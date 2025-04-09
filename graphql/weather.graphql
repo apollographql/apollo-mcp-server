@@ -1,0 +1,50 @@
+extend schema
+  @link(url: "https://specs.apollo.dev/federation/v2.10")
+  @link(
+    url: "https://specs.apollo.dev/connect/v0.1"
+    import: ["@connect", "@source"]
+  )
+  @source(
+    name: "NWS"
+    http: {
+      baseURL: "https://api.weather.gov"
+      headers: [
+        { name: "User-Agent", value: "weather-app/1.0" }
+        { name: "Accept", value: "application/ld+json" }
+      ]
+    }
+  )
+
+type Query {
+  forecast(latitude: String!, longitude: String!): Forecast
+    @connect(
+      source: "NWS"
+      http: { GET: "/points/{$args.latitude},{$args.longitude}" }
+      selection: """
+      forecast
+      """
+    )
+
+  alerts(state: String!): [Alert]
+    @connect(
+      source: "NWS"
+      http: { GET: "/alerts/active?area={$args.state}" }
+      selection: """
+      $."@graph" {
+        severity
+        description
+        instruction
+      }
+      """
+    )
+}
+
+type Forecast {
+  forecast: String
+}
+
+type Alert {
+  severity: String
+  description: String
+  instruction: String
+}
