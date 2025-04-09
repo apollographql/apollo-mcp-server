@@ -1,6 +1,6 @@
 federation_version: =2.10.0
 subgraphs:
-  posts:
+  weather:
     routing_url: http://localhost # this value is ignored
     schema:
       file: weather.graphql
