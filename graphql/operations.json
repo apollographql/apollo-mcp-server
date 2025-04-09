@@ -1,15 +1,8 @@
 [
     {
-        "query": "query GetForecast($latitude: String!, $longitude:String!) { forecast(latitude: $latitude, longitude: $longitude) { forecast } }",
-        "variables": {
-            "latitude": "33.749",
-            "longitude": "-84.388"
-        }
+        "query": "query GetForecast($latitude: String!, $longitude:String!) { forecast(latitude: $latitude, longitude: $longitude) { forecast } }"
     },
     {
-        "query": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }",
-        "variables": {
-            "state": "GA"
-        }
+        "query": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
     }
 ]
