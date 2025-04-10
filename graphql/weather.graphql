@@ -10,7 +10,7 @@ extend schema
       baseURL: "https://api.weather.gov"
       headers: [
         { name: "User-Agent", value: "weather-app/1.0" }
-        { name: "Accept", value: "application/ld+json" }
+        { name: "Accept", value: "application/geo+json" }
       ]
     }
   )
@@ -21,16 +21,19 @@ type Query {
       source: "NWS"
       http: { GET: "/points/{$args.latitude},{$args.longitude}" }
       selection: """
-      forecast
+      latitude: $args.latitude
+      longitude: $args.longitude
+      forecastURL: properties.forecast
       """
+      entity: true
     )
 
   alerts(state: String!): [Alert]
     @connect(
       source: "NWS"
-      http: { GET: "/alerts/active?area={$args.state}" }
+      http: { GET: "/alerts/active/area/{$args.state}" }
       selection: """
-      $."@graph" {
+      $.features.properties {
         severity
         description
         instruction
@@ -40,7 +43,24 @@ type Query {
 }
 
 type Forecast {
-  forecast: String
+  latitude: String!
+  longitude: String!
+  forecastURL: String!
+  detailed: String!
+    @connect(
+      http: {
+        # GET: "{$this.forecastURL->urlSafe}" # TODO: Use this when urlSafe is implemented
+        GET: "https://api.weather.gov/gridpoints/FFC/51,87/forecast" # TODO: remove this hardcoded value
+        headers: [
+          { name: "foo", value: "{$this.forecastURL}" } # reqruired to make composition not throw a satisfiability error
+          { name: "Accept", value: "application/geo+json" }
+          { name: "User-Agent", value: "weather-app/1.0" }
+        ]
+      }
+      selection: """
+      $.properties.periods->first.detailedForecast
+      """
+    )
 }
 
 type Alert {
