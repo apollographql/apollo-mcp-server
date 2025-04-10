@@ -1,6 +1,6 @@
 [
     {
-        "query": "query GetForecast($latitude: String!, $longitude:String!) { forecast(latitude: $latitude, longitude: $longitude) { forecast } }"
+        "query": "query GetForecast($latitude: String!, $longitude:String!) { forecast(latitude: $latitude, longitude: $longitude) { detailed } }"
     },
     {
         "query": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
