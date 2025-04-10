@@ -52,7 +52,7 @@ type Forecast {
         # GET: "{$this.forecastURL->urlSafe}" # TODO: Use this when urlSafe is implemented
         GET: "https://api.weather.gov/gridpoints/FFC/51,87/forecast" # TODO: remove this hardcoded value
         headers: [
-          { name: "foo", value: "{$this.forecastURL}" } # reqruired to make composition not throw a satisfiability error
+          { name: "foo", value: "{$this.forecastURL}" } # required to make composition not throw a satisfiability error
           { name: "Accept", value: "application/geo+json" }
           { name: "User-Agent", value: "weather-app/1.0" }
         ]
