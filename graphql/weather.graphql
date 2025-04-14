@@ -1,5 +1,8 @@
 extend schema
-  @link(url: "https://specs.apollo.dev/federation/v2.10")
+  @link(
+    url: "https://specs.apollo.dev/federation/v2.10"
+    import: ["@tag"]
+  )
   @link(
     url: "https://specs.apollo.dev/connect/v0.1"
     import: ["@connect", "@source"]
@@ -28,7 +31,7 @@ type Query {
       entity: true
     )
 
-  alerts(state: String!): [Alert]
+  alerts(state: String!): [Alert] @tag(name: "mcp")
     @connect(
       source: "NWS"
       http: { GET: "/alerts/active/area/{$args.state}" }
@@ -63,7 +66,7 @@ type Forecast {
     )
 }
 
-type Alert {
+type Alert @tag(name: "mcp") {
   severity: String
   description: String
   instruction: String
