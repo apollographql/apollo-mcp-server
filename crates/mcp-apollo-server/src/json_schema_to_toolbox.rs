@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rmcp::{handler::server::tool::{ToolBox, ToolBoxItem, ToolCallContext}, model::{object, CallToolResult, ErrorData, Tool}, serde_json::json, ServerHandler};
 
-use crate::operation_to_json_schema::ToolDefinition;
+use crate::operations::ToolDefinition;
 
 #[derive(Debug, Clone, Default)]
 pub struct Server {}
