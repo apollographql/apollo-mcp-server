@@ -53,8 +53,12 @@ impl Operation {
                     .expect("Operations require names")
                     .to_string();
 
-                let object = rmcp::serde_json::to_value(get_json_schema(operation_def, graphql_schema, custom_scalar_map))
-                    .expect("failed to serialize schema"); // TODO: error handling
+                let object = rmcp::serde_json::to_value(get_json_schema(
+                    operation_def,
+                    graphql_schema,
+                    custom_scalar_map,
+                ))
+                .expect("failed to serialize schema"); // TODO: error handling
                 let schema = match object {
                     rmcp::serde_json::Value::Object(object) => object,
                     _ => panic!("unexpected schema value"), // TODO: error handling
@@ -81,7 +85,13 @@ impl Operation {
         })
         .to_string();
 
-        match client.post(endpoint).body(body).send().await {
+        match client
+            .post(endpoint)
+            .header("Content-Type", "application/json")
+            .body(body)
+            .send()
+            .await
+        {
             Ok(response) => response.text().await,
             Err(e) => Err(e),
         }
