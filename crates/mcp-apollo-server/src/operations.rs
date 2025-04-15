@@ -243,9 +243,9 @@ mod tests {
                 "operation.graphql",
             )
             .expect("failed to parse operation");
-        let grpahql_schema = document.to_schema().unwrap();
+        let graphql_schema = document.to_schema().unwrap();
 
-        let operation = Operation::new(source_text, &grpahql_schema, custom_scalar_map);
+        let operation = Operation::new(source_text, &graphql_schema, custom_scalar_map);
         let tool = operation.as_tool();
         assert_eq!(json!(tool.input_schema), expected_json);
     }
