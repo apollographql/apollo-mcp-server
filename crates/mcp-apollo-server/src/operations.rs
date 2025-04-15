@@ -1,54 +1,99 @@
-use apollo_compiler::{
-    Schema as GraphqlSchema,
-    ast::{Definition, Type},
-    parser::Parser,
-};
-use rmcp::model::Tool;
-use rmcp::schemars::schema::{
-    ArrayValidation, InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject, SingleOrVec,
-    SubschemaValidation,
-};
 use std::collections::HashMap;
 
-/// Convert a GraphQL operation to an MCP tool.
-pub fn operation_to_tool(
-    uri: &str,
-    source_text: &str,
+use apollo_compiler::{
+    Node, Schema as GraphqlSchema,
+    ast::{Definition, OperationDefinition, Type},
+    parser::Parser,
+};
+use rmcp::{
+    model::Tool,
+    schemars::schema::{
+        ArrayValidation, InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject,
+        SingleOrVec, SubschemaValidation,
+    },
+    serde_json,
+};
+
+pub struct Operation {
+    pub tool: Tool,
+    source_text: String,
+}
+
+impl Operation {
+    pub fn new(
+        source_text: &str,
+        graphql_schema: &GraphqlSchema,
+        custom_scalar_map: Option<&HashMap<String, SchemaObject>>,
+    ) -> Self {
+        let document = Parser::new()
+            .parse_ast(source_text, "operation.graphql")
+            .expect("failed to parse operation");
+
+        let mut operation_defs = document.definitions.iter().filter_map(|def| match def {
+            Definition::OperationDefinition(operation_def) => Some(operation_def),
+            Definition::FragmentDefinition(_) => None,
+            _ => {
+                eprintln!(
+                    "Schema definitions were passed in, only operations and fragments are allowed"
+                );
+                None
+            }
+        });
+        let operation_count = operation_defs.clone().count();
+        assert!(
+            operation_count <= 1,
+            "too many operations in document: {operation_count}"
+        );
+
+        match operation_defs.nth(0) {
+            Some(operation_def) => {
+                let operation_name = operation_def
+                    .name
+                    .clone()
+                    .expect("Operations require names")
+                    .to_string();
+
+                let object = rmcp::serde_json::to_value(get_json_schema(operation_def, graphql_schema, custom_scalar_map))
+                    .expect("failed to serialize schema"); // TODO: error handling
+                let schema = match object {
+                    rmcp::serde_json::Value::Object(object) => object,
+                    _ => panic!("unexpected schema value"), // TODO: error handling
+                };
+
+                Operation {
+                    tool: Tool::new(operation_name, "", schema),
+                    source_text: source_text.to_string(),
+                }
+            }
+            _ => panic!("no operations in document"),
+        }
+    }
+
+    pub async fn execute_operation(
+        &self,
+        endpoint: &str,
+        variables: serde_json::Value,
+    ) -> Result<String, reqwest::Error> {
+        let client = reqwest::Client::new();
+        let body = serde_json::json!({
+            "query": self.source_text,
+            "variables": variables,
+        })
+        .to_string();
+
+        match client.post(endpoint).body(body).send().await {
+            Ok(response) => response.text().await,
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn get_json_schema(
+    operation: &Node<OperationDefinition>,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&HashMap<String, SchemaObject>>,
-) -> Tool {
-    let document = Parser::new()
-        .parse_ast(source_text, uri)
-        .expect("failed to parse operation");
-    let operation_defs = document.definitions.iter().filter_map(|def| match def {
-        Definition::OperationDefinition(operation_def) => Some(operation_def),
-        Definition::FragmentDefinition(_) => None,
-        _ => {
-            eprintln!(
-                "Schema definitions were passed in, only operations and fragments are allowed"
-            );
-            None
-        }
-    });
-
-    let operation_count = operation_defs.clone().count();
-    assert!(
-        operation_count <= 1,
-        "too many operations in document: {operation_count}"
-    );
-
+) -> RootSchema {
     let mut obj = ObjectValidation::default();
-
-    let operation = operation_defs
-        .clone()
-        .nth(0)
-        .expect("no operations in document");
-
-    let operation_name = operation
-        .name
-        .clone()
-        .expect("Operations require names")
-        .to_string();
 
     operation.variables.iter().for_each(|variable| {
         let variable_name = variable.name.to_string();
@@ -59,21 +104,14 @@ pub fn operation_to_tool(
         }
     });
 
-    let schema = RootSchema {
+    RootSchema {
         schema: SchemaObject {
             instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
             object: Some(Box::new(obj)),
             ..Default::default()
         },
         ..Default::default()
-    };
-    let object = rmcp::serde_json::to_value(schema).expect("failed to serialize schema"); // TODO: error handling
-    let schema = match object {
-        rmcp::serde_json::Value::Object(object) => object,
-        _ => panic!("unexpected schema value"), // TODO: error handling
-    };
-
-    Tool::new(operation_name, "", schema)
+    }
 }
 
 fn schema_factory(
@@ -164,13 +202,13 @@ fn type_to_schema(
 mod tests {
     use std::collections::HashMap;
 
-    use crate::operations::operation_to_tool;
     use apollo_compiler::parser::Parser;
-    use rmcp::model::Tool;
     use rmcp::{
         schemars::schema::{InstanceType, SchemaObject, SingleOrVec},
         serde_json::{self, json},
     };
+
+    use crate::operations::Operation;
 
     fn expect_json_schema(
         source_text: &str,
@@ -191,19 +229,10 @@ mod tests {
                 "operation.graphql",
             )
             .expect("failed to parse operation");
-        let graphql_schema = document.to_schema().unwrap();
+        let grpahql_schema = document.to_schema().unwrap();
 
-        let Tool {
-            name: _name,
-            description: _description,
-            input_schema: schema,
-        } = operation_to_tool(
-            "operation.graphql",
-            source_text,
-            &graphql_schema,
-            custom_scalar_map,
-        );
-        assert_eq!(json!(schema), expected_json)
+        let operation = Operation::new(source_text, &grpahql_schema, custom_scalar_map);
+        assert_eq!(json!(operation.tool.input_schema), expected_json)
     }
 
     #[test]

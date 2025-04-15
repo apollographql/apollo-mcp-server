@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 rmcp = { version = "0.1", features = ["server"] }
 apollo-compiler = "1.27.0"
+reqwest = "0.12.15"
