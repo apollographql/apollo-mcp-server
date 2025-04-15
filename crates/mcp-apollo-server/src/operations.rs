@@ -1,27 +1,22 @@
-use std::collections::HashMap;
-
 use apollo_compiler::{
     Schema as GraphqlSchema,
     ast::{Definition, Type},
     parser::Parser,
 };
+use rmcp::model::Tool;
 use rmcp::schemars::schema::{
     ArrayValidation, InstanceType, ObjectValidation, RootSchema, Schema, SchemaObject, SingleOrVec,
     SubschemaValidation,
 };
+use std::collections::HashMap;
 
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub schema: RootSchema,
-}
-
-pub fn operation_to_json_schema(
+/// Convert a GraphQL operation to an MCP tool.
+pub fn operation_to_tool(
     uri: &str,
     source_text: &str,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&HashMap<String, SchemaObject>>,
-) -> ToolDefinition {
+) -> Tool {
     let document = Parser::new()
         .parse_ast(source_text, uri)
         .expect("failed to parse operation");
@@ -29,9 +24,11 @@ pub fn operation_to_json_schema(
         Definition::OperationDefinition(operation_def) => Some(operation_def),
         Definition::FragmentDefinition(_) => None,
         _ => {
-            eprintln!("Schema definitions were passed in, only operations and fragments are allowed");
+            eprintln!(
+                "Schema definitions were passed in, only operations and fragments are allowed"
+            );
             None
-        },
+        }
     });
 
     let operation_count = operation_defs.clone().count();
@@ -47,6 +44,12 @@ pub fn operation_to_json_schema(
         .nth(0)
         .expect("no operations in document");
 
+    let operation_name = operation
+        .name
+        .clone()
+        .expect("Operations require names")
+        .to_string();
+
     operation.variables.iter().for_each(|variable| {
         let variable_name = variable.name.to_string();
         let schema = type_to_schema(variable.ty.as_ref(), graphql_schema, custom_scalar_map);
@@ -56,22 +59,21 @@ pub fn operation_to_json_schema(
         }
     });
 
-    ToolDefinition {
-        name: operation
-            .name
-            .clone()
-            .expect("Operations require names")
-            .to_string(),
-        description: "".to_string(),
-        schema: RootSchema {
-            schema: SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-                object: Some(Box::new(obj)),
-                ..Default::default()
-            },
+    let schema = RootSchema {
+        schema: SchemaObject {
+            instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
+            object: Some(Box::new(obj)),
             ..Default::default()
         },
-    }
+        ..Default::default()
+    };
+    let object = rmcp::serde_json::to_value(schema).expect("failed to serialize schema"); // TODO: error handling
+    let schema = match object {
+        rmcp::serde_json::Value::Object(object) => object,
+        _ => panic!("unexpected schema value"), // TODO: error handling
+    };
+
+    Tool::new(operation_name, "", schema)
 }
 
 fn schema_factory(
@@ -162,8 +164,9 @@ fn type_to_schema(
 mod tests {
     use std::collections::HashMap;
 
-    use crate::operations::{ToolDefinition, operation_to_json_schema};
+    use crate::operations::operation_to_tool;
     use apollo_compiler::parser::Parser;
+    use rmcp::model::Tool;
     use rmcp::{
         schemars::schema::{InstanceType, SchemaObject, SingleOrVec},
         serde_json::{self, json},
@@ -188,16 +191,16 @@ mod tests {
                 "operation.graphql",
             )
             .expect("failed to parse operation");
-        let grpahql_schema = document.to_schema().unwrap();
+        let graphql_schema = document.to_schema().unwrap();
 
-        let ToolDefinition {
+        let Tool {
             name: _name,
-            description: _desciption,
-            schema,
-        } = operation_to_json_schema(
+            description: _description,
+            input_schema: schema,
+        } = operation_to_tool(
             "operation.graphql",
             source_text,
-            &grpahql_schema,
+            &graphql_schema,
             custom_scalar_map,
         );
         assert_eq!(json!(schema), expected_json)
@@ -357,9 +360,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "no operations in document"
-    )]
+    #[should_panic(expected = "no operations in document")]
     fn schema_should_panic() {
         expect_json_schema("type Query { id: String }", json!({}), None)
     }
