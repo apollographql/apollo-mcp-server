@@ -15,7 +15,7 @@ use rmcp::{
 };
 
 pub struct Operation {
-    pub tool: Tool,
+    tool: Tool,
     source_text: String,
 }
 
@@ -85,6 +85,10 @@ impl Operation {
             Ok(response) => response.text().await,
             Err(e) => Err(e),
         }
+    }
+
+    pub fn as_tool(&self) -> &Tool {
+        &self.tool
     }
 }
 
@@ -232,7 +236,8 @@ mod tests {
         let grpahql_schema = document.to_schema().unwrap();
 
         let operation = Operation::new(source_text, &grpahql_schema, custom_scalar_map);
-        assert_eq!(json!(operation.tool.input_schema), expected_json)
+        let tool = operation.as_tool();
+        assert_eq!(json!(tool.input_schema), expected_json);
     }
 
     #[test]
