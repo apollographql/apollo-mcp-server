@@ -4,5 +4,8 @@
     },
     {
         "query": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
+    },
+    {
+        "query": "query GetAllWeatherData($latitude: String!, $longitude:String!, $state: String!) { forecast(latitude: $latitude, longitude: $longitude) { detailed } alerts(state: $state) { severity description instruction } }"
     }
 ]

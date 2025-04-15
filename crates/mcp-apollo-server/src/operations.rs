@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use apollo_compiler::ast::Selection;
+use apollo_compiler::ast::{OperationType, Selection};
 use apollo_compiler::{
     Node, Schema as GraphqlSchema,
     ast::{Definition, OperationDefinition, Type},
@@ -55,25 +55,7 @@ impl Operation {
                     .expect("Operations require names")
                     .to_string();
 
-                let selection = operation_def.selection_set.clone();
-                let selection = selection.first().unwrap(); // TODO: combine multiple fields
-                let description = if let Selection::Field(field) = selection {
-                    let field_name = field.name.to_string();
-                    let query = graphql_schema.schema_definition.query.clone().unwrap(); // TODO: mutation
-                    let query = graphql_schema.get_object(&query).unwrap();
-                    query
-                        .fields
-                        .iter()
-                        .find(|(name, _)| {
-                            let name = name.to_string();
-                            name == field_name
-                        })
-                        .map(|(_, field_definition)| field_definition.node.clone())
-                        .and_then(|field| field.description.clone())
-                        .map(|n| n.to_string())
-                } else {
-                    None
-                };
+                let description = Self::description(graphql_schema, operation_def);
 
                 let object = serde_json::to_value(get_json_schema(
                     operation_def,
@@ -96,6 +78,52 @@ impl Operation {
                 }
             }
             _ => panic!("no operations in document"),
+        }
+    }
+
+    /// Generate a description for an operation based on documentation in the schema
+    fn description(
+        graphql_schema: &GraphqlSchema,
+        operation_def: &Node<OperationDefinition>,
+    ) -> Option<String> {
+        let description = operation_def
+            .selection_set
+            .iter()
+            .filter_map(|selection| {
+                match selection {
+                    Selection::Field(field) => {
+                        let field_name = field.name.to_string();
+                        let operation_type = operation_def.operation_type;
+                        let component = match operation_type {
+                            OperationType::Query => graphql_schema.schema_definition.query.clone(),
+                            OperationType::Mutation => {
+                                graphql_schema.schema_definition.mutation.clone()
+                            }
+                            OperationType::Subscription => {
+                                graphql_schema.schema_definition.subscription.clone()
+                            }
+                        }?;
+                        let query = graphql_schema.get_object(&component)?;
+                        query
+                            .fields
+                            .iter()
+                            .find(|(name, _)| {
+                                let name = name.to_string();
+                                name == field_name
+                            })
+                            .map(|(_, field_definition)| field_definition.node.clone())
+                            .and_then(|field| field.description.clone())
+                            .map(|n| n.to_string())
+                    }
+                    _ => None, // TODO: handle fragments
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+        if description.is_empty() {
+            None
+        } else {
+            Some(description)
         }
     }
 
