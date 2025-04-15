@@ -73,7 +73,7 @@ impl Operation {
         }
     }
 
-    pub async fn execute_operation(
+    pub async fn execute(
         &self,
         endpoint: &str,
         variables: serde_json::Value,
