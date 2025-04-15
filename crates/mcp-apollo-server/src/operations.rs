@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use apollo_compiler::ast::Selection;
 use apollo_compiler::{
     Node, Schema as GraphqlSchema,
     ast::{Definition, OperationDefinition, Type},
@@ -14,6 +15,7 @@ use rmcp::{
     serde_json,
 };
 
+#[derive(Debug, Clone)]
 pub struct Operation {
     tool: Tool,
     source_text: String,
@@ -53,6 +55,26 @@ impl Operation {
                     .expect("Operations require names")
                     .to_string();
 
+                let selection = operation_def.selection_set.clone();
+                let selection = selection.first().unwrap(); // TODO: combine multiple fields
+                let description = if let Selection::Field(field) = selection {
+                    let field_name = field.name.to_string();
+                    let query = graphql_schema.schema_definition.query.clone().unwrap();
+                    let query = graphql_schema.get_object(&query).unwrap();
+                    query
+                        .fields
+                        .iter()
+                        .find(|(name, _)| {
+                            let name = name.to_string();
+                            name == field_name
+                        })
+                        .map(|(_, field_definition)| field_definition.node.clone())
+                        .and_then(|field| field.description.clone())
+                        .map(|n| n.to_string())
+                } else {
+                    None
+                };
+
                 let object = rmcp::serde_json::to_value(get_json_schema(
                     operation_def,
                     graphql_schema,
@@ -65,7 +87,11 @@ impl Operation {
                 };
 
                 Operation {
-                    tool: Tool::new(operation_name, "", schema),
+                    tool: Tool::new(
+                        operation_name,
+                        description.unwrap_or(String::from("")),
+                        schema,
+                    ),
                     source_text: source_text.to_string(),
                 }
             }
@@ -136,9 +162,9 @@ fn schema_factory(
 ) -> Schema {
     Schema::Object(SchemaObject {
         instance_type: Some(SingleOrVec::Single(Box::new(instance_type))),
-        object: object_validation.map(|validation| Box::new(validation)),
-        array: array_validation.map(|validation| Box::new(validation)),
-        subschemas: subschema_validation.map(|validation| Box::new(validation)),
+        object: object_validation.map(Box::new),
+        array: array_validation.map(Box::new),
+        subschemas: subschema_validation.map(Box::new),
         ..Default::default()
     })
 }

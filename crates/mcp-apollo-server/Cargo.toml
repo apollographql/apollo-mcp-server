@@ -4,6 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rmcp = { version = "0.1", features = ["server"] }
+rmcp = { version = "0.1", features = ["server", "transport-io"] }
 apollo-compiler = "1.27.0"
 reqwest = "0.12.15"
+tokio = { version =  "1.44.2", features = [
+"macros",
+"rt",
+"rt-multi-thread",
+"io-std",
+"net",
+"fs",
+"time",
+] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+futures-util = "0.3.31"
