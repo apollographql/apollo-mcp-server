@@ -59,7 +59,7 @@ impl Operation {
                 let selection = selection.first().unwrap(); // TODO: combine multiple fields
                 let description = if let Selection::Field(field) = selection {
                     let field_name = field.name.to_string();
-                    let query = graphql_schema.schema_definition.query.clone().unwrap();
+                    let query = graphql_schema.schema_definition.query.clone().unwrap(); // TODO: mutation
                     let query = graphql_schema.get_object(&query).unwrap();
                     query
                         .fields
@@ -75,14 +75,14 @@ impl Operation {
                     None
                 };
 
-                let object = rmcp::serde_json::to_value(get_json_schema(
+                let object = serde_json::to_value(get_json_schema(
                     operation_def,
                     graphql_schema,
                     custom_scalar_map,
                 ))
                 .expect("failed to serialize schema"); // TODO: error handling
                 let schema = match object {
-                    rmcp::serde_json::Value::Object(object) => object,
+                    serde_json::Value::Object(object) => object,
                     _ => panic!("unexpected schema value"), // TODO: error handling
                 };
 
