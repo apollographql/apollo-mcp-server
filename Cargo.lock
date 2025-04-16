@@ -889,6 +889,8 @@ dependencies = [
  "futures-util",
  "reqwest",
  "rmcp",
+ "serde",
+ "serde_derive",
  "tokio",
  "tracing",
  "tracing-subscriber",

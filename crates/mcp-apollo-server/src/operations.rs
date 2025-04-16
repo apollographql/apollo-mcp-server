@@ -14,8 +14,9 @@ use rmcp::{
     },
     serde_json::{self, Value},
 };
+use serde_derive::Serialize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     tool: Tool,
     source_text: String,

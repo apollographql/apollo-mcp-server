@@ -41,7 +41,10 @@ impl Server {
                 Operation::new(operation, &graphql_schema, None)
             })
             .collect();
-        info!(?operations, "Loaded operations");
+        info!(
+            "Loaded operations:\n{}",
+            serde_json::to_string_pretty(&operations).unwrap()
+        );
 
         Self { operations }
     }
