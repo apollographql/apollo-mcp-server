@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
-use apollo_compiler::ast::{Document, OperationType, Selection};
-use apollo_compiler::validation::WithErrors;
+use apollo_compiler::ast::{OperationType, Selection};
 use apollo_compiler::{
     Name, Node, Schema as GraphqlSchema,
     ast::{Definition, OperationDefinition, Type},
@@ -17,29 +16,7 @@ use rmcp::{
 };
 use serde_derive::Serialize;
 
-#[derive(Debug, thiserror::Error)]
-pub enum OperationError {
-    #[error("Could not parse GraphQL document: {0}")]
-    GraphQLDocument(WithErrors<Document>),
-
-    #[error("Could not parse GraphQL schema: {0}")]
-    GraphQLSchema(WithErrors<Schema>),
-
-    #[error("Internal error: {0}")]
-    Internal(String),
-
-    #[error("Operation is missing its required name: {0}")]
-    MissingName(String),
-
-    #[error("No operations defined")]
-    NoOperations,
-
-    #[error("Invalid JSON: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("Too many operations. Expected 1 but got {0}")]
-    TooManyOperations(usize),
-}
+use crate::OperationError;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
@@ -59,7 +36,7 @@ impl From<Operation> for Tool {
 }
 
 impl Operation {
-    pub fn from_spec(
+    pub fn from_document(
         source_text: &str,
         graphql_schema: &GraphqlSchema,
         custom_scalar_map: Option<&HashMap<String, SchemaObject>>,
@@ -422,7 +399,7 @@ mod tests {
         let graphql_schema = document.to_schema().unwrap();
 
         let operation =
-            Operation::from_spec(source_text, &graphql_schema, custom_scalar_map).unwrap();
+            Operation::from_document(source_text, &graphql_schema, custom_scalar_map).unwrap();
         let Tool {
             name,
             description,

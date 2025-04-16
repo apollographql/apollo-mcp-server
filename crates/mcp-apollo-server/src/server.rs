@@ -1,9 +1,6 @@
-use crate::OperationsList;
-use crate::operations::{Operation, OperationError};
-use apollo_compiler::Schema;
-use apollo_compiler::ast::Document;
+use crate::operations::Operation;
+use crate::{OperationsList, ServerError};
 use apollo_compiler::parser::Parser;
-use apollo_compiler::validation::WithErrors;
 use futures_util::TryFutureExt;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Content, ErrorCode, ListToolsResult,
@@ -16,24 +13,6 @@ use std::path::Path;
 use tracing::info;
 
 type McpError = rmcp::model::ErrorData;
-
-#[derive(Debug, thiserror::Error)]
-pub enum ServerError {
-    #[error("Could not parse GraphQL document: {0}")]
-    GraphQLDocument(Box<WithErrors<Document>>),
-
-    #[error("Could not parse GraphQL schema: {0}")]
-    GraphQLSchema(Box<WithErrors<Schema>>),
-
-    #[error("Invalid JSON: {0}")]
-    Json(#[from] serde_json::Error),
-
-    #[error("Failed to create operation: {0}")]
-    Operation(#[from] OperationError),
-
-    #[error("Could not open file: {0}")]
-    ReadFile(#[from] std::io::Error),
-}
 
 /// An MCP Server for Apollo GraphQL operations
 #[derive(Clone)]
@@ -63,7 +42,7 @@ impl Server {
         let operations: OperationsList = serde_json::from_reader(operations)?;
         let operations = operations
             .into_iter()
-            .map(|operation| Operation::from_spec(&operation.query, &graphql_schema, None))
+            .map(|operation| Operation::from_document(&operation.query, &graphql_schema, None))
             .collect::<Result<Vec<_>, _>>()?;
         info!(
             "Loaded operations:\n{}",
