@@ -1,6 +1,6 @@
 [package]
 name = "mcp-apollo-server"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,11 @@ clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
 futures-util = "0.3.31"
 reqwest = "0.12.15"
-rmcp = { version = "0.1", features = ["server", "transport-io", "transport-sse-server"] }
+rmcp = { version = "0.1", features = [
+    "server",
+    "transport-io",
+    "transport-sse-server",
+] }
 serde = "1.0.219"
 serde_derive = "1.0.219"
 thiserror = "2.0.12"
@@ -21,7 +25,6 @@ tokio = { version = "1.44.2", features = [
     "io-std",
     "net",
     "fs",
-    "signal",
     "time",
 ] }
 tracing = "0.1.41"
@@ -29,3 +32,6 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [dev-dependencies]
 insta = "1.42.2"
+
+[lints]
+workspace = true

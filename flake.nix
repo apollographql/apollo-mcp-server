@@ -4,6 +4,9 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
 
+    # Rust builder
+    crane.url = "github:ipetkov/crane";
+
     # Rust overlay for toolchain / building deterministically
     fenix = {
       url = "github:nix-community/fenix";
@@ -16,6 +19,7 @@
 
   outputs = {
     self,
+    crane,
     nixpkgs,
     fenix,
     flake-utils,
@@ -27,6 +31,26 @@
         sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
       };
 
+      # Crane options
+      craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+      craneCommonArgs = {
+        inherit src;
+        pname = "mcp-apollo";
+        strictDeps = true;
+
+        buildInputs =
+          [
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+            pkgs.libiconv
+          ];
+      };
+      # Build the cargo dependencies (of the entire workspace), so we can reuse
+      # all of that work (e.g. via cachix) when running in CI
+      cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+      src = craneLib.cleanCargoSource ./.;
+
+      # Supporting tools
       mcphost = pkgs.callPackage ./nix/mcphost.nix {};
       mcp-server-tools = pkgs.callPackage ./nix/mcp-server-tools {};
     in {
@@ -47,7 +71,52 @@
 
             # For local LLM testing
             ollama
+
+            # For consistent TOML formatting
+            taplo
           ]);
+      };
+
+      checks = {
+        clippy = craneLib.cargoClippy (craneCommonArgs
+          // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          });
+        docs = craneLib.cargoDoc (craneCommonArgs
+          // {
+            inherit cargoArtifacts;
+          });
+
+        # Check formatting
+        nix-fmt = pkgs.runCommandLocal "check-nix-fmt" {} "${pkgs.alejandra}/bin/alejandra --check ${./.}; touch $out";
+        rustfmt = craneLib.cargoFmt {
+          inherit src;
+        };
+        toml-fmt = craneLib.taploFmt {
+          src = pkgs.lib.sources.sourceFilesBySuffices src [".toml"];
+        };
+      };
+
+      packages = rec {
+        default = mcp-apollo-server;
+        mcp-apollo-server = let
+          fileSetForCrate = crate:
+            pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [
+                ./Cargo.toml
+                ./Cargo.lock
+                (craneLib.fileset.commonCargoSources crate)
+              ];
+            };
+        in
+          craneLib.buildPackage (craneCommonArgs
+            // {
+              pname = "mcp-apollo-server";
+              cargoExtraArgs = "-p mcp-apollo-server";
+              src = fileSetForCrate ./crates/mcp-apollo-server;
+            });
       };
     });
 }

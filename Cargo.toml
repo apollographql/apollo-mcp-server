@@ -1,3 +1,15 @@
 [workspace]
 resolver = "2"
 members = ["crates/mcp-apollo-server"]
+
+package.version = "0.1.0"
+
+[workspace.metadata]
+crane.name = "mcp-apollo"
+
+[workspace.lints.clippy]
+exit = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+panic = "deny"
+unwrap_used = "deny"
