@@ -58,7 +58,7 @@ impl ServerHandler for Server {
         Box::pin(async move {
             self.operations
                 .iter()
-                .find(|op| op.as_tool().name == request.name)
+                .find(|op| op.as_ref().name == request.name)
                 .ok_or_else(|| {
                     McpError::new(
                         ErrorCode::METHOD_NOT_FOUND,
@@ -87,7 +87,7 @@ impl ServerHandler for Server {
             tools: self
                 .operations
                 .iter()
-                .map(|op| op.as_tool().clone())
+                .map(|op| op.as_ref().clone())
                 .collect(),
         }))
     }
