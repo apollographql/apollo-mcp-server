@@ -17,15 +17,17 @@ extend schema
 
 type Query {
   """
-  Get the weather forecast for a latitude and longitude
+  Get the weather forecast for a coordinate
   """
-  forecast(latitude: String!, longitude: String!): Forecast
+  forecast(coordinate: InputCoordinate!): Forecast
     @connect(
       source: "NWS"
-      http: { GET: "/points/{$args.latitude},{$args.longitude}" }
+      http: { GET: "/points/{$args.coordinate.latitude},{$args.coordinate.longitude}" }
       selection: """
-      latitude: $args.latitude
-      longitude: $args.longitude
+      coordinate: {
+        latitude: $args.coordinate.latitude
+        longitude: $args.coordinate.longitude
+      }
       forecastURL: properties.forecast
       """
       entity: true
@@ -54,14 +56,9 @@ A weather forecast
 """
 type Forecast {
   """
-  The latitude associated with this forecast
+  The coordinate associated with this forecast
   """
-  latitude: String!
-
-  """
-  The longitude associated with this forecast
-  """
-  longitude: String!
+  coordinate: Coordinate!
 
   """
   The National Weather Service (NWS) URL where the forecast data can be read
@@ -106,4 +103,35 @@ type Alert @tag(name: "mcp") {
   Information about people should respond to the alert
   """
   instruction: String
+}
+
+"""
+A coordinate, consisting of a latitude and longitude
+"""
+input InputCoordinate {
+  """
+  The latitude of this coordinate
+  """
+  latitude: String!
+
+  """
+  The longitude of this coordinate
+  """
+  longitude: String!
+}
+
+
+"""
+A coordinate, consisting of a latitude and longitude
+"""
+type Coordinate {
+  """
+  The latitude of this coordinate
+  """
+  latitude: String!
+
+  """
+  The longitude of this coordinate
+  """
+  longitude: String!
 }

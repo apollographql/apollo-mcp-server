@@ -1,11 +1,11 @@
 [
     {
-        "query": "query GetForecast($latitude: String!, $longitude:String!) { forecast(latitude: $latitude, longitude: $longitude) { detailed } }"
+        "query": "query GetForecast($coordinate: InputCoordinate!) { forecast(coordinate: $coordinate) { detailed } }"
     },
     {
         "query": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
     },
     {
-        "query": "query GetAllWeatherData($latitude: String!, $longitude:String!, $state: String!) { forecast(latitude: $latitude, longitude: $longitude) { detailed } alerts(state: $state) { severity description instruction } }"
+        "query": "query GetAllWeatherData($coordinate: InputCoordinate!) { forecast(coordinate: $coordinate) { detailed } alerts(state: $state) { severity description instruction } }"
     }
 ]
