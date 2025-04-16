@@ -66,7 +66,8 @@ impl Operation {
                     .expect("Operations require names")
                     .to_string();
 
-                let description = Self::description(graphql_schema, operation_def);
+                let description = Self::tool_description(graphql_schema, operation_def)
+                    .unwrap_or(String::from(""));
 
                 let object = serde_json::to_value(get_json_schema(
                     operation_def,
@@ -80,11 +81,7 @@ impl Operation {
                 };
 
                 Operation {
-                    tool: Tool::new(
-                        operation_name,
-                        description.unwrap_or(String::from("")),
-                        schema,
-                    ),
+                    tool: Tool::new(operation_name, description, schema),
                     source_text: source_text.to_string(),
                 }
             }
@@ -93,7 +90,7 @@ impl Operation {
     }
 
     /// Generate a description for an operation based on documentation in the schema
-    fn description(
+    fn tool_description(
         graphql_schema: &GraphqlSchema,
         operation_def: &Node<OperationDefinition>,
     ) -> Option<String> {
