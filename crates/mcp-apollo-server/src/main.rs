@@ -3,7 +3,37 @@ use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use std::env;
 use std::io::Error;
+use clap::builder::Styles;
+use clap::builder::styling::{AnsiColor, Effects};
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
+
+/// Clap styling
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .usage(AnsiColor::Green.on_default().effects(Effects::BOLD))
+    .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
+    .placeholder(AnsiColor::Cyan.on_default());
+
+// Define clap arguments
+#[derive(Debug, clap::Parser)]
+#[command(
+    styles = STYLES,
+    about = "Apollo MCP Server - invoke GraphQL operations from an AI agent",
+)]
+struct Args {
+    /// The working directory to use
+    #[clap(long, short='d')]
+    directory: String,
+
+    /// The path to the GraphQL schema file
+    #[clap(long, short='s', default_value = "graphql/weather.graphql")]
+    schema: String,
+
+    /// The path to the GraphQL operations file
+    #[clap(long, short='o', default_value = "graphql/operations.json")]
+    operations: String,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
@@ -13,12 +43,11 @@ async fn main() -> Result<(), Error> {
         .with_ansi(false)
         .init();
 
-    let args: Vec<String> = env::args().collect();
-    let working_directory = args.get(1).map(|s| s.as_str()).unwrap_or(".");
-    let _ = env::set_current_dir(working_directory);
+    let args = Args::parse();
+    let _ = env::set_current_dir(args.directory);
 
     tracing::info!("Starting MCP server");
-    let server = Server::new("graphql/weather.graphql", "graphql/operations.json");
+    let server = Server::new(args.schema, args.operations);
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;

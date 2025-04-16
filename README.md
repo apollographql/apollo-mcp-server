@@ -35,7 +35,10 @@ Add the following to this file, using the absolute path to this Git repo:
   "mcpServers": {
     "weather": {
         "command": "<absolute path to repo>/target/debug/mcp-apollo-server",
-        "args": [ "<absolute path to repo>" ]
+        "args": [
+            "--directory",
+            "<absolute path to repo>"
+        ]
     }
   }
 }
