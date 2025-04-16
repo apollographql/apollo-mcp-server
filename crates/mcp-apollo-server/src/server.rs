@@ -2,6 +2,7 @@ use crate::operations::Operation;
 use crate::{OperationsList, errors::ServerError};
 use apollo_compiler::parser::Parser;
 use futures_util::TryFutureExt;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Content, ErrorCode, ListToolsResult,
     PaginatedRequestParam,
@@ -10,6 +11,7 @@ use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, serde_json};
 use std::path::Path;
+use std::str::FromStr;
 use tracing::info;
 
 type McpError = rmcp::model::ErrorData;
@@ -19,6 +21,7 @@ type McpError = rmcp::model::ErrorData;
 pub struct Server {
     operations: Vec<Operation>,
     endpoint: String,
+    default_headers: HeaderMap
 }
 
 impl Server {
@@ -26,6 +29,7 @@ impl Server {
         schema: P,
         operations: P,
         endpoint: String,
+        headers: Vec<String>
     ) -> Result<Self, ServerError> {
         let schema_path = schema.as_ref();
         info!(schema_path=?schema_path, "Loading schema");
@@ -49,9 +53,25 @@ impl Server {
             serde_json::to_string_pretty(&operations)?
         );
 
+        let mut default_headers = HeaderMap::new();
+        default_headers.append(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        for header in headers {
+            // let parts: Vec<&str> = header.split(':').collect();
+            let parts: Vec<&str> = header.split(':').collect();
+            match (parts.get(0), parts.get(1), parts.get(2)) {
+                (Some(key), Some(value), None) => {
+                    default_headers.append(HeaderName::from_str(key)?, HeaderValue::from_str(value)?);
+                }
+                _ => {
+                    return Err(ServerError::Header(header))
+                }
+            }
+        }
+
         Ok(Self {
             operations,
             endpoint,
+            default_headers,
         })
     }
 }
@@ -72,7 +92,7 @@ impl ServerHandler for Server {
                     None,
                 )
             })?
-            .execute(&self.endpoint, Value::from(request.arguments))
+            .execute(&self.endpoint, Value::from(request.arguments), self.default_headers.clone())
             .map_err(|err| McpError {
                 code: ErrorCode::INTERNAL_ERROR,
                 message: "could not execute graphql request".into(),

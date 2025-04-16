@@ -36,6 +36,10 @@ struct Args {
     /// The GraphQL endpoint the server will invoke
     #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
     endpoint: String,
+
+    /// The GraphQL endpoint the server will invoke
+    #[clap(long = "header", short = 'h', action = clap::ArgAction::Append)]
+    headers: Vec<String>,
 }
 
 #[tokio::main]
@@ -50,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
     env::set_current_dir(args.directory)?;
 
     tracing::info!("Starting MCP server");
-    let server = Server::from_operations(args.schema, args.operations, args.endpoint)?;
+    let server = Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;

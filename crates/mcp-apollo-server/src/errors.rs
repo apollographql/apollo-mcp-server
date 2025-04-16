@@ -1,4 +1,5 @@
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
+use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 
 /// An error in operation parsing
@@ -40,4 +41,13 @@ pub enum ServerError {
 
     #[error("Could not open file: {0}")]
     ReadFile(#[from] std::io::Error),
+
+    #[error("invalid header value: {0}")]
+    HeaderValue(#[from] InvalidHeaderValue),
+
+    #[error("invalid header name: {0}")]
+    HeaderName(#[from] InvalidHeaderName),
+    
+    #[error("invalid header: {0}")]
+    Header(String),
 }

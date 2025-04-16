@@ -6,6 +6,7 @@ use apollo_compiler::{
     ast::{Definition, OperationDefinition, Type},
     parser::Parser,
 };
+use reqwest::header::HeaderMap;
 use rmcp::{
     model::Tool,
     schemars::schema::{
@@ -144,6 +145,7 @@ impl Operation {
         &self,
         endpoint: &str,
         variables: serde_json::Value,
+        headers: HeaderMap,
     ) -> Result<String, reqwest::Error> {
         let client = reqwest::Client::new();
         let body = serde_json::json!({
@@ -154,7 +156,7 @@ impl Operation {
 
         match client
             .post(endpoint)
-            .header("Content-Type", "application/json")
+            .headers(headers)
             .body(body)
             .send()
             .await
