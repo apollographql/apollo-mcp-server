@@ -1,6 +1,10 @@
-use crate::operations::Operation;
+use crate::OperationsList;
+use crate::operations::{Operation, OperationError};
+use apollo_compiler::Schema;
+use apollo_compiler::ast::Document;
 use apollo_compiler::parser::Parser;
-use futures_util::future::FutureExt;
+use apollo_compiler::validation::WithErrors;
+use futures_util::TryFutureExt;
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Content, ErrorCode, ListToolsResult,
     PaginatedRequestParam,
@@ -13,6 +17,24 @@ use tracing::info;
 
 type McpError = rmcp::model::ErrorData;
 
+#[derive(Debug, thiserror::Error)]
+pub enum ServerError {
+    #[error("Could not parse GraphQL document: {0}")]
+    GraphQLDocument(Box<WithErrors<Document>>),
+
+    #[error("Could not parse GraphQL schema: {0}")]
+    GraphQLSchema(Box<WithErrors<Schema>>),
+
+    #[error("Invalid JSON: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("Failed to create operation: {0}")]
+    Operation(#[from] OperationError),
+
+    #[error("Could not open file: {0}")]
+    ReadFile(#[from] std::io::Error),
+}
+
 /// An MCP Server for Apollo GraphQL operations
 #[derive(Clone)]
 pub struct Server {
@@ -21,79 +43,82 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new<P: AsRef<Path>>(schema: P, operations: P, endpoint: String) -> Self {
+    pub fn from_operations<P: AsRef<Path>>(
+        schema: P,
+        operations: P,
+        endpoint: String,
+    ) -> Result<Self, ServerError> {
         let schema_path = schema.as_ref();
         info!(schema_path=?schema_path, "Loading schema");
-        let graphql_schema = std::fs::read_to_string(schema_path).unwrap();
+        let graphql_schema = std::fs::read_to_string(schema_path)?;
         let mut parser = Parser::new();
-        let graphql_schema = parser.parse_ast(graphql_schema, schema_path).unwrap();
-        let graphql_schema = graphql_schema.to_schema().unwrap();
+        let graphql_schema = parser
+            .parse_ast(graphql_schema, schema_path)
+            .map_err(|e| ServerError::GraphQLDocument(Box::new(e)))?;
+        let graphql_schema = graphql_schema
+            .to_schema()
+            .map_err(|e| ServerError::GraphQLSchema(Box::new(e)))?;
 
-        let operations = std::fs::read_to_string(operations.as_ref()).unwrap();
-        let operations: Value =
-            serde_json::from_str(&operations).expect("Operations must be valid JSON");
-        let operations = operations.as_array().expect("Operations must be an array");
+        let operations = std::fs::File::open(&operations)?;
+        let operations: OperationsList = serde_json::from_reader(operations)?;
         let operations = operations
-            .iter()
-            .map(|operation| {
-                let operation = &operation["query"]
-                    .as_str()
-                    .expect("Operation must be a string");
-                Operation::new(operation, &graphql_schema, None)
-            })
-            .collect();
+            .into_iter()
+            .map(|operation| Operation::from_spec(&operation.query, &graphql_schema, None))
+            .collect::<Result<Vec<_>, _>>()?;
         info!(
             "Loaded operations:\n{}",
-            serde_json::to_string_pretty(&operations).unwrap()
+            serde_json::to_string_pretty(&operations)?
         );
 
-        Self {
+        Ok(Self {
             operations,
             endpoint,
-        }
+        })
     }
 }
 
 impl ServerHandler for Server {
-    fn call_tool(
+    async fn call_tool(
         &self,
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
-        Box::pin(async move {
-            self.operations
-                .iter()
-                .find(|op| op.as_ref().name == request.name)
-                .ok_or_else(|| {
-                    McpError::new(
-                        ErrorCode::METHOD_NOT_FOUND,
-                        format!("Tool {} not found", request.name),
-                        None,
-                    )
-                })?
-                .execute(&self.endpoint, Value::from(request.arguments))
-                .map(|result| {
-                    Ok(CallToolResult {
-                        content: vec![Content::json(result.unwrap()).unwrap()],
-                        is_error: None,
-                    })
-                })
-                .await
-        })
+    ) -> Result<CallToolResult, McpError> {
+        self.operations
+            .iter()
+            .find(|op| op.as_ref().name == request.name)
+            .ok_or_else(|| {
+                McpError::new(
+                    ErrorCode::METHOD_NOT_FOUND,
+                    format!("Tool {} not found", request.name),
+                    None,
+                )
+            })?
+            .execute(&self.endpoint, Value::from(request.arguments))
+            .map_err(|err| McpError {
+                code: ErrorCode::INTERNAL_ERROR,
+                message: "could not execute graphql request".into(),
+                data: Some(serde_json::Value::String(err.to_string())),
+            })
+            .and_then(async |result| Content::json(result))
+            .map_ok(|result| CallToolResult {
+                content: vec![result],
+                is_error: None,
+            })
+            .await
     }
 
-    fn list_tools(
+    async fn list_tools(
         &self,
         _request: PaginatedRequestParam,
         _context: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
-        std::future::ready(Ok(ListToolsResult {
+    ) -> Result<ListToolsResult, McpError> {
+        Ok(ListToolsResult {
             next_cursor: None,
             tools: self
                 .operations
                 .iter()
                 .map(|op| op.as_ref().clone())
                 .collect(),
-        }))
+        })
     }
 }

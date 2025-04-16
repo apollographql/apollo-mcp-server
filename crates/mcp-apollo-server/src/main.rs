@@ -5,7 +5,6 @@ use mcp_apollo_server::server::Server;
 use rmcp::ServiceExt;
 use rmcp::transport::stdio;
 use std::env;
-use std::io::Error;
 use tracing_subscriber::EnvFilter;
 
 /// Clap styling
@@ -40,7 +39,7 @@ struct Args {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
         .with_writer(std::io::stderr)
@@ -48,10 +47,10 @@ async fn main() -> Result<(), Error> {
         .init();
 
     let args = Args::parse();
-    let _ = env::set_current_dir(args.directory);
+    env::set_current_dir(args.directory)?;
 
     tracing::info!("Starting MCP server");
-    let server = Server::new(args.schema, args.operations, args.endpoint);
+    let server = Server::from_operations(args.schema, args.operations, args.endpoint)?;
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;

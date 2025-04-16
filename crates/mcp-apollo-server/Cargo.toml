@@ -4,21 +4,23 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rmcp = { version = "0.1", features = ["server", "transport-io"] }
+anyhow = "1.0.98"
 apollo-compiler = "1.27.0"
+clap = { version = "4.5.36", features = ["derive"] }
+futures-util = "0.3.31"
 reqwest = "0.12.15"
-tokio = { version =  "1.44.2", features = [
-"macros",
-"rt",
-"rt-multi-thread",
-"io-std",
-"net",
-"fs",
-"time",
+rmcp = { version = "0.1", features = ["server", "transport-io"] }
+serde = "1.0.219"
+serde_derive = "1.0.219"
+thiserror = "2.0.12"
+tokio = { version = "1.44.2", features = [
+    "macros",
+    "rt",
+    "rt-multi-thread",
+    "io-std",
+    "net",
+    "fs",
+    "time",
 ] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-futures-util = "0.3.31"
-serde_derive = "1.0.219"
-serde = "1.0.219"
-clap = { version = "4.5.36", features = ["derive"] }
