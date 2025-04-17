@@ -37,7 +37,7 @@ struct Args {
     #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
     endpoint: String,
 
-    /// The GraphQL endpoint the server will invoke
+    /// Headers to send to endpoint
     #[clap(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
 }
