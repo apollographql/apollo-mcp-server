@@ -11,9 +11,6 @@ on:
   workflow_dispatch:
 
 env:
-  # required for gh
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
   # We want the cache to be as full as possible, so we instruct nix to keep derivations
   # and other related outputs around in its cache
   nix_conf: |
