@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.98"
 apollo-compiler = "1.27.0"
 clap = { version = "4.5.36", features = ["derive"] }
+derive-new = "0.7.0"
 futures-util = "0.3.31"
 reqwest = "0.12.15"
 rmcp = { version = "0.1", features = ["server", "transport-io"] }
@@ -24,3 +25,6 @@ tokio = { version = "1.44.2", features = [
 ] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
+[dev-dependencies]
+insta = "1.42.2"

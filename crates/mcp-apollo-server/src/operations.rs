@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use apollo_compiler::ast::{OperationType, Selection};
+use apollo_compiler::ast::{FragmentDefinition, Selection};
 use apollo_compiler::{
     Name, Node, Schema as GraphqlSchema,
     ast::{Definition, OperationDefinition, Type},
@@ -18,6 +18,7 @@ use rmcp::{
 use serde_derive::Serialize;
 
 use crate::errors::OperationError;
+use crate::tree_shake::TreeShaker;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
@@ -46,7 +47,7 @@ impl Operation {
             .parse_ast(source_text, "operation.graphql")
             .map_err(|e| OperationError::GraphQLDocument(Box::new(e)))?;
 
-        let mut operation_defs = document.definitions.into_iter().filter_map(|def| match def {
+        let mut operation_defs = document.definitions.iter().filter_map(|def| match def {
             Definition::OperationDefinition(operation_def) => Some(operation_def),
             Definition::FragmentDefinition(_) => None,
             _ => {
@@ -57,6 +58,15 @@ impl Operation {
                 None
             }
         });
+
+        let fragment_defs: Vec<&Node<FragmentDefinition>> = document
+            .definitions
+            .iter()
+            .filter_map(|def| match def {
+                Definition::FragmentDefinition(fragment_def) => Some(fragment_def),
+                _ => None,
+            })
+            .collect();
 
         let operation = match (operation_defs.next(), operation_defs.next()) {
             (None, _) => return Err(OperationError::NoOperations),
@@ -76,14 +86,14 @@ impl Operation {
             })?
             .to_string();
 
-        let description = Self::tool_description(graphql_schema, &operation).unwrap_or_default();
+        let description = Self::tool_description(graphql_schema, operation, &fragment_defs);
 
         let object = serde_json::to_value(get_json_schema(
-            &operation,
+            operation,
             graphql_schema,
             custom_scalar_map,
         ))?;
-        let serde_json::Value::Object(schema) = object else {
+        let Value::Object(schema) = object else {
             return Err(OperationError::Internal(
                 "Schemars should have returned an object".to_string(),
             ));
@@ -99,8 +109,10 @@ impl Operation {
     fn tool_description(
         graphql_schema: &GraphqlSchema,
         operation_def: &Node<OperationDefinition>,
-    ) -> Option<String> {
-        let description = operation_def
+        fragment_defs: &[&Node<FragmentDefinition>],
+    ) -> String {
+        let mut tree_shaker = TreeShaker::new(graphql_schema, fragment_defs);
+        let descriptions = operation_def
             .selection_set
             .iter()
             .filter_map(|selection| {
@@ -108,43 +120,99 @@ impl Operation {
                     Selection::Field(field) => {
                         let field_name = field.name.to_string();
                         let operation_type = operation_def.operation_type;
-                        let component = match operation_type {
-                            OperationType::Query => graphql_schema.schema_definition.query.clone(),
-                            OperationType::Mutation => {
-                                graphql_schema.schema_definition.mutation.clone()
+                        if let Some(root_name) = graphql_schema.root_operation(operation_type) {
+                            // Find the root field referenced by the operation
+                            let root = graphql_schema.get_object(root_name)?;
+                            let field_definition = root
+                                .fields
+                                .iter()
+                                .find(|(name, _)| {
+                                    let name = name.to_string();
+                                    name == field_name
+                                })
+                                .map(|(_, field_definition)| field_definition.node.clone());
+
+                            // Add the root field description to the tool description
+                            let field_description = field_definition
+                                .clone()
+                                .and_then(|field| field.description.clone())
+                                .map(|node| node.to_string());
+
+                            // Add information about the return type
+                            let ty = field_definition.map(|field| field.ty.clone());
+                            let type_description = ty.as_ref().map(Self::type_description);
+
+                            // Retain the return type in the tree shaker
+                            if let Some(ty) = ty {
+                                let type_name = ty.inner_named_type();
+                                if let Some(extended_type) =
+                                    graphql_schema.types.get(type_name.as_str())
+                                {
+                                    tree_shaker.retain(
+                                        type_name.clone(),
+                                        extended_type,
+                                        &field.selection_set,
+                                    )
+                                }
                             }
-                            OperationType::Subscription => {
-                                graphql_schema.schema_definition.subscription.clone()
-                            }
-                        }?;
-                        let query = graphql_schema.get_object(&component)?;
-                        query
-                            .fields
-                            .iter()
-                            .find(|(name, _)| {
-                                let name = name.to_string();
-                                name == field_name
-                            })
-                            .map(|(_, field_definition)| field_definition.node.clone())
-                            .and_then(|field| field.description.clone())
-                            .map(|n| n.to_string())
+
+                            Some(
+                                vec![field_description, type_description]
+                                    .into_iter()
+                                    .flatten()
+                                    .collect::<Vec<String>>()
+                                    .join("\n"),
+                            )
+                        } else {
+                            None
+                        }
                     }
-                    _ => None, // TODO: handle fragments
+                    _ => None,
                 }
             })
             .collect::<Vec<String>>()
-            .join("\n");
-        if description.is_empty() {
-            None
-        } else {
-            Some(description)
+            .join("\n---\n");
+
+        // Add the tree-shaken types to the end of the tool description
+        let mut lines = vec![];
+        lines.push(descriptions);
+
+        let mut shaken = tree_shaker.shaken().peekable();
+        if shaken.peek().is_some() {
+            lines.push(String::from("---"));
         }
+        for ty in shaken {
+            lines.push(ty.serialize().to_string());
+        }
+
+        lines.join("\n")
+    }
+
+    fn type_description(ty: &Type) -> String {
+        let type_name = ty.inner_named_type();
+        let mut lines = vec![];
+        let optional = if ty.is_non_null() {
+            ""
+        } else {
+            "is optional and "
+        };
+        let array = if ty.is_list() {
+            "is an array of type"
+        } else {
+            "has type"
+        };
+        lines.push(format!(
+            "The returned value {}{} `{}`",
+            optional, array, type_name
+        ));
+
+        lines.join("\n")
     }
 
     pub async fn execute(
         &self,
         endpoint: &str,
-        variables: serde_json::Value,
+        variables: Value,
         headers: HeaderMap,
     ) -> Result<String, reqwest::Error> {
         let client = reqwest::Client::new();
@@ -446,7 +514,7 @@ mod tests {
             "query QueryName { id }",
             serde_json::json!({"type": "object"}),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -465,7 +533,7 @@ mod tests {
                 }
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -485,7 +553,7 @@ mod tests {
                 "required": ["id"]
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -511,7 +579,7 @@ mod tests {
                 "required": ["id"]
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -534,7 +602,7 @@ mod tests {
                 "required": ["id"]
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -559,7 +627,7 @@ mod tests {
                 },
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -581,7 +649,7 @@ mod tests {
                 },
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -606,7 +674,7 @@ mod tests {
                 },
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -632,7 +700,7 @@ mod tests {
                 },
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -657,7 +725,7 @@ mod tests {
                 "required": ["id"]
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             None,
         )
     }
@@ -764,8 +832,201 @@ mod tests {
                 },
             }),
             "QueryName",
-            "",
+            "The returned value is optional and has type `String`",
             Some(&custom_scalar_map),
         )
+    }
+
+    #[test]
+    fn test_tool_description() {
+        const SCHEMA: &str = r#"
+        type Query {
+          """
+          Get a list of A
+          """
+          a(input: String!): [A]!
+
+          """
+          Get a B
+          """
+          b: B
+
+          """
+          Get a Z
+          """
+          z: Z
+        }
+
+        """
+        A
+        """
+        type A {
+          c: String
+          d: D
+        }
+
+        """
+        B
+        """
+        type B {
+          d: D
+          u: U
+        }
+
+        """
+        D
+        """
+        type D {
+          e: E
+          f: String
+          g: String
+        }
+
+        """
+        E
+        """
+        enum E {
+          """
+          one
+          """
+          ONE
+          """
+          two
+          """
+          TWO
+        }
+
+        """
+        F
+        """
+        scalar F
+
+        """
+        U
+        """
+        union U = M | W
+
+        """
+        M
+        """
+        type M {
+          m: Int
+        }
+
+        """
+        W
+        """
+        type W {
+          w: Int
+        }
+
+        """
+        Z
+        """
+        type Z {
+          z: Int
+          zz: Int
+          zzz: Int
+        }
+        "#;
+
+        let schema = Parser::new()
+            .parse_ast(SCHEMA, "schema.graphql")
+            .unwrap()
+            .to_schema()
+            .unwrap();
+
+        let operation = Operation::from_document(
+            r###"
+            query GetABZ($state: String!) {
+              a(input: $input) {
+                d {
+                  e
+                }
+              }
+              b {
+                d {
+                  ...JustF
+                }
+                u {
+                  ... on M {
+                    m
+                  }
+                  ... on W {
+                    w
+                  }
+                }
+              }
+              z {
+                ...JustZZZ
+              }
+            }
+
+            fragment JustF on D {
+              f
+            }
+
+            fragment JustZZZ on Z {
+              zzz
+            }
+            "###,
+            &schema,
+            None,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.tool.description.as_ref(),
+            @r###"
+        Get a list of A
+        The returned value is an array of type `A`
+        ---
+        Get a B
+        The returned value is optional and has type `B`
+        ---
+        Get a Z
+        The returned value is optional and has type `Z`
+        ---
+        """A"""
+        type A {
+          d: D
+        }
+
+        """D"""
+        type D {
+          e: E
+          f: String
+        }
+
+        """E"""
+        enum E {
+          """one"""
+          ONE
+          """two"""
+          TWO
+        }
+
+        """B"""
+        type B {
+          d: D
+          u: U
+        }
+
+        """W"""
+        type W {
+          w: Int
+        }
+
+        """M"""
+        type M {
+          m: Int
+        }
+
+        """Z"""
+        type Z {
+          zzz: Int
+        }
+        "###
+        );
     }
 }

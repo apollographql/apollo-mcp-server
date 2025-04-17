@@ -26,11 +26,11 @@ struct Args {
     directory: String,
 
     /// The path to the GraphQL schema file
-    #[clap(long, short = 's', default_value = "graphql/weather.graphql")]
+    #[clap(long, short = 's', default_value = "graphql/weather/weather.graphql")]
     schema: String,
 
     /// The path to the GraphQL operations file
-    #[clap(long, short = 'o', default_value = "graphql/operations.json")]
+    #[clap(long, short = 'o', default_value = "graphql/weather/operations.json")]
     operations: String,
 
     /// The GraphQL endpoint the server will invoke
@@ -54,7 +54,8 @@ async fn main() -> anyhow::Result<()> {
     env::set_current_dir(args.directory)?;
 
     tracing::info!("Starting MCP server");
-    let server = Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
+    let server =
+        Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
     let service = server.serve(stdio()).await.inspect_err(|e| {
         tracing::error!("serving error: {:?}", e);
     })?;

@@ -4,7 +4,7 @@ The MCP Server exposes a pre-defined set of GraphQL queries as MCP tools.
 
 # Running the Example
 
-The repo has an example schema in `.graphql/weather.graphql`, and an example set of operations in `.graphql/operations.json`.
+The repo has an example weather schema in `.graphql/weather/weather.graphql`, and an example set of operations in `.graphql/weather/operations.json`.
 
 First, build the repo with:
 
