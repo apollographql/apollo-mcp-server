@@ -56,7 +56,6 @@ impl Server {
         let mut default_headers = HeaderMap::new();
         default_headers.append(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         for header in headers {
-            // let parts: Vec<&str> = header.split(':').collect();
             let parts: Vec<&str> = header.split(':').collect();
             match (parts.get(0), parts.get(1), parts.get(2)) {
                 (Some(key), Some(value), None) => {

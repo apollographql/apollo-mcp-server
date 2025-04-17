@@ -38,7 +38,7 @@ struct Args {
     endpoint: String,
 
     /// The GraphQL endpoint the server will invoke
-    #[clap(long = "header", short = 'h', action = clap::ArgAction::Append)]
+    #[clap(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
 }
 
