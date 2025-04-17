@@ -1,0 +1,44 @@
+name: Nix CI/CD
+on:
+  push:
+    # don't run on tags, run on commits
+    # https://github.com/orgs/community/discussions/25615
+    tags-ignore:
+      - "**"
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # required for gh
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # We want the cache to be as full as possible, so we instruct nix to keep derivations
+  # and other related outputs around in its cache
+  nix_conf: |
+    keep-env-derivations = true
+    keep-outputs = true
+
+jobs:
+  check:
+    name: Check formatting / lints / clippy
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock') }}
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 1G
+      - name: Run checks
+        run: nix flake check
