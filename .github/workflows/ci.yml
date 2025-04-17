@@ -19,10 +19,11 @@ env:
 
 jobs:
   check:
-    name: Check formatting / lints / clippy
+    name: Run checks
     runs-on: ubuntu-24.04
     permissions:
       actions: write
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: nixbuild/nix-quick-install-action@v30
