@@ -62,6 +62,9 @@
           ]
           ++ mcp-server-tools
           ++ (with pkgs; [
+            # For running github action workflows locally
+            act
+
             # For autogenerating nix evaluations for MCP server tools
             node2nix
 
