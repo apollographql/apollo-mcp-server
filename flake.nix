@@ -31,6 +31,15 @@
         sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
       };
 
+      # Rust options
+      systemDependencies =
+        (with pkgs; [
+          openssl
+        ])
+        ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
+          pkgs.libiconv
+        ];
+
       # Crane options
       craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
       craneCommonArgs = {
@@ -39,13 +48,7 @@
         strictDeps = true;
 
         nativeBuildInputs = with pkgs; [pkg-config];
-        buildInputs =
-          (with pkgs; [
-            openssl
-          ])
-          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            pkgs.libiconv
-          ];
+        buildInputs = systemDependencies;
       };
       # Build the cargo dependencies (of the entire workspace), so we can reuse
       # all of that work (e.g. via cachix) when running in CI
@@ -57,12 +60,14 @@
       mcp-server-tools = pkgs.callPackage ./nix/mcp-server-tools {};
     in {
       devShells.default = pkgs.mkShell {
+        nativeBuildInputs = with pkgs; [pkg-config];
         buildInputs =
           [
             mcphost
             toolchain
           ]
           ++ mcp-server-tools
+          ++ systemDependencies
           ++ (with pkgs; [
             # For running github action workflows locally
             act
