@@ -30,12 +30,6 @@ pub enum OperationError {
 /// An error in server initialization
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
-    #[error("Could not parse GraphQL document: {0}")]
-    GraphQLDocument(Box<WithErrors<Document>>),
-
-    #[error("Could not parse GraphQL schema: {0}")]
-    GraphQLSchema(Box<WithErrors<Schema>>),
-
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 

@@ -1,6 +1,5 @@
+use crate::OperationsList;
 use crate::errors::ServerError;
-use crate::operations::Operation;
-use apollo_compiler::parser::Parser;
 use futures_util::TryFutureExt;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
@@ -9,52 +8,25 @@ use rmcp::model::{
 };
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
-use rmcp::{RoleServer, ServerHandler, serde_json};
-use std::path::Path;
+use rmcp::{RoleServer, ServerHandler};
 use std::str::FromStr;
-use tracing::info;
 
 type McpError = rmcp::model::ErrorData;
 
 /// An MCP Server for Apollo GraphQL operations
 #[derive(Clone)]
 pub struct Server {
-    operations: Vec<Operation>,
+    operations: OperationsList,
     endpoint: String,
     default_headers: HeaderMap,
 }
 
 impl Server {
-    pub fn from_operations<P: AsRef<Path>>(
-        schema: P,
+    pub fn from_operations(
         endpoint: String,
         headers: Vec<String>,
-        operations: Vec<P>,
+        operations: OperationsList,
     ) -> Result<Self, ServerError> {
-        let schema_path = schema.as_ref();
-        info!(schema_path=?schema_path, "Loading schema");
-        let graphql_schema = std::fs::read_to_string(schema_path)?;
-        let mut parser = Parser::new();
-        let graphql_schema = parser
-            .parse_ast(graphql_schema, schema_path)
-            .map_err(|e| ServerError::GraphQLDocument(Box::new(e)))?;
-        let graphql_schema = graphql_schema
-            .to_schema()
-            .map_err(|e| ServerError::GraphQLSchema(Box::new(e)))?;
-
-        let operations = operations
-            .into_iter()
-            .map(|operation| {
-                info!(operation_path=?operation.as_ref(), "Loading operation");
-                let operation = std::fs::read_to_string(operation)?;
-                Operation::from_document(&operation, &graphql_schema, None)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        info!(
-            "Loaded operations:\n{}",
-            serde_json::to_string_pretty(&operations)?
-        );
-
         let mut default_headers = HeaderMap::new();
         default_headers.append(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         for header in headers {

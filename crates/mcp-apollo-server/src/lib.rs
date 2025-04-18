@@ -14,3 +14,10 @@ pub mod operations;
 pub mod sanitize;
 pub mod server;
 pub(crate) mod tree_shake;
+
+use operations::Operation;
+pub type OperationsList = Vec<Operation>;
+
+pub use rover_client::operations::persisted_queries::publish::{
+    ApolloPersistedQueryManifest, RelayPersistedQueryManifest,
+};
