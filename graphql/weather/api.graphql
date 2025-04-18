@@ -1,0 +1,53 @@
+"""A weather alert"""
+type Alert {
+  """The severity of this alert"""
+  severity: String
+
+  """A description of the alert"""
+  description: String
+
+  """Information about people should respond to the alert"""
+  instruction: String
+}
+
+"""A coordinate, consisting of a latitude and longitude"""
+type Coordinate {
+  """The latitude of this coordinate"""
+  latitude: String!
+
+  """The longitude of this coordinate"""
+  longitude: String!
+}
+
+"""A weather forecast"""
+type Forecast {
+  """The coordinate associated with this forecast"""
+  coordinate: Coordinate!
+
+  """
+  The National Weather Service (NWS) URL where the forecast data can be read
+  """
+  forecastURL: String!
+
+  """A detailed weather forecast from the National Weather Service (NWS)"""
+  detailed: String!
+}
+
+"""A coordinate, consisting of a latitude and longitude"""
+input InputCoordinate {
+  """The latitude of this coordinate"""
+  latitude: String!
+
+  """The longitude of this coordinate"""
+  longitude: String!
+}
+
+type Query {
+  """Get the weather forecast for a coordinate"""
+  forecast(coordinate: InputCoordinate!): Forecast
+
+  """
+  Get the weather alerts for a state, using the two-letter abbreviation for the state - for example, CO for Colorado
+  """
+  alerts(state: String!): [Alert]
+}

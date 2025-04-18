@@ -6,7 +6,6 @@ use apollo_compiler::{
     ast::{Definition, OperationDefinition, Type},
     parser::Parser,
 };
-use reqwest::header::HeaderMap;
 use rmcp::{
     model::Tool,
     schemars::schema::{
@@ -17,7 +16,8 @@ use rmcp::{
 };
 use serde_derive::Serialize;
 
-use crate::errors::OperationError;
+use crate::errors::{McpError, OperationError};
+use crate::graphql;
 use crate::tree_shake::TreeShaker;
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,31 +207,6 @@ impl Operation {
         ));
 
         lines.join("\n")
-    }
-
-    pub async fn execute(
-        &self,
-        endpoint: &str,
-        variables: Value,
-        headers: HeaderMap,
-    ) -> Result<String, reqwest::Error> {
-        let client = reqwest::Client::new();
-        let body = serde_json::json!({
-            "query": self.source_text,
-            "variables": variables,
-        })
-        .to_string();
-
-        match client
-            .post(endpoint)
-            .headers(headers)
-            .body(body)
-            .send()
-            .await
-        {
-            Ok(response) => response.text().await,
-            Err(e) => Err(e),
-        }
     }
 }
 
@@ -434,6 +409,16 @@ fn type_to_schema(
                 None,
             )
         }
+    }
+}
+
+impl graphql::Executable for Operation {
+    fn operation(&self, _input: Value) -> Result<String, McpError> {
+        Ok(self.source_text.clone())
+    }
+
+    fn variables(&self, input: Value) -> Result<Value, McpError> {
+        Ok(input)
     }
 }
 

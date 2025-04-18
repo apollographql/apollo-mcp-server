@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.98"
 apollo-compiler = "1.27.0"
+buildstructor = "0.6.0"
 clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
 futures-util = "0.3.31"

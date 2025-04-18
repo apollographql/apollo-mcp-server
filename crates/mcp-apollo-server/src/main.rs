@@ -14,7 +14,7 @@ const STYLES: Styles = Styles::styled()
     .literal(AnsiColor::Cyan.on_default().effects(Effects::BOLD))
     .placeholder(AnsiColor::Cyan.on_default());
 
-// Define clap arguments
+/// Arguments to the MCP server
 #[derive(Debug, clap::Parser)]
 #[command(
     styles = STYLES,
@@ -25,7 +25,7 @@ struct Args {
     #[clap(long, short = 'd')]
     directory: String,
 
-    /// The path to the GraphQL schema file
+    /// The path to the GraphQL API schema file
     #[clap(long, short = 's')]
     schema: String,
 
@@ -33,13 +33,17 @@ struct Args {
     #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
     endpoint: String,
 
-    /// Headers to send to endpoint
+    /// Headers to send to the endpoint
     #[clap(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
 
     /// Start the server using the SSE transport on the given port
     #[clap(long)]
     sse_port: Option<u16>,
+
+    /// Expose the schema to the MCP client through `schema` and `execute` tools
+    #[clap(long, short = 'i')]
+    introspection: bool,
 
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
@@ -57,8 +61,13 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     env::set_current_dir(args.directory)?;
 
-    let server =
-        Server::from_operations(args.schema, args.endpoint, args.headers, args.operations)?;
+    let server = Server::builder()
+        .schema(args.schema)
+        .endpoint(args.endpoint)
+        .operations(args.operations)
+        .headers(args.headers)
+        .introspection(args.introspection)
+        .build()?;
 
     if let Some(port) = args.sse_port {
         tracing::info!(port = ?port, "Starting MCP server in SSE mode");

@@ -54,3 +54,6 @@ pub enum ServerError {
     #[error("invalid header: {0}")]
     Header(String),
 }
+
+/// An MCP tool error
+pub type McpError = rmcp::model::ErrorData;
