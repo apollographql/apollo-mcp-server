@@ -69,7 +69,7 @@
       # CI options
       garbageCollector = import "${inputs.cache-nix-action}/saveFromGC.nix" {
         inherit pkgs inputs;
-        derivations = [cargoArtifacts toolchain];
+        derivations = [cargoArtifacts toolchain] ++ mcp-server-tools;
       };
     in {
       devShells.default = pkgs.mkShell {
