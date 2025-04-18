@@ -9,7 +9,7 @@ apollo-compiler = "1.27.0"
 clap = { version = "4.5.36", features = ["derive"] }
 futures-util = "0.3.31"
 reqwest = "0.12.15"
-rmcp = { version = "0.1", features = ["server", "transport-io"] }
+rmcp = { version = "0.1", features = ["server", "transport-io", "transport-sse-server"] }
 serde = "1.0.219"
 serde_derive = "1.0.219"
 thiserror = "2.0.12"
@@ -20,6 +20,7 @@ tokio = { version = "1.44.2", features = [
     "io-std",
     "net",
     "fs",
+    "signal",
     "time",
 ] }
 tracing = "0.1.41"

@@ -47,7 +47,7 @@ pub enum ServerError {
 
     #[error("invalid header name: {0}")]
     HeaderName(#[from] InvalidHeaderName),
-    
+
     #[error("invalid header: {0}")]
     Header(String),
 }

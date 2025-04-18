@@ -3,7 +3,7 @@ use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use mcp_apollo_server::server::Server;
 use rmcp::ServiceExt;
-use rmcp::transport::stdio;
+use rmcp::transport::{SseServer, stdio};
 use std::env;
 use tracing_subscriber::EnvFilter;
 
@@ -40,12 +40,16 @@ struct Args {
     /// Headers to send to endpoint
     #[clap(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
+
+    /// Start the server using the SSE transport on the given port
+    #[clap(long)]
+    sse_port: Option<u16>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::DEBUG.into()))
+        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .with_writer(std::io::stderr)
         .with_ansi(false)
         .init();
@@ -53,12 +57,23 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     env::set_current_dir(args.directory)?;
 
-    tracing::info!("Starting MCP server");
-    let server = Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
-    let service = server.serve(stdio()).await.inspect_err(|e| {
-        tracing::error!("serving error: {:?}", e);
-    })?;
+    let server =
+        Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
 
-    service.waiting().await?;
+    if let Some(port) = args.sse_port {
+        tracing::info!(port = ?port, "Starting MCP server in SSE mode");
+        let cancellation_token = SseServer::serve(format!("127.0.0.1:{port}").parse()?)
+            .await?
+            .with_service(move || server.clone());
+        tokio::signal::ctrl_c().await?;
+        cancellation_token.cancel();
+    } else {
+        tracing::info!("Starting MCP server in stdio mode");
+        let service = server.serve(stdio()).await.inspect_err(|e| {
+            tracing::error!("serving error: {:?}", e);
+        })?;
+        service.waiting().await?;
+    }
+
     Ok(())
 }
