@@ -38,7 +38,7 @@ jobs:
           purge: true
           purge-prefixes: build-${{ runner.os }}-
           purge-created: 0
-          purge-primary-key: never
+          purge-primary-key: always
           gc-max-store-size: 5G
       - name: Run checks
         run: nix flake check
