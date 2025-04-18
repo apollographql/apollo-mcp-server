@@ -22,6 +22,9 @@ pub enum OperationError {
 
     #[error("Too many operations. Expected 1 but got {0}")]
     TooManyOperations(usize),
+
+    #[error(transparent)]
+    File(#[from] std::io::Error),
 }
 
 /// An error in server initialization

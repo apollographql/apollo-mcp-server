@@ -1,0 +1,5 @@
+query GetForecast($coordinate: InputCoordinate!) {
+  forecast(coordinate: $coordinate) {
+    detailed
+  }
+}

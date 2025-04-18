@@ -29,10 +29,6 @@ struct Args {
     #[clap(long, short = 's', default_value = "graphql/weather/weather.graphql")]
     schema: String,
 
-    /// The path to the GraphQL operations file
-    #[clap(long, short = 'o', default_value = "graphql/weather/operations.json")]
-    operations: String,
-
     /// The GraphQL endpoint the server will invoke
     #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
     endpoint: String,
@@ -44,6 +40,10 @@ struct Args {
     /// Start the server using the SSE transport on the given port
     #[clap(long)]
     sse_port: Option<u16>,
+
+    /// Operation files to include in planning
+    #[arg(long = "operations", short = 'o', num_args=0..)]
+    operations: Vec<String>,
 }
 
 #[tokio::main]
@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     env::set_current_dir(args.directory)?;
 
     let server =
-        Server::from_operations(args.schema, args.operations, args.endpoint, args.headers)?;
+        Server::from_operations(args.schema, args.endpoint, args.headers, args.operations)?;
 
     if let Some(port) = args.sse_port {
         tracing::info!(port = ?port, "Starting MCP server in SSE mode");

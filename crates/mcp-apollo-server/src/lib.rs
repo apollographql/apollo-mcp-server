@@ -14,12 +14,3 @@ pub mod operations;
 pub mod sanitize;
 pub mod server;
 pub(crate) mod tree_shake;
-
-/// A list of GraphQL operations
-pub(crate) type OperationsList = Vec<Operation>;
-
-/// A GraphQL Operation
-#[derive(Debug, serde::Deserialize)]
-pub(crate) struct Operation {
-    pub query: String,
-}

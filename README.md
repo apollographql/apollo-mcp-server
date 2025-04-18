@@ -4,7 +4,7 @@ The MCP Server exposes a pre-defined set of GraphQL queries as MCP tools.
 
 # Running the Example
 
-The repo has an example weather schema in `.graphql/weather/weather.graphql`, and an example set of operations in `.graphql/weather/operations.json`.
+The repo has an example schema in `graphql/weather/weather.graphql`, and an example set of operations in `graphql/weather/operations/*.graphql`.
 
 First, build the repo with:
 
@@ -15,7 +15,7 @@ cargo build
 Next, start the Apollo Router:
 
 ```sh
-rover dev --supergraph-config ./graphql/supergraph.yaml
+rover dev --supergraph-config ./graphql/weather/supergraph.yaml
 ```
 
 Then, register the MCP Server with your AI agent.
@@ -37,7 +37,13 @@ Add the following to this file, using the absolute path to this Git repo:
         "command": "<absolute path to repo>/target/debug/mcp-apollo-server",
         "args": [
             "--directory",
-            "<absolute path to repo>"
+            "<absolute path to repo>",
+            "--schema",
+            "graphql/weather/weather.graphql",
+            "--operations",
+            "graphql/weather/operations/forecast.graphql",
+            "graphql/weather/operations/alerts.graphql",
+            "graphql/weather/operations/all.graphql"
         ]
     }
   }
@@ -63,9 +69,9 @@ You can easily run the server with your own GraphQL schema and operations in the
             "--directory",
             "<absolute path to the directory containing your schema and operations file>",
             "--schema",
-            "<relative path to the schema from the directory specified above>",
+            "<relative path from the directory specified above to the schema>",
             "--operations",
-            "<relative path to the operations file from the directory specified above>",
+            "<relative path from the directory specified above to the operation files>",
             "--endpoint",
             "<your GraphQL endpoint>"
         ]
@@ -74,7 +80,7 @@ You can easily run the server with your own GraphQL schema and operations in the
 }
 ```
 
-Follow the format from `graphql/operations.json` to specify the operations. Make sure to give your operations meaningful names, and document your schema as much as possible.
+The operation files are just `.graphql` files, with each file containing a single operation. Make sure to give your operations meaningful names, and document your schema as much as possible.
 
 Run your schema in Apollo Router at the endpoint given in your configuration file.
 

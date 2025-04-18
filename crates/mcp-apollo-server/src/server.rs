@@ -1,5 +1,5 @@
+use crate::errors::ServerError;
 use crate::operations::Operation;
-use crate::{OperationsList, errors::ServerError};
 use apollo_compiler::parser::Parser;
 use futures_util::TryFutureExt;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
@@ -27,9 +27,9 @@ pub struct Server {
 impl Server {
     pub fn from_operations<P: AsRef<Path>>(
         schema: P,
-        operations: P,
         endpoint: String,
         headers: Vec<String>,
+        operations: Vec<P>,
     ) -> Result<Self, ServerError> {
         let schema_path = schema.as_ref();
         info!(schema_path=?schema_path, "Loading schema");
@@ -42,11 +42,13 @@ impl Server {
             .to_schema()
             .map_err(|e| ServerError::GraphQLSchema(Box::new(e)))?;
 
-        let operations = std::fs::File::open(&operations)?;
-        let operations: OperationsList = serde_json::from_reader(operations)?;
         let operations = operations
             .into_iter()
-            .map(|operation| Operation::from_document(&operation.query, &graphql_schema, None))
+            .map(|operation| {
+                info!(operation_path=?operation.as_ref(), "Loading operation");
+                let operation = std::fs::read_to_string(operation)?;
+                Operation::from_document(&operation, &graphql_schema, None)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         info!(
             "Loaded operations:\n{}",
@@ -98,7 +100,7 @@ impl ServerHandler for Server {
             .map_err(|err| McpError {
                 code: ErrorCode::INTERNAL_ERROR,
                 message: "could not execute graphql request".into(),
-                data: Some(serde_json::Value::String(err.to_string())),
+                data: Some(Value::String(err.to_string())),
             })
             .and_then(async |result| Content::json(result))
             .map_ok(|result| CallToolResult {

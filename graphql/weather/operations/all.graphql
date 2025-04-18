@@ -1,0 +1,10 @@
+query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) {
+  forecast(coordinate: $coordinate) {
+    detailed
+  }
+  alerts(state: $state) {
+    severity
+    description
+    instruction
+  }
+}
