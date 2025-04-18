@@ -4,6 +4,12 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
 
+    # Helper utility for keeping certain paths from garbage collection in CI
+    cache-nix-action = {
+      url = "github:nix-community/cache-nix-action";
+      flake = false;
+    };
+
     # Rust builder
     crane.url = "github:ipetkov/crane";
 
@@ -19,11 +25,12 @@
 
   outputs = {
     self,
+    cache-nix-action,
     crane,
     nixpkgs,
     fenix,
     flake-utils,
-  }:
+  } @ inputs:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = import nixpkgs {inherit system;};
       toolchain = fenix.packages.${system}.fromToolchainFile {
@@ -58,6 +65,12 @@
       # Supporting tools
       mcphost = pkgs.callPackage ./nix/mcphost.nix {};
       mcp-server-tools = pkgs.callPackage ./nix/mcp-server-tools {};
+
+      # CI options
+      garbageCollector = import "${inputs.cache-nix-action}/saveFromGC.nix" {
+        inherit pkgs inputs;
+        derivations = [cargoArtifacts toolchain];
+      };
     in {
       devShells.default = pkgs.mkShell {
         nativeBuildInputs = with pkgs; [pkg-config];
@@ -127,6 +140,9 @@
               cargoExtraArgs = "-p mcp-apollo-server";
               src = fileSetForCrate ./crates/mcp-apollo-server;
             });
+
+        # CI related packages
+        inherit (garbageCollector) saveFromGC;
       };
     });
 }

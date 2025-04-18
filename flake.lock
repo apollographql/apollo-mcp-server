@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "cache-nix-action": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1745008660,
+        "narHash": "sha256-JZzo8Uvhi7isp/OjLdcpzIvrSJ7auqjK83S8F+pFujU=",
+        "owner": "nix-community",
+        "repo": "cache-nix-action",
+        "rev": "764d5f335e9690876db8f44c35a3edbcde5dc948",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "cache-nix-action",
+        "type": "github"
+      }
+    },
     "crane": {
       "locked": {
         "lastModified": 1744386647,
@@ -72,6 +88,7 @@
     },
     "root": {
       "inputs": {
+        "cache-nix-action": "cache-nix-action",
         "crane": "crane",
         "fenix": "fenix",
         "flake-utils": "flake-utils",

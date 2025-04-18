@@ -18,9 +18,35 @@ env:
     keep-outputs = true
 
 jobs:
+  cache:
+    name: Cache nix store
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 5G
+      - name: Save flake attributes from garbage collection
+        run: nix profile install .#saveFromGC
+
   check:
     name: Run checks
     runs-on: ubuntu-24.04
+    needs: cache
     permissions:
       actions: write
       contents: read
@@ -46,6 +72,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-24.04
+    needs: cache
     permissions:
       actions: write
       contents: read
@@ -71,6 +98,7 @@ jobs:
   test:
     name: Run Tests
     runs-on: ubuntu-24.04
+    needs: cache
     permissions:
       actions: write
       contents: read
