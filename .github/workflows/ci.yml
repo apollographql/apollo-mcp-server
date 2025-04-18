@@ -18,6 +18,8 @@ env:
     keep-outputs = true
 
 jobs:
+  # Cache the nix store so that subsequent runs are almost instantaneous
+  # See https://github.com/marketplace/actions/restore-and-save-nix-store#inputs
   cache:
     name: Cache nix store
     runs-on: ubuntu-24.04
@@ -35,6 +37,7 @@ jobs:
         uses: nix-community/cache-nix-action@v6
         with:
           primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: build-${{ runner.os }}-
           purge: true
           purge-prefixes: build-${{ runner.os }}-
           purge-created: 0
