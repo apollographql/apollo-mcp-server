@@ -1,4 +1,4 @@
-name: Nix CI/CD
+name: Nix CI
 on:
   push:
     # don't run on tags, run on commits

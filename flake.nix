@@ -38,9 +38,11 @@
         pname = "mcp-apollo";
         strictDeps = true;
 
+        nativeBuildInputs = with pkgs; [pkg-config];
         buildInputs =
-          [
-          ]
+          (with pkgs; [
+            openssl
+          ])
           ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
           ];
