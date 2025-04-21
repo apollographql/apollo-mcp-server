@@ -8,7 +8,7 @@ use buildstructor::buildstructor;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, Content, ErrorCode, ListToolsResult,
-    PaginatedRequestParam,
+    PaginatedRequestParam, ServerCapabilities, ServerInfo,
 };
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
@@ -160,6 +160,13 @@ impl ServerHandler for Server {
                 )
                 .collect(),
         })
+    }
+
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            capabilities: ServerCapabilities::builder().enable_tools().build(),
+            ..Default::default()
+        }
     }
 }
 
