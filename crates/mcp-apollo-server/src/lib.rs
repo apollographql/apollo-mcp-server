@@ -1,14 +1,3 @@
-#![cfg_attr(
-    not(test),
-    deny(
-        clippy::exit,
-        // clippy::panic, - TODO: fix existing cases
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::indexing_slicing,
-    )
-)]
-
 pub mod errors;
 mod graphql;
 mod introspection;

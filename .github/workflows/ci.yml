@@ -1,0 +1,125 @@
+name: Nix CI
+on:
+  push:
+    # don't run on tags, run on commits
+    # https://github.com/orgs/community/discussions/25615
+    tags-ignore:
+      - "**"
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # We want the cache to be as full as possible, so we instruct nix to keep derivations
+  # and other related outputs around in its cache
+  nix_conf: |
+    keep-env-derivations = true
+    keep-outputs = true
+
+jobs:
+  # Cache the nix store so that subsequent runs are almost instantaneous
+  # See https://github.com/marketplace/actions/restore-and-save-nix-store#inputs
+  cache:
+    name: Cache nix store
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          restore-prefixes-first-match: build-${{ runner.os }}-
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 5G
+      - name: Save flake attributes from garbage collection
+        run: nix profile install .#saveFromGC
+
+  check:
+    name: Run checks
+    runs-on: ubuntu-24.04
+    needs: cache
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 5G
+      - name: Run checks
+        run: nix flake check
+
+  build:
+    name: Build
+    runs-on: ubuntu-24.04
+    needs: cache
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 5G
+      - name: Build
+        run: nix build .#mcp-apollo-server
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-24.04
+    needs: cache
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: ${{ env.nix_conf }}
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
+          purge: true
+          purge-prefixes: build-${{ runner.os }}-
+          purge-created: 0
+          purge-primary-key: never
+          gc-max-store-size: 5G
+      - name: Run Tests
+        run: 'nix develop --command bash -c "cargo test"'
