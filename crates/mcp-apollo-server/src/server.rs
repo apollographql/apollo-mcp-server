@@ -14,6 +14,7 @@ use rmcp::model::{
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, serde_json};
+use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
 use std::path::Path;
 use std::str::FromStr;
 use tracing::info;
@@ -41,8 +42,10 @@ impl Server {
         endpoint: String,
         headers: Vec<String>,
         introspection: bool,
+        persisted_query_manifest: Option<ApolloPersistedQueryManifest>,
     ) -> Result<Self, ServerError> {
-        let operations = operations
+        // Load operations
+        let mut operations = operations
             .into_iter()
             .map(|operation| {
                 info!(operation_path=?operation.as_ref(), "Loading operation");
@@ -50,12 +53,18 @@ impl Server {
                 Operation::from_document(&operation, &schema, None)
             })
             .collect::<Result<Vec<_>, _>>()?;
+
+        // Optionally load queries from a persisted query manifest
+        if let Some(pq_manifest) = persisted_query_manifest {
+            operations.extend(Operation::from_manifest(&schema, pq_manifest)?);
+        }
+
         info!(
             "Loaded operations:\n{}",
             serde_json::to_string_pretty(&operations)?
         );
 
-        // Load operations
+        // Load headers
         let mut default_headers = HeaderMap::new();
         default_headers.append(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         for header in headers {

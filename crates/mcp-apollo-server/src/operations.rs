@@ -14,6 +14,7 @@ use rmcp::{
     },
     serde_json::{self, Value},
 };
+use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
 use serde_derive::Serialize;
 
 use crate::errors::{McpError, OperationError};
@@ -103,6 +104,22 @@ impl Operation {
             tool: Tool::new(operation_name, description, schema),
             source_text: source_text.to_string(),
         })
+    }
+
+    /// Load multiple operations from a Persisted Query Manifest
+    pub fn from_manifest(
+        schema: &GraphqlSchema,
+        manifest: ApolloPersistedQueryManifest,
+    ) -> Result<Vec<Self>, OperationError> {
+        manifest
+            .operations
+            .into_iter()
+            .map(|pq| {
+                tracing::info!(pesisted_query = pq.name, "Loading persisted query");
+
+                Self::from_document(&pq.body, &schema, None)
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Generate a description for an operation based on documentation in the schema
@@ -424,402 +441,636 @@ impl graphql::Executable for Operation {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        cell::LazyCell,
+        collections::{HashMap, HashSet},
+    };
 
-    use apollo_compiler::parser::Parser;
+    use apollo_compiler::{Schema, parser::Parser, validation::Valid};
     use rmcp::{
         model::Tool,
         schemars::schema::{InstanceType, SchemaObject, SingleOrVec},
         serde_json,
     };
+    use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
 
     use crate::operations::Operation;
 
-    fn expect_json_schema(
-        source_text: &str,
-        expected_json: serde_json::Value,
-        expected_name: &str,
-        expected_description: &str,
-        custom_scalar_map: Option<&HashMap<String, SchemaObject>>,
-    ) {
-        let mut parser = Parser::new();
-        let document = parser
-            .parse_ast(
-                "
-                    type Query { id: String }
-                    \"\"\"
-                    RealCustomScalar exists
-                    \"\"\"
-                    scalar RealCustomScalar
-                    input RealInputObject {
-                        \"\"\"
-                        optional is a input field that is optional
-                        \"\"\"
-                        optional: String
-                        \"\"\"
-                        required is a input field that is required
-                        \"\"\"
-                        required: String!
-                    }
+    // Example schema for tests
+    const SCHEMA: LazyCell<Valid<Schema>> = LazyCell::new(|| {
+        Schema::parse(
+            r#"
+                type Query { id: String }
 
-                    \"\"\"
-                    the description for the enum
-                    \"\"\"
-                    enum RealEnum {
-                        \"\"\"
-                        ENUM_VALUE_1 is a value
-                        \"\"\"
-                        ENUM_VALUE_1
-                        \"\"\"
-                        ENUM_VALUE_2 is a value
-                        \"\"\"
-                        ENUM_VALUE_2
-                    }
-                ",
-                "operation.graphql",
-            )
-            .expect("failed to parse operation");
-        let graphql_schema = document.to_schema().unwrap();
+                """
+                RealCustomScalar exists
+                """
+                scalar RealCustomScalar
+                input RealInputObject {
+                    """
+                    optional is a input field that is optional
+                    """
+                    optional: String
 
-        let operation =
-            Operation::from_document(source_text, &graphql_schema, custom_scalar_map).unwrap();
-        let Tool {
-            name,
-            description,
-            input_schema,
-        } = operation.into();
-        assert_eq!(serde_json::json!(input_schema), expected_json);
-        assert_eq!(name, expected_name);
-        assert_eq!(description, expected_description)
-    }
+                    """
+                    required is a input field that is required
+                    """
+                    required: String!
+                }
+
+                """
+                the description for the enum
+                """
+                enum RealEnum {
+                    """
+                    ENUM_VALUE_1 is a value
+                    """
+                    ENUM_VALUE_1
+
+                    """
+                    ENUM_VALUE_2 is a value
+                    """
+                    ENUM_VALUE_2
+                }
+            "#,
+            "operation.graphql",
+        )
+        .expect("schema should parse")
+        .validate()
+        .expect("schema should be valid")
+    });
 
     #[test]
     fn no_variables() {
-        expect_json_schema(
-            "query QueryName { id }",
-            serde_json::json!({"type": "object"}),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+        let operation = Operation::from_document("query QueryName { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: ID) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
-                    }
-                }
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+        let operation =
+            Operation::from_document("query QueryName($id: ID) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "type": String("string"),
+                    },
+                },
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn non_nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: ID!) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID."
-                    }
+        let operation =
+            Operation::from_document("query QueryName($id: ID!) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "type": String("string"),
+                    },
                 },
-                "required": ["id"]
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "required": Array [
+                    String("id"),
+                ],
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn non_nullable_list_of_nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: [ID]!) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "array",
-                        "oneOf": [
-                            {
-                                "type": "string",
-                                "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
+        let operation =
+            Operation::from_document("query QueryName($id: [ID]!) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "oneOf": Array [
+                            Object {
+                                "type": String("string"),
                             },
-                            {"type": "null"}
-                        ]
-                    }
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
+                        "type": String("array"),
+                    },
                 },
-                "required": ["id"]
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "required": Array [
+                    String("id"),
+                ],
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn non_nullable_list_of_non_nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: [ID!]!) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
-                        }
-                    }
+        let operation =
+            Operation::from_document("query QueryName($id: [ID!]!) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "items": Object {
+                            "type": String("string"),
+                        },
+                        "type": String("array"),
+                    },
                 },
-                "required": ["id"]
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "required": Array [
+                    String("id"),
+                ],
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn nullable_list_of_nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: [ID]) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "array",
-                        "oneOf": [
-                            {
-                                "type": "string",
-                                "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
+        let operation =
+            Operation::from_document("query QueryName($id: [ID]) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "oneOf": Array [
+                            Object {
+                                "type": String("string"),
                             },
-                            {"type": "null"}
-                        ]
-                    }
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
+                        "type": String("array"),
+                    },
                 },
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn nullable_list_of_non_nullable_named_type() {
-        expect_json_schema(
-            "query QueryName($id: [ID!]) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "array",
-                        "items": {
-                            "type": "string",
-                            "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
-                        }
-                    }
+        let operation =
+            Operation::from_document("query QueryName($id: [ID!]) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "items": Object {
+                            "type": String("string"),
+                        },
+                        "type": String("array"),
+                    },
                 },
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn nullable_list_of_nullable_lists_of_nullable_named_types() {
-        expect_json_schema(
-            "query QueryName($id: [[ID]]) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "array",
-                        "oneOf": [
-                            {"type": "array", "oneOf": [{
-                                "type": "string",
-                                "description": "The `ID` scalar type represents a unique identifier, often used to refetch an object or as key for a cache. The ID type appears in a JSON response as a String; however, it is not intended to be human-readable. When expected as an input type, any string (such as `\"4\"`) or integer (such as `4`) input value will be accepted as an ID.",
-                            }, {"type": "null"}]},
-                            {"type": "null"}
-                        ]
-                    }
+        let operation =
+            Operation::from_document("query QueryName($id: [[ID]]) { id }", &SCHEMA, None).unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "oneOf": Array [
+                            Object {
+                                "oneOf": Array [
+                                    Object {
+                                        "type": String("string"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
+                                "type": String("array"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
+                        "type": String("array"),
+                    },
                 },
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "oneOf": [
+                {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn nullable_input_object() {
-        expect_json_schema(
+        let operation = Operation::from_document(
             "query QueryName($id: RealInputObject) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "object",
-                        "properties": {
-                            "optional": {
-                                "type": "string",
-                                "description": "optional is a input field that is optional"
-                             },
-                            "required": { "type": "string", "description": "required is a input field that is required" }
-                        },
-                        "required": ["required"]
-                    }
-                },
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
+            &SCHEMA,
             None,
         )
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "properties": Object {
+                            "optional": Object {
+                                "description": String("optional is a input field that is optional"),
+                                "type": String("string"),
+                            },
+                            "required": Object {
+                                "description": String("required is a input field that is required"),
+                                "type": String("string"),
+                            },
+                        },
+                        "required": Array [
+                            String("required"),
+                        ],
+                        "type": String("object"),
+                    },
+                },
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "properties": {
+                "optional": {
+                  "description": "optional is a input field that is optional",
+                  "type": "string"
+                },
+                "required": {
+                  "description": "required is a input field that is required",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "required"
+              ],
+              "type": "object"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
     fn non_nullable_enum() {
-        expect_json_schema(
-            "query QueryName($id: RealEnum!) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "the description for the enum\n\nValues:\nENUM_VALUE_1: ENUM_VALUE_1 is a value\nENUM_VALUE_2: ENUM_VALUE_2 is a value",
-                        "enum": [
-                            "ENUM_VALUE_1",
-                            "ENUM_VALUE_2",
-                        ]
+        let operation =
+            Operation::from_document("query QueryName($id: RealEnum!) { id }", &SCHEMA, None)
+                .unwrap();
+        let tool = Tool::from(operation);
 
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "description": String("the description for the enum\n\nValues:\nENUM_VALUE_1: ENUM_VALUE_1 is a value\nENUM_VALUE_2: ENUM_VALUE_2 is a value"),
+                        "enum": Array [
+                            String("ENUM_VALUE_1"),
+                            String("ENUM_VALUE_2"),
+                        ],
+                        "type": String("string"),
                     },
                 },
-                "required": ["id"]
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
-            None,
-        )
+                "required": Array [
+                    String("id"),
+                ],
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "description": "the description for the enum\n\nValues:\nENUM_VALUE_1: ENUM_VALUE_1 is a value\nENUM_VALUE_2: ENUM_VALUE_2 is a value",
+              "enum": [
+                "ENUM_VALUE_1",
+                "ENUM_VALUE_2"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
-    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: TooManyOperations(2)")]
-    fn multiple_operations_should_panic() {
-        expect_json_schema(
+    fn multiple_operations_should_error() {
+        let operation = Operation::from_document(
             "query QueryName { id } query QueryName { id }",
-            serde_json::json!({}),
-            "",
-            "",
+            &SCHEMA,
             None,
+        );
+        insta::assert_debug_snapshot!(operation, @r###"
+        Err(
+            TooManyOperations(
+                2,
+            ),
         )
+        "###);
     }
 
     #[test]
-    #[should_panic(
-        expected = "called `Result::unwrap()` on an `Err` value: MissingName(\"{ id }\")"
-    )]
-    fn unnamed_operations_should_panic() {
-        expect_json_schema("query { id }", serde_json::json!({}), "", "", None)
+    fn unnamed_operations_should_error() {
+        let operation = Operation::from_document("query { id }", &SCHEMA, None);
+        insta::assert_debug_snapshot!(operation, @r###"
+        Err(
+            MissingName(
+                "{ id }",
+            ),
+        )
+        "###);
     }
 
     #[test]
-    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: NoOperations")]
-    fn no_operations_should_panic() {
-        expect_json_schema(
-            "fragment Test on Query { id }",
-            serde_json::json!({}),
-            "",
-            "",
-            None,
+    fn no_operations_should_error() {
+        let operation = Operation::from_document("fragment Test on Query { id }", &SCHEMA, None);
+        insta::assert_debug_snapshot!(operation, @r###"
+        Err(
+            NoOperations,
         )
+        "###);
     }
 
     #[test]
-    #[should_panic(expected = "called `Result::unwrap()` on an `Err` value: NoOperations")]
-    fn schema_should_panic() {
-        expect_json_schema(
-            "type Query { id: String }",
-            serde_json::json!({}),
-            "",
-            "",
-            None,
+    fn schema_should_error() {
+        let operation = Operation::from_document("type Query { id: String }", &SCHEMA, None);
+        insta::assert_debug_snapshot!(operation, @r###"
+        Err(
+            NoOperations,
         )
+        "###);
     }
 
+    // TODO: This should not cause a panic
     #[test]
     #[should_panic(expected = "Type not found in schema! FakeType")]
-    fn unknown_type_should_panic() {
-        expect_json_schema(
-            "query QueryName($id: FakeType) { id }",
-            serde_json::json!({}),
-            "",
-            "",
-            None,
-        )
+    fn unknown_type_should_error() {
+        let _operation =
+            Operation::from_document("query QueryName($id: FakeType) { id }", &SCHEMA, None);
     }
 
     #[test]
-    #[should_panic(expected = "custom scalars aren't currently supported")]
-    fn custom_scalar_without_map_should_panic() {
-        expect_json_schema(
+    fn custom_scalar_without_map_should_error() {
+        let operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
-            serde_json::json!({}),
-            "",
-            "",
+            &SCHEMA,
             None,
-        )
+        );
+        insta::assert_debug_snapshot!(operation, @"");
     }
 
+    // TODO: This should not cause a panic
     #[test]
     #[should_panic(expected = "custom scalar missing from custom_scalar_map")]
-    fn custom_scalar_with_map_but_not_found_should_panic() {
-        expect_json_schema(
+    fn custom_scalar_with_map_but_not_found_should_error() {
+        let _operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
-            serde_json::json!({}),
-            "",
-            "",
+            &SCHEMA,
             Some(&HashMap::new()),
-        )
+        );
     }
 
     #[test]
     fn custom_scalar_with_map() {
-        let mut custom_scalar_map = HashMap::new();
-        custom_scalar_map.insert(
+        let custom_scalar_map = HashMap::from([(
             "RealCustomScalar".to_string(),
             SchemaObject {
                 instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
                 ..Default::default()
             },
-        );
-        expect_json_schema(
+        )]);
+
+        let operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "description": "RealCustomScalar exists"
-                    }
-                },
-            }),
-            "QueryName",
-            "The returned value is optional and has type `String`",
+            &SCHEMA,
             Some(&custom_scalar_map),
         )
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: "The returned value is optional and has type `String`",
+            input_schema: {
+                "properties": Object {
+                    "id": Object {
+                        "description": String("RealCustomScalar exists"),
+                        "type": String("string"),
+                    },
+                },
+                "type": String("object"),
+            },
+        }
+        "###);
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "properties": {
+            "id": {
+              "description": "RealCustomScalar exists",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        }
+        "###);
     }
 
     #[test]
@@ -1012,6 +1263,43 @@ mod tests {
           zzz: Int
         }
         "###
+        );
+    }
+
+    #[test]
+    fn it_extracts_operations_from_apollo_pq_manifest() {
+        // The inner types needed to construct one of these are not exported,
+        // so we use JSON as an intermediary
+        let apollo_pq: ApolloPersistedQueryManifest = serde_json::from_value(serde_json::json!({
+            "format": "apollo-persisted-query-manifest",
+            "version": 1,
+            "operations": [
+                {
+                    "id": "f4d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d",
+                    "clientName": "my-web-app",
+                    "body": "query Example1 { id }",
+                    "name": "Example1",
+                    "type": "query"
+                },
+                {
+                    "id": "5d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23de",
+                    "clientName": "my-web-app",
+                    "body": "query Example2 { id2: id }",
+                    "name": "Example2",
+                    "type": "query"
+                }
+            ]
+        }))
+        .expect("apollo pq should be valid");
+
+        let operations = Operation::from_manifest(&SCHEMA, apollo_pq.clone())
+            .expect("operations from manifest should parse");
+        assert_eq!(
+            operations
+                .into_iter()
+                .map(|op| op.source_text)
+                .collect::<HashSet<String>>(),
+            apollo_pq.operations.into_iter().map(|op| op.body).collect()
         );
     }
 }

@@ -1,0 +1,27 @@
+{
+  "format": "apollo-persisted-query-manifest",
+  "version": 1,
+  "operations": [
+    {
+      "id": "f4d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d",
+      "clientName": "my-web-app",
+      "body": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }",
+      "name": "GetAlerts",
+      "type": "query"
+    },
+    {
+      "id": "e2c1b89a5e4d95f6b8f7dfed7d9db192ea39d0cb34b3d4cd1bd7e0fbec23efb",
+      "clientName": "my-web-app",
+      "body": "query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) { forecast(coordinate: $coordinate) { detailed } alerts(state: $state) { severity description instruction } }",
+      "name": "GetAllWeatherData",
+      "type": "query"
+    },
+    {
+      "id": "7f4c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d",
+      "clientName": "my-web-app",
+      "body": "query GetForecast($coordinate: InputCoordinate!) { forecast(coordinate: $coordinate) { detailed } }",
+      "name": "GetForecast",
+      "type": "query"
+    }
+  ]
+}

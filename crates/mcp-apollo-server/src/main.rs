@@ -1,13 +1,17 @@
+use anyhow::Context as _;
 use apollo_compiler::Schema;
-use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
+use clap::{Parser, ValueEnum};
 use mcp_apollo_server::errors::ServerError;
 use mcp_apollo_server::server::Server;
 use rmcp::ServiceExt;
 use rmcp::transport::{SseServer, stdio};
+use rover_client::operations::persisted_queries::publish::{
+    ApolloPersistedQueryManifest, RelayPersistedQueryManifest,
+};
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -27,11 +31,11 @@ const STYLES: Styles = Styles::styled()
 struct Args {
     /// The working directory to use
     #[clap(long, short = 'd')]
-    directory: String,
+    directory: PathBuf,
 
     /// The path to the GraphQL API schema file
     #[clap(long, short = 's')]
-    schema: String,
+    schema: PathBuf,
 
     /// The GraphQL endpoint the server will invoke
     #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
@@ -51,7 +55,30 @@ struct Args {
 
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
-    operations: Vec<String>,
+    operations: Vec<PathBuf>,
+
+    /// Persisted Queries manifest to expose as MCP tools
+    #[command(flatten)]
+    pq_manifest: Option<ManifestArgs>,
+}
+
+// TODO: This is currently yoiked from rover
+#[derive(Debug, Clone, ValueEnum)]
+enum PersistedQueriesManifestFormat {
+    Apollo,
+    Relay,
+}
+
+#[derive(Debug, Parser)]
+#[group(requires = "manifest")]
+struct ManifestArgs {
+    /// The path to the manifest containing operations to publish.
+    #[arg(long, required = false)]
+    manifest: PathBuf,
+
+    /// The format of the manifest file.
+    #[arg(long, value_enum, default_value_t = PersistedQueriesManifestFormat::Apollo)]
+    manifest_format: PersistedQueriesManifestFormat,
 }
 
 #[tokio::main]
@@ -77,6 +104,45 @@ async fn main() -> anyhow::Result<()> {
         .operations(args.operations)
         .headers(args.headers)
         .introspection(args.introspection)
+        .and_persisted_query_manifest(
+            args.pq_manifest
+                .map(
+                    |ManifestArgs {
+                         manifest,
+                         manifest_format,
+                     }| {
+                        tracing::info!(manifest=?manifest, "Loading persisted query manifest");
+                        let raw_manifest = std::fs::read_to_string(&manifest)
+                            .context("Could not read manifest")?;
+                        let invalid_json_err = |manifest, format| {
+                            format!(
+                                "JSON in {manifest:?} did not match '--manifest-format {format}'"
+                            )
+                        };
+
+                        let pq_manifest = match manifest_format {
+                            PersistedQueriesManifestFormat::Apollo => {
+                                rmcp::serde_json::from_str::<ApolloPersistedQueryManifest>(
+                                    &raw_manifest,
+                                )
+                                .with_context(|| invalid_json_err(&manifest, "apollo"))?
+                            }
+                            PersistedQueriesManifestFormat::Relay => {
+                                rmcp::serde_json::from_str::<RelayPersistedQueryManifest>(
+                                    &raw_manifest,
+                                )
+                                .with_context(|| invalid_json_err(&manifest, "relay"))?
+                                .try_into()
+                                .context("Could not convert relay manifest to Apollo's format")?
+                            }
+                        };
+
+                        // This disambiguiation is sad but needed
+                        Ok::<_, anyhow::Error>(pq_manifest)
+                    },
+                )
+                .transpose()?,
+        )
         .build()?;
 
     if let Some(port) = args.sse_port {
