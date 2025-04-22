@@ -1008,7 +1008,9 @@ mod tests {
 
     // TODO: This should not cause a panic
     #[test]
-    #[should_panic(expected = "Type not found in schema! FakeType")]
+    #[should_panic(
+        expected = "custom scalars aren't currently supported without a custom_scalar_map"
+    )]
     fn custom_scalar_without_map_should_error() {
         let _operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
