@@ -42,6 +42,7 @@
       systemDependencies =
         (with pkgs; [
           openssl
+          perl
         ])
         ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
           pkgs.libiconv
