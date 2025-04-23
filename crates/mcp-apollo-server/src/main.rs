@@ -7,9 +7,7 @@ use mcp_apollo_server::errors::ServerError;
 use mcp_apollo_server::server::Server;
 use rmcp::ServiceExt;
 use rmcp::transport::{SseServer, stdio};
-use rover_client::operations::persisted_queries::publish::{
-    ApolloPersistedQueryManifest, RelayPersistedQueryManifest,
-};
+use rover_copy::pq_manifest::{ApolloPersistedQueryManifest, RelayPersistedQueryManifest};
 use std::env;
 use std::path::{Path, PathBuf};
 use tracing::{error, info};

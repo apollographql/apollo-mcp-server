@@ -14,8 +14,8 @@ use rmcp::{
     },
     serde_json::{self, Value},
 };
-use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
-use serde_derive::Serialize;
+use rover_copy::pq_manifest::ApolloPersistedQueryManifest;
+use serde::Serialize;
 
 use crate::errors::{McpError, OperationError};
 use crate::graphql;
@@ -452,7 +452,7 @@ mod tests {
         schemars::schema::{InstanceType, SchemaObject, SingleOrVec},
         serde_json,
     };
-    use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
+    use rover_copy::pq_manifest::ApolloPersistedQueryManifest;
 
     use crate::operations::Operation;
 

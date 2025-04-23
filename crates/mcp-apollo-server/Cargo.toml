@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.98"
-apollo-compiler = "1.27.0"
+apollo-compiler.workspace = true
 buildstructor = "0.6.0"
 clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
@@ -16,10 +16,9 @@ rmcp = { version = "0.1", features = [
   "transport-io",
   "transport-sse-server",
 ] }
-rover-client = { git = "https://github.com/apollographql/rover.git", package = "rover-client" }
-serde = "1.0.219"
-serde_derive = "1.0.219"
-thiserror = "2.0.12"
+rover-copy = { path = "../rover-copy" }
+serde.workspace = true
+thiserror.workspace = true
 tokio = { version = "1.44.2", features = [
   "fs",
   "io-std",
@@ -30,7 +29,7 @@ tokio = { version = "1.44.2", features = [
   "signal",
   "time",
 ] }
-tracing = "0.1.41"
+tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
 [dev-dependencies]

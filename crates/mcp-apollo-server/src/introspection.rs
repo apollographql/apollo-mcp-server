@@ -8,7 +8,7 @@ use rmcp::model::{ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 pub(crate) const GET_SCHEMA_TOOL_NAME: &str = "schema";
 pub(crate) const EXECUTE_TOOL_NAME: &str = "execute";

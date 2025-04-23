@@ -1,8 +1,15 @@
 [workspace]
 resolver = "2"
-members = ["crates/mcp-apollo-server"]
+members = ["crates/mcp-apollo-server", "crates/rover-copy"]
 
 package.version = "0.1.0"
+
+[workspace.dependencies]
+apollo-compiler = "1.27.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+thiserror = "2.0.12"
+tracing = "0.1.41"
 
 [workspace.metadata]
 crane.name = "mcp-apollo"

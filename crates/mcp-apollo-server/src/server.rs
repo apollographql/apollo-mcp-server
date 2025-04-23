@@ -14,7 +14,7 @@ use rmcp::model::{
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{RoleServer, ServerHandler, serde_json};
-use rover_client::operations::persisted_queries::publish::ApolloPersistedQueryManifest;
+use rover_copy::pq_manifest::ApolloPersistedQueryManifest;
 use std::path::Path;
 use std::str::FromStr;
 use tracing::info;

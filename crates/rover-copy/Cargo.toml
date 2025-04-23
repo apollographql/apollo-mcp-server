@@ -1,0 +1,15 @@
+[package]
+name = "rover-copy"
+edition = "2024"
+version.workspace = true
+
+[dependencies]
+apollo-compiler.workspace = true
+apollo-parser = "0.8.4"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
