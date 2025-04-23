@@ -133,6 +133,24 @@ You can now issue prompts related to weather forecasts and alerts, which will ca
 
 **Note** that due to current limitations of Apollo Connectors, the schema is using a hard-coded weather forecast link, so the forecast will be for a fixed location.
 
+#### Persisted Queries Manifests
+
+The MCP server also supports reading operations from either an [Apollo]()- or [Relay]()-formatted persisted query manifest through
+the use of the `--manifest` and `--manifest-format` flags. An example of each is included in `graphql/weather/persisted_queries`.
+
+```sh
+# For apollo persisted query manifests
+target/debug/mcp-apollo-server \
+  --directory <absolute path to this git repo> \
+  -s graphql/weather/api.graphql \
+  --manifest graphql/weather/persisted_queries/apollo.json --manifest-format apollo
+
+# Or for relay persisted query manifests
+target/debug/mcp-apollo-server \
+  --directory <absolute path to this git repo> \
+  -s graphql/weather/api.graphql \
+  --manifest graphql/weather/persisted_queries/relay.json --manifest-format relay
+```
 
 # Running Your Own Graph
 
