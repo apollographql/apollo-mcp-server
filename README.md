@@ -135,8 +135,11 @@ You can now issue prompts related to weather forecasts and alerts, which will ca
 
 #### Persisted Queries Manifests
 
-The MCP server also supports reading operations from either an [Apollo]()- or [Relay]()-formatted persisted query manifest through
-the use of the `--manifest` and `--manifest-format` flags. An example of each is included in `graphql/weather/persisted_queries`.
+The MCP server also supports reading operations from either an
+[Apollo](https://www.apollographql.com/docs/graphos/platform/security/persisted-queries#manifest-format)-
+or [Relay](https://relay.dev/docs/guides/persisted-queries/)-
+formatted persisted query manifest through the use of the `--manifest` and `--manifest-format` flags.
+An example of each is included in `graphql/weather/persisted_queries`.
 
 ```sh
 # For apollo persisted query manifests
