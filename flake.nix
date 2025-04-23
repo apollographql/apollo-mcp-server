@@ -123,23 +123,11 @@
 
       packages = rec {
         default = mcp-apollo-server;
-        mcp-apollo-server = let
-          fileSetForCrate = crate:
-            pkgs.lib.fileset.toSource {
-              root = ./.;
-              fileset = pkgs.lib.fileset.unions [
-                ./Cargo.toml
-                ./Cargo.lock
-                (craneLib.fileset.commonCargoSources crate)
-              ];
-            };
-        in
-          craneLib.buildPackage (craneCommonArgs
-            // {
-              pname = "mcp-apollo-server";
-              cargoExtraArgs = "-p mcp-apollo-server";
-              src = fileSetForCrate ./crates/mcp-apollo-server;
-            });
+        mcp-apollo-server = craneLib.buildPackage (craneCommonArgs
+          // {
+            pname = "mcp-apollo-server";
+            cargoExtraArgs = "-p mcp-apollo-server";
+          });
 
         # CI related packages
         inherit (garbageCollector) saveFromGC;
