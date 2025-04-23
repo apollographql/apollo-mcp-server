@@ -117,7 +117,7 @@ impl Operation {
             .map(|pq| {
                 tracing::info!(pesisted_query = pq.name, "Loading persisted query");
 
-                Self::from_document(&pq.body, &schema, None)
+                Self::from_document(&pq.body, schema, None)
             })
             .collect::<Result<Vec<_>, _>>()
     }
@@ -442,8 +442,8 @@ impl graphql::Executable for Operation {
 #[cfg(test)]
 mod tests {
     use std::{
-        cell::LazyCell,
         collections::{HashMap, HashSet},
+        sync::LazyLock,
     };
 
     use apollo_compiler::{Schema, parser::Parser, validation::Valid};
@@ -457,7 +457,7 @@ mod tests {
     use crate::operations::Operation;
 
     // Example schema for tests
-    const SCHEMA: LazyCell<Valid<Schema>> = LazyCell::new(|| {
+    static SCHEMA: LazyLock<Valid<Schema>> = LazyLock::new(|| {
         Schema::parse(
             r#"
                 type Query { id: String }
