@@ -55,9 +55,7 @@ jobs:
       - name: Push the Container
         env:
           FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
-        run: |
-          docker image push "${{ env.FQDN }}:latest"
-          docker image push "${{ env.FQDN }}:${{ github.ref_name }}"
+        run: docker image push --all-tags "${{ env.FQDN }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
