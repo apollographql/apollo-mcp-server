@@ -48,12 +48,16 @@ jobs:
       - name: Tag the Container
         env:
           FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
-        run: docker tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}:${{ github.ref_name }}"
+        run: |
+          docker image tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:latest"
+          docker image tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}"
 
       - name: Push the Container
         env:
           FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
-        run: docker push "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}"
+        run: |
+          docker image push "${{ env.FQDN }}:latest"
+          docker image push "${{ env.FQDN }}:${{ github.ref_name }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
