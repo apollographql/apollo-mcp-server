@@ -1,3 +1,6 @@
+use crate::errors::{McpError, OperationError};
+use crate::graphql;
+use crate::tree_shake::TreeShaker;
 use apollo_compiler::ast::{FragmentDefinition, Selection};
 use apollo_compiler::{
     Name, Node, Schema as GraphqlSchema,
@@ -13,20 +16,17 @@ use rmcp::{
     },
     serde_json::{self, Value},
 };
-use rover_copy::pq_manifest::ApolloPersistedQueryManifest;
 use serde::Serialize;
-use std::collections::HashMap;
 
 use crate::custom_scalar_map::CustomScalarMap;
-use crate::errors::{McpError, OperationError};
-use crate::graphql;
-use crate::tree_shake::TreeShaker;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     tool: Tool,
     source_text: String,
+    persisted_query_id: Option<String>,
 }
+
 impl AsRef<Tool> for Operation {
     fn as_ref(&self) -> &Tool {
         &self.tool
@@ -43,6 +43,7 @@ impl Operation {
     pub fn from_document(
         source_text: &str,
         graphql_schema: &GraphqlSchema,
+        persisted_query_id: Option<String>,
         custom_scalar_map: Option<&CustomScalarMap>,
     ) -> Result<Self, OperationError> {
         let document = Parser::new()
@@ -70,13 +71,7 @@ impl Operation {
                 }
                 Definition::FragmentDefinition(_) => None,
                 _ => {
-                    eprintln!(
-                        // This string needs to be broken into multiple lines or it will break cargo fmt
-                        "
-                            Schema definitions were passed in, 
-                            only operations and fragments are allowed
-                        "
-                    );
+                    eprintln!("Schema definitions were passed in, but only operations and fragments are allowed");
                     None
                 }
             }
@@ -126,24 +121,8 @@ impl Operation {
         Ok(Operation {
             tool: Tool::new(operation_name, description, schema),
             source_text: source_text.to_string(),
+            persisted_query_id,
         })
-    }
-
-    /// Load multiple operations from a Persisted Query Manifest
-    pub fn from_manifest(
-        schema: &GraphqlSchema,
-        manifest: ApolloPersistedQueryManifest,
-        custom_scalar_map: Option<&CustomScalarMap>,
-    ) -> Result<Vec<Self>, OperationError> {
-        manifest
-            .operations
-            .into_iter()
-            .map(|pq| {
-                tracing::info!(pesisted_query = pq.name, "Loading persisted query");
-
-                Self::from_document(&pq.body, schema, custom_scalar_map)
-            })
-            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Generate a description for an operation based on documentation in the schema
@@ -491,6 +470,10 @@ fn type_to_schema(
 }
 
 impl graphql::Executable for Operation {
+    fn persisted_query_id(&self) -> Option<String> {
+        self.persisted_query_id.clone()
+    }
+
     fn operation(&self, _input: Value) -> Result<String, McpError> {
         Ok(self.source_text.clone())
     }
@@ -502,11 +485,10 @@ impl graphql::Executable for Operation {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, str::FromStr, sync::LazyLock};
+    use std::{str::FromStr, sync::LazyLock};
 
     use apollo_compiler::{Schema, parser::Parser, validation::Valid};
     use rmcp::{model::Tool, serde_json};
-    use rover_copy::pq_manifest::ApolloPersistedQueryManifest;
 
     use crate::{custom_scalar_map::CustomScalarMap, operations::Operation};
 
@@ -556,7 +538,8 @@ mod tests {
 
     #[test]
     fn no_variables() {
-        let operation = Operation::from_document("query QueryName { id }", &SCHEMA, None).unwrap();
+        let operation =
+            Operation::from_document("query QueryName { id }", &SCHEMA, None, None).unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -578,7 +561,8 @@ mod tests {
     #[test]
     fn nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: ID) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: ID) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -610,7 +594,8 @@ mod tests {
     #[test]
     fn non_nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: ID!) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: ID!) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -648,7 +633,8 @@ mod tests {
     #[test]
     fn non_nullable_list_of_nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: [ID]!) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: [ID]!) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -702,7 +688,8 @@ mod tests {
     #[test]
     fn non_nullable_list_of_non_nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: [ID!]!) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: [ID!]!) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -746,7 +733,8 @@ mod tests {
     #[test]
     fn nullable_list_of_nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: [ID]) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: [ID]) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -794,7 +782,8 @@ mod tests {
     #[test]
     fn nullable_list_of_non_nullable_named_type() {
         let operation =
-            Operation::from_document("query QueryName($id: [ID!]) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: [ID!]) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -832,7 +821,8 @@ mod tests {
     #[test]
     fn nullable_list_of_nullable_lists_of_nullable_named_types() {
         let operation =
-            Operation::from_document("query QueryName($id: [[ID]]) { id }", &SCHEMA, None).unwrap();
+            Operation::from_document("query QueryName($id: [[ID]]) { id }", &SCHEMA, None, None)
+                .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -899,6 +889,7 @@ mod tests {
             "query QueryName($id: RealInputObject) { id }",
             &SCHEMA,
             None,
+            None,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -957,9 +948,13 @@ mod tests {
 
     #[test]
     fn non_nullable_enum() {
-        let operation =
-            Operation::from_document("query QueryName($id: RealEnum!) { id }", &SCHEMA, None)
-                .unwrap();
+        let operation = Operation::from_document(
+            "query QueryName($id: RealEnum!) { id }",
+            &SCHEMA,
+            None,
+            None,
+        )
+        .unwrap();
         let tool = Tool::from(operation);
 
         insta::assert_debug_snapshot!(tool, @r###"
@@ -1010,6 +1005,7 @@ mod tests {
             "query QueryName { id } query QueryName { id }",
             &SCHEMA,
             None,
+            None,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1022,7 +1018,7 @@ mod tests {
 
     #[test]
     fn unnamed_operations_should_error() {
-        let operation = Operation::from_document("query { id }", &SCHEMA, None);
+        let operation = Operation::from_document("query { id }", &SCHEMA, None, None);
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             MissingName(
@@ -1034,7 +1030,8 @@ mod tests {
 
     #[test]
     fn no_operations_should_error() {
-        let operation = Operation::from_document("fragment Test on Query { id }", &SCHEMA, None);
+        let operation =
+            Operation::from_document("fragment Test on Query { id }", &SCHEMA, None, None);
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             NoOperations,
@@ -1044,7 +1041,7 @@ mod tests {
 
     #[test]
     fn schema_should_error() {
-        let operation = Operation::from_document("type Query { id: String }", &SCHEMA, None);
+        let operation = Operation::from_document("type Query { id: String }", &SCHEMA, None, None);
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             NoOperations,
@@ -1056,7 +1053,7 @@ mod tests {
     fn unknown_type_should_be_any() {
         // TODO: should this test that the warning was logged?
         let operation =
-            Operation::from_document("query QueryName($id: FakeType) { id }", &SCHEMA, None)
+            Operation::from_document("query QueryName($id: FakeType) { id }", &SCHEMA, None, None)
                 .unwrap();
         let tool = Tool::from(operation);
 
@@ -1080,6 +1077,7 @@ mod tests {
         let operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
             &SCHEMA,
+            None,
             None,
         )
         .unwrap();
@@ -1105,6 +1103,7 @@ mod tests {
         let operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
             &SCHEMA,
+            None,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
         )
         .unwrap();
@@ -1134,6 +1133,7 @@ mod tests {
         let operation = Operation::from_document(
             "query QueryName($id: RealCustomScalar) { id }",
             &SCHEMA,
+            None,
             custom_scalar_map.ok().as_ref(),
         )
         .unwrap();
@@ -1302,6 +1302,7 @@ mod tests {
             "###,
             &schema,
             None,
+            None,
         )
         .unwrap();
 
@@ -1375,6 +1376,7 @@ mod tests {
             "###,
             &SCHEMA,
             None,
+            None,
         )
         .unwrap();
 
@@ -1388,14 +1390,15 @@ mod tests {
     fn tool_empty_comment_description() {
         let operation = Operation::from_document(
             r###"
-            # 
+            #
 
-            #   
+            #
             query GetABZ($state: String!) {
               id
             }
             "###,
             &SCHEMA,
+            None,
             None,
         )
         .unwrap();
@@ -1403,43 +1406,6 @@ mod tests {
         insta::assert_snapshot!(
             operation.tool.description.as_ref(),
             @r###"The returned value is optional and has type `String`"###
-        );
-    }
-
-    #[test]
-    fn it_extracts_operations_from_apollo_pq_manifest() {
-        // The inner types needed to construct one of these are not exported,
-        // so we use JSON as an intermediary
-        let apollo_pq: ApolloPersistedQueryManifest = serde_json::from_value(serde_json::json!({
-            "format": "apollo-persisted-query-manifest",
-            "version": 1,
-            "operations": [
-                {
-                    "id": "f4d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d",
-                    "clientName": "my-web-app",
-                    "body": "query Example1 { id }",
-                    "name": "Example1",
-                    "type": "query"
-                },
-                {
-                    "id": "5d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23de",
-                    "clientName": "my-web-app",
-                    "body": "query Example2 { id2: id }",
-                    "name": "Example2",
-                    "type": "query"
-                }
-            ]
-        }))
-        .expect("apollo pq should be valid");
-
-        let operations = Operation::from_manifest(&SCHEMA, apollo_pq.clone(), None)
-            .expect("operations from manifest should parse");
-        assert_eq!(
-            operations
-                .into_iter()
-                .map(|op| op.source_text)
-                .collect::<HashSet<String>>(),
-            apollo_pq.operations.into_iter().map(|op| op.body).collect()
         );
     }
 }

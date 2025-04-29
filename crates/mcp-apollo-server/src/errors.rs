@@ -59,6 +59,12 @@ pub enum ServerError {
 
     #[error("invalid json schema: {0}")]
     CustomScalarJsonSchema(serde_json::Value),
+
+    #[error("Missing environment variable: {0}")]
+    EnvironmentVariable(String),
+
+    #[error("No operations defined")]
+    NoOperations,
 }
 
 /// An MCP tool error

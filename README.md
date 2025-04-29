@@ -135,24 +135,44 @@ You can now issue prompts related to weather forecasts and alerts, which will ca
 
 #### Persisted Queries Manifests
 
-The MCP server also supports reading operations from either an
-[Apollo](https://www.apollographql.com/docs/graphos/platform/security/persisted-queries#manifest-format)-
-or [Relay](https://relay.dev/docs/guides/persisted-queries/)-
-formatted persisted query manifest through the use of the `--manifest` and `--manifest-format` flags.
-An example of each is included in `graphql/weather/persisted_queries`.
+The MCP server also supports reading operations from an
+[Apollo](https://www.apollographql.com/docs/graphos/platform/security/persisted-queries#manifest-format) formatted
+persisted query manifest file through the use of the `--manifest` flag.
+
+An example is included in `graphql/weather/persisted_queries`.
 
 ```sh
-# For apollo persisted query manifests
 target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
   -s graphql/weather/api.graphql \
-  --manifest graphql/weather/persisted_queries/apollo.json --manifest-format apollo
+  --header "apollographql-client-name:my-web-app" \
+  --manifest graphql/weather/persisted_queries/apollo.json
+```
 
-# Or for relay persisted query manifests
+Note that when using persisted queries, if your queries are registered with a specific client name instead of `null`,
+you will need to configure the MCP server to send the necessary header indicating the client name to the router. This
+header is `apollographql-client-name` by default, but can be overridden in the router config by setting
+`telemetry.apollo.client_name_header`. Note that in the example persisted query manifest file, the client name
+is `my-web-app`.
+
+This supports hot-reloading, so changes to the persisted query manifest file will be picked up by the MCP server
+without restarting.
+
+#### Uplink
+
+The MCP server can also read persisted queries from Uplink using the `--uplink` option. This supports hot-reloading,
+so it will pick up changes from GraphOS automatically, without restarting the MCP server.
+
+You must set the `APOLLO_KEY` and `APOLLO_GRAPH_REF` environment variables to use Uplink. It is recommended to use
+a contract variant of your graph, with a PQ list associated with that variant. That way, you control exactly what
+persisted queries are available to the MCP server.
+
+```sh
 target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
   -s graphql/weather/api.graphql \
-  --manifest graphql/weather/persisted_queries/relay.json --manifest-format relay
+  --header "apollographql-client-name:my-web-app" \
+  --uplink
 ```
 
 # Running Your Own Graph

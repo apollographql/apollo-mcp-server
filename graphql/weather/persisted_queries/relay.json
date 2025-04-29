@@ -1,5 +1,0 @@
-{
-  "f4d7c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d": "query GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }",
-  "e2c1b89a5e4d95f6b8f7dfed7d9db192ea39d0cb34b3d4cd1bd7e0fbec23efb": "query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) { forecast(coordinate: $coordinate) { detailed } alerts(state: $state) { severity description instruction } }",
-  "7f4c9e3dca95d72be8b2ae5df7db1a92a29d8c2f43c1d3e04e30e7eb0fb23d": "query GetForecast($coordinate: InputCoordinate!) { forecast(coordinate: $coordinate) { detailed } }"
-}

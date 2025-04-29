@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mcp-apollo-server", "crates/rover-copy"]
+members = ["crates/mcp-apollo-server", "crates/mcp-apollo-registry"]
 
 package.version = "0.1.0"
 

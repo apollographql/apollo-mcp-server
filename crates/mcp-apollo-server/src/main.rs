@@ -1,14 +1,12 @@
-use anyhow::Context as _;
 use apollo_compiler::Schema;
+use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
-use clap::{Parser, ValueEnum};
 use mcp_apollo_server::custom_scalar_map::CustomScalarMap;
 use mcp_apollo_server::errors::ServerError;
 use mcp_apollo_server::server::Server;
 use rmcp::ServiceExt;
 use rmcp::transport::{SseServer, stdio};
-use rover_copy::pq_manifest::{ApolloPersistedQueryManifest, RelayPersistedQueryManifest};
 use std::env;
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
@@ -56,6 +54,10 @@ struct Args {
     #[clap(long, short = 'i')]
     introspection: bool,
 
+    /// Enable use of uplink to get the schema and persisted queries
+    #[clap(long, short = 'u')]
+    uplink: bool,
+
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
     operations: Vec<PathBuf>,
@@ -65,23 +67,12 @@ struct Args {
     pq_manifest: Option<ManifestArgs>,
 }
 
-// TODO: This is currently yoiked from rover
-#[derive(Debug, Clone, ValueEnum)]
-enum PersistedQueriesManifestFormat {
-    Apollo,
-    Relay,
-}
-
 #[derive(Debug, Parser)]
 #[group(requires = "manifest")]
 struct ManifestArgs {
-    /// The path to the manifest containing operations to publish.
+    /// The path to the persisted query manifest containing operations.
     #[arg(long, required = false)]
     manifest: PathBuf,
-
-    /// The format of the manifest file.
-    #[arg(long, value_enum, default_value_t = PersistedQueriesManifestFormat::Apollo)]
-    manifest_format: PersistedQueriesManifestFormat,
 }
 
 #[tokio::main]
@@ -89,8 +80,13 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
         .with_writer(std::io::stderr)
-        .with_ansi(false)
+        .with_ansi(true)
         .init();
+
+    info!(
+        "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed as ELv2 (https://go.apollo.dev/elv2)",
+        std::env!("CARGO_PKG_VERSION")
+    );
 
     let args = Args::parse();
     env::set_current_dir(args.directory)?;
@@ -107,51 +103,15 @@ async fn main() -> anyhow::Result<()> {
         .operations(args.operations)
         .headers(args.headers)
         .introspection(args.introspection)
+        .uplink(args.uplink)
+        .manifests(args.pq_manifest.map(|m| m.manifest).into_iter().collect())
         .and_custom_scalar_map(
             args.custom_scalars_config
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
                 .transpose()?,
         )
-        .and_persisted_query_manifest(
-            args.pq_manifest
-                .map(
-                    |ManifestArgs {
-                         manifest,
-                         manifest_format,
-                     }| {
-                        tracing::info!(manifest=?manifest, "Loading persisted query manifest");
-                        let raw_manifest = std::fs::read_to_string(&manifest)
-                            .context("Could not read manifest")?;
-                        let invalid_json_err = |manifest, format| {
-                            format!(
-                                "JSON in {manifest:?} did not match '--manifest-format {format}'"
-                            )
-                        };
-
-                        let pq_manifest = match manifest_format {
-                            PersistedQueriesManifestFormat::Apollo => {
-                                rmcp::serde_json::from_str::<ApolloPersistedQueryManifest>(
-                                    &raw_manifest,
-                                )
-                                .with_context(|| invalid_json_err(&manifest, "apollo"))?
-                            }
-                            PersistedQueriesManifestFormat::Relay => {
-                                rmcp::serde_json::from_str::<RelayPersistedQueryManifest>(
-                                    &raw_manifest,
-                                )
-                                .with_context(|| invalid_json_err(&manifest, "relay"))?
-                                .try_into()
-                                .context("Could not convert relay manifest to Apollo's format")?
-                            }
-                        };
-
-                        // This disambiguiation is sad but needed
-                        Ok::<_, anyhow::Error>(pq_manifest)
-                    },
-                )
-                .transpose()?,
-        )
-        .build()?;
+        .build()
+        .await?;
 
     if let Some(port) = args.sse_port {
         info!(port = ?port, "Starting MCP server in SSE mode");

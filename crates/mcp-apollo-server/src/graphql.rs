@@ -14,6 +14,9 @@ pub struct Request<'a> {
 
 /// Able to be executed as a GraphQL operation
 pub trait Executable {
+    /// Get the persisted query ID to be executed, if any
+    fn persisted_query_id(&self) -> Option<String>;
+
     /// Get the operation to execute
     fn operation(&self, input: Value) -> Result<String, McpError>;
 
@@ -25,13 +28,24 @@ pub trait Executable {
         reqwest::Client::new()
             .post(request.endpoint)
             .headers(request.headers)
-            .body(
+            .body(if let Some(id) = self.persisted_query_id() {
+                serde_json::json!({
+                    "extensions": {
+                        "persistedQuery": {
+                            "version": 1,
+                            "sha256Hash": id,
+                        },
+                    },
+                    "variables": self.variables(request.input)?,
+                })
+                .to_string()
+            } else {
                 serde_json::json!({
                     "query": self.operation(request.input.clone())?,
                     "variables": self.variables(request.input)?,
                 })
-                .to_string(),
-            )
+                .to_string()
+            })
             .send()
             .await
             .map_err(|reqwest_error| {

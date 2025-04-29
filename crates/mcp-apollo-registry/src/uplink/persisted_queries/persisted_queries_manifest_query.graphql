@@ -1,0 +1,29 @@
+query PersistedQueriesManifestQuery(
+    $apiKey: String!
+    $graphRef: String!
+    $ifAfterId: ID
+) {
+    persistedQueries(
+        ref: $graphRef
+        apiKey: $apiKey
+        ifAfterId: $ifAfterId
+    ) {
+        __typename
+        ... on PersistedQueriesResult {
+            id
+            minDelaySeconds
+            chunks {
+                id
+                urls
+            }
+        }
+        ... on Unchanged {
+            id
+            minDelaySeconds
+        }
+        ... on FetchError {
+            code
+            message
+        }
+    }
+}

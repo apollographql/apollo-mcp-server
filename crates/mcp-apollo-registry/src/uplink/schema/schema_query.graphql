@@ -1,0 +1,26 @@
+query SupergraphSdlQuery(
+    $apiKey: String!,
+    $graphRef: String!,
+    $ifAfterId: ID
+) {
+    routerConfig(
+        ref: $graphRef,
+        apiKey: $apiKey,
+        ifAfterId: $ifAfterId
+    ) {
+        __typename
+        ... on RouterConfigResult {
+            id
+            supergraphSdl
+            minDelaySeconds
+        }
+        ... on Unchanged {
+            id
+            minDelaySeconds
+        }
+        ... on FetchError {
+            code
+            message
+        }
+    }
+}

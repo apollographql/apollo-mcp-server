@@ -1,0 +1,84 @@
+"""
+Schema for requests to Apollo Uplink
+"""
+
+type Query {
+  """
+  Persisted queries endpoint
+  """
+  persistedQueries(
+    """
+    the Apollo Graph ID to load persisted queries for
+    """
+    ref: String!
+
+    """
+    the API key to authenticate with
+    """
+    apiKey: String!
+
+    """
+    If passed, only returns changes after the given ID
+    """
+    ifAfterId: ID
+  ): PersistedQueriesResponse!
+}
+
+union PersistedQueriesResponse = PersistedQueriesResult | Unchanged | FetchError
+
+type PersistedQueriesResult {
+  """
+  Uniquely identifies this version. Must be passed via ifAfterId for incremental updates.
+  """
+  id: ID!
+
+  """
+  Minimum seconds to wait before checking again on 'unchanged'
+  """
+  minDelaySeconds: Float!
+
+  """
+  Chunks of operations
+  """
+  chunks: [PersistedQueriesResultChunks!]
+}
+
+"""
+A sublist of the persisted query result which can be fetched directly from a content-addressed storage
+"""
+type PersistedQueriesResultChunks {
+  """
+  Chunk ID
+  """
+  id: ID!
+
+  """
+  Locations to find the operations from
+  """
+  urls: [String!]!
+}
+
+type Unchanged {
+  """
+  Uniquely identifies this version. Must be passed via ifAfterId for subsequent checks.
+  """
+  id: ID!
+  
+  """
+  Minimum seconds to wait before checking again
+  """
+  minDelaySeconds: Float!
+}
+
+enum FetchErrorCode {
+  AUTHENTICATION_FAILED
+  ACCESS_DENIED
+  UNKNOWN_REF
+  RETRY_LATER
+  NOT_IMPLEMENTED_ON_THIS_INSTANCE
+}
+
+type FetchError {
+  code: FetchErrorCode!
+  message: String!
+}

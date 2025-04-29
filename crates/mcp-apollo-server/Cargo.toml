@@ -10,14 +10,13 @@ apollo-compiler.workspace = true
 buildstructor = "0.6.0"
 clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
-futures-util = "0.3.31"
+mcp-apollo-registry = { path = "../mcp-apollo-registry" }
 reqwest = "0.12.15"
 rmcp = { version = "0.1", features = [
   "server",
   "transport-io",
   "transport-sse-server",
 ] }
-rover-copy = { path = "../rover-copy" }
 serde.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.44.2", features = [
