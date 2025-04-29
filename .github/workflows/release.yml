@@ -6,7 +6,9 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: apollographql/${{ github.repository }}
+  ORG_NAME: ${{ github.repository_owner }}
+  IMAGE_NAME: ${{ github.repository }}
+  FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
 
 jobs:
   release:
@@ -39,17 +41,17 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build Container
-        run: nix run .#mcp-apollo-container | docker image load
+        run: nix run .#streamImage | docker image load
 
       - name: Tag the Container
-        run: docker tag "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+        run: docker tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}:${{ github.ref_name }}"
 
       - name: Push the Container
-        run: docker push "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}"
+        run: docker push "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME}}
+          subject-name: ${{ env.FQDN }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
