@@ -8,7 +8,6 @@ env:
   REGISTRY: ghcr.io
   ORG_NAME: ${{ github.repository_owner }}
   IMAGE_NAME: ${{ github.repository }}
-  FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
 
 jobs:
   release:
@@ -47,13 +46,19 @@ jobs:
         run: nix run .#streamImage | docker image load
 
       - name: Tag the Container
+        env:
+          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
         run: docker tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}:${{ github.ref_name }}"
 
       - name: Push the Container
+        env:
+          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
         run: docker push "${{ env.FQDN }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
+        env:
+          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
         with:
           subject-name: ${{ env.FQDN }}
           subject-digest: ${{ steps.push.outputs.digest }}
