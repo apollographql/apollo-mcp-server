@@ -138,6 +138,27 @@
             cargoExtraArgs = "-p mcp-apollo-server";
           });
 
+        # Container related packages
+        # TODO: This does not work on macOS without cross compiling, so maybe
+        # we need to disable flake-utils and manually specify the supported
+        # hosts?
+        mcp-apollo-container = let
+          # Nix flakes don't yet expose a nice formatted timestamp in ISO-8601
+          # format, so we need to drop out to date to do so.
+          commitDate = pkgs.lib.readFile "${pkgs.runCommand "git-timestamp" {env.when = self.lastModified;} "echo -n `date -d @$when --iso-8601=seconds` > $out"}";
+        in
+          pkgs.dockerTools.streamLayeredImage {
+            name = "mcp-apollo-container";
+            tag = "latest";
+
+            # Use the latest commit time for reproducible builds
+            created = commitDate;
+            mtime = commitDate;
+
+            # Make the entrypoint the server
+            config.Cmd = ["${mcp-apollo-server}/bin/mcp-apollo-server"];
+          };
+
         # CI related packages
         inherit (garbageCollector) saveFromGC;
       };
