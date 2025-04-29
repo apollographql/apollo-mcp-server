@@ -25,6 +25,7 @@ jobs:
 
       # Extract needed info for use with the other steps
       - id: repo-meta
+        name: Extract Metadata
         shell: bash
         run: |
           echo "fqdn=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
