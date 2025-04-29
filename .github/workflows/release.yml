@@ -6,7 +6,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  ORG_NAME: ${{ github.repository_owner }}
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
@@ -23,6 +22,13 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+
+      # Extract needed info for use with the other steps
+      - id: repo-meta
+        shell: bash
+        run: |
+          echo "fqdn=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
+          echo "name=`basename ${{ github.repository }}`" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@v30
         with:
@@ -46,22 +52,16 @@ jobs:
         run: nix run .#streamImage | docker image load
 
       - name: Tag the Container
-        env:
-          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
         run: |
-          docker image tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:latest"
-          docker image tag "${{ env.IMAGE_NAME }}:latest" "${{ env.FQDN }}:${{ github.ref_name }}"
+          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:latest"
+          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:${{ github.ref_name }}"
 
       - name: Push the Container
-        env:
-          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
-        run: docker image push --all-tags "${{ env.FQDN }}"
+        run: docker image push --all-tags "${{ steps.repo-meta.outputs.fqdn }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
-        env:
-          FQDN: ${{ env.REGISTRY }}/${{ env.ORG_NAME }}/${{ env.IMAGE_NAME }}
         with:
-          subject-name: ${{ env.FQDN }}
+          subject-name: ${{ steps.repo-meta.outputs.fqdn }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
