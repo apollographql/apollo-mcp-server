@@ -124,7 +124,7 @@ impl Server {
             }
         }
 
-        let execute_tool = introspection.then(|| Execute::new());
+        let execute_tool = introspection.then(Execute::new);
         let get_schema_tool = introspection.then(|| GetSchema::new(schema.clone()));
 
         let peers = Arc::new(RwLock::new(vec![]));
@@ -162,32 +162,20 @@ impl Server {
                 for peer in peers.iter() {
                     match peer.notify_tool_list_changed().await {
                         Ok(_) => retained_peers.push(peer.clone()),
-                        Err(e) => {
-                            match e {
-                                ServiceError::Transport(e) => {
-                                    if let Some(error_data) = e.get_ref() {
-                                        if error_data.to_string() == *"disconnected" {
-                                            // TODO: this always gets a "disconnected" error due to a bug in the SDK, but it actually works
-                                            retained_peers.push(peer.clone());
-                                        } else {
-                                            error!(
-                                                "Failed to notify peer of tool list change: {:?} - dropping peer",
-                                                error_data
-                                            );
-                                        }
-                                    } else {
-                                        error!(
-                                            "Failed to notify peer of tool list change: {:?}",
-                                            e
-                                        );
-                                        retained_peers.push(peer.clone());
-                                    }
-                                }
-                                _ => {
-                                    error!("Failed to notify peer of tool list change {:?}", e);
-                                    retained_peers.push(peer.clone());
-                                }
+                        Err(ServiceError::Transport(e)) if e.get_ref().is_some() => {
+                            if e.to_string() == *"disconnected" {
+                                // TODO: this always gets a "disconnected" error due to a bug in the SDK, but it actually works
+                                retained_peers.push(peer.clone());
+                            } else {
+                                error!(
+                                    "Failed to notify peer of tool list change: {:?} - dropping peer",
+                                    e
+                                );
                             }
+                        }
+                        Err(e) => {
+                            error!("Failed to notify peer of tool list change {:?}", e);
+                            retained_peers.push(peer.clone());
                         }
                     }
                 }
