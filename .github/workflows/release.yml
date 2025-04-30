@@ -63,7 +63,7 @@ jobs:
       - id: digest-meta
         name: Extract the digest
         shell: bash
-        run: echo "digest=`docker image inspect ${{ steps.repo-meta.outputs.fqdn }}:latest --format '{{ .Digest }}'`" >> $GITHUB_OUTPUT
+        run: echo "digest=`docker images ${{ steps.repo-meta.outputs.fqdn }}:latest --digests --format '{{ .Digest}}' | head -n1`" >> $GITHUB_OUTPUT
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
