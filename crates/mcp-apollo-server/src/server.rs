@@ -124,16 +124,8 @@ impl Server {
             }
         }
 
-        let execute_tool = if introspection {
-            Some(Execute::new())
-        } else {
-            None
-        };
-        let get_schema_tool = if introspection {
-            Some(GetSchema::new(schema.clone()))
-        } else {
-            None
-        };
+        let execute_tool = introspection.then(|| Execute::new());
+        let get_schema_tool = introspection.then(|| GetSchema::new(schema.clone()));
 
         let peers = Arc::new(RwLock::new(vec![]));
 

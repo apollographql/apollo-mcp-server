@@ -62,17 +62,9 @@ struct Args {
     #[arg(long = "operations", short = 'o', num_args=0..)]
     operations: Vec<PathBuf>,
 
-    /// Persisted Queries manifest to expose as MCP tools
-    #[command(flatten)]
-    pq_manifest: Option<ManifestArgs>,
-}
-
-#[derive(Debug, Parser)]
-#[group(requires = "manifest")]
-struct ManifestArgs {
-    /// The path to the persisted query manifest containing operations.
-    #[arg(long, required = false)]
-    manifest: PathBuf,
+    /// The path to the persisted query manifest containing operations
+    #[arg(long)]
+    manifest: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -104,7 +96,7 @@ async fn main() -> anyhow::Result<()> {
         .headers(args.headers)
         .introspection(args.introspection)
         .uplink(args.uplink)
-        .manifests(args.pq_manifest.map(|m| m.manifest).into_iter().collect())
+        .manifests(args.manifest.into_iter().collect())
         .and_custom_scalar_map(
             args.custom_scalars_config
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
