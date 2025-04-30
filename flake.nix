@@ -60,7 +60,16 @@
       # Build the cargo dependencies (of the entire workspace), so we can reuse
       # all of that work (e.g. via cachix) when running in CI
       cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
-      src = craneLib.cleanCargoSource ./.;
+      src = let
+        graphqlFilter = path: _type: builtins.match ".*graphql$" path != null;
+        srcFilter = path: type:
+          (graphqlFilter path type) || (craneLib.filterCargoSources path type);
+      in
+        pkgs.lib.cleanSourceWith {
+          src = ./.;
+          filter = srcFilter;
+          name = "source"; # Be reproducible, regardless of the directory name
+        };
 
       # Supporting tools
       mcphost = pkgs.callPackage ./nix/mcphost.nix {};
