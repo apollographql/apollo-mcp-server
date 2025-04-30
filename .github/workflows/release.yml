@@ -60,9 +60,14 @@ jobs:
       - name: Push the Container
         run: docker image push --all-tags "${{ steps.repo-meta.outputs.fqdn }}"
 
+      - id: digest-meta
+        name: Extract the digest
+        shell: bash
+        run: echo "digest=`docker image inspect ${{ steps.repo-meta.outputs.fqdn }}:latest --format '{{ .Digest }}'`" >> $GITHUB_OUTPUT
+
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: ${{ steps.repo-meta.outputs.fqdn }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.digest-meta.outputs.digest }}
           push-to-registry: true
