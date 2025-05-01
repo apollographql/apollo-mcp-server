@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{error, info};
 
+use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 pub use apollo_compiler::Schema;
 pub use apollo_compiler::validation::Valid;
 use mcp_apollo_registry::uplink::persisted_queries::{
@@ -40,6 +41,7 @@ pub struct Server {
     default_headers: HeaderMap,
     execute_tool: Option<Execute>,
     get_schema_tool: Option<GetSchema>,
+    explorer_tool: Option<Explorer>,
     manifest_poller: Option<PersistedQueryManifestPoller>,
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
 }
@@ -54,6 +56,7 @@ impl Server {
         headers: Vec<String>,
         introspection: bool,
         uplink: bool,
+        explorer: bool,
         manifests: Vec<P>,
         custom_scalar_map: Option<CustomScalarMap>,
     ) -> Result<Self, ServerError> {
@@ -99,7 +102,6 @@ impl Server {
             };
         let (manifest_poller, change_receiver) = if let Some(manifest_source) = manifest_source {
             let (change_sender, change_receiver) = mpsc::channel::<ManifestChanged>(1);
-
             (
                 PersistedQueryManifestPoller::new(manifest_source, change_sender)
                     .await
@@ -126,6 +128,10 @@ impl Server {
 
         let execute_tool = introspection.then(Execute::new);
         let get_schema_tool = introspection.then(|| GetSchema::new(schema.clone()));
+        let explorer_tool = explorer
+            .then(|| std::env::var("APOLLO_GRAPH_REF").ok())
+            .flatten()
+            .map(Explorer::new);
 
         let peers = Arc::new(RwLock::new(vec![]));
 
@@ -140,6 +146,7 @@ impl Server {
             default_headers,
             execute_tool,
             get_schema_tool,
+            explorer_tool,
             manifest_poller,
             peers,
         })
@@ -208,15 +215,20 @@ impl ServerHandler for Server {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         if request.name == GET_SCHEMA_TOOL_NAME {
-            let get_schema = self.get_schema_tool.as_ref().ok_or(McpError::new(
-                ErrorCode::METHOD_NOT_FOUND,
-                format!("Tool {} not found", request.name),
-                None,
-            ))?;
+            let get_schema = self
+                .get_schema_tool
+                .as_ref()
+                .ok_or(tool_not_found(&request.name))?;
             Ok(CallToolResult {
                 content: vec![Content::text(get_schema.schema.to_string())],
                 is_error: None,
             })
+        } else if request.name == EXPLORER_TOOL_NAME {
+            self.explorer_tool
+                .as_ref()
+                .ok_or(tool_not_found(&request.name))?
+                .execute(Value::from(request.arguments.clone()))
+                .await
         } else {
             let graphql_request = graphql::Request {
                 input: Value::from(request.arguments.clone()),
@@ -262,6 +274,13 @@ impl ServerHandler for Server {
                 )
                 .chain(
                     self.get_schema_tool
+                        .as_ref()
+                        .iter()
+                        .clone()
+                        .map(|e| e.tool.clone()),
+                )
+                .chain(
+                    self.explorer_tool
                         .as_ref()
                         .iter()
                         .clone()

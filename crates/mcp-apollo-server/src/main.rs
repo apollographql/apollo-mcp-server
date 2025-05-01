@@ -54,9 +54,13 @@ struct Args {
     #[clap(long, short = 'i')]
     introspection: bool,
 
-    /// Enable use of uplink to get the schema and persisted queries
+    /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
     #[clap(long, short = 'u')]
     uplink: bool,
+
+    /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
+    #[clap(long, short = 'x')]
+    explorer: bool,
 
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
@@ -96,6 +100,7 @@ async fn main() -> anyhow::Result<()> {
         .headers(args.headers)
         .introspection(args.introspection)
         .uplink(args.uplink)
+        .explorer(args.explorer)
         .manifests(args.manifest.into_iter().collect())
         .and_custom_scalar_map(
             args.custom_scalars_config
