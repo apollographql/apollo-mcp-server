@@ -1,0 +1,5 @@
+---
+source: crates/mcp-apollo-registry/src/uplink/schema.rs
+expression: yaml
+---
+[]

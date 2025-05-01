@@ -8,15 +8,21 @@ repository = "https://github.com/apollographql/mcp-apollo"
 description = "Registry providing schema and operations to the MCP Server"
 
 [dependencies]
-futures = "0.3"
+derive_more = { version = "2.0.1", default-features = false, features = [
+  "from",
+  "display",
+] }
+derivative = "2.2.0"
+futures.workspace = true
 graphql_client = "0.14.0"
+insta.workspace = true
 notify = "8.0.0"
 parking_lot = "0.12"
 reqwest = { version = "0.12.15", features = ["json", "gzip"] }
 secrecy = "0.10.3"
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 tokio = { version = "1.0", features = [
   "fs",
   "sync",
@@ -26,8 +32,18 @@ tokio = { version = "1.0", features = [
 ] }
 tokio-stream = "0.1"
 tower = "0.5.2"
-tracing = { workspace = true }
+tracing.workspace = true
 url = "2.4"
+uuid = { version = "1.16.0", features = ["serde", "v4"] }
+tracing-core.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+test-log = { version = "0.2.16", default-features = false, features = [
+  "trace",
+] }
+tracing-futures = { version = "0.2.5", features = ["futures-03"] }
+wiremock = "0.6.3"
 
 [lints]
 workspace = true

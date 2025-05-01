@@ -10,7 +10,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower::BoxError;
 use url::Url;
 
+pub mod event;
 pub mod persisted_queries;
+pub mod schema;
 
 const GCP_URL: &str = "https://uplink.api.apollographql.com";
 const AWS_URL: &str = "https://aws.uplink.api.apollographql.com";

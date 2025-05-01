@@ -48,7 +48,7 @@ impl TryFrom<&PathBuf> for CustomScalarMap {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CustomScalarMap(HashMap<String, SchemaObject>);
 
 impl CustomScalarMap {
@@ -162,16 +162,16 @@ mod tests {
         .unwrap();
 
         insta::assert_debug_snapshot!(result, @r###"
-            CustomScalarJsonSchema(
-                Object {
-                    "properties": Object {
-                        "test": Object {
-                            "test": Bool(true),
-                        },
+        CustomScalarJsonSchema(
+            Object {
+                "type": String("object"),
+                "properties": Object {
+                    "test": Object {
+                        "test": Bool(true),
                     },
-                    "type": String("object"),
                 },
-            )
+            },
+        )
         "###)
     }
 

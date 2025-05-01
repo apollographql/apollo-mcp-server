@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -38,9 +38,9 @@ pub enum ManifestPollResultOnStartup {
 pub struct ManifestChanged;
 
 #[derive(Debug)]
-pub enum ManifestSource<P: 'static + AsRef<Path> + Sync + Send + Clone> {
-    LocalStatic(Vec<P>),
-    LocalHotReload(Vec<P>),
+pub enum ManifestSource {
+    LocalStatic(Vec<PathBuf>),
+    LocalHotReload(Vec<PathBuf>),
     Uplink(UplinkConfig),
 }
 
@@ -55,8 +55,8 @@ impl PersistedQueryManifestPoller {
     /// Create a new [`PersistedQueryManifestPoller`] from an UplinkConfig.
     /// Starts polling immediately and this function only returns after all chunks have been fetched
     /// and the [`PersistedQueryManifest`] has been fully populated.
-    pub async fn new<P: 'static + AsRef<Path> + Sync + Send + Clone>(
-        manifest_source: ManifestSource<P>,
+    pub async fn new(
+        manifest_source: ManifestSource,
         change_sender: mpsc::Sender<ManifestChanged>,
     ) -> Result<Self, BoxError> {
         let manifest_stream = create_manifest_stream(manifest_source).await?;
@@ -220,8 +220,8 @@ async fn fetch_chunk(http_client: Client, chunk_url: &String) -> Result<SignedUr
 /// A stream of manifest updates
 type ManifestStream = dyn Stream<Item = Result<PersistedQueryManifest, BoxError>> + Send + 'static;
 
-async fn create_manifest_stream<P: 'static + AsRef<Path> + Sync + Send + Clone>(
-    source: ManifestSource<P>,
+async fn create_manifest_stream(
+    source: ManifestSource,
 ) -> Result<Pin<Box<ManifestStream>>, BoxError> {
     match source {
         ManifestSource::LocalStatic(paths) => Ok(stream::once(load_local_manifests(paths)).boxed()),
@@ -275,13 +275,10 @@ async fn poll_manifest_stream(
     }
 }
 
-async fn load_local_manifests<P: AsRef<Path> + Sync + Send>(
-    paths: Vec<P>,
-) -> Result<PersistedQueryManifest, BoxError> {
+async fn load_local_manifests(paths: Vec<PathBuf>) -> Result<PersistedQueryManifest, BoxError> {
     let mut complete_manifest = PersistedQueryManifest::default();
 
     for path in paths.iter() {
-        let path = path.as_ref();
         let raw_file_contents = read_to_string(path).await.map_err(|e| -> BoxError {
             format!(
                 "Failed to read persisted query list file at path: {}, {}",
@@ -332,8 +329,8 @@ fn create_uplink_stream(
     })
 }
 
-fn create_hot_reload_stream<P: 'static + AsRef<Path> + Clone + Sync + Send>(
-    paths: Vec<P>,
+fn create_hot_reload_stream(
+    paths: Vec<PathBuf>,
 ) -> impl Stream<Item = Result<PersistedQueryManifest, BoxError>> {
     // Create file watchers for each path
     let file_watchers = paths.into_iter().map(|raw_path| {
@@ -361,7 +358,6 @@ fn create_hot_reload_stream<P: 'static + AsRef<Path> + Clone + Sync + Send>(
     // Combine all watchers into a single stream
     stream::select_all(file_watchers).map(move |result| {
         result.map(|(path, chunk)| {
-            let path = path.as_ref();
             tracing::info!(
                 "hot reloading persisted query manifest file at path: {}",
                 path.to_string_lossy()

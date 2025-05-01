@@ -1,6 +1,8 @@
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
+use apollo_federation::error::FederationError;
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
+use tokio::task::JoinError;
 
 /// An error in operation parsing
 #[derive(Debug, thiserror::Error)]
@@ -36,6 +38,9 @@ pub enum ServerError {
     #[error("Could not parse GraphQL schema: {0}")]
     GraphQLSchema(Box<WithErrors<Schema>>),
 
+    #[error("Federation error in GraphQL schema: {0}")]
+    Federation(FederationError),
+
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -65,6 +70,12 @@ pub enum ServerError {
 
     #[error("No operations defined")]
     NoOperations,
+
+    #[error("No valid schema was supplied")]
+    NoSchema,
+
+    #[error("Failed to start server")]
+    StartupError(#[from] JoinError),
 }
 
 /// An MCP tool error

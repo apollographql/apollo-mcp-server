@@ -10,13 +10,15 @@ use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 pub(crate) const GET_SCHEMA_TOOL_NAME: &str = "schema";
 pub(crate) const EXECUTE_TOOL_NAME: &str = "execute";
 
 #[derive(Clone)]
 pub struct GetSchema {
-    pub schema: Valid<Schema>,
+    pub schema: Arc<Mutex<Valid<Schema>>>,
     pub tool: Tool,
 }
 
@@ -24,7 +26,7 @@ pub struct GetSchema {
 pub struct GetSchemaInput {}
 
 impl GetSchema {
-    pub fn new(schema: Valid<Schema>) -> Self {
+    pub fn new(schema: Arc<Mutex<Valid<Schema>>>) -> Self {
         Self {
             schema,
             tool: Tool::new(

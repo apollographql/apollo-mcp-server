@@ -7,11 +7,14 @@ license = "Elastic-2.0"
 [dependencies]
 anyhow = "1.0.98"
 apollo-compiler.workspace = true
+apollo-federation.workspace = true
 buildstructor = "0.6.0"
 clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
+futures.workspace = true
 lz-str = "0.2.1"
 mcp-apollo-registry = { path = "../mcp-apollo-registry" }
+regex = "1.11.1"
 reqwest = "0.12.15"
 rmcp = { version = "0.1", features = [
   "server",
@@ -32,12 +35,11 @@ tokio = { version = "1.44.2", features = [
 ] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-regex = "1.11.1"
+tokio-util = "0.7.15"
 webbrowser = "1.0.4"
-base64 = "0.22.1"
 
 [dev-dependencies]
-insta = "1.42.2"
+insta = { workspace = true }
 
 [lints]
 workspace = true

@@ -3,82 +3,126 @@ Schema for requests to Apollo Uplink
 """
 
 type Query {
-  """
-  Persisted queries endpoint
-  """
-  persistedQueries(
     """
-    the Apollo Graph ID to load persisted queries for
+    Fetch schema through router configuration
     """
-    ref: String!
+    routerConfig(
+        """
+        The reference to a graph variant, like `engine@prod` or `engine` (i.e. `engine@current`).
+        """
+        ref: String!,
+
+        """
+        the API key to authenticate with
+        """
+        apiKey: String!,
+
+        """
+        When specified and the result is not newer, `Unchanged` is returned rather than `RouterConfigResult`.
+        """
+        ifAfterId: ID
+    ): RouterConfigResponse!
 
     """
-    the API key to authenticate with
+    Fetch persisted queries
     """
-    apiKey: String!
+    persistedQueries(
+        """
+        The reference to a graph variant, like `engine@prod` or `engine` (i.e. `engine@current`).
+        """
+        ref: String!
 
-    """
-    If passed, only returns changes after the given ID
-    """
-    ifAfterId: ID
-  ): PersistedQueriesResponse!
+        """
+        the API key to authenticate with
+        """
+        apiKey: String!
+
+        """
+        When specified and the result is not newer, `Unchanged` is returned rather than `PersistedQueriesResult`.
+        """
+        ifAfterId: ID
+    ): PersistedQueriesResponse!
+}
+
+union RouterConfigResponse = RouterConfigResult | Unchanged | FetchError
+
+type RouterConfigResult {
+    "Variant-unique identifier."
+    id: ID!
+    "The configuration as core schema."
+    supergraphSDL: String!
+    "Messages that should be reported back to the operators of this router, eg through logs and/or monitoring."
+    messages: [Message!]!
+    "Minimum delay before the next fetch should occur, in seconds."
+    minDelaySeconds: Float!
+}
+
+type Message {
+    level: MessageLevel!
+    body: String!
+}
+
+enum MessageLevel {
+    ERROR
+    WARN
+    INFO
 }
 
 union PersistedQueriesResponse = PersistedQueriesResult | Unchanged | FetchError
 
 type PersistedQueriesResult {
-  """
-  Uniquely identifies this version. Must be passed via ifAfterId for incremental updates.
-  """
-  id: ID!
+    """
+    Uniquely identifies this version. Must be passed via ifAfterId for incremental updates.
+    """
+    id: ID!
 
-  """
-  Minimum seconds to wait before checking again on 'unchanged'
-  """
-  minDelaySeconds: Float!
+    """
+    Minimum seconds to wait before checking again on 'unchanged'
+    """
+    minDelaySeconds: Float!
 
-  """
-  Chunks of operations
-  """
-  chunks: [PersistedQueriesResultChunks!]
+    """
+    Chunks of operations
+    """
+    chunks: [PersistedQueriesResultChunks!]
 }
 
 """
 A sublist of the persisted query result which can be fetched directly from a content-addressed storage
 """
 type PersistedQueriesResultChunks {
-  """
-  Chunk ID
-  """
-  id: ID!
+    """
+    Chunk ID
+    """
+    id: ID!
 
-  """
-  Locations to find the operations from
-  """
-  urls: [String!]!
+    """
+    Locations to find the operations from
+    """
+    urls: [String!]!
 }
 
 type Unchanged {
-  """
-  Uniquely identifies this version. Must be passed via ifAfterId for subsequent checks.
-  """
-  id: ID!
-  
-  """
-  Minimum seconds to wait before checking again
-  """
-  minDelaySeconds: Float!
+    """
+    Uniquely identifies this version. Must be passed via ifAfterId for subsequent checks.
+    """
+    id: ID!
+
+    """
+    Minimum seconds to wait before checking again
+    """
+    minDelaySeconds: Float!
 }
 
 enum FetchErrorCode {
-  AUTHENTICATION_FAILED
-  ACCESS_DENIED
-  UNKNOWN_REF
-  RETRY_LATER
-  NOT_IMPLEMENTED_ON_THIS_INSTANCE
+    AUTHENTICATION_FAILED
+    ACCESS_DENIED
+    UNKNOWN_REF
+    RETRY_LATER
+    NOT_IMPLEMENTED_ON_THIS_INSTANCE
 }
 
 type FetchError {
-  code: FetchErrorCode!
-  message: String!
+    code: FetchErrorCode!
+    message: String!
 }
