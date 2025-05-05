@@ -7,10 +7,10 @@ package.version = "0.1.0"
 [workspace.dependencies]
 apollo-compiler = "1.27.0"
 insta = { version = "1.43.1", features = [
-    "json",
-    "redactions",
-    "yaml",
-    "glob",
+  "json",
+  "redactions",
+  "yaml",
+  "glob",
 ] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
