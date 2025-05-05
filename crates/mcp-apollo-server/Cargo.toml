@@ -40,6 +40,7 @@ webbrowser = "1.0.4"
 
 [dev-dependencies]
 insta = { workspace = true }
+rstest = "0.25.0"
 
 [lints]
 workspace = true
