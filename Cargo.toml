@@ -9,10 +9,10 @@ apollo-compiler = "1.27.0"
 apollo-federation = "2.1.3"
 futures = { version = "0.3.31", features = ["thread-pool"] }
 insta = { version = "1.43.1", features = [
-    "json",
-    "redactions",
-    "yaml",
-    "glob",
+  "json",
+  "redactions",
+  "yaml",
+  "glob",
 ] }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
