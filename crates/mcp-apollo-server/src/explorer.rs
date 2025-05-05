@@ -21,7 +21,11 @@ pub struct Explorer {
 pub struct Input {
     /// The GraphQL document
     document: String,
+
+    /// Any variables used in the document
     variables: String,
+
+    /// Headers to be sent with the operation
     headers: String,
 }
 
@@ -36,13 +40,33 @@ impl Explorer {
             variant,
             tool: Tool::new(
                 EXPLORER_TOOL_NAME,
-                "Open a GraphQL operation in Apollo Explorer. The input fields must be in the order document, variables, headers. All fields must be present, but if they are not set, set them to a string containing just `{}`",
+                "Open a GraphQL operation in Apollo Explorer",
                 schema_from_type!(Input),
             ),
         }
     }
 
     fn create_explorer_url(&self, input: &Value) -> String {
+        let mut input = input.clone();
+
+        let document = input.get("document").and_then(|v| v.as_str());
+        if document.is_none() || document == Some("") {
+            if let Some(obj) = input.as_object_mut() {
+                obj.insert("document".to_string(), Value::String("{}".to_string()));
+            }
+        }
+        let variables = input.get("variables").and_then(|v| v.as_str());
+        if variables.is_none() || variables == Some("") {
+            if let Some(obj) = input.as_object_mut() {
+                obj.insert("variables".to_string(), Value::String("{}".to_string()));
+            }
+        }
+        let headers = input.get("headers").and_then(|v| v.as_str());
+        if headers.is_none() || headers == Some("") {
+            if let Some(obj) = input.as_object_mut() {
+                obj.insert("headers".to_string(), Value::String("{}".to_string()));
+            }
+        }
         let compressed = lz_str::compress_to_encoded_uri_component(input.to_string().as_str());
         format!(
             "https://studio.apollographql.com/graph/{graph_id}/variant/{variant}/explorer?explorerURLState={compressed}",
@@ -52,54 +76,6 @@ impl Explorer {
     }
 
     pub async fn execute(&self, input: Value) -> Result<CallToolResult, McpError> {
-        // Validate field order: must be ["document", "variables", "headers"]
-        if let Value::Object(map) = &input {
-            let mut keys = map.keys();
-            if !(keys.next() == Some(&"document".to_string())
-                && keys.next() == Some(&"variables".to_string())
-                && keys.next() == Some(&"headers".to_string())
-                && keys.next().is_none())
-            {
-                return Err(McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "Input fields must be in order: document, variables, headers",
-                    None,
-                ));
-            }
-        } else {
-            return Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Input must be a JSON object",
-                None,
-            ));
-        }
-
-        let document = input.get("document").and_then(|v| v.as_str());
-        let variables = input.get("variables").and_then(|v| v.as_str());
-        let headers = input.get("headers").and_then(|v| v.as_str());
-
-        if document.is_none() || document == Some("") {
-            return Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Missing or empty 'document' field in input",
-                None,
-            ));
-        }
-        if variables.is_none() || variables == Some("") {
-            return Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Missing or empty 'variables' field in input",
-                None,
-            ));
-        }
-        if headers.is_none() || headers == Some("") {
-            return Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Missing or empty 'headers' field in input",
-                None,
-            ));
-        }
-
         let url = self.create_explorer_url(&input);
         info!(
             "Opening Apollo Explorer URL: {} for input operation: {}",
@@ -120,6 +96,7 @@ mod tests {
     use super::*;
     use insta::assert_snapshot;
     use rmcp::serde_json::json;
+    use rstest::rstest;
 
     #[test]
     fn test_create_explorer_url() {
@@ -135,5 +112,45 @@ mod tests {
             url,
             @"https://studio.apollographql.com/graph/mcp-example/variant/mcp/explorer?explorerURLState=N4IgJg9gxgrgtgUwHYBcQC4QEcYIE4CeABAOIIoDqCAhigBb4CCANvigM4AUAJOyrQnREAyijwBLJAHMAhAEoiwADpIiRaqzwdOfAUN78UCBctVqi7BADd84lARXmiYBOygSADinEQkj85J8eDBQ3r7+AL4qESAANCAM1C547BggwDHxVtQS1ABGrKmYyiC6RkoYRBUAwowVMRFAA"
         );
+    }
+
+    #[tokio::test]
+    #[rstest]
+    #[case(json!({
+        "variables": "{\"state\": \"CA\"}",
+        "headers": "{}"
+    }), "document")]
+    #[case(json!({
+        "document": "query GetWeatherAlerts($state: String!) {\n  alerts(state: $state) {\n    severity\n    description\n    instruction\n  }\n}",
+        "headers": "{}"
+    }), "variables")]
+    #[case(json!({
+        "document": "query GetWeatherAlerts($state: String!) {\n  alerts(state: $state) {\n    severity\n    description\n    instruction\n  }\n}",
+        "variables": "{\"state\": \"CA\"}"
+    }), "headers")]
+    async fn test_input_missing_fields(#[case] input: Value, #[case] missing_field: &str) {
+        let explorer = Explorer::new(String::from("mcp-example@mcp"));
+        let url = explorer.create_explorer_url(&input);
+        let filled_input = {
+            let mut input = input;
+            if missing_field == "document" {
+                if let Some(obj) = input.as_object_mut() {
+                    obj.insert("document".to_string(), Value::String("{}".to_string()));
+                }
+            }
+            if missing_field == "variables" {
+                if let Some(obj) = input.as_object_mut() {
+                    obj.insert("variables".to_string(), Value::String("{}".to_string()));
+                }
+            }
+            if missing_field == "headers" {
+                if let Some(obj) = input.as_object_mut() {
+                    obj.insert("headers".to_string(), Value::String("{}".to_string()));
+                }
+            }
+            input
+        };
+        let expected_url = explorer.create_explorer_url(&filled_input);
+        assert_eq!(url, expected_url);
     }
 }
