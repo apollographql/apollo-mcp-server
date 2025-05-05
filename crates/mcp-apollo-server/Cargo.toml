@@ -34,10 +34,9 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 regex = "1.11.1"
 webbrowser = "1.0.4"
-base64 = "0.22.1"
 
 [dev-dependencies]
-insta = "1.42.2"
+insta = { workspace = true }
 
 [lints]
 workspace = true
