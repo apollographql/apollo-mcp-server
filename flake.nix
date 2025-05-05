@@ -3,21 +3,10 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
-
-    # Helper utility for keeping certain paths from garbage collection in CI
-    cache-nix-action = {
-      url = "github:nix-community/cache-nix-action";
-      flake = false;
-    };
+    unstable-pkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
     # Rust builder
     crane.url = "github:ipetkov/crane";
-
-    # Rust overlay for toolchain / building deterministically
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
 
     # Overlay for common architecture support
     flake-utils.url = "github:numtide/flake-utils";
@@ -25,18 +14,14 @@
 
   outputs = {
     self,
-    cache-nix-action,
     crane,
     nixpkgs,
-    fenix,
     flake-utils,
-  } @ inputs:
+    unstable-pkgs,
+  }:
     flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs {inherit system;};
-      toolchain = fenix.packages.${system}.fromToolchainFile {
-        file = ./rust-toolchain.toml;
-        sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
-      };
+      pkgs = nixpkgs.legacyPackages.${system};
+      unstable = unstable-pkgs.legacyPackages.${system};
 
       # Rust options
       systemDependencies =
@@ -44,11 +29,11 @@
           openssl
         ])
         ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          pkgs.libiconv
+          # pkgs.libiconv
         ];
 
       # Crane options
-      craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+      craneLib = crane.mkLib unstable;
       craneCommonArgs = {
         inherit src;
         pname = "mcp-apollo";
@@ -74,22 +59,21 @@
       # Supporting tools
       mcphost = pkgs.callPackage ./nix/mcphost.nix {};
       mcp-server-tools = pkgs.callPackage ./nix/mcp-server-tools {};
-
-      # CI options
-      garbageCollector = import "${inputs.cache-nix-action}/saveFromGC.nix" {
-        inherit pkgs inputs;
-        derivations = [cargoArtifacts toolchain] ++ mcp-server-tools;
-      };
     in {
       devShells.default = pkgs.mkShell {
         nativeBuildInputs = with pkgs; [pkg-config];
         buildInputs =
           [
             mcphost
-            toolchain
           ]
           ++ mcp-server-tools
           ++ systemDependencies
+          ++ (with unstable; [
+            cargo
+            rust-analyzer
+            rustc
+            rustfmt
+          ])
           ++ (with pkgs; [
             # For running github action workflows locally
             act
@@ -137,9 +121,6 @@
             pname = "mcp-apollo-server";
             cargoExtraArgs = "-p mcp-apollo-server";
           });
-
-        # CI related packages
-        inherit (garbageCollector) saveFromGC;
       };
     });
 }
