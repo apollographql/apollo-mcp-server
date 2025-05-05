@@ -227,7 +227,11 @@ impl ServerHandler for Server {
             self.explorer_tool
                 .as_ref()
                 .ok_or(tool_not_found(&request.name))?
-                .execute(Value::from(request.arguments.clone()))
+                .execute(
+                    serde_json::from_value(Value::from(request.arguments)).map_err(|_| {
+                        McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
+                    })?,
+                )
                 .await
         } else {
             let graphql_request = graphql::Request {
