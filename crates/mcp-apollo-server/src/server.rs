@@ -370,14 +370,15 @@ impl StateMachine {
     }
 
     fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
-        let schema = Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
-            .map_err(|e| ServerError::GraphQLSchema(e.into()))?;
-        Ok(Supergraph::from_schema(schema)
-            .map_err(ServerError::Federation)?
-            .to_api_schema(ApiSchemaOptions::default())
-            .map_err(ServerError::Federation)?
-            .schema()
-            .clone())
+        match Supergraph::new(&schema_state.sdl) {
+            Ok(supergraph) => Ok(supergraph
+                .to_api_schema(ApiSchemaOptions::default())
+                .map_err(ServerError::Federation)?
+                .schema()
+                .clone()),
+            Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
+                .map_err(|e| ServerError::GraphQLSchema(e.into())),
+        }
     }
 
     #[allow(clippy::expect_used)]

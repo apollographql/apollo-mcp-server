@@ -30,7 +30,7 @@ You can run the MCP inspector with the stdio transport as follows:
 npx @modelcontextprotocol/inspector \
   target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
-  -s graphql/weather/supergraph.graphql \
+  -s graphql/weather/api.graphql \
   -o graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
 ```
 
@@ -43,7 +43,7 @@ To use the SSE transport with MCP Inspector, first start the MCP server in SEE m
 ```sh
 target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
-  --sse-port 5000 -s graphql/weather/supergraph.graphql \
+  --sse-port 5000 -s graphql/weather/api.graphql \
   -o graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
 ```
 
@@ -82,7 +82,7 @@ To use the stdio transport, add the following to the MCP configuration file for 
             "--directory",
             "<absolute path to repo>",
             "--schema",
-            "graphql/weather/supergraph.graphql",
+            "graphql/weather/api.graphql",
             "--operations",
             "graphql/weather/operations/forecast.graphql",
             "graphql/weather/operations/alerts.graphql",
@@ -146,7 +146,7 @@ An example is included in `graphql/weather/persisted_queries`.
 ```sh
 target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
-  -s graphql/weather/supergraph.graphql \
+  -s graphql/weather/api.graphql \
   --header "apollographql-client-name:my-web-app" \
   --manifest graphql/weather/persisted_queries/apollo.json
 ```
@@ -172,7 +172,7 @@ persisted queries are available to the MCP server.
 ```sh
 target/debug/mcp-apollo-server \
   --directory <absolute path to this git repo> \
-  -s graphql/weather/supergraph.graphql \
+  -s graphql/weather/api.graphql \
   --header "apollographql-client-name:my-web-app" \
   --uplink
 ```
