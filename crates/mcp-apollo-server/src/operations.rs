@@ -73,7 +73,7 @@ impl OperationPoller {
             OperationPoller::None => Ok(Vec::default()),
         }
         .inspect(|operations| {
-            if  operations.is_empty() {
+            if operations.is_empty() {
                 warn!("No operations found - only introspection tools will be available");
             } else {
                 info!(

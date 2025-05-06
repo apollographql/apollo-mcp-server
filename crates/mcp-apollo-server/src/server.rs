@@ -152,7 +152,7 @@ impl Starting {
                     Some(change_receiver),
                 )
             }
-            OperationSource::None => (OperationPoller::None, None)
+            OperationSource::None => (OperationPoller::None, None),
         };
         let operations = operation_poller
             .operations(&schema, self.custom_scalar_map.as_ref())
