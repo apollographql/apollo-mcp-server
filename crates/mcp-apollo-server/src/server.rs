@@ -26,6 +26,7 @@ use mcp_apollo_registry::uplink::event::Event;
 use mcp_apollo_registry::uplink::persisted_queries::{
     ManifestChanged, PersistedQueryManifestPoller,
 };
+pub use mcp_apollo_registry::uplink::UplinkConfig;
 pub use mcp_apollo_registry::uplink::schema::SchemaSource;
 pub use mcp_apollo_registry::uplink::persisted_queries::ManifestSource;
 use mcp_apollo_registry::uplink::schema::SchemaState;
