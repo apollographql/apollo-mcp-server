@@ -416,13 +416,30 @@ fn type_to_schema(
 ) -> Schema {
     match variable_type {
         Type::NonNullNamed(named) | Type::Named(named) => match named.as_str() {
-            "String" | "ID" => {
-                schema_factory(None, Some(InstanceType::String), None, None, None, None)
-            }
-            "Int" | "Float" => {
-                schema_factory(None, Some(InstanceType::Number), None, None, None, None)
-            }
-            "Boolean" => schema_factory(None, Some(InstanceType::Boolean), None, None, None, None),
+            "String" | "ID" => schema_factory(
+                description,
+                Some(InstanceType::String),
+                None,
+                None,
+                None,
+                None,
+            ),
+            "Int" | "Float" => schema_factory(
+                description,
+                Some(InstanceType::Number),
+                None,
+                None,
+                None,
+                None,
+            ),
+            "Boolean" => schema_factory(
+                description,
+                Some(InstanceType::Boolean),
+                None,
+                None,
+                None,
+                None,
+            ),
             _ => {
                 if let Some(input_type) = graphql_schema.get_input_object(named) {
                     let mut obj = ObjectValidation::default();
