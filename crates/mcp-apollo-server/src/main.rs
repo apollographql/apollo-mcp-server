@@ -32,39 +32,39 @@ const STYLES: Styles = Styles::styled()
 )]
 struct Args {
     /// The working directory to use
-    #[clap(long, short = 'd')]
+    #[arg(long, short = 'd')]
     directory: PathBuf,
 
     /// The path to the GraphQL API schema file
-    #[clap(long, short = 's')]
+    #[arg(long, short = 's')]
     schema: Option<PathBuf>,
 
     /// The path to the GraphQL custom_scalars_config file
-    #[clap(long, short = 'c', required = false)]
+    #[arg(long, short = 'c', required = false)]
     custom_scalars_config: Option<PathBuf>,
 
     /// The GraphQL endpoint the server will invoke
-    #[clap(long, short = 'e', default_value = "http://127.0.0.1:4000")]
+    #[arg(long, short = 'e', default_value = "http://127.0.0.1:4000")]
     endpoint: String,
 
     /// Headers to send to the endpoint
-    #[clap(long = "header", action = clap::ArgAction::Append)]
+    #[arg(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
 
     /// Start the server using the SSE transport on the given port
-    #[clap(long)]
+    #[arg(long)]
     sse_port: Option<u16>,
 
     /// Expose the schema to the MCP client through `schema` and `execute` tools
-    #[clap(long, short = 'i')]
+    #[arg(long, short = 'i')]
     introspection: bool,
 
     /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[clap(long, short = 'u')]
+    #[arg(long, short = 'u')]
     uplink: bool,
 
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[clap(long, short = 'x')]
+    #[arg(long, short = 'x')]
     explorer: bool,
 
     /// Operation files to expose as MCP tools

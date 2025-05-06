@@ -74,7 +74,9 @@ impl OperationPoller {
         }
         .inspect(|operations| {
             if operations.is_empty() {
-                warn!("No operations found - only introspection tools will be available");
+                if !matches!(self, OperationPoller::None) {
+                    warn!("No operations found");
+                }
             } else {
                 info!(
                     "Loaded {} operations:\n{}",
@@ -415,7 +417,7 @@ fn type_to_schema(
     match variable_type {
         Type::NonNullNamed(named) | Type::Named(named) => match named.as_str() {
             "String" | "ID" => schema_factory(
-                description,
+                None,
                 Some(InstanceType::String),
                 None,
                 None,
@@ -423,7 +425,7 @@ fn type_to_schema(
                 None,
             ),
             "Int" | "Float" => schema_factory(
-                description,
+                None,
                 Some(InstanceType::Number),
                 None,
                 None,
@@ -431,7 +433,7 @@ fn type_to_schema(
                 None,
             ),
             "Boolean" => schema_factory(
-                description,
+                None,
                 Some(InstanceType::Boolean),
                 None,
                 None,
