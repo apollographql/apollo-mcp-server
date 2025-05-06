@@ -258,8 +258,9 @@ async fn poll_manifest_stream(
 
                         if let Some(sender) = ready_sender.take() {
                             let _ = sender.send(ManifestPollResultOnStartup::LoadedOperations).await;
+                        } else {
+                            let _ = change_sender.send(ManifestChanged).await;
                         }
-                        let _ = change_sender.send(ManifestChanged).await;
                     }
                     Some(Err(e)) => {
                         tracing::error!("Error polling manifest: {}", e);
@@ -323,7 +324,7 @@ fn create_uplink_stream(
     .filter_map(|result| async move {
         match result {
             Ok(Some(manifest)) => Some(Ok(manifest)),
-            Ok(None) => None,
+            Ok(None) => Some(Ok(PersistedQueryManifest::default())),
             Err(e) => Some(Err(e.into())),
         }
     })

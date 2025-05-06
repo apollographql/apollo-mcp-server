@@ -101,8 +101,13 @@ async fn main() -> anyhow::Result<()> {
         OperationSource::Manifest(ManifestSource::LocalHotReload(vec![manifest]))
     } else if args.uplink {
         OperationSource::Manifest(ManifestSource::Uplink(uplink_config()?))
-    } else {
+    } else if !args.operations.is_empty() {
         OperationSource::Files(args.operations)
+    } else {
+        if !args.introspection {
+            bail!(ServerError::NoOperations);
+        }
+        OperationSource::None
     };
 
     let mut default_headers = HeaderMap::new();

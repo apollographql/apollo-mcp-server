@@ -23,7 +23,7 @@ use rmcp::{
 };
 use serde::Serialize;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 /// The source of the operations exposed as MCP tools
 pub enum OperationSource {
@@ -32,6 +32,9 @@ pub enum OperationSource {
 
     /// Persisted Query manifest (including sources that support hot reloading)
     Manifest(ManifestSource),
+
+    /// No operations provided
+    None,
 }
 
 #[derive(Clone)]
@@ -41,6 +44,9 @@ pub enum OperationPoller {
 
     /// Persisted Query manifest (including sources that support hot reloading)
     Manifest(PersistedQueryManifestPoller),
+
+    /// No operations defined
+    None,
 }
 
 impl OperationPoller {
@@ -64,14 +70,19 @@ impl OperationPoller {
                     Operation::from_document(&operation, schema, Some(pq_id), custom_scalars)
                 })
                 .collect::<Result<Vec<Operation>, OperationError>>(),
+            OperationPoller::None => Ok(Vec::default()),
         }
         .inspect(|operations| {
-            info!(
-                "Loaded {} operations:\n{}",
-                operations.len(),
-                serde_json::to_string_pretty(&operations)
-                    .unwrap_or(String::from("<unable to serialize>"))
-            );
+            if  operations.is_empty() {
+                warn!("No operations found - only introspection tools will be available");
+            } else {
+                info!(
+                    "Loaded {} operations:\n{}",
+                    operations.len(),
+                    serde_json::to_string_pretty(&operations)
+                        .unwrap_or(String::from("<unable to serialize>"))
+                );
+            }
         })
     }
 }
@@ -470,11 +481,11 @@ fn type_to_schema(
                             custom_schema.metadata = Some(Box::new(meta));
                             Schema::Object(custom_schema)
                         } else {
-                            tracing::warn!(name=?named, "custom scalar missing from custom_scalar_map");
+                            warn!(name=?named, "custom scalar missing from custom_scalar_map");
                             schema_factory(description, None, None, None, None, None)
                         }
                     } else {
-                        tracing::warn!(name=?named, "custom scalars aren't currently supported without a custom_scalar_map");
+                        warn!(name=?named, "custom scalars aren't currently supported without a custom_scalar_map");
                         schema_factory(None, None, None, None, None, None)
                     }
                 } else if let Some(enum_type) = graphql_schema.get_enum(named) {
@@ -493,7 +504,7 @@ fn type_to_schema(
                         ),
                     )
                 } else {
-                    tracing::warn!(name=?named, "Type not found in schema");
+                    warn!(name=?named, "Type not found in schema");
                     schema_factory(None, None, None, None, None, None)
                 }
             }

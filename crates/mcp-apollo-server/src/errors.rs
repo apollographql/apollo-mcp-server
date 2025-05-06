@@ -68,7 +68,7 @@ pub enum ServerError {
     #[error("Missing environment variable: {0}")]
     EnvironmentVariable(String),
 
-    #[error("No operations defined")]
+    #[error("You must define operations or enable introspection")]
     NoOperations,
 
     #[error("No valid schema was supplied")]
