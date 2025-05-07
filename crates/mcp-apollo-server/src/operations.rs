@@ -56,6 +56,8 @@ impl OperationPoller {
         schema: &Valid<apollo_compiler::Schema>,
         custom_scalars: Option<&CustomScalarMap>,
         mutation_mode: MutationMode,
+        type_description: bool,
+        schema_description: bool,
     ) -> Result<Vec<Operation>, OperationError> {
         match self {
             OperationPoller::Files(paths) => paths
@@ -68,6 +70,8 @@ impl OperationPoller {
                         None,
                         custom_scalars,
                         mutation_mode,
+                        type_description,
+                        schema_description,
                     )
                 })
                 .collect::<Result<Vec<Operation>, OperationError>>(),
@@ -81,6 +85,8 @@ impl OperationPoller {
                         Some(pq_id),
                         custom_scalars,
                         mutation_mode,
+                        type_description,
+                        schema_description,
                     )
                 })
                 .collect::<Result<Vec<Operation>, OperationError>>(),
@@ -200,6 +206,8 @@ impl Operation {
         persisted_query_id: Option<String>,
         custom_scalar_map: Option<&CustomScalarMap>,
         mutation_mode: MutationMode,
+        type_description: bool,
+        schema_description: bool,
     ) -> Result<Self, OperationError> {
         let (document, operation, comments) = operation_defs(
             source_text,
@@ -215,7 +223,14 @@ impl Operation {
             })?
             .to_string();
 
-        let description = Self::tool_description(comments, &document, graphql_schema, &operation);
+        let description = Self::tool_description(
+            comments,
+            &document,
+            graphql_schema,
+            &operation,
+            type_description,
+            schema_description,
+        );
 
         let object = serde_json::to_value(get_json_schema(
             &operation,
@@ -255,6 +270,8 @@ impl Operation {
         document: &Document,
         graphql_schema: &GraphqlSchema,
         operation_def: &Node<OperationDefinition>,
+        type_description: bool,
+        schema_description: bool,
     ) -> String {
         let comment_description = comments.and_then(|comments| {
             let content = Regex::new(r"(\n|^)\s*#")
@@ -272,93 +289,99 @@ impl Operation {
         match comment_description {
             Some(description) => description,
             None => {
-                let descriptions = operation_def
-                    .selection_set
-                    .iter()
-                    .filter_map(|selection| {
-                        match selection {
-                            Selection::Field(field) => {
-                                let field_name = field.name.to_string();
-                                let operation_type = operation_def.operation_type;
-                                if let Some(root_name) =
-                                    graphql_schema.root_operation(operation_type)
-                                {
-                                    // Find the root field referenced by the operation
-                                    let root = graphql_schema.get_object(root_name)?;
-                                    let field_definition = root
-                                        .fields
-                                        .iter()
-                                        .find(|(name, _)| {
-                                            let name = name.to_string();
-                                            name == field_name
-                                        })
-                                        .map(|(_, field_definition)| field_definition.node.clone());
-
-                                    // Add the root field description to the tool description
-                                    let field_description = field_definition
-                                        .clone()
-                                        .and_then(|field| field.description.clone())
-                                        .map(|node| node.to_string());
-
-                                    // Add information about the return type
-                                    let ty = field_definition.map(|field| field.ty.clone());
-                                    let type_description = ty.as_ref().map(Self::type_description);
-
-                                    Some(
-                                        vec![field_description, type_description]
-                                            .into_iter()
-                                            .flatten()
-                                            .collect::<Vec<String>>()
-                                            .join("\n"),
-                                    )
-                                } else {
-                                    None
-                                }
-                            }
-                            _ => None,
-                        }
-                    })
-                    .collect::<Vec<String>>()
-                    .join("\n---\n");
-
                 // Add the tree-shaken types to the end of the tool description
                 let mut lines = vec![];
-                lines.push(descriptions);
+                if type_description {
+                    let descriptions = operation_def
+                        .selection_set
+                        .iter()
+                        .filter_map(|selection| {
+                            match selection {
+                                Selection::Field(field) => {
+                                    let field_name = field.name.to_string();
+                                    let operation_type = operation_def.operation_type;
+                                    if let Some(root_name) =
+                                        graphql_schema.root_operation(operation_type)
+                                    {
+                                        // Find the root field referenced by the operation
+                                        let root = graphql_schema.get_object(root_name)?;
+                                        let field_definition = root
+                                            .fields
+                                            .iter()
+                                            .find(|(name, _)| {
+                                                let name = name.to_string();
+                                                name == field_name
+                                            })
+                                            .map(|(_, field_definition)| {
+                                                field_definition.node.clone()
+                                            });
 
-                let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
-                tree_shaker.retain_operation(operation_def, document);
-                let shaken_schema = match tree_shaker.shaken() {
-                    Ok(schema) => schema,
-                    Err(schema) => schema.partial,
-                };
+                                        // Add the root field description to the tool description
+                                        let field_description = field_definition
+                                            .clone()
+                                            .and_then(|field| field.description.clone())
+                                            .map(|node| node.to_string());
 
-                let mut types = shaken_schema
-                    .types
-                    .iter()
-                    .filter(|(_name, extended_type)| {
-                        !extended_type.is_built_in()
-                            && matches!(
-                                extended_type,
-                                ExtendedType::Object(_)
-                                    | ExtendedType::Scalar(_)
-                                    | ExtendedType::Enum(_)
-                                    | ExtendedType::Interface(_)
-                                    | ExtendedType::Union(_)
-                            )
-                            && graphql_schema
-                                .root_operation(operation_def.operation_type)
-                                .is_none_or(|op_name| extended_type.name() != op_name)
-                            && graphql_schema
-                                .root_operation(OperationType::Query)
-                                .is_none_or(|op_name| extended_type.name() != op_name)
-                    })
-                    .peekable();
-                if types.peek().is_some() {
-                    lines.push(String::from("---"));
+                                        // Add information about the return type
+                                        let ty = field_definition.map(|field| field.ty.clone());
+                                        let type_description =
+                                            ty.as_ref().map(Self::type_description);
+
+                                        Some(
+                                            vec![field_description, type_description]
+                                                .into_iter()
+                                                .flatten()
+                                                .collect::<Vec<String>>()
+                                                .join("\n"),
+                                        )
+                                    } else {
+                                        None
+                                    }
+                                }
+                                _ => None,
+                            }
+                        })
+                        .collect::<Vec<String>>()
+                        .join("\n---\n");
+                    lines.push(descriptions);
                 }
 
-                for ty in types {
-                    lines.push(ty.1.serialize().to_string());
+                if schema_description {
+                    let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
+                    tree_shaker.retain_operation(operation_def, document);
+                    let shaken_schema = match tree_shaker.shaken() {
+                        Ok(schema) => schema,
+                        Err(schema) => schema.partial,
+                    };
+
+                    let mut types = shaken_schema
+                        .types
+                        .iter()
+                        .filter(|(_name, extended_type)| {
+                            !extended_type.is_built_in()
+                                && matches!(
+                                    extended_type,
+                                    ExtendedType::Object(_)
+                                        | ExtendedType::Scalar(_)
+                                        | ExtendedType::Enum(_)
+                                        | ExtendedType::Interface(_)
+                                        | ExtendedType::Union(_)
+                                )
+                                && graphql_schema
+                                    .root_operation(operation_def.operation_type)
+                                    .is_none_or(|op_name| extended_type.name() != op_name)
+                                && graphql_schema
+                                    .root_operation(OperationType::Query)
+                                    .is_none_or(|op_name| extended_type.name() != op_name)
+                        })
+                        .peekable();
+                    if types.peek().is_some() {
+                        lines.push(String::from("---"));
+                    }
+
+                    for ty in types {
+                        lines.push(ty.1.serialize().to_string());
+                    }
                 }
 
                 lines.join("\n")
@@ -644,7 +667,7 @@ mod tests {
     static SCHEMA: LazyLock<Valid<Schema>> = LazyLock::new(|| {
         Schema::parse(
             r#"
-                type Query { id: String }
+                type Query { id: String enum: RealEnum }
                 type Mutation { id: String }
 
                 """
@@ -693,6 +716,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .err()
         .unwrap();
@@ -711,6 +736,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .err()
         .unwrap();
@@ -729,6 +756,8 @@ mod tests {
             None,
             None,
             MutationMode::Explicit,
+            true,
+            true,
         )
         .unwrap();
 
@@ -755,6 +784,8 @@ mod tests {
             None,
             None,
             MutationMode::All,
+            true,
+            true,
         )
         .unwrap();
 
@@ -781,6 +812,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -809,6 +842,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -847,6 +882,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -891,6 +928,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -951,6 +990,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1001,6 +1042,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1055,6 +1098,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1099,6 +1144,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1169,6 +1216,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1233,6 +1282,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1287,6 +1338,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1299,8 +1352,15 @@ mod tests {
 
     #[test]
     fn unnamed_operations_should_error() {
-        let operation =
-            Operation::from_document("query { id }", &SCHEMA, None, None, MutationMode::None);
+        let operation = Operation::from_document(
+            "query { id }",
+            &SCHEMA,
+            None,
+            None,
+            MutationMode::None,
+            true,
+            true,
+        );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             MissingName(
@@ -1318,6 +1378,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1334,6 +1396,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1351,6 +1415,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1378,6 +1444,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1405,6 +1473,8 @@ mod tests {
             None,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1436,6 +1506,8 @@ mod tests {
             None,
             custom_scalar_map.ok().as_ref(),
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1602,6 +1674,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
 
@@ -1680,6 +1754,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
 
@@ -1704,12 +1780,83 @@ mod tests {
             None,
             None,
             MutationMode::None,
+            true,
+            true,
         )
         .unwrap();
 
         insta::assert_snapshot!(
             operation.tool.description.as_ref(),
             @r###"The returned value is optional and has type `String`"###
+        );
+    }
+
+    #[test]
+    fn no_schema_description() {
+        let operation = Operation::from_document(
+            r###"query GetABZ($state: String!) { id enum }"###,
+            &SCHEMA,
+            None,
+            None,
+            MutationMode::None,
+            true,
+            false,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.tool.description.as_ref(),
+            @r###"
+                The returned value is optional and has type `String`
+                ---
+                The returned value is optional and has type `RealEnum`
+            "###
+        );
+    }
+
+    #[test]
+    fn no_type_description() {
+        let operation = Operation::from_document(
+            r###"query GetABZ($state: String!) { id enum }"###,
+            &SCHEMA,
+            None,
+            None,
+            MutationMode::None,
+            false,
+            true,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.tool.description.as_ref(),
+            @r###"
+                """the description for the enum"""
+                enum RealEnum {
+                  """ENUM_VALUE_1 is a value"""
+                  ENUM_VALUE_1
+                  """ENUM_VALUE_2 is a value"""
+                  ENUM_VALUE_2
+                }
+            "###
+        );
+    }
+
+    #[test]
+    fn no_type_description_or_schema_description() {
+        let operation = Operation::from_document(
+            r###"query GetABZ($state: String!) { id enum }"###,
+            &SCHEMA,
+            None,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.tool.description.as_ref(),
+            @r###""###
         );
     }
 }

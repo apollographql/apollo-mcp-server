@@ -80,6 +80,14 @@ struct Args {
     // Configure when to allow mutations
     #[clap(long, short = 'm', default_value_t, value_enum)]
     allow_mutations: MutationMode,
+
+    /// Use type descriptions for tool descriptions
+    #[arg(long)]
+    type_description: bool,
+
+    /// Use schema types in descriptions for tool descriptions
+    #[arg(long)]
+    schema_description: bool,
 }
 
 #[tokio::main]
@@ -141,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         .headers(default_headers)
         .introspection(args.introspection)
         .mutation_mode(args.allow_mutations)
+        .type_description(args.type_description)
+        .schema_description(args.schema_description)
         .and_custom_scalar_map(
             args.custom_scalars_config
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
