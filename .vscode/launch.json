@@ -1,0 +1,73 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Run apollo-mcp-server [SSE]",
+            "runtimeExecutable": "cargo",
+            "runtimeArgs": [
+                "run",
+                "--bin",
+                "mcp-apollo-server",
+                "--",
+                "-i",
+                "--directory",
+                ".",
+                "-s",
+                "graphql/weather/api.graphql",
+                "--manifest",
+                "graphql/weather/persisted_queries/apollo.json",
+                "--sse-port",
+                "5000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug apollo-mcp-server [SSE]",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=mcp-apollo-server",
+                    "--lib"
+                ],
+                "filter": {
+                    "name": "mcp-apollo-server",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "-i",
+                "--directory",
+                ".",
+                "-s",
+                "graphql/weather/api.graphql",
+                "--manifest",
+                "graphql/weather/persisted_queries/apollo.json",
+                "--sse-port",
+                "5000"
+            ],
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Run mcp-inspector",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "@modelcontextprotocol/inspector"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        }
+    ]
+}
