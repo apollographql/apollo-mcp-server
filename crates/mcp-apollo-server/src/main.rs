@@ -57,7 +57,7 @@ struct Args {
     #[arg(long)]
     sse_port: Option<u16>,
 
-    /// Expose the schema to the MCP client through `schema` and `execute` tools
+    /// Expose the schema to the MCP client through `introspect` and `execute` tools
     #[arg(long, short = 'i')]
     introspection: bool,
 
