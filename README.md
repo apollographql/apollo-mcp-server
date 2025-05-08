@@ -216,7 +216,7 @@ To enable this mode, add `--introspect` to the MCP server command line.
 
 Two new tools will be exposed by the server:
 
-* `schema` - returns the GraphQL schema
+* `get_type_info` - returns information about GraphQL schema types
 * `execute` - executes an operation on the GraphQL endpoint
 
 The MCP client can then use these tools to provide schema information to the model, and allow the model to execute GraphQL operations based on that schema.
