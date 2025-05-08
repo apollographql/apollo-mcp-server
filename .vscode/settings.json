@@ -5,7 +5,18 @@
         "editor.formatOnSave": true,       
     },
     "cSpell.words": [
+        "buildstructor",
+        "insta",
+        "peekable",
+        "reqwest",
         "rmcp",
-        "schemars"
+        "rstest",
+        "schemars",
+        "serde",
+        "Subschema",
+        "subschemas",
+        "Supergraph",
+        "thiserror",
+        "webbrowser"
     ]
 }

@@ -239,10 +239,10 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                 .clone()
                                                 .into_iter()
                                                 .filter_map(|(field_name, field)| {
-                                                    if let Some(fitlered_fields) =
+                                                    if let Some(filtered_fields) =
                                                         &tree_node.filtered_field
                                                     {
-                                                        fitlered_fields
+                                                        filtered_fields
                                                             .contains(&field_name.to_string())
                                                             .then_some(field.node)
                                                     } else {
@@ -304,10 +304,10 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                 .clone()
                                                 .into_iter()
                                                 .filter_map(|(field_name, field)| {
-                                                    if let Some(fitlered_fields) =
+                                                    if let Some(filtered_fields) =
                                                         &tree_node.filtered_field
                                                     {
-                                                        fitlered_fields
+                                                        filtered_fields
                                                             .contains(&field_name.to_string())
                                                             .then_some(field.node)
                                                     } else {
@@ -350,10 +350,10 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                 .clone()
                                                 .into_iter()
                                                 .filter_map(|(field_name, field)| {
-                                                    if let Some(fitlered_fields) =
+                                                    if let Some(filtered_fields) =
                                                         &tree_node.filtered_field
                                                     {
-                                                        fitlered_fields
+                                                        filtered_fields
                                                             .contains(&field_name.to_string())
                                                             .then_some(field.node)
                                                     } else {
@@ -740,7 +740,7 @@ fn retain_type(
         }
         ExtendedType::Union(union_def) => union_def.members.iter().for_each(|member| {
             if let Some(member_type) = schema.types.get(member.as_str()) {
-                let memeber_selection_set = selection_set
+                let member_selection_set = selection_set
                     .map(|selection_set| {
                         selection_set
                             .clone()
@@ -771,10 +771,10 @@ fn retain_type(
                     })
                     .and_then(|s| if s.is_empty() { None } else { Some(s) });
 
-                if selection_set.is_none() || memeber_selection_set.is_some() {
+                if selection_set.is_none() || member_selection_set.is_some() {
                     retain_type(
                         member_type,
-                        memeber_selection_set.as_ref(),
+                        member_selection_set.as_ref(),
                         named_type_nodes,
                         directive_nodes,
                         named_fragments,
