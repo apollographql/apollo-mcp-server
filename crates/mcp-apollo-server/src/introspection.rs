@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 pub(crate) const EXECUTE_TOOL_NAME: &str = "execute";
 
 /// The name of the tool to get GraphQL schema type information
-pub(crate) const GET_TYPE_INFO_TOOL_NAME: &str = "get_type_info";
+pub(crate) const INTROSPECT_TOOL_NAME: &str = "introspect";
 
 /// A schema can rename the root Query type, so this is used to indicate the root query type, whatever its name
 pub(crate) const QUERY_TYPE_NAME: &str = "$Query";
@@ -34,16 +34,16 @@ fn default_depth() -> u32 {
     1u32
 }
 
-/// A tool to get detailed information about a specific type from the GraphQL schema.
+/// A tool to get detailed information about specific types from the GraphQL schema.
 #[derive(Clone)]
-pub struct GetTypeInfo {
+pub struct Introspect {
     mutation_mode: MutationMode,
     schema: Arc<Mutex<Valid<Schema>>>,
     pub tool: Tool,
 }
 
 #[derive(JsonSchema, Deserialize)]
-pub struct GetTypeInfoInput {
+pub struct IntrospectInput {
     /// The name of the type to get information about.
     type_name: String,
     /// How far to recurse the type hierarchy. Use 0 for no limit. Defaults to 1.
@@ -51,27 +51,27 @@ pub struct GetTypeInfoInput {
     depth: u32,
 }
 
-impl GetTypeInfo {
+impl Introspect {
     pub fn new(schema: Arc<Mutex<Valid<Schema>>>, mutation_mode: MutationMode) -> Self {
         Self {
             mutation_mode,
             schema,
             tool: Tool::new(
-                GET_TYPE_INFO_TOOL_NAME,
+                INTROSPECT_TOOL_NAME,
                 format!(
-                    "Get detailed information about a specific type from the GraphQL schema. Use `{QUERY_TYPE_NAME}`{} to get available root fields - the `$` character is important.",
+                    "Get detailed information about specific types from the GraphQL schema. Use `{QUERY_TYPE_NAME}`{} to get available root fields - the `$` character is important.",
                     if mutation_mode == MutationMode::All {
                         format!(" or `{MUTATION_TYPE_NAME}`")
                     } else {
                         String::new()
                     }
                 ),
-                schema_from_type!(GetTypeInfoInput),
+                schema_from_type!(IntrospectInput),
             ),
         }
     }
 
-    pub async fn execute(&self, input: GetTypeInfoInput) -> Result<CallToolResult, McpError> {
+    pub async fn execute(&self, input: IntrospectInput) -> Result<CallToolResult, McpError> {
         let schema = self.schema.lock().await;
 
         // Handle special cases for $Query and $Mutation

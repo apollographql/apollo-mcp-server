@@ -2,7 +2,7 @@ use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError, ServerError};
 use crate::graphql;
 use crate::graphql::Executable;
-use crate::introspection::{EXECUTE_TOOL_NAME, Execute, GET_TYPE_INFO_TOOL_NAME, GetTypeInfo};
+use crate::introspection::{EXECUTE_TOOL_NAME, Execute, INTROSPECT_TOOL_NAME, Introspect};
 use crate::operations::{MutationMode, Operation, OperationPoller, OperationSource};
 use buildstructor::buildstructor;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -167,9 +167,9 @@ impl Starting {
         let schema = Arc::new(Mutex::new(schema));
 
         let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
-        let get_type_info_tool = self
+        let introspect_tool = self
             .introspection
-            .then(|| GetTypeInfo::new(schema.clone(), self.mutation_mode));
+            .then(|| Introspect::new(schema.clone(), self.mutation_mode));
         let explorer_tool = self
             .explorer
             .then(|| std::env::var("APOLLO_GRAPH_REF").ok())
@@ -185,7 +185,7 @@ impl Starting {
             headers: self.headers,
             endpoint: self.endpoint,
             execute_tool,
-            get_type_info_tool,
+            introspect_tool,
             explorer_tool,
             custom_scalar_map: self.custom_scalar_map,
             peers,
@@ -229,7 +229,7 @@ struct Running {
     headers: HeaderMap,
     endpoint: String,
     execute_tool: Option<Execute>,
-    get_type_info_tool: Option<GetTypeInfo>,
+    introspect_tool: Option<Introspect>,
     explorer_tool: Option<Explorer>,
     custom_scalar_map: Option<CustomScalarMap>,
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
@@ -432,8 +432,8 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if request.name == GET_TYPE_INFO_TOOL_NAME {
-            self.get_type_info_tool
+        if request.name == INTROSPECT_TOOL_NAME {
+            self.introspect_tool
                 .as_ref()
                 .ok_or(tool_not_found(&request.name))?
                 .execute(convert_arguments(request)?)
@@ -490,7 +490,7 @@ impl ServerHandler for Running {
                         .map(|e| e.tool.clone()),
                 )
                 .chain(
-                    self.get_type_info_tool
+                    self.introspect_tool
                         .as_ref()
                         .iter()
                         .clone()
