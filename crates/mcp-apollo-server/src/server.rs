@@ -2,13 +2,13 @@ use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError, ServerError};
 use crate::graphql;
 use crate::graphql::Executable;
-use crate::introspection::{EXECUTE_TOOL_NAME, Execute, GET_SCHEMA_TOOL_NAME, GetSchema};
+use crate::introspection::{EXECUTE_TOOL_NAME, Execute, GET_TYPE_INFO_TOOL_NAME, GetTypeInfo};
 use crate::operations::{MutationMode, Operation, OperationPoller, OperationSource};
 use buildstructor::buildstructor;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use rmcp::model::{
-    CallToolRequestParam, CallToolResult, Content, ErrorCode, ListToolsResult,
-    PaginatedRequestParam, ServerCapabilities, ServerInfo,
+    CallToolRequestParam, CallToolResult, ErrorCode, ListToolsResult, PaginatedRequestParam,
+    ServerCapabilities, ServerInfo,
 };
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
@@ -167,7 +167,9 @@ impl Starting {
         let schema = Arc::new(Mutex::new(schema));
 
         let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
-        let get_schema_tool = self.introspection.then(|| GetSchema::new(schema.clone()));
+        let get_type_info_tool = self
+            .introspection
+            .then(|| GetTypeInfo::new(schema.clone(), self.mutation_mode));
         let explorer_tool = self
             .explorer
             .then(|| std::env::var("APOLLO_GRAPH_REF").ok())
@@ -183,7 +185,7 @@ impl Starting {
             headers: self.headers,
             endpoint: self.endpoint,
             execute_tool,
-            get_schema_tool,
+            get_type_info_tool,
             explorer_tool,
             custom_scalar_map: self.custom_scalar_map,
             peers,
@@ -227,7 +229,7 @@ struct Running {
     headers: HeaderMap,
     endpoint: String,
     execute_tool: Option<Execute>,
-    get_schema_tool: Option<GetSchema>,
+    get_type_info_tool: Option<GetTypeInfo>,
     explorer_tool: Option<Explorer>,
     custom_scalar_map: Option<CustomScalarMap>,
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
@@ -430,24 +432,17 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if request.name == GET_SCHEMA_TOOL_NAME {
-            let get_schema = self
-                .get_schema_tool
+        if request.name == GET_TYPE_INFO_TOOL_NAME {
+            self.get_type_info_tool
                 .as_ref()
-                .ok_or(tool_not_found(&request.name))?;
-            Ok(CallToolResult {
-                content: vec![Content::text(get_schema.schema.lock().await.to_string())],
-                is_error: None,
-            })
+                .ok_or(tool_not_found(&request.name))?
+                .execute(convert_arguments(request)?)
+                .await
         } else if request.name == EXPLORER_TOOL_NAME {
             self.explorer_tool
                 .as_ref()
                 .ok_or(tool_not_found(&request.name))?
-                .execute(
-                    serde_json::from_value(Value::from(request.arguments)).map_err(|_| {
-                        McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
-                    })?,
-                )
+                .execute(convert_arguments(request)?)
                 .await
         } else {
             let graphql_request = graphql::Request {
@@ -495,7 +490,7 @@ impl ServerHandler for Running {
                         .map(|e| e.tool.clone()),
                 )
                 .chain(
-                    self.get_schema_tool
+                    self.get_type_info_tool
                         .as_ref()
                         .iter()
                         .clone()
@@ -539,4 +534,11 @@ fn tool_not_found(name: &str) -> McpError {
         format!("Tool {} not found", name),
         None,
     )
+}
+
+fn convert_arguments<T: serde::de::DeserializeOwned>(
+    arguments: CallToolRequestParam,
+) -> Result<T, McpError> {
+    serde_json::from_value(Value::from(arguments.arguments))
+        .map_err(|_| McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None))
 }

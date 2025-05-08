@@ -47,7 +47,10 @@ type Query {
   forecast(coordinate: InputCoordinate!): Forecast
 
   """
-  Get the weather alerts for a state, using the two-letter abbreviation for the state - for example, CO for Colorado
+  Get the weather alerts for a state
   """
-  alerts(state: String!): [Alert]
+  alerts(
+    """The two-letter state abbreviation (e.g., 'CO' for Colorado)"""
+    state: String!
+  ): [Alert]
 }

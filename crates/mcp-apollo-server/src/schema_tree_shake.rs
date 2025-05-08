@@ -115,6 +115,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
         &mut self,
         operation_type: OperationType,
         selection_set: Option<&Vec<Selection>>,
+        depth: u32,
     ) {
         self.operation_types.push(operation_type);
         let operation_type_name = self
@@ -129,13 +130,39 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 &mut self.directive_nodes,
                 &self.named_fragments,
                 self.schema,
+                depth,
+                0,
             );
         } else {
             tracing::error!("root operation type {} not found in schema", operation_type);
         }
     }
 
-    pub fn retain_operation(&mut self, operation: &OperationDefinition, document: &Document) {
+    /// Retain a specific type, and recursively every type it references, up to a given depth.
+    pub fn retain_type(
+        &mut self,
+        retain: &ExtendedType,
+        selection_set: Option<&Vec<Selection>>,
+        depth: u32,
+    ) {
+        retain_type(
+            retain,
+            selection_set,
+            &mut self.named_type_nodes,
+            &mut self.directive_nodes,
+            &self.named_fragments,
+            self.schema,
+            depth,
+            0,
+        );
+    }
+
+    pub fn retain_operation(
+        &mut self,
+        operation: &OperationDefinition,
+        document: &Document,
+        depth: u32,
+    ) {
         self.named_fragments = document
             .definitions
             .iter()
@@ -146,7 +173,11 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 _ => None,
             })
             .collect();
-        self.retain_operation_type(operation.operation_type, Some(&operation.selection_set))
+        self.retain_operation_type(
+            operation.operation_type,
+            Some(&operation.selection_set),
+            depth,
+        )
     }
 
     /// Return the set of types retained after tree shaking.
@@ -497,6 +528,7 @@ fn selection_set_to_fields(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn retain_type(
     extended_type: &ExtendedType,
     selection_set: Option<&Vec<Selection>>,
@@ -504,7 +536,14 @@ fn retain_type(
     directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
     schema: &Schema,
+    max_depth: u32,
+    current_depth: u32,
 ) {
+    // Check if we've exceeded the depth limit
+    if max_depth > 0 && current_depth >= max_depth {
+        return;
+    }
+
     let type_name = extended_type.name().as_str();
     let selected_fields = if let Some(selection_set) = selection_set {
         let selected_fields = selection_set
@@ -542,6 +581,8 @@ fn retain_type(
             directive_nodes,
             named_fragments,
             schema,
+            max_depth,
+            current_depth,
         )
     });
 
@@ -588,6 +629,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             } else {
                                 tracing::error!("field type {} not found", field_type_name);
@@ -603,6 +646,8 @@ fn retain_type(
                                         directive_nodes,
                                         named_fragments,
                                         schema,
+                                        max_depth,
+                                        current_depth + 1,
                                     );
                                 } else {
                                     tracing::error!(
@@ -625,6 +670,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             })
                         }
@@ -636,6 +683,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             })
                         }
@@ -684,6 +733,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             } else {
                                 tracing::error!("field type {} not found", field_type_name);
@@ -699,6 +750,8 @@ fn retain_type(
                                         directive_nodes,
                                         named_fragments,
                                         schema,
+                                        max_depth,
+                                        current_depth + 1,
                                     );
                                 } else {
                                     tracing::error!(
@@ -721,6 +774,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             })
                         }
@@ -732,6 +787,8 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
+                                    max_depth,
+                                    current_depth + 1,
                                 );
                             })
                         }
@@ -779,6 +836,8 @@ fn retain_type(
                         directive_nodes,
                         named_fragments,
                         schema,
+                        max_depth,
+                        current_depth + 1,
                     );
                 }
             } else {
@@ -793,6 +852,8 @@ fn retain_type(
                     directive_nodes,
                     named_fragments,
                     schema,
+                    max_depth,
+                    current_depth + 1,
                 );
             })
         }),
@@ -811,6 +872,8 @@ fn retain_type(
                             directive_nodes,
                             named_fragments,
                             schema,
+                            max_depth,
+                            current_depth + 1,
                         );
                     } else {
                         tracing::error!("field type {} not found", field_type_name);
@@ -822,6 +885,8 @@ fn retain_type(
                             directive_nodes,
                             named_fragments,
                             schema,
+                            max_depth,
+                            current_depth + 1,
                         )
                     });
                 });
@@ -835,6 +900,8 @@ fn retain_directive(
     directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
     schema: &Schema,
+    max_depth: u32,
+    current_depth: u32,
 ) {
     if let Some(tree_directive_node) = directive_nodes.get_mut(directive_name) {
         tree_directive_node.retain = true;
@@ -847,6 +914,8 @@ fn retain_directive(
                     directive_nodes,
                     named_fragments,
                     schema,
+                    max_depth,
+                    current_depth + 1,
                 )
             } else {
                 tracing::error!("argument type {} not found", arg.name);
@@ -877,7 +946,7 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None);
+        shaker.retain_operation_type(OperationType::Query, None, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: String\n}\n"
@@ -896,8 +965,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None);
-        shaker.retain_operation_type(OperationType::Mutation, None);
+        shaker.retain_operation_type(OperationType::Query, None, 0);
+        shaker.retain_operation_type(OperationType::Mutation, None, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: String\n}\n\ntype Mutation {\n  id: String\n}\n"
@@ -921,7 +990,7 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None);
+        shaker.retain_operation_type(OperationType::Query, None, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "schema {\n  query: CustomQuery\n}\n\ntype CustomQuery {\n  id: String\n}\n"
@@ -945,8 +1014,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None);
-        shaker.retain_operation_type(OperationType::Mutation, None);
+        shaker.retain_operation_type(OperationType::Query, None, 0);
+        shaker.retain_operation_type(OperationType::Mutation, None, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "schema {\n  query: CustomQuery\n  mutation: CustomMutation\n}\n\ntype CustomQuery {\n  id: String\n}\n\ntype CustomMutation {\n  id: String\n}\n"
@@ -968,8 +1037,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None);
-        shaker.retain_operation_type(OperationType::Mutation, None);
+        shaker.retain_operation_type(OperationType::Query, None, 0);
+        shaker.retain_operation_type(OperationType::Mutation, None, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: UsedInQuery\n}\n\ntype Mutation {\n  id: UsedInMutation\n}\n\nscalar UsedInQuery\n\ntype UsedInMutation {\n  id: String\n}\n"
@@ -994,7 +1063,7 @@ mod test {
         let mut shaker = SchemaTreeShaker::new(&schema);
         let (operation_document, operation_def, _comments) =
             operation_defs("query TestQuery { id }", false, MutationMode::None).unwrap();
-        shaker.retain_operation(&operation_def, &operation_document);
+        shaker.retain_operation(&operation_def, &operation_document, 0);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: UsedInQuery\n}\n\nscalar UsedInQuery\n"

@@ -1,6 +1,7 @@
 # Apollo MCP Server
 
-The MCP Server exposes a pre-defined set of GraphQL queries as MCP tools.
+An MCP Server to expose a pre-defined set of GraphQL operations as MCP tools. Optionally provides introspection
+tools to allow an LLM to generate and execute its own ad hoc operations.
 
 # Running the Example
 
