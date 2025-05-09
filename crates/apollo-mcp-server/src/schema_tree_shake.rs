@@ -200,30 +200,20 @@ impl<'schema> SchemaTreeShaker<'schema> {
 
     /// Return the set of types retained after tree shaking.
     pub fn shaken(&mut self) -> Result<Schema, Box<WithErrors<Schema>>> {
-        let mut filtered_root_operations = self
-            .schema
-            .schema_definition
-            .query
-            .clone()
-            .map(|query_name| vec![Node::new((OperationType::Query, query_name.name))])
-            .unwrap_or_default();
-        if self.operation_types.contains(&OperationType::Mutation) {
-            if let Some(mutation_name) = self.schema.schema_definition.mutation.clone() {
-                filtered_root_operations
-                    .push(Node::new((OperationType::Mutation, mutation_name.name)));
-            }
-        }
-        if self.operation_types.contains(&OperationType::Subscription) {
-            if let Some(subscription_name) = self.schema.schema_definition.subscription.clone() {
-                filtered_root_operations.push(Node::new((
-                    OperationType::Subscription,
-                    subscription_name.name,
-                )));
-            }
-        }
+        let root_operations = self
+            .operation_types
+            .iter()
+            .filter_map(|operation_type| {
+                self.schema
+                    .root_operation(*operation_type)
+                    .cloned()
+                    .map(|operation_name| Node::new((*operation_type, operation_name)))
+            })
+            .collect();
+
         let schema_definition =
             Definition::SchemaDefinition(apollo_compiler::Node::new(SchemaDefinition {
-                root_operations: filtered_root_operations,
+                root_operations,
                 description: self.schema.schema_definition.description.clone(),
                 directives: DirectiveList(
                     self.schema
@@ -927,8 +917,8 @@ fn retain_directive(
 
 #[cfg(test)]
 mod test {
-
     use apollo_compiler::{ast::OperationType, parser::Parser};
+    use rstest::{fixture, rstest};
 
     use crate::{
         operations::{MutationMode, operation_defs},
@@ -1069,5 +1059,111 @@ mod test {
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: UsedInQuery\n}\n\nscalar UsedInQuery\n"
         );
+    }
+
+    #[fixture]
+    fn nested_schema() -> apollo_compiler::Schema {
+        Parser::new()
+            .parse_ast(
+                r#"
+                    type Query  { level1: Level1 }
+                    type Level1 { level2: Level2 }
+                    type Level2 { level3: Level3 }
+                    type Level3 { level4: Level4 }
+                    type Level4 { id: String }
+                "#,
+                "schema.graphql",
+            )
+            .unwrap()
+            .to_schema_validate()
+            .unwrap()
+            .into_inner()
+    }
+
+    #[rstest]
+    fn should_respect_depth_limit(nested_schema: apollo_compiler::Schema) {
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+
+        // Get the Query type to start from
+        let query_type = nested_schema.types.get("Query").unwrap();
+
+        // Test with depth limit of 1
+        shaker.retain_type(query_type, DepthLimit::Limited(1));
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain only Query, not Level1, Level2, Level3, or Level4
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(!shaken_schema.types.contains_key("Level1"));
+        assert!(!shaken_schema.types.contains_key("Level2"));
+        assert!(!shaken_schema.types.contains_key("Level3"));
+        assert!(!shaken_schema.types.contains_key("Level4"));
+
+        // Test with depth limit of 2
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+        shaker.retain_type(query_type, DepthLimit::Limited(2));
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain Query and Level1, but not deeper levels
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(shaken_schema.types.contains_key("Level1"));
+        assert!(!shaken_schema.types.contains_key("Level2"));
+        assert!(!shaken_schema.types.contains_key("Level3"));
+        assert!(!shaken_schema.types.contains_key("Level4"));
+
+        // Test with depth limit of 1 starting from Level2
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+        let level2_type = nested_schema.types.get("Level2").unwrap();
+        shaker.retain_type(level2_type, DepthLimit::Limited(1));
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain only Level2 - note that a stub Query is always added so the schema is valid
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(!shaken_schema.types.contains_key("Level1"));
+        assert!(shaken_schema.types.contains_key("Level2"));
+        assert!(!shaken_schema.types.contains_key("Level3"));
+        assert!(!shaken_schema.types.contains_key("Level4"));
+
+        // Test with depth limit of 2 starting from Level2
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+        shaker.retain_type(level2_type, DepthLimit::Limited(2));
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain Level2 and Level3 - note that a stub Query is always added so the schema is valid
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(!shaken_schema.types.contains_key("Level1"));
+        assert!(shaken_schema.types.contains_key("Level2"));
+        assert!(shaken_schema.types.contains_key("Level3"));
+        assert!(!shaken_schema.types.contains_key("Level4"));
+
+        // Test with depth limit of 5 starting from Level2
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+        shaker.retain_type(level2_type, DepthLimit::Limited(5));
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain Level2 and deeper types - note that a stub Query is always added so the schema is valid
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(!shaken_schema.types.contains_key("Level1"));
+        assert!(shaken_schema.types.contains_key("Level2"));
+        assert!(shaken_schema.types.contains_key("Level3"));
+        assert!(shaken_schema.types.contains_key("Level4"));
+    }
+
+    #[rstest]
+    fn should_retain_all_types_with_unlimited_depth(nested_schema: apollo_compiler::Schema) {
+        let mut shaker = SchemaTreeShaker::new(&nested_schema);
+
+        // Get the Query type to start from
+        let query_type = nested_schema.types.get("Query").unwrap();
+
+        // Test with unlimited depth
+        shaker.retain_type(query_type, DepthLimit::Unlimited);
+        let shaken_schema = shaker.shaken().unwrap();
+
+        // Should retain all types
+        assert!(shaken_schema.types.contains_key("Query"));
+        assert!(shaken_schema.types.contains_key("Level1"));
+        assert!(shaken_schema.types.contains_key("Level2"));
+        assert!(shaken_schema.types.contains_key("Level3"));
+        assert!(shaken_schema.types.contains_key("Level4"));
     }
 }
