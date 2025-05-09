@@ -15,7 +15,7 @@ futures.workspace = true
 lz-str = "0.2.1"
 mcp-apollo-registry = { path = "../mcp-apollo-registry" }
 regex = "1.11.1"
-reqwest = "0.12.15"
+reqwest.workspace = true
 rmcp = { version = "0.1", features = [
   "server",
   "transport-io",

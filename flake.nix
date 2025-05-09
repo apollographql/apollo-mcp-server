@@ -3,6 +3,7 @@
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
+    unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
     # Helper utility for keeping certain paths from garbage collection in CI
     cache-nix-action = {
@@ -13,10 +14,10 @@
     # Rust builder
     crane.url = "github:ipetkov/crane";
 
-    # Rust overlay for toolchain / building deterministically
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
+    # Rust toolchains
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "unstable";
     };
 
     # Overlay for common architecture support
@@ -27,69 +28,38 @@
     self,
     cache-nix-action,
     crane,
-    nixpkgs,
-    fenix,
     flake-utils,
-  } @ inputs:
+    nixpkgs,
+    rust-overlay,
+    unstable,
+  }:
     flake-utils.lib.eachDefaultSystem (system: let
-      pkgs = import nixpkgs {inherit system;};
-      toolchain = fenix.packages.${system}.fromToolchainFile {
-        file = ./rust-toolchain.toml;
-        sha256 = "sha256-X/4ZBHO3iW0fOenQ3foEvscgAPJYl2abspaBThDOukI=";
+      pkgs = nixpkgs.legacyPackages.${system};
+      unstable-pkgs = import unstable {
+        inherit system;
+        overlays = [(import rust-overlay)];
       };
 
-      # Rust options
-      systemDependencies =
-        (with pkgs; [
-          openssl
-        ])
-        ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-          pkgs.libiconv
-        ];
-
-      # Crane options
-      craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
-      craneCommonArgs = {
-        inherit src;
-        pname = "mcp-apollo";
-        strictDeps = true;
-
-        nativeBuildInputs = with pkgs; [pkg-config];
-        buildInputs = systemDependencies;
+      # Define our toolchains for both native and cross compilation targets
+      nativeToolchain = p: p.rust-bin.stable.latest.default;
+      mcp-apollo-builder = unstable-pkgs.callPackage ./nix/mcp-apollo.nix {
+        inherit crane;
+        toolchain = nativeToolchain;
       };
-      # Build the cargo dependencies (of the entire workspace), so we can reuse
-      # all of that work (e.g. via cachix) when running in CI
-      cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
-      src = let
-        graphqlFilter = path: _type: builtins.match ".*graphql$" path != null;
-        srcFilter = path: type:
-          (graphqlFilter path type) || (craneLib.filterCargoSources path type);
-      in
-        pkgs.lib.cleanSourceWith {
-          src = ./.;
-          filter = srcFilter;
-          name = "source"; # Be reproducible, regardless of the directory name
-        };
 
       # Supporting tools
       mcphost = pkgs.callPackage ./nix/mcphost.nix {};
       mcp-server-tools = pkgs.callPackage ./nix/mcp-server-tools {};
-
-      # CI options
-      garbageCollector = import "${inputs.cache-nix-action}/saveFromGC.nix" {
-        inherit pkgs inputs;
-        derivations = [cargoArtifacts toolchain] ++ mcp-server-tools;
-      };
     in rec {
       devShells.default = pkgs.mkShell {
-        nativeBuildInputs = with pkgs; [pkg-config];
+        nativeBuildInputs = mcp-apollo-builder.nativeDependencies;
         buildInputs =
           [
             mcphost
-            toolchain
+            (nativeToolchain unstable-pkgs)
           ]
+          ++ mcp-apollo-builder.dependencies
           ++ mcp-server-tools
-          ++ systemDependencies
           ++ (with pkgs; [
             # For running github action workflows locally
             act
@@ -109,37 +79,73 @@
           ]);
       };
 
-      checks = {
-        clippy = craneLib.cargoClippy (craneCommonArgs
-          // {
-            inherit cargoArtifacts;
-            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-          });
-        docs = craneLib.cargoDoc (craneCommonArgs
-          // {
-            inherit cargoArtifacts;
-          });
-
-        # Check formatting
-        nix-fmt = pkgs.runCommandLocal "check-nix-fmt" {} "${pkgs.alejandra}/bin/alejandra --check ${./.}; touch $out";
-        rustfmt = craneLib.cargoFmt {
-          inherit src;
-        };
-        toml-fmt = craneLib.taploFmt {
-          src = pkgs.lib.sources.sourceFilesBySuffices src [".toml"];
-        };
-      };
+      checks =
+        {
+          # Check formatting
+          nix-fmt = pkgs.runCommandLocal "check-nix-fmt" {} "${pkgs.alejandra}/bin/alejandra --check ${./.}; touch $out";
+        }
+        // mcp-apollo-builder.checks;
 
       packages = rec {
-        default = mcp-apollo-server;
-        mcp-apollo-server = craneLib.buildPackage (craneCommonArgs
-          // {
-            pname = "mcp-apollo-server";
-            cargoExtraArgs = "-p mcp-apollo-server";
-          });
+        default = mcp-apollo;
+        mcp-apollo = mcp-apollo-builder.packages.mcp-apollo;
 
-        # CI related packages
-        inherit (garbageCollector) saveFromGC;
+        crossBinaries = let
+          crossTargets = [
+            "aarch64-apple-darwin"
+            "aarch64-unknown-linux-gnu"
+            "aarch64-unknown-linux-musl"
+            "x86_64-apple-darwin"
+            "x86_64-pc-windows-msvc"
+            "x86_64-unknown-linux-gnu"
+            "x86_64-unknown-linux-musl"
+          ];
+          crossToolchain = p:
+            p.rust-bin.stable.latest.minimal.override {
+              # Pull in the various supported targets for cross compilation
+              targets = crossTargets;
+            };
+          mcp-apollo-cross = unstable-pkgs.callPackage ./nix/mcp-apollo.nix {
+            inherit crane;
+            toolchain = crossToolchain;
+          };
+
+          # Individual builds for each supported platform
+          linux-aarch64-gnu = mcp-apollo-cross.packages.builder "aarch64-unknown-linux-gnu";
+          linux-aarch64-musl = mcp-apollo-cross.packages.builder "aarch64-unknown-linux-musl";
+          linux-x86_64-gnu = mcp-apollo-cross.packages.builder "x86_64-unknown-linux-gnu";
+          linux-x86_64-musl = mcp-apollo-cross.packages.builder "x86_64-unknown-linux-musl";
+          linux = pkgs.runCommandLocal "linux-bundle" {} ''
+            mkdir -p $out/bin
+
+            cp ${linux-aarch64-musl}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.linux-aarch64-musl
+            cp ${linux-aarch64-gnu}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.linux-aarch64-gnu
+            cp ${linux-x86_64-musl}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.linux-x86_64-musl
+            cp ${linux-x86_64-gnu}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.linux-x86_64-gnu
+          '';
+
+          macos-aarch64 = mcp-apollo-cross.packages.builder "aarch64-apple-darwin";
+          macos-x86_64 = mcp-apollo-cross.packages.builder "x86_64-apple-darwin";
+          macos = pkgs.runCommandLocal "macos-bundle" {} ''
+            mkdir -p $out/bin
+            ${unstable-pkgs.lipo-go}/bin/lipo -create \
+                -output $out/bin/mcp-apollo-server.macos \
+                -arch arm64 ${macos-aarch64}/bin/mcp-apollo-server
+                # TODO: macos-x86_64 seems to cause a bad relocation error in hyper
+                # -arch x86_64 ''${macos-x86_64}/bin/mcp-apollo-server
+
+            cp ${macos-aarch64}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.macos-aarch64
+            # TODO: macos-x86_64 seems to cause a bad relocation error in hyper
+            # cp ''${macos-aarch64}/bin/mcp-apollo-server $out/bin/mcp-apollo-server.macos-x86_64
+          '';
+        in
+          unstable-pkgs.symlinkJoin {
+            name = "mcp-apollo-cross-binaries";
+            paths = [
+              linux
+              macos
+            ];
+          };
       };
 
       # TODO: This does not work on macOS without cross compiling, so maybe
