@@ -4,6 +4,7 @@ use crate::graphql;
 use crate::graphql::Executable;
 use crate::introspection::{EXECUTE_TOOL_NAME, Execute, INTROSPECT_TOOL_NAME, Introspect};
 use crate::operations::{MutationMode, Operation, OperationPoller, OperationSource};
+use apollo_compiler::ast::OperationType;
 use buildstructor::buildstructor;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use rmcp::model::{
@@ -18,8 +19,8 @@ use std::sync::Arc;
 use tracing::{error, info};
 
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
-use apollo_compiler::Schema;
 use apollo_compiler::validation::Valid;
+use apollo_compiler::{Name, Schema};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use futures::{FutureExt, Stream, StreamExt, future, stream};
 pub use mcp_apollo_registry::uplink::UplinkConfig;
@@ -164,12 +165,35 @@ impl Starting {
             .operations(&schema, self.custom_scalar_map.as_ref(), self.mutation_mode)
             .await?;
 
-        let schema = Arc::new(Mutex::new(schema));
-
         let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
+
+        let root_query_type = self
+            .introspection
+            .then(|| {
+                schema
+                    .root_operation(OperationType::Query)
+                    .map(Name::as_str)
+                    .map(|s| s.to_string())
+            })
+            .flatten();
+        let root_mutation_type = self
+            .introspection
+            .then(|| {
+                matches!(self.mutation_mode, MutationMode::All)
+                    .then(|| {
+                        schema
+                            .root_operation(OperationType::Mutation)
+                            .map(Name::as_str)
+                            .map(|s| s.to_string())
+                    })
+                    .flatten()
+            })
+            .flatten();
+        let schema = Arc::new(Mutex::new(schema));
         let introspect_tool = self
             .introspection
-            .then(|| Introspect::new(schema.clone(), self.mutation_mode));
+            .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
+
         let explorer_tool = self
             .explorer
             .then(|| std::env::var("APOLLO_GRAPH_REF").ok())

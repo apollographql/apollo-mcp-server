@@ -5,10 +5,10 @@ use crate::graphql;
 use crate::operations::{MutationMode, operation_defs};
 use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
+use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
-use apollo_compiler::{Name, Schema};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::{Value, json};
@@ -23,12 +23,6 @@ pub(crate) const EXECUTE_TOOL_NAME: &str = "execute";
 /// The name of the tool to get GraphQL schema type information
 pub(crate) const INTROSPECT_TOOL_NAME: &str = "introspect";
 
-/// A schema can rename the root Query type, so this is used to indicate the root query type, whatever its name
-pub(crate) const QUERY_TYPE_NAME: &str = "$Query";
-
-/// A schema can rename the root Mutation type, so this is used to indicate the root mutation type, whatever its name
-pub(crate) const MUTATION_TYPE_NAME: &str = "$Mutation";
-
 /// The default depth to recurse the type hierarchy.
 fn default_depth() -> u32 {
     1u32
@@ -37,7 +31,6 @@ fn default_depth() -> u32 {
 /// A tool to get detailed information about specific types from the GraphQL schema.
 #[derive(Clone)]
 pub struct Introspect {
-    mutation_mode: MutationMode,
     schema: Arc<Mutex<Valid<Schema>>>,
     pub tool: Tool,
 }
@@ -52,19 +45,23 @@ pub struct IntrospectInput {
 }
 
 impl Introspect {
-    pub fn new(schema: Arc<Mutex<Valid<Schema>>>, mutation_mode: MutationMode) -> Self {
+    pub fn new(
+        schema: Arc<Mutex<Valid<Schema>>>,
+        root_query_type: Option<String>,
+        root_mutation_type: Option<String>,
+    ) -> Self {
         Self {
-            mutation_mode,
             schema,
             tool: Tool::new(
                 INTROSPECT_TOOL_NAME,
                 format!(
-                    "Get detailed information about specific types from the GraphQL schema. Use `{QUERY_TYPE_NAME}`{} to get available root fields - the `$` character is important.",
-                    if mutation_mode == MutationMode::All {
-                        format!(" or `{MUTATION_TYPE_NAME}`")
-                    } else {
-                        String::new()
-                    }
+                    "Get detailed information about types from the GraphQL schema.{}{}",
+                    root_query_type
+                        .map(|t| format!(" Use the type name `{t}` to get root query fields."))
+                        .unwrap_or_default(),
+                    root_mutation_type
+                        .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
+                        .unwrap_or_default()
                 ),
                 schema_from_type!(IntrospectInput),
             ),
@@ -73,32 +70,7 @@ impl Introspect {
 
     pub async fn execute(&self, input: IntrospectInput) -> Result<CallToolResult, McpError> {
         let schema = self.schema.lock().await;
-
-        // Handle special cases for $Query and $Mutation
-        let type_name = match if input.type_name.eq_ignore_ascii_case(QUERY_TYPE_NAME) {
-            schema
-                .root_operation(OperationType::Query)
-                .map(Name::as_str)
-        } else if input.type_name.eq_ignore_ascii_case(MUTATION_TYPE_NAME) {
-            if self.mutation_mode == MutationMode::All {
-                schema
-                    .root_operation(OperationType::Mutation)
-                    .map(Name::as_str)
-            } else {
-                None
-            }
-        } else {
-            Some(input.type_name.as_str())
-        } {
-            Some(name) => name,
-            None => {
-                return Ok(CallToolResult {
-                    content: vec![],
-                    is_error: None,
-                });
-            }
-        };
-
+        let type_name = input.type_name.as_str();
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         match schema.types.get(type_name) {
             Some(extended_type) => tree_shaker.retain_type(
