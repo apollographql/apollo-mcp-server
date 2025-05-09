@@ -45,6 +45,7 @@ pub struct Server {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -69,6 +70,7 @@ impl Server {
         endpoint: String,
         headers: Headers,
         introspection: bool,
+        execute_introspection: bool,
         explorer: bool,
         custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
@@ -85,6 +87,7 @@ impl Server {
             endpoint,
             headers,
             introspection,
+            execute_introspection,
             explorer,
             custom_scalar_map,
             mutation_mode,
@@ -131,6 +134,7 @@ struct Starting {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -166,11 +170,17 @@ impl Starting {
 
         let schema = Arc::new(Mutex::new(schema));
 
-        let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
-        let get_schema_tool = self.introspection.then(|| GetSchema::new(schema.clone()));
+        let execute_tool = self
+            .execute_introspection
+            .then(|| Execute::new(self.mutation_mode));
+        let graph_ref = std::env::var("APOLLO_GRAPH_REF").ok();
+        let enable_explorer = self.explorer && graph_ref.is_some();
+        let get_schema_tool = self
+            .introspection
+            .then(|| GetSchema::new(schema.clone(), self.execute_introspection, enable_explorer));
         let explorer_tool = self
             .explorer
-            .then(|| std::env::var("APOLLO_GRAPH_REF").ok())
+            .then_some(graph_ref)
             .flatten()
             .map(Explorer::new);
 
@@ -345,6 +355,7 @@ impl StateMachine {
             endpoint: server.endpoint,
             headers: server.headers,
             introspection: server.introspection,
+            execute_introspection: server.execute_introspection,
             explorer: server.explorer,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,

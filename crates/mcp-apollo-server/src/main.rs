@@ -57,9 +57,13 @@ struct Args {
     #[arg(long)]
     sse_port: Option<u16>,
 
-    /// Expose the schema to the MCP client through `schema` and `execute` tools
+    /// Expose the schema to the MCP client through `schema`
     #[arg(long, short = 'i')]
     introspection: bool,
+
+    /// Expose the schema to the MCP client through `execute` tools
+    #[arg(long)]
+    execute_introspection: bool,
 
     /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
     #[arg(long, short = 'u')]
@@ -140,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
         .explorer(args.explorer)
         .headers(default_headers)
         .introspection(args.introspection)
+        .execute_introspection(args.execute_introspection)
         .mutation_mode(args.allow_mutations)
         .and_custom_scalar_map(
             args.custom_scalars_config
