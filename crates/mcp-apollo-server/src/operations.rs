@@ -56,8 +56,8 @@ impl OperationPoller {
         schema: &Valid<apollo_compiler::Schema>,
         custom_scalars: Option<&CustomScalarMap>,
         mutation_mode: MutationMode,
-        type_description: bool,
-        schema_description: bool,
+        disable_type_description: bool,
+        disable_schema_description: bool,
     ) -> Result<Vec<Operation>, OperationError> {
         match self {
             OperationPoller::Files(paths) => paths
@@ -70,8 +70,8 @@ impl OperationPoller {
                         None,
                         custom_scalars,
                         mutation_mode,
-                        type_description,
-                        schema_description,
+                        disable_type_description,
+                        disable_schema_description,
                     )
                 })
                 .collect::<Result<Vec<Operation>, OperationError>>(),
@@ -85,8 +85,8 @@ impl OperationPoller {
                         Some(pq_id),
                         custom_scalars,
                         mutation_mode,
-                        type_description,
-                        schema_description,
+                        disable_type_description,
+                        disable_schema_description,
                     )
                 })
                 .collect::<Result<Vec<Operation>, OperationError>>(),
@@ -206,8 +206,8 @@ impl Operation {
         persisted_query_id: Option<String>,
         custom_scalar_map: Option<&CustomScalarMap>,
         mutation_mode: MutationMode,
-        type_description: bool,
-        schema_description: bool,
+        disable_type_description: bool,
+        disable_schema_description: bool,
     ) -> Result<Self, OperationError> {
         let (document, operation, comments) = operation_defs(
             source_text,
@@ -228,8 +228,8 @@ impl Operation {
             &document,
             graphql_schema,
             &operation,
-            type_description,
-            schema_description,
+            disable_type_description,
+            disable_schema_description,
         );
 
         let object = serde_json::to_value(get_json_schema(
@@ -270,8 +270,8 @@ impl Operation {
         document: &Document,
         graphql_schema: &GraphqlSchema,
         operation_def: &Node<OperationDefinition>,
-        type_description: bool,
-        schema_description: bool,
+        disable_type_description: bool,
+        disable_schema_description: bool,
     ) -> String {
         let comment_description = comments.and_then(|comments| {
             let content = Regex::new(r"(\n|^)\s*#")
@@ -291,7 +291,7 @@ impl Operation {
             None => {
                 // Add the tree-shaken types to the end of the tool description
                 let mut lines = vec![];
-                if type_description {
+                if !disable_type_description {
                     let descriptions = operation_def
                         .selection_set
                         .iter()
@@ -346,7 +346,7 @@ impl Operation {
                     lines.push(descriptions);
                 }
 
-                if schema_description {
+                if !disable_schema_description {
                     let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
                     tree_shaker.retain_operation(operation_def, document);
                     let shaken_schema = match tree_shaker.shaken() {
@@ -716,8 +716,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .err()
         .unwrap();
@@ -736,8 +736,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .err()
         .unwrap();
@@ -756,8 +756,8 @@ mod tests {
             None,
             None,
             MutationMode::Explicit,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
 
@@ -784,8 +784,8 @@ mod tests {
             None,
             None,
             MutationMode::All,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
 
@@ -812,8 +812,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -842,8 +842,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -882,8 +882,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -928,8 +928,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -990,8 +990,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1042,8 +1042,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1098,8 +1098,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1144,8 +1144,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1216,8 +1216,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1282,8 +1282,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1338,8 +1338,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1358,8 +1358,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1378,8 +1378,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1396,8 +1396,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
@@ -1415,8 +1415,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1444,8 +1444,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1473,8 +1473,8 @@ mod tests {
             None,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1506,8 +1506,8 @@ mod tests {
             None,
             custom_scalar_map.ok().as_ref(),
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
         let tool = Tool::from(operation);
@@ -1674,8 +1674,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
 
@@ -1754,8 +1754,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
 
@@ -1780,8 +1780,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
-            true,
+            false,
+            false,
         )
         .unwrap();
 
@@ -1799,8 +1799,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            true,
             false,
+            true,
         )
         .unwrap();
 
@@ -1822,8 +1822,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            false,
             true,
+            false,
         )
         .unwrap();
 
@@ -1849,8 +1849,8 @@ mod tests {
             None,
             None,
             MutationMode::None,
-            false,
-            false,
+            true,
+            true,
         )
         .unwrap();
 
