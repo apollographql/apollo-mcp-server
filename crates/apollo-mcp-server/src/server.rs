@@ -49,8 +49,8 @@ pub struct Server {
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
-    type_description: bool,
-    schema_description: bool,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 #[derive(Clone)]
@@ -75,8 +75,8 @@ impl Server {
         explorer: bool,
         custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
-        type_description: bool,
-        schema_description: bool,
+        disable_type_description: bool,
+        disable_schema_description: bool,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -93,8 +93,8 @@ impl Server {
             explorer,
             custom_scalar_map,
             mutation_mode,
-            type_description,
-            schema_description,
+            disable_type_description,
+            disable_schema_description,
         }
     }
 
@@ -141,8 +141,8 @@ struct Starting {
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
-    type_description: bool,
-    schema_description: bool,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 impl Starting {
@@ -174,8 +174,8 @@ impl Starting {
                 &schema,
                 self.custom_scalar_map.as_ref(),
                 self.mutation_mode,
-                self.type_description,
-                self.schema_description,
+                self.disable_type_description,
+                self.disable_schema_description,
             )
             .await?;
 
@@ -229,8 +229,8 @@ impl Starting {
             peers,
             cancellation_token: cancellation_token.clone(),
             mutation_mode: self.mutation_mode,
-            type_description: self.type_description,
-            schema_description: self.schema_description,
+            disable_type_description: self.disable_type_description,
+            disable_schema_description: self.disable_schema_description,
         };
 
         if let Some(change_receiver) = change_receiver {
@@ -275,8 +275,8 @@ struct Running {
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
     cancellation_token: CancellationToken,
     mutation_mode: MutationMode,
-    type_description: bool,
-    schema_description: bool,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 impl Running {
@@ -292,8 +292,8 @@ impl Running {
                 &schema,
                 self.custom_scalar_map.as_ref(),
                 self.mutation_mode,
-                self.type_description,
-                self.schema_description,
+                self.disable_type_description,
+                self.disable_schema_description,
             )
             .await?;
         info!(
@@ -352,8 +352,8 @@ impl Running {
         let custom_scalars = self.custom_scalar_map.clone();
         let schema = self.schema.clone();
         let mutation_mode = self.mutation_mode;
-        let type_description = self.type_description;
-        let schema_description = self.schema_description;
+        let disable_type_description = self.disable_type_description;
+        let disable_schema_description = self.disable_schema_description;
         tokio::spawn(async move {
             while change_receiver.recv().await.is_some() {
                 match operation_poller
@@ -361,8 +361,8 @@ impl Running {
                         &*schema.lock().await,
                         custom_scalars.as_ref(),
                         mutation_mode,
-                        type_description,
-                        schema_description,
+                        disable_type_description,
+                        disable_schema_description,
                     )
                     .await
                 {
@@ -402,8 +402,8 @@ impl StateMachine {
             explorer: server.explorer,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,
-            type_description: server.type_description,
-            schema_description: server.schema_description,
+            disable_type_description: server.disable_type_description,
+            disable_schema_description: server.disable_schema_description,
         });
         while let Some(event) = stream.next().await {
             state = match event {
