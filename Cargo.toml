@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/mcp-apollo-server", "crates/mcp-apollo-registry"]
+members = ["crates/apollo-mcp-server", "crates/apollo-mcp-registry"]
 
 package.version = "0.1.0"
 
@@ -22,7 +22,7 @@ tracing-core = "0.1.33"
 tracing-subscriber = { version = "0.3.19", features = ["json"] }
 
 [workspace.metadata]
-crane.name = "mcp-apollo"
+crane.name = "apollo-mcp"
 
 [workspace.lints.clippy]
 exit = "deny"

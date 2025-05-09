@@ -10,7 +10,7 @@ use apollo_compiler::{
     ast::{Definition, OperationDefinition, Type},
     parser::Parser,
 };
-use mcp_apollo_registry::uplink::persisted_queries::{
+use apollo_mcp_registry::uplink::persisted_queries::{
     ManifestSource, PersistedQueryManifestPoller,
 };
 use regex::Regex;

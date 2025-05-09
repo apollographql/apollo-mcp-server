@@ -23,14 +23,14 @@ use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use futures::{FutureExt, Stream, StreamExt, future, stream};
-pub use mcp_apollo_registry::uplink::UplinkConfig;
-use mcp_apollo_registry::uplink::event::Event;
-pub use mcp_apollo_registry::uplink::persisted_queries::ManifestSource;
-use mcp_apollo_registry::uplink::persisted_queries::{
+pub use apollo_mcp_registry::uplink::UplinkConfig;
+use apollo_mcp_registry::uplink::event::Event;
+pub use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
+use apollo_mcp_registry::uplink::persisted_queries::{
     ManifestChanged, PersistedQueryManifestPoller,
 };
-pub use mcp_apollo_registry::uplink::schema::SchemaSource;
-use mcp_apollo_registry::uplink::schema::SchemaState;
+pub use apollo_mcp_registry::uplink::schema::SchemaSource;
+use apollo_mcp_registry::uplink::schema::SchemaState;
 pub use rmcp::ServiceExt;
 pub use rmcp::transport::SseServer;
 pub use rmcp::transport::sse_server::SseServerConfig;
@@ -342,7 +342,7 @@ impl Running {
                     // TODO: ideally, we'd send the server to the error state here because it's
                     //  no longer configured correctly. To do this, we'd have to receive the PQ
                     //  updates through the same stream where schema changes are tracked. However,
-                    //  the router code ported into mcp-apollo-registry does not work that way -
+                    //  the router code ported into apollo-mcp-registry does not work that way -
                     //  it has a separate PQ update mechanism. That will need to be rewritten, or
                     //  maybe there's some way to bridge the PQ changes into the same stream.
                     Err(e) => error!("Failed to update operations: {:?}", e),

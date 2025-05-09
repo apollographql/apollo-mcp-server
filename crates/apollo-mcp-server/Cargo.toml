@@ -1,5 +1,5 @@
 [package]
-name = "mcp-apollo-server"
+name = "apollo-mcp-server"
 version.workspace = true
 edition = "2024"
 license = "Elastic-2.0"
@@ -13,7 +13,7 @@ clap = { version = "4.5.36", features = ["derive"] }
 derive-new = "0.7.0"
 futures.workspace = true
 lz-str = "0.2.1"
-mcp-apollo-registry = { path = "../mcp-apollo-registry" }
+apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 regex = "1.11.1"
 reqwest = "0.12.15"
 rmcp = { version = "0.1", features = [

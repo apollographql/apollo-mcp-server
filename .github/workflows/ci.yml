@@ -96,7 +96,7 @@ jobs:
           purge-primary-key: never
           gc-max-store-size: 5G
       - name: Build
-        run: nix build .#mcp-apollo-server
+        run: nix build .#apollo-mcp-server
 
   test:
     name: Run Tests
