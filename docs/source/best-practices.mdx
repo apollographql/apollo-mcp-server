@@ -1,3 +1,23 @@
 ---
 title: Best Practices
+subtitle: Guidelines for using Apollo MCP Server
 ---
+
+<ExperimentalFeature />
+
+## Use contract variants to control AI access to graphs
+
+[Contract variants](/graphos/platform/schema-management/delivery/contracts/overview) in GraphOS let you deliver different subsets of your graph to different consumers.
+
+We recommend using contract variants when possible when running Apollo MCP Server with GraphOS. It lets you expose only the parts of your graph that you want to be accessible by AI. 
+
+In particular, we strongly recommend contract variants when using:
+- [GraphOS-managed persisted queries](/apollo-mcp-server/guides#graphos-managed-persisted-queries)
+- [Introspection](/apollo-mcp-server/guides#introspection)
+
+
+## Send client name header when using persisted queries
+
+If you register a persisted query with a specific client name instead of `null`, you must configure the MCP server to send the necessary header indicating the client name to the router. 
+
+Use the `--header` option when running the MCP server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration. 

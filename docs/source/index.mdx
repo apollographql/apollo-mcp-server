@@ -1,5 +1,27 @@
 ---
 title: Apollo MCP Server
+subtitle: TODO
 ---
 
-Welcome to Apollo MCP Server!
+<ExperimentalFeature />
+
+Apollo MCP Server provides a standard and secure way for AI models to access and use your graphs running in Apollo.
+
+## What is MCP?
+
+[MCP](https://modelcontextprotocol.io/introduction) is an open protocol that standardizes how applications provide context to AI models like Large Language Models (LLM). MCP enables LLMs and AI agents to indirectly fetch data from external sources.
+
+MCP follows a client-server architecture. MCP servers provide MCP clients access to different capabilities, including functions called _MCP tools_ that clients can invoke.
+
+TODO
+
+## What is Apollo MCP Server? 
+
+ Apollo MCP Server an implementation of a Model Context Protocol (MCP) server. It makes GraphQL API operations available to AI clients as MCP tools. 
+
+The GraphQL operations can be configured from persisted queries, which are predefined, approved lists of operations that are registered with and maintained by a graph. The operations can also be determined by AI introspecting your graph schema.
+
+Apollo MCP Server is deployable in local environments via Apollo's Rover CLI or in containerized services in your cloud infrastructure. It can expose an MCP endpoint using Server-Sent Events (SSE) for communication with AI clients.
+
+TODO
+

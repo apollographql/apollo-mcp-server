@@ -1,3 +1,96 @@
 ---
-title: Get Started with Apollo MCP Server
+title: Get Started
 ---
+
+<ExperimentalFeature />
+
+Let's run Apollo MCP Server for the first time! You will:
+- Learn how GraphQL operations are defined and configured as MCP tools.
+- Deploy the MCP server locally or in a container.
+- Connect an MCP client to use the tools.
+
+## Prerequisites
+
+Before you begin:
+- Install [Claude for Desktop](https://claude.ai/download). It'll be an MCP client.
+- Install the TODO version of the Rover CLI. It'll start a development graph and runtime.
+- Clone the [Apollo MCP Server repo](https://github.com/apollographql/apollo-mcp-server). It'll provide example schema and operation files.
+
+## Download server
+
+1. Download the binary of the [latest Apollo MCP Server release from GitHub](https://github.com/apollographql/apollo-mcp-server/releases/latest). Set it in your path.
+
+<ExpansionPanel title="Build from source repo">
+
+You can build an Apollo MCP Server binary from its [source repo](https://github.com/apollographql/apollo-mcp-server).
+
+1. Install [Rust and Cargo](https://doc.rust-lang.org/cargo/getting-started/installation.html#install-rust-and-cargo).
+
+1. In the root directory of your repo, run the build command:
+
+    ```sh showLineNumbers=false
+    cargo build
+    ```
+
+    The binary will be built as `target/debug/apollo-mcp-server`.
+
+1. Run the binary to validate it: 
+
+    ```sh showLineNumbers=false
+    target/debug/apollo-mcp-server --help
+    ```
+
+</ExpansionPanel>
+
+## Define GraphQL operations 
+
+Each MCP tool of Apollo MCP Server runs a GraphQL operation of your graph. You configure which GraphQL operations are callable by the MCP server. 
+
+This guide uses an example graph and a set of operations on that graph. The examples are in the Apollo MCP Server repo, with the graph schema in `graphql/weather/weather.graphql` and operations files in `graphql/weather/operations/*.graphql`.
+
+TODO
+
+## Deploy server
+
+<Tabs>
+
+<Tab label="Local binary">
+
+TODO
+
+</Tab>
+
+<Tab label="Containerized service">
+
+TODO
+
+</Tab>
+
+</Tabs>
+
+
+
+## Connect client
+
+1. Open Claude for Desktop's JSON config file (go to **Settings**, select **Developer**, and click **Edit Config**) and add the following server configuration:
+
+```json
+{
+  "mcpServers": {
+    "weather": {
+        "command": "<absolute path to repo>/target/debug/apollo-mcp-server",
+        "args": [
+            "--directory",
+            "<absolute path to repo>",
+            "--schema",
+            "graphql/weather/api.graphql",
+            "--operations",
+            "graphql/weather/operations/forecast.graphql",
+        ]
+    }
+  }
+}
+```
+
+
+TODO

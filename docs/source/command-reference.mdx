@@ -1,3 +1,33 @@
 ---
 title: Command Reference
+subtitle: ""
+description: Reference guide for running Apollo MCP Server. Includes options
 ---
+
+<ExperimentalFeature />
+
+## Usage
+
+```sh showLineNumbers=false
+apollo-mcp-server [OPTIONS] --directory <DIRECTORY> --schema <SCHEMA>
+```
+
+## Options
+
+| Option                                     | Description                                                                                                                                                                                                                               |
+| :-------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-d, --directory <DIRECTORY>`                       | The working directory to use.                                                                                                                                                                                                             |
+| `-s, --schema <SCHEMA>`                             | The path to the GraphQL API schema file.                                                                                                                                                                                                  |
+| `-c, --custom-scalars-config <CUSTOM_SCALARS_CONFIG>` | The path to the GraphQL custom_scalars_config file.                                                                                                                                                                                     |
+| `-e, --endpoint <ENDPOINT>`                         | The GraphQL endpoint the server will invoke.<br />[default: `http://127.0.0.1:4000`]                                                                                                                                                         |
+| `--header <HEADERS>`                                | Headers to send to the endpoint.                                                                                                                                                                                                          |
+| `--sse-port <SSE_PORT>`                             | Start the server using the SSE transport on the given port.                                                                                                                                                                               |
+| `-i, --introspection`                               | Expose the schema to the MCP client through `schema` and `execute` tools.                                                                                                                                                                 |
+| `-u, --uplink`                                      | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                                              |
+| `-x, --explorer`                                    | Expose a tool to open queries in Apollo Explorer (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                                                         |
+| `-o, --operations [<OPERATIONS>...]`                | Operation files to expose as MCP tools.                                                                                                                                                                                                   |
+| `--manifest <MANIFEST>`                             | The path to the persisted query manifest containing operations.                                                                                                                                                                           |
+| `-m, --allow-mutations <ALLOW_MUTATIONS>`           | [default: `none`]<br /><br />Possible values:<ul><li>`none`: Don't allow any mutations</li><li>`explicit`: Allow explicit mutations, but don't allow the LLM to build them</li><li>`all`: Allow the LLM to build mutations</li></ul> |
+| `-h, --help`                                        | Print help (see a summary with `-h`).                                                                                                                                                                                                     |
+
+

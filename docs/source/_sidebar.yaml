@@ -9,8 +9,8 @@ items:
     href: "."
   - label: "Get Started"
     href: "./get-started"
-  - label: "Features"
-    href: ./features
+  - label: "User Guide"
+    href: ./guides
   - label: "Command Reference"
     href: "./command-reference"
   - label: "Best Practices"
