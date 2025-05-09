@@ -1,0 +1,19 @@
+switcher:
+  heading: "Apollo MCP Server"
+  versions:
+    - label: v0
+      latest: true
+      href: ./
+items:
+  - label: "Welcome"
+    href: "."
+  - label: "Get Started"
+    href: "./get-started"
+  - label: "Features"
+    href: ./features
+  - label: "Command Reference"
+    href: "./command-reference"
+  - label: "Best Practices"
+    href: "./best-practices"
+  - label: "Limitations"
+    href: "./limitations"
