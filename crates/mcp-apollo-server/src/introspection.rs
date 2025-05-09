@@ -4,7 +4,7 @@ use crate::errors::McpError;
 use crate::graphql;
 use crate::operations::{MutationMode, operation_defs};
 use crate::schema_from_type;
-use crate::schema_tree_shake::SchemaTreeShaker;
+use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
@@ -101,7 +101,14 @@ impl Introspect {
 
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         match schema.types.get(type_name) {
-            Some(extended_type) => tree_shaker.retain_type(extended_type, None, input.depth),
+            Some(extended_type) => tree_shaker.retain_type(
+                extended_type,
+                if input.depth > 0 {
+                    DepthLimit::Limited(input.depth)
+                } else {
+                    DepthLimit::Unlimited
+                },
+            ),
             None => {
                 return Ok(CallToolResult {
                     content: vec![],

@@ -45,6 +45,31 @@ impl RootOperationNames {
     }
 }
 
+/// Limits the depth of the schema tree that is retained.
+#[derive(Debug, Clone, Copy)]
+pub enum DepthLimit {
+    Unlimited,
+    Limited(u32),
+}
+
+impl DepthLimit {
+    /// Returns true if the depth limit has been reached.
+    pub fn reached(&self) -> bool {
+        match self {
+            DepthLimit::Unlimited => false,
+            DepthLimit::Limited(depth) => *depth == 0,
+        }
+    }
+
+    /// Decrements the depth limit. This should be called when descending a level in the schema type tree.
+    pub fn decrement(self) -> Self {
+        match self {
+            DepthLimit::Unlimited => self,
+            DepthLimit::Limited(depth) => DepthLimit::Limited(depth - 1),
+        }
+    }
+}
+
 /// Tree shaker for GraphQL schemas
 pub struct SchemaTreeShaker<'schema> {
     schema: &'schema Schema,
@@ -115,7 +140,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
         &mut self,
         operation_type: OperationType,
         selection_set: Option<&Vec<Selection>>,
-        depth: u32,
+        depth_limit: DepthLimit,
     ) {
         self.operation_types.push(operation_type);
         let operation_type_name = self
@@ -130,8 +155,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 &mut self.directive_nodes,
                 &self.named_fragments,
                 self.schema,
-                depth,
-                0,
+                depth_limit,
             );
         } else {
             tracing::error!("root operation type {} not found in schema", operation_type);
@@ -139,21 +163,15 @@ impl<'schema> SchemaTreeShaker<'schema> {
     }
 
     /// Retain a specific type, and recursively every type it references, up to a given depth.
-    pub fn retain_type(
-        &mut self,
-        retain: &ExtendedType,
-        selection_set: Option<&Vec<Selection>>,
-        depth: u32,
-    ) {
+    pub fn retain_type(&mut self, retain: &ExtendedType, depth_limit: DepthLimit) {
         retain_type(
             retain,
-            selection_set,
+            None,
             &mut self.named_type_nodes,
             &mut self.directive_nodes,
             &self.named_fragments,
             self.schema,
-            depth,
-            0,
+            depth_limit,
         );
     }
 
@@ -161,7 +179,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
         &mut self,
         operation: &OperationDefinition,
         document: &Document,
-        depth: u32,
+        depth_limit: DepthLimit,
     ) {
         self.named_fragments = document
             .definitions
@@ -176,7 +194,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
         self.retain_operation_type(
             operation.operation_type,
             Some(&operation.selection_set),
-            depth,
+            depth_limit,
         )
     }
 
@@ -528,7 +546,6 @@ fn selection_set_to_fields(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn retain_type(
     extended_type: &ExtendedType,
     selection_set: Option<&Vec<Selection>>,
@@ -536,11 +553,10 @@ fn retain_type(
     directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
     schema: &Schema,
-    max_depth: u32,
-    current_depth: u32,
+    depth_limit: DepthLimit,
 ) {
     // Check if we've exceeded the depth limit
-    if max_depth > 0 && current_depth >= max_depth {
+    if depth_limit.reached() {
         return;
     }
 
@@ -581,8 +597,7 @@ fn retain_type(
             directive_nodes,
             named_fragments,
             schema,
-            max_depth,
-            current_depth,
+            depth_limit,
         )
     });
 
@@ -629,8 +644,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth + 1,
+                                    depth_limit.decrement(),
                                 );
                             } else {
                                 tracing::error!("field type {} not found", field_type_name);
@@ -646,8 +660,7 @@ fn retain_type(
                                         directive_nodes,
                                         named_fragments,
                                         schema,
-                                        max_depth,
-                                        current_depth + 1,
+                                        depth_limit.decrement(),
                                     );
                                 } else {
                                     tracing::error!(
@@ -670,8 +683,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth,
+                                    depth_limit,
                                 );
                             })
                         }
@@ -683,8 +695,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth,
+                                    depth_limit,
                                 );
                             })
                         }
@@ -733,8 +744,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth + 1,
+                                    depth_limit.decrement(),
                                 );
                             } else {
                                 tracing::error!("field type {} not found", field_type_name);
@@ -750,8 +760,7 @@ fn retain_type(
                                         directive_nodes,
                                         named_fragments,
                                         schema,
-                                        max_depth,
-                                        current_depth + 1,
+                                        depth_limit.decrement(),
                                     );
                                 } else {
                                     tracing::error!(
@@ -774,8 +783,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth,
+                                    depth_limit,
                                 );
                             })
                         }
@@ -787,8 +795,7 @@ fn retain_type(
                                     directive_nodes,
                                     named_fragments,
                                     schema,
-                                    max_depth,
-                                    current_depth,
+                                    depth_limit,
                                 );
                             })
                         }
@@ -836,8 +843,7 @@ fn retain_type(
                         directive_nodes,
                         named_fragments,
                         schema,
-                        max_depth,
-                        current_depth + 1,
+                        depth_limit.decrement(),
                     );
                 }
             } else {
@@ -852,8 +858,7 @@ fn retain_type(
                     directive_nodes,
                     named_fragments,
                     schema,
-                    max_depth,
-                    current_depth,
+                    depth_limit,
                 );
             })
         }),
@@ -872,8 +877,7 @@ fn retain_type(
                             directive_nodes,
                             named_fragments,
                             schema,
-                            max_depth,
-                            current_depth + 1,
+                            depth_limit.decrement(),
                         );
                     } else {
                         tracing::error!("field type {} not found", field_type_name);
@@ -885,8 +889,7 @@ fn retain_type(
                             directive_nodes,
                             named_fragments,
                             schema,
-                            max_depth,
-                            current_depth,
+                            depth_limit,
                         )
                     });
                 });
@@ -900,8 +903,7 @@ fn retain_directive(
     directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
     schema: &Schema,
-    max_depth: u32,
-    current_depth: u32,
+    depth_limit: DepthLimit,
 ) {
     if let Some(tree_directive_node) = directive_nodes.get_mut(directive_name) {
         tree_directive_node.retain = true;
@@ -914,8 +916,7 @@ fn retain_directive(
                     directive_nodes,
                     named_fragments,
                     schema,
-                    max_depth,
-                    current_depth + 1,
+                    depth_limit.decrement(),
                 )
             } else {
                 tracing::error!("argument type {} not found", arg.name);
@@ -931,7 +932,7 @@ mod test {
 
     use crate::{
         operations::{MutationMode, operation_defs},
-        schema_tree_shake::SchemaTreeShaker,
+        schema_tree_shake::{DepthLimit, SchemaTreeShaker},
     };
 
     #[test]
@@ -946,7 +947,7 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None, 0);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: String\n}\n"
@@ -965,8 +966,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None, 0);
-        shaker.retain_operation_type(OperationType::Mutation, None, 0);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
+        shaker.retain_operation_type(OperationType::Mutation, None, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: String\n}\n\ntype Mutation {\n  id: String\n}\n"
@@ -990,7 +991,7 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None, 0);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "schema {\n  query: CustomQuery\n}\n\ntype CustomQuery {\n  id: String\n}\n"
@@ -1014,8 +1015,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None, 0);
-        shaker.retain_operation_type(OperationType::Mutation, None, 0);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
+        shaker.retain_operation_type(OperationType::Mutation, None, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "schema {\n  query: CustomQuery\n  mutation: CustomMutation\n}\n\ntype CustomQuery {\n  id: String\n}\n\ntype CustomMutation {\n  id: String\n}\n"
@@ -1037,8 +1038,8 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        shaker.retain_operation_type(OperationType::Query, None, 0);
-        shaker.retain_operation_type(OperationType::Mutation, None, 0);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
+        shaker.retain_operation_type(OperationType::Mutation, None, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: UsedInQuery\n}\n\ntype Mutation {\n  id: UsedInMutation\n}\n\nscalar UsedInQuery\n\ntype UsedInMutation {\n  id: String\n}\n"
@@ -1063,7 +1064,7 @@ mod test {
         let mut shaker = SchemaTreeShaker::new(&schema);
         let (operation_document, operation_def, _comments) =
             operation_defs("query TestQuery { id }", false, MutationMode::None).unwrap();
-        shaker.retain_operation(&operation_def, &operation_document, 0);
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  id: UsedInQuery\n}\n\nscalar UsedInQuery\n"

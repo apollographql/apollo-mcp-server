@@ -1,7 +1,7 @@
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError};
 use crate::graphql;
-use crate::schema_tree_shake::SchemaTreeShaker;
+use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::{Document, OperationType, Selection};
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
@@ -326,7 +326,7 @@ impl Operation {
                 lines.push(descriptions);
 
                 let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
-                tree_shaker.retain_operation(operation_def, document, 0);
+                tree_shaker.retain_operation(operation_def, document, DepthLimit::Unlimited);
                 let shaken_schema = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
                 let mut types = shaken_schema
