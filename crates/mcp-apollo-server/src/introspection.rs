@@ -27,12 +27,24 @@ pub struct GetSchema {
 pub struct GetSchemaInput {}
 
 impl GetSchema {
-    pub fn new(schema: Arc<Mutex<Valid<Schema>>>) -> Self {
+    pub fn new(
+        schema: Arc<Mutex<Valid<Schema>>>,
+        execute_introspection: bool,
+        enable_explorer: bool,
+    ) -> Self {
         Self {
             schema,
             tool: Tool::new(
                 GET_SCHEMA_TOOL_NAME,
-                "Get the GraphQL schema. Operations on this schema can be executed using the `execute` tool.",
+                if execute_introspection && enable_explorer {
+                    "Get the GraphQL schema. Operations on this schema can be executed using the `execute` tool or used with the explorer tool."
+                } else if execute_introspection {
+                    "Get the GraphQL schema. Operations on this schema can be executed using the `execute` tool."
+                } else if enable_explorer {
+                    "Get the GraphQL schema. Operations on this schema can be used with the explorer tool."
+                } else {
+                    "Get the GraphQL schema. Operations on this schema can be displayed to the user."
+                },
                 schema_from_type!(GetSchemaInput),
             ),
         }
