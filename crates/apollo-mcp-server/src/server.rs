@@ -22,7 +22,6 @@ use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
-use futures::{FutureExt, Stream, StreamExt, future, stream};
 pub use apollo_mcp_registry::uplink::UplinkConfig;
 use apollo_mcp_registry::uplink::event::Event;
 pub use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
@@ -31,6 +30,7 @@ use apollo_mcp_registry::uplink::persisted_queries::{
 };
 pub use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::schema::SchemaState;
+use futures::{FutureExt, Stream, StreamExt, future, stream};
 pub use rmcp::ServiceExt;
 pub use rmcp::transport::SseServer;
 pub use rmcp::transport::sse_server::SseServerConfig;

@@ -1,7 +1,4 @@
 use anyhow::bail;
-use clap::Parser;
-use clap::builder::Styles;
-use clap::builder::styling::{AnsiColor, Effects};
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
@@ -11,6 +8,9 @@ use apollo_mcp_server::operations::MutationMode;
 use apollo_mcp_server::operations::OperationSource;
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
+use clap::Parser;
+use clap::builder::Styles;
+use clap::builder::styling::{AnsiColor, Effects};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::env;
 use std::path::PathBuf;
