@@ -11,8 +11,9 @@
   zig,
 }: let
   graphqlFilter = path: _type: builtins.match ".*graphql$" path != null;
+  testFilter = path: _type: builtins.match ".*snap$" path != null;
   srcFilter = path: type:
-    (graphqlFilter path type) || (craneLib.filterCargoSources path type);
+    (graphqlFilter path type) || (testFilter path type) || (craneLib.filterCargoSources path type);
 
   # Crane options
   src = pkgs.lib.cleanSourceWith {
