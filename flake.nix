@@ -51,7 +51,7 @@
       craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
       craneCommonArgs = {
         inherit src;
-        pname = "mcp-apollo";
+        pname = "apollo-mcp";
         strictDeps = true;
 
         nativeBuildInputs = with pkgs; [pkg-config];
@@ -131,11 +131,11 @@
       };
 
       packages = rec {
-        default = mcp-apollo-server;
-        mcp-apollo-server = craneLib.buildPackage (craneCommonArgs
+        default = apollo-mcp-server;
+        apollo-mcp-server = craneLib.buildPackage (craneCommonArgs
           // {
-            pname = "mcp-apollo-server";
-            cargoExtraArgs = "-p mcp-apollo-server";
+            pname = "apollo-mcp-server";
+            cargoExtraArgs = "-p apollo-mcp-server";
           });
 
         # CI related packages
@@ -150,7 +150,7 @@
         # format, so we need to drop out to date to do so.
         commitDate = pkgs.lib.readFile "${pkgs.runCommand "git-timestamp" {env.when = self.lastModified;} "echo -n `date -d @$when --iso-8601=seconds` > $out"}";
         builder = pkgs.dockerTools.streamLayeredImage {
-          name = "mcp-apollo";
+          name = "apollo-mcp";
           tag = "latest";
 
           # Use the latest commit time for reproducible builds
@@ -158,12 +158,12 @@
           mtime = commitDate;
 
           contents = [
-            packages.mcp-apollo-server
+            packages.apollo-mcp-server
           ];
 
           config = {
             # Make the entrypoint the server
-            Entrypoint = ["mcp-apollo-server" "-d" "/data"];
+            Entrypoint = ["apollo-mcp-server" "-d" "/data"];
 
             # Drop to local user
             User = "1000";
@@ -174,7 +174,7 @@
         streamImage = {
           type = "app";
           program = "${builder}";
-          meta.description = "Builds the mcp-apollo-server container and streams the image to stdout.";
+          meta.description = "Builds the apollo-mcp-server container and streams the image to stdout.";
         };
       };
     });

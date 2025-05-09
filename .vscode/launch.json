@@ -9,7 +9,7 @@
             "runtimeArgs": [
                 "run",
                 "--bin",
-                "mcp-apollo-server",
+                "apollo-mcp-server",
                 "--",
                 "-i",
                 "--directory",
@@ -37,11 +37,11 @@
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=mcp-apollo-server",
+                    "--bin=apollo-mcp-server",
                     "--lib"
                 ],
                 "filter": {
-                    "name": "mcp-apollo-server",
+                    "name": "apollo-mcp-server",
                     "kind": "bin"
                 }
             },

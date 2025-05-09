@@ -29,7 +29,7 @@ You can run the MCP inspector with the stdio transport as follows:
 
 ```sh
 npx @modelcontextprotocol/inspector \
-  target/debug/mcp-apollo-server \
+  target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   -s graphql/weather/api.graphql \
   -o graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
@@ -42,7 +42,7 @@ Press "Connect" in the MCP Inspector and "List Tools" to see the list of availab
 To use the SSE transport with MCP Inspector, first start the MCP server in SEE mode:
 
 ```sh
-target/debug/mcp-apollo-server \
+target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   --sse-port 5000 -s graphql/weather/api.graphql \
   -o graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
@@ -78,7 +78,7 @@ To use the stdio transport, add the following to the MCP configuration file for 
 {
   "mcpServers": {
     "weather": {
-        "command": "<absolute path to repo>/target/debug/mcp-apollo-server",
+        "command": "<absolute path to repo>/target/debug/apollo-mcp-server",
         "args": [
             "--directory",
             "<absolute path to repo>",
@@ -145,7 +145,7 @@ persisted query manifest file through the use of the `--manifest` flag.
 An example is included in `graphql/weather/persisted_queries`.
 
 ```sh
-target/debug/mcp-apollo-server \
+target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   -s graphql/weather/api.graphql \
   --header "apollographql-client-name:my-web-app" \
@@ -171,7 +171,7 @@ a contract variant of your graph, with a PQ list associated with that variant. T
 persisted queries are available to the MCP server.
 
 ```sh
-target/debug/mcp-apollo-server \
+target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   -s graphql/weather/api.graphql \
   --header "apollographql-client-name:my-web-app" \
@@ -186,7 +186,7 @@ You can easily run the server with your own GraphQL schema and operations. For e
 {
   "mcpServers": {
     "<name for your server>": {
-        "command": "<absolute path to repo>/target/debug/mcp-apollo-server",
+        "command": "<absolute path to repo>/target/debug/apollo-mcp-server",
         "args": [
             "--directory",
             "<absolute path to the directory containing your schema and operations file>",
@@ -234,10 +234,10 @@ example below uses the provided weather example for reference
 ```sh
 docker run \
   -it --rm \
-  --name mcp-apollo-server \
+  --name apollo-mcp-server \
   -p 5000:5000 \
   -v $PWD/graphql/weather:/data \
-  ghcr.io/apollographql/mcp-apollo:latest \
+  ghcr.io/apollographql/apollo-mcp:latest \
   --sse-port 5000 \
   -s api.graphql \
   # Other MCP server options...

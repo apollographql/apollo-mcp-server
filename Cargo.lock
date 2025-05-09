@@ -168,6 +168,62 @@ dependencies = [
 ]
 
 [[package]]
+name = "apollo-mcp-registry"
+version = "0.1.0"
+dependencies = [
+ "derivative",
+ "derive_more 2.0.1",
+ "futures",
+ "graphql_client",
+ "insta",
+ "notify",
+ "parking_lot",
+ "reqwest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "test-log",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "tower",
+ "tracing",
+ "tracing-core",
+ "tracing-futures",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "wiremock",
+]
+
+[[package]]
+name = "apollo-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apollo-compiler",
+ "apollo-federation",
+ "apollo-mcp-registry",
+ "buildstructor",
+ "clap",
+ "derive-new",
+ "futures",
+ "insta",
+ "lz-str",
+ "regex",
+ "reqwest",
+ "rmcp",
+ "rstest",
+ "serde",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "webbrowser",
+]
+
+[[package]]
 name = "apollo-parser"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1553,62 +1609,6 @@ name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
-
-[[package]]
-name = "mcp-apollo-registry"
-version = "0.1.0"
-dependencies = [
- "derivative",
- "derive_more 2.0.1",
- "futures",
- "graphql_client",
- "insta",
- "notify",
- "parking_lot",
- "reqwest",
- "secrecy",
- "serde",
- "serde_json",
- "test-log",
- "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
- "tower",
- "tracing",
- "tracing-core",
- "tracing-futures",
- "tracing-subscriber",
- "url",
- "uuid",
- "wiremock",
-]
-
-[[package]]
-name = "mcp-apollo-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "apollo-compiler",
- "apollo-federation",
- "buildstructor",
- "clap",
- "derive-new",
- "futures",
- "insta",
- "lz-str",
- "mcp-apollo-registry",
- "regex",
- "reqwest",
- "rmcp",
- "rstest",
- "serde",
- "thiserror 2.0.12",
- "tokio",
- "tokio-util",
- "tracing",
- "tracing-subscriber",
- "webbrowser",
-]
 
 [[package]]
 name = "memchr"

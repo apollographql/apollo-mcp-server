@@ -1,5 +1,5 @@
 ---
-source: crates/mcp-apollo-registry/src/uplink/schema.rs
+source: crates/apollo-mcp-registry/src/uplink/schema.rs
 expression: yaml
 ---
 - fields:
