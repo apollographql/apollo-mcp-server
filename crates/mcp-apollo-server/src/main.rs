@@ -80,6 +80,14 @@ struct Args {
     // Configure when to allow mutations
     #[clap(long, short = 'm', default_value_t, value_enum)]
     allow_mutations: MutationMode,
+
+    /// Disable operation root field types in tool description
+    #[arg(long)]
+    disable_type_description: bool,
+
+    /// Disable schema type definitions referenced by all fields returned by the operation in the tool description
+    #[arg(long)]
+    disable_schema_description: bool,
 }
 
 #[tokio::main]
@@ -141,6 +149,8 @@ async fn main() -> anyhow::Result<()> {
         .headers(default_headers)
         .introspection(args.introspection)
         .mutation_mode(args.allow_mutations)
+        .disable_type_description(args.disable_type_description)
+        .disable_schema_description(args.disable_schema_description)
         .and_custom_scalar_map(
             args.custom_scalars_config
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))

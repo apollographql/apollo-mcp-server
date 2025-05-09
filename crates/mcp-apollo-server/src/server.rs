@@ -48,6 +48,8 @@ pub struct Server {
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 #[derive(Clone)]
@@ -72,6 +74,8 @@ impl Server {
         explorer: bool,
         custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
+        disable_type_description: bool,
+        disable_schema_description: bool,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -88,6 +92,8 @@ impl Server {
             explorer,
             custom_scalar_map,
             mutation_mode,
+            disable_type_description,
+            disable_schema_description,
         }
     }
 
@@ -134,6 +140,8 @@ struct Starting {
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 impl Starting {
@@ -161,7 +169,13 @@ impl Starting {
             OperationSource::None => (OperationPoller::None, None),
         };
         let operations = operation_poller
-            .operations(&schema, self.custom_scalar_map.as_ref(), self.mutation_mode)
+            .operations(
+                &schema,
+                self.custom_scalar_map.as_ref(),
+                self.mutation_mode,
+                self.disable_type_description,
+                self.disable_schema_description,
+            )
             .await?;
 
         let schema = Arc::new(Mutex::new(schema));
@@ -189,6 +203,8 @@ impl Starting {
             peers,
             cancellation_token: cancellation_token.clone(),
             mutation_mode: self.mutation_mode,
+            disable_type_description: self.disable_type_description,
+            disable_schema_description: self.disable_schema_description,
         };
 
         if let Some(change_receiver) = change_receiver {
@@ -233,6 +249,8 @@ struct Running {
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
     cancellation_token: CancellationToken,
     mutation_mode: MutationMode,
+    disable_type_description: bool,
+    disable_schema_description: bool,
 }
 
 impl Running {
@@ -244,7 +262,13 @@ impl Running {
         // input schemas and description are derived from the schema.
         let operations = self
             .operation_poller
-            .operations(&schema, self.custom_scalar_map.as_ref(), self.mutation_mode)
+            .operations(
+                &schema,
+                self.custom_scalar_map.as_ref(),
+                self.mutation_mode,
+                self.disable_type_description,
+                self.disable_schema_description,
+            )
             .await?;
         info!(
             "Updated {} operations:\n{}",
@@ -302,6 +326,8 @@ impl Running {
         let custom_scalars = self.custom_scalar_map.clone();
         let schema = self.schema.clone();
         let mutation_mode = self.mutation_mode;
+        let disable_type_description = self.disable_type_description;
+        let disable_schema_description = self.disable_schema_description;
         tokio::spawn(async move {
             while change_receiver.recv().await.is_some() {
                 match operation_poller
@@ -309,6 +335,8 @@ impl Running {
                         &*schema.lock().await,
                         custom_scalars.as_ref(),
                         mutation_mode,
+                        disable_type_description,
+                        disable_schema_description,
                     )
                     .await
                 {
@@ -348,6 +376,8 @@ impl StateMachine {
             explorer: server.explorer,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,
+            disable_type_description: server.disable_type_description,
+            disable_schema_description: server.disable_schema_description,
         });
         while let Some(event) = stream.next().await {
             state = match event {
