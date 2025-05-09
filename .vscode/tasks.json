@@ -1,0 +1,13 @@
+{
+    "version": "2.0.0",
+    "tasks": [{
+        "label": "Generate Apollo Manifest",
+        "command": "npx",
+        "args": ["@apollo/generate-persisted-query-manifest","generate-persisted-query-manifest","--config","persisted_queries.config.json"],
+        "type": "shell",
+        "problemMatcher": [],
+        "options": {
+            "cwd": "${workspaceFolder}/graphql/TheSpaceDevs"
+        }
+    }]
+}

@@ -1,0 +1,25 @@
+# You don't have to provide a query search input
+query GetAstronautsCurrentlyInSpace ($query: String!) {
+  astronauts(filters: { inSpace: true, search: $query }) {
+    results {
+      id
+      name
+      timeInSpace
+      lastFlight
+      agency {
+        name
+        abbrev
+        country {
+          name
+        }
+      }
+      nationality {
+        name
+        nationalityName
+      }
+      image {
+        thumbnail
+      }
+    }
+  }
+}

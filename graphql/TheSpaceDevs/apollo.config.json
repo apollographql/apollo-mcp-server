@@ -1,0 +1,9 @@
+{
+  "client": {
+    "includes": ["./operations/**/*.graphql"],
+    "service": {
+      "name": "TheSpaceDevs",
+      "localSchemaFile": "./api.graphql"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "documents": [
+    "operations/**/*.{graphql,gql,js,jsx,ts,tsx}"
+  ],
+  "output": "persisted_queries/apollo.json"
+}

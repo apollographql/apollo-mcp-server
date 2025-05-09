@@ -1,0 +1,29 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Generate Apollo Manifest",
+      "command": "npx",
+      "args": [
+        "@apollo/generate-persisted-query-manifest",
+        "generate-persisted-query-manifest",
+        "--config",
+        "persisted_queries.config.json"
+      ],
+      "type": "shell",
+      "problemMatcher": []
+    },
+    {
+        "label": "Run rover dev",
+        "command": "rover",
+        "args": [
+          "dev",
+          "--supergraph-config",
+          "supergraph.yaml",
+          "--mcp"
+        ],
+        "type": "shell",
+        "problemMatcher": []
+      }
+  ]
+}
