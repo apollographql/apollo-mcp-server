@@ -671,7 +671,7 @@ fn retain_type(
                                     named_fragments,
                                     schema,
                                     max_depth,
-                                    current_depth + 1,
+                                    current_depth,
                                 );
                             })
                         }
@@ -684,7 +684,7 @@ fn retain_type(
                                     named_fragments,
                                     schema,
                                     max_depth,
-                                    current_depth + 1,
+                                    current_depth,
                                 );
                             })
                         }
@@ -775,7 +775,7 @@ fn retain_type(
                                     named_fragments,
                                     schema,
                                     max_depth,
-                                    current_depth + 1,
+                                    current_depth,
                                 );
                             })
                         }
@@ -788,7 +788,7 @@ fn retain_type(
                                     named_fragments,
                                     schema,
                                     max_depth,
-                                    current_depth + 1,
+                                    current_depth,
                                 );
                             })
                         }
@@ -853,7 +853,7 @@ fn retain_type(
                     named_fragments,
                     schema,
                     max_depth,
-                    current_depth + 1,
+                    current_depth,
                 );
             })
         }),
@@ -886,7 +886,7 @@ fn retain_type(
                             named_fragments,
                             schema,
                             max_depth,
-                            current_depth + 1,
+                            current_depth,
                         )
                     });
                 });
