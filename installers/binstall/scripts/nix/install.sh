@@ -17,7 +17,7 @@ BINARY_DOWNLOAD_PREFIX="${APOLLO_MCP_SERVER_BINARY_DOWNLOAD_PREFIX:="https://git
 
 # Apollo MCP Server version defined in apollo-mcp-server's Cargo.toml
 # Note: Change this line manually during the release steps.
-PACKAGE_VERSION="v0.0.1"
+PACKAGE_VERSION="v0.1.0-rc.0"
 
 download_binary_and_run_installer() {
     downloader --check
@@ -59,7 +59,7 @@ download_binary_and_run_installer() {
     local _url="$BINARY_DOWNLOAD_PREFIX/$DOWNLOAD_VERSION/${_tardir}.tar.gz"
     local _dir="$(mktemp -d 2>/dev/null || ensure mktemp -d -t apollo-mcp-server)"
     local _file="$_dir/input.tar.gz"
-    local _apollo_mcp_server="$_dir/apollo_mcp_server$_ext"
+    local _apollo_mcp_server="$_dir/apollo-mcp-server$_ext"
     local _safe_url
 
     # Remove credentials from the URL for logging
@@ -84,8 +84,7 @@ download_binary_and_run_installer() {
     say "Moving $_apollo_mcp_server to $outfile ..."
     mv "$_apollo_mcp_server" "$outfile"
 
-    _version="$($outfile --version)"
-    _retval=$?
+    local _retval=$?
 
     say ""
     say "You can now run the Apollo MCP Server using '$outfile'"
