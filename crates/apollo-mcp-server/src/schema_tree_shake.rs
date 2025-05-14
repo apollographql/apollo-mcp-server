@@ -149,12 +149,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
 
         if let Some(operation_type_extended_type) = self.schema.types.get(operation_type_name) {
             retain_type(
+                self,
                 operation_type_extended_type,
                 selection_set,
-                &mut self.named_type_nodes,
-                &mut self.directive_nodes,
-                &self.named_fragments,
-                self.schema,
                 depth_limit,
             );
         } else {
@@ -164,15 +161,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
 
     /// Retain a specific type, and recursively every type it references, up to a given depth.
     pub fn retain_type(&mut self, retain: &ExtendedType, depth_limit: DepthLimit) {
-        retain_type(
-            retain,
-            None,
-            &mut self.named_type_nodes,
-            &mut self.directive_nodes,
-            &self.named_fragments,
-            self.schema,
-            depth_limit,
-        );
+        retain_type(self, retain, None, depth_limit);
     }
 
     pub fn retain_operation(
@@ -537,12 +526,9 @@ fn selection_set_to_fields(
 }
 
 fn retain_type(
+    tree_shaker: &mut SchemaTreeShaker,
     extended_type: &ExtendedType,
     selection_set: Option<&Vec<Selection>>,
-    named_type_nodes: &mut HashMap<String, TreeTypeNode>,
-    directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
-    named_fragments: &HashMap<String, Node<FragmentDefinition>>,
-    schema: &Schema,
     depth_limit: DepthLimit,
 ) {
     // Check if we've exceeded the depth limit
@@ -554,7 +540,7 @@ fn retain_type(
     let selected_fields = if let Some(selection_set) = selection_set {
         let selected_fields = selection_set
             .iter()
-            .flat_map(|s| selection_set_to_fields(s, named_fragments))
+            .flat_map(|s| selection_set_to_fields(s, &tree_shaker.named_fragments))
             .collect::<Vec<_>>();
 
         Some(selected_fields)
@@ -562,7 +548,7 @@ fn retain_type(
         None
     };
 
-    if let Some(tree_node) = named_type_nodes.get_mut(type_name) {
+    if let Some(tree_node) = tree_shaker.named_type_nodes.get_mut(type_name) {
         tree_node.retain = true;
         if let Some(selected_fields) = selected_fields.as_ref() {
             let additional_fields = selected_fields
@@ -580,16 +566,10 @@ fn retain_type(
         }
     }
 
-    extended_type.directives().iter().for_each(|t| {
-        retain_directive(
-            t.name.as_str(),
-            named_type_nodes,
-            directive_nodes,
-            named_fragments,
-            schema,
-            depth_limit,
-        )
-    });
+    extended_type
+        .directives()
+        .iter()
+        .for_each(|t| retain_directive(tree_shaker, t.name.as_str(), depth_limit));
 
     match extended_type {
         ExtendedType::Object(def) => {
@@ -626,14 +606,13 @@ fn retain_type(
                     )| {
                         if let Some(field_type) = field_definition {
                             let field_type_name = field_type.ty.inner_named_type();
-                            if let Some(field_type_def) = schema.types.get(field_type_name) {
+                            if let Some(field_type_def) =
+                                tree_shaker.schema.types.get(field_type_name)
+                            {
                                 retain_type(
+                                    tree_shaker,
                                     field_type_def,
                                     field_selection_set,
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
                                     depth_limit.decrement(),
                                 );
                             } else {
@@ -642,14 +621,12 @@ fn retain_type(
 
                             field_type.arguments.iter().for_each(|arg| {
                                 let arg_type_name = arg.ty.inner_named_type();
-                                if let Some(arg_type) = schema.types.get(arg_type_name) {
+                                if let Some(arg_type) = tree_shaker.schema.types.get(arg_type_name)
+                                {
                                     retain_type(
+                                        tree_shaker,
                                         arg_type,
                                         None,
-                                        named_type_nodes,
-                                        directive_nodes,
-                                        named_fragments,
-                                        schema,
                                         depth_limit.decrement(),
                                     );
                                 } else {
@@ -667,26 +644,12 @@ fn retain_type(
                             field_definition.map(|f| f.directives.clone())
                         {
                             field_definition_directives.iter().for_each(|directive| {
-                                retain_directive(
-                                    directive.name.as_str(),
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
-                                    depth_limit,
-                                );
+                                retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
                         if let Some(field_selection_directives) = field_selection_directives {
                             field_selection_directives.iter().for_each(|directive| {
-                                retain_directive(
-                                    directive.name.as_str(),
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
-                                    depth_limit,
-                                );
+                                retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
                     },
@@ -726,14 +689,13 @@ fn retain_type(
                     )| {
                         if let Some(field_type) = field_definition {
                             let field_type_name = field_type.ty.inner_named_type();
-                            if let Some(field_type_def) = schema.types.get(field_type_name) {
+                            if let Some(field_type_def) =
+                                tree_shaker.schema.types.get(field_type_name)
+                            {
                                 retain_type(
+                                    tree_shaker,
                                     field_type_def,
                                     field_selection_set,
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
                                     depth_limit.decrement(),
                                 );
                             } else {
@@ -742,14 +704,12 @@ fn retain_type(
 
                             field_type.arguments.iter().for_each(|arg| {
                                 let arg_type_name = arg.ty.inner_named_type();
-                                if let Some(arg_type) = schema.types.get(arg_type_name) {
+                                if let Some(arg_type) = tree_shaker.schema.types.get(arg_type_name)
+                                {
                                     retain_type(
+                                        tree_shaker,
                                         arg_type,
                                         None,
-                                        named_type_nodes,
-                                        directive_nodes,
-                                        named_fragments,
-                                        schema,
                                         depth_limit.decrement(),
                                     );
                                 } else {
@@ -767,33 +727,19 @@ fn retain_type(
                             field_definition.map(|f| f.directives.clone())
                         {
                             field_definition_directives.iter().for_each(|directive| {
-                                retain_directive(
-                                    directive.name.as_str(),
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
-                                    depth_limit,
-                                );
+                                retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
                         if let Some(field_selection_directives) = field_selection_directives {
                             field_selection_directives.iter().for_each(|directive| {
-                                retain_directive(
-                                    directive.name.as_str(),
-                                    named_type_nodes,
-                                    directive_nodes,
-                                    named_fragments,
-                                    schema,
-                                    depth_limit,
-                                );
+                                retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
                     },
                 );
         }
         ExtendedType::Union(union_def) => union_def.members.iter().for_each(|member| {
-            if let Some(member_type) = schema.types.get(member.as_str()) {
+            if let Some(member_type) = tree_shaker.schema.types.get(member.as_str()) {
                 let member_selection_set = selection_set
                     .map(|selection_set| {
                         selection_set
@@ -802,8 +748,9 @@ fn retain_type(
                             .filter(|selection| match selection {
                                 Selection::Field(_) => true,
                                 Selection::FragmentSpread(fragment) => {
-                                    if let Some(fragment_def) =
-                                        named_fragments.get(fragment.fragment_name.as_str())
+                                    if let Some(fragment_def) = &tree_shaker
+                                        .named_fragments
+                                        .get(fragment.fragment_name.as_str())
                                     {
                                         fragment_def.type_condition == member.as_str()
                                     } else {
@@ -827,12 +774,9 @@ fn retain_type(
 
                 if selection_set.is_none() || member_selection_set.is_some() {
                     retain_type(
+                        tree_shaker,
                         member_type,
                         member_selection_set.as_ref(),
-                        named_type_nodes,
-                        directive_nodes,
-                        named_fragments,
-                        schema,
                         depth_limit.decrement(),
                     );
                 }
@@ -842,14 +786,7 @@ fn retain_type(
         }),
         ExtendedType::Enum(def) => def.values.iter().for_each(|(_name, value)| {
             value.directives.iter().for_each(|directive| {
-                retain_directive(
-                    directive.name.as_str(),
-                    named_type_nodes,
-                    directive_nodes,
-                    named_fragments,
-                    schema,
-                    depth_limit,
-                );
+                retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
             })
         }),
         ExtendedType::Scalar(_) => {}
@@ -859,28 +796,13 @@ fn retain_type(
                 .iter()
                 .for_each(|(_name, field_definition)| {
                     let field_type_name = field_definition.ty.inner_named_type();
-                    if let Some(field_type_def) = schema.types.get(field_type_name) {
-                        retain_type(
-                            field_type_def,
-                            None,
-                            named_type_nodes,
-                            directive_nodes,
-                            named_fragments,
-                            schema,
-                            depth_limit.decrement(),
-                        );
+                    if let Some(field_type_def) = tree_shaker.schema.types.get(field_type_name) {
+                        retain_type(tree_shaker, field_type_def, None, depth_limit.decrement());
                     } else {
                         tracing::error!("field type {} not found", field_type_name);
                     }
                     field_definition.directives.iter().for_each(|directive| {
-                        retain_directive(
-                            directive.name.as_str(),
-                            named_type_nodes,
-                            directive_nodes,
-                            named_fragments,
-                            schema,
-                            depth_limit,
-                        )
+                        retain_directive(tree_shaker, directive.name.as_str(), depth_limit)
                     });
                 });
         }
@@ -888,26 +810,15 @@ fn retain_type(
 }
 
 fn retain_directive(
+    tree_shaker: &mut SchemaTreeShaker,
     directive_name: &str,
-    named_type_nodes: &mut HashMap<String, TreeTypeNode>,
-    directive_nodes: &mut HashMap<String, TreeDirectiveNode>,
-    named_fragments: &HashMap<String, Node<FragmentDefinition>>,
-    schema: &Schema,
     depth_limit: DepthLimit,
 ) {
-    if let Some(tree_directive_node) = directive_nodes.get_mut(directive_name) {
+    if let Some(tree_directive_node) = tree_shaker.directive_nodes.get_mut(directive_name) {
         tree_directive_node.retain = true;
         tree_directive_node.node.arguments.iter().for_each(|arg| {
-            if let Some(arg_type) = schema.types.get(arg.name.as_str()) {
-                retain_type(
-                    arg_type,
-                    None,
-                    named_type_nodes,
-                    directive_nodes,
-                    named_fragments,
-                    schema,
-                    depth_limit.decrement(),
-                )
+            if let Some(arg_type) = tree_shaker.schema.types.get(arg.name.as_str()) {
+                retain_type(tree_shaker, arg_type, None, depth_limit.decrement())
             } else {
                 tracing::error!("argument type {} not found", arg.name);
             }
