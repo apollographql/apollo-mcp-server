@@ -316,15 +316,11 @@ impl Operation {
                                                 field_definition.node.clone()
                                             });
 
-                                        let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
-                                        tree_shaker.retain_operation(
-                                            operation_def,
-                                            document,
-                                            DepthLimit::Unlimited,
-                                        );
-                                        let shaken_schema = tree_shaker
-                                            .shaken()
-                                            .unwrap_or_else(|schema| schema.partial);
+                                        // Add the root field description to the tool description
+                                        let field_description = field_definition
+                                            .clone()
+                                            .and_then(|field| field.description.clone())
+                                            .map(|node| node.to_string());
 
                                         // Add information about the return type
                                         let ty = field_definition.map(|field| field.ty.clone());
@@ -347,16 +343,16 @@ impl Operation {
                         })
                         .collect::<Vec<String>>()
                         .join("\n---\n");
+
+                    // Add the tree-shaken types to the end of the tool description
+
                     lines.push(descriptions);
                 }
-
                 if !disable_schema_description {
                     let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
-                    tree_shaker.retain_operation(operation_def, document);
-                    let shaken_schema = match tree_shaker.shaken() {
-                        Ok(schema) => schema,
-                        Err(schema) => schema.partial,
-                    };
+                    tree_shaker.retain_operation(operation_def, document, DepthLimit::Unlimited);
+                    let shaken_schema =
+                        tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
                     let mut types = shaken_schema
                         .types
@@ -387,7 +383,6 @@ impl Operation {
                         lines.push(ty.1.serialize().to_string());
                     }
                 }
-
                 lines.join("\n")
             }
         }
