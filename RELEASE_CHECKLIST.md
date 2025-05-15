@@ -10,7 +10,7 @@ This document outlines the steps required to prepare and execute a new release o
 - [ ] Ensure any new command line arguments have an equivalent in `rover dev`, or there is an open task to add them
 - [ ] Update the version number in [Cargo.toml](./Cargo.toml)
 - [ ] Update the version number in [the *nix install script](./scripts/nix/install.sh)
-- [ ] Update the version number in [the Windows install script](./scripts/nix/install.sh)
+- [ ] Update the version number in [the Windows install script](./scripts/windows/install.ps1)
 - [ ] Create a PR with these changes and get it approved and merged
 - [ ] Check out `main` and `git pull` to pick up your merged changes
 - [ ] Sync your tags with the repo: `git tag -d $(git tag) && git fetch --tags`
