@@ -29,6 +29,10 @@ function Install-Binary($apollo_mcp_server_install_args) {
 
   $exe = Download($download_version)
 
+  Move-Item -Path $exe -Destination .
+
+  Write-Host "Run `".\apollo-mcp-server.exe`" to start the server"
+
   $ErrorActionPreference = $old_erroractionpreference
 }
 
@@ -48,7 +52,7 @@ function Download($version) {
   $wc = New-Object Net.Webclient
   $wc.downloadFile($url, $dir_path)
   tar -xkf $dir_path -C "$tmp"
-  return "$tmp\dist\apollo_mcp_server.exe"
+  return "$tmp\dist\apollo-mcp-server.exe"
 }
 
 function Initialize-Environment() {
