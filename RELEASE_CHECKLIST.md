@@ -5,6 +5,9 @@ This document outlines the steps required to prepare and execute a new release o
 ## Release Process
 
 - [ ] Update the [change log](./CHANGELOG.md) following the example format in the comment at the top of the file
+- [ ] Ensure [docs](./docs/source/) are up to date with all changes
+- [ ] Add any new command line arguments to [the command reference doc page](./docs/source/command-reference.mdx)
+- [ ] Ensure any new command line arguments have an equivalent in `rover dev`, or there is an open task to add them
 - [ ] Update the version number in [Cargo.toml](./Cargo.toml)
 - [ ] Update the version number in [the *nix install script](./scripts/nix/install.sh)
 - [ ] Update the version number in [the Windows install script](./scripts/nix/install.sh)
