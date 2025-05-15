@@ -8,9 +8,6 @@
 # Installs the latest version of the Apollo MCP Server.
 # Specify a specific version to install with the $VERSION variable.
 
-# Example to bypass binary overwrite [y/N] prompt
-# curl -sSL https://mcp.apollo.dev/nix/latest | sh -s -- --force
-
 set -u
 
 BINARY_DOWNLOAD_PREFIX="${APOLLO_MCP_SERVER_BINARY_DOWNLOAD_PREFIX:="https://github.com/apollographql/apollo-mcp-server/releases/download"}"
