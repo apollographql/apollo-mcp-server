@@ -182,8 +182,20 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          make_latest: false # this runs for each combination in the matrix - don't mark as latest until all are done
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: "artifacts/*"
+
+  publish:
+    name: Publish the release
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make latest
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-rc.') }}
