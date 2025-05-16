@@ -64,7 +64,7 @@ jobs:
       - id: deploy
         name: Tag and push the container
         env:
-          TAG: $VERSION-${{ steps.build.outputs.arch }}
+          TAG: ${{ env.VERSION }}-${{ steps.build.outputs.arch }}
         run: |
           docker image tag "${{ steps.build.outputs.id }}" "$FQDN:$TAG"
           docker image push "$FQDN:$TAG"
