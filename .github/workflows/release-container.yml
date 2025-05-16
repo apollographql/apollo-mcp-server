@@ -53,7 +53,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - id: builder
+      - id: build
         name: Build Container
         shell: bash
         run: |
@@ -61,12 +61,12 @@ jobs:
           echo "id=`docker image ls -q | head -n1`" >> $GITHUB_OUTPUT
           echo "arch=`docker image ls --format '{{ .Tag }}' | head -n1`" >> $GITHUB_OUTPUT
 
-      - id: builder
+      - id: deploy
         name: Tag and push the container
         env:
-          TAG: $VERSION-${{ steps.builder.outputs.arch }}
+          TAG: $VERSION-${{ steps.build.outputs.arch }}
         run: |
-          docker image tag "${{ steps.builder.outputs.id }}" "$FQDN:$TAG"
+          docker image tag "${{ steps.build.outputs.id }}" "$FQDN:$TAG"
           docker image push "$FQDN:$TAG"
           echo "digest=`docker manifest inspect $FQDN:$TAG --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
 
@@ -74,7 +74,7 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-name: $FQDN
-          subject-digest: ${{ steps.builder.outputs.digest }}
+          subject-digest: ${{ steps.deploy.outputs.digest }}
           push-to-registry: true
 
   bundle:
