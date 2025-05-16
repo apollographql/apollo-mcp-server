@@ -7,7 +7,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  FQDN: ghcr.io/${{ github.repository }}
+  VERSION: ${{ github.ref_name }}
 
 jobs:
   # Build a container for x86_64 and aarch64 linux
@@ -22,20 +23,10 @@ jobs:
       packages: write
       attestations: write
       id-token: write
-    outputs:
-      fqdn: ${{ steps.repo-meta.outputs.fqdn }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
-
-      # Extract needed info for use with the other steps
-      - id: repo-meta
-        name: Extract Metadata
-        shell: bash
-        run: |
-          echo "fqdn=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
-          echo "name=`basename ${{ github.repository }}`" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@v30
         with:
@@ -64,39 +55,26 @@ jobs:
           echo "id=`docker image ls -q | head -n1`" >> $GITHUB_OUTPUT
           echo "arch=`docker image ls --format '{{ .Tag }}' | head -n1`" >> $GITHUB_OUTPUT
 
-      - name: Tag the Container
+      - id: builder
+        name: Tag and push the container
         env:
-          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
+          TAG: $VERSION-${{ steps.builder.outputs.arch }}
         run: |
-          docker image tag "${{ steps.builder.outputs.id }}" \
-            "${{ steps.repo-meta.outputs.fqdn }}:$TAG"
-
-      - name: Push the Container
-        env:
-          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
-        run: docker image push "${{ steps.repo-meta.outputs.fqdn }}:$TAG"
-
-      - id: digest-meta
-        name: Extract the digest
-        shell: bash
-        env:
-          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
-        run: echo "digest=`docker manifest inspect ${{ steps.repo-meta.outputs.fqdn }}:$TAG --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
+          docker image tag "${{ steps.builder.outputs.id }}" "$FQDN:$TAG"
+          docker image push "$FQDN:$TAG"
+          echo "digest=`docker manifest inspect $FQDN:$TAG --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ steps.repo-meta.outputs.fqdn }}
-          subject-digest: ${{ steps.digest-meta.outputs.digest }}
+          subject-name: $FQDN
+          subject-digest: ${{ steps.builder.outputs.digest }}
           push-to-registry: true
 
   bundle:
     name: Bundle into multiarch container
     needs: build
     runs-on: ubuntu-24.04
-    env:
-      FQDN: ${{ needs.build.outputs.fqdn }}
-      VERSION: ${{ github.ref_name }}
     steps:
       - name: Log in to the Container registry
         uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
