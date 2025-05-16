@@ -4,11 +4,17 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
   FQDN: ghcr.io/${{ github.repository }}
-  VERSION: ${{ github.ref_name }}
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   # Build a container for x86_64 and aarch64 linux
