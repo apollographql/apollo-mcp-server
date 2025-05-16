@@ -73,7 +73,7 @@ jobs:
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: $FQDN
+          subject-name: ${{ env.FQDN }}
           subject-digest: ${{ steps.deploy.outputs.digest }}
           push-to-registry: true
 
