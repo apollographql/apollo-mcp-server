@@ -11,7 +11,7 @@ env:
 
 jobs:
   # Build a container for x86_64 and aarch64 linux
-  container:
+  build:
     name: Release Container
     strategy:
       matrix:
@@ -22,6 +22,8 @@ jobs:
       packages: write
       attestations: write
       id-token: write
+    outputs:
+      fqdn: ${{ steps.repo-meta.outputs.fqdn }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,21 +56,32 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Container
-        run: nix run .#streamImage | docker image load
+      - id: builder
+        name: Build Container
+        shell: bash
+        run: |
+          nix run .#streamImage | docker image load
+          echo "id=`docker image ls -q | head -n1`" >> $GITHUB_OUTPUT
+          echo "arch=`docker image ls --format '{{ .Tag }}' | head -n1`" >> $GITHUB_OUTPUT
 
       - name: Tag the Container
+        env:
+          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
         run: |
-          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:latest"
-          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:${{ github.ref_name }}"
+          docker image tag "${{ steps.builder.outputs.id }}" \
+            "${{ steps.repo-meta.outputs.fqdn }}:$TAG"
 
       - name: Push the Container
-        run: docker image push --all-tags "${{ steps.repo-meta.outputs.fqdn }}"
+        env:
+          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
+        run: docker image push "${{ steps.repo-meta.outputs.fqdn }}:$TAG"
 
       - id: digest-meta
         name: Extract the digest
         shell: bash
-        run: echo "digest=`docker manifest inspect ${{ steps.repo-meta.outputs.fqdn }}:latest --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
+        env:
+          TAG: ${{ github.ref_name }}-${{ steps.builder.outputs.arch }}
+        run: echo "digest=`docker manifest inspect ${{ steps.repo-meta.outputs.fqdn }}:$TAG --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
@@ -76,3 +89,31 @@ jobs:
           subject-name: ${{ steps.repo-meta.outputs.fqdn }}
           subject-digest: ${{ steps.digest-meta.outputs.digest }}
           push-to-registry: true
+
+  bundle:
+    name: Bundle into multiarch container
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      FQDN: ${{ needs.build.outputs.fqdn }}
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multiarch manifest
+        run: |
+          docker manifest create $FQDN:$VERSION $FQDN:$VERSION-amd64 $FQDN:$VERSION-arm64
+          docker manifest annotate $FQDN:$VERSION $FQDN:$VERSION-amd64 --arch amd64
+          docker manifest annotate $FQDN:$VERSION $FQDN:$VERSION-arm64 --arch arm64
+
+          docker manifest create $FQDN:latest $FQDN:$VERSION-amd64 $FQDN:$VERSION-arm64
+          docker manifest annotate $FQDN:latest $FQDN:$VERSION-amd64 --arch amd64
+          docker manifest annotate $FQDN:latest $FQDN:$VERSION-arm64 --arch arm64
+      - name: Push the multiarch manifests
+        run: |
+          docker manifest push $FQDN:$VERSION
+          docker manifest push $FQDN:latest
