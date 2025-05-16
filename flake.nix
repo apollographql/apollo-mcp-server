@@ -139,9 +139,16 @@
         # Nix flakes don't yet expose a nice formatted timestamp in ISO-8601
         # format, so we need to drop out to date to do so.
         commitDate = pkgs.lib.readFile "${pkgs.runCommand "git-timestamp" {env.when = self.lastModified;} "echo -n `date -d @$when --iso-8601=seconds` > $out"}";
+
+        # The architecture follows the docker format, which is not what nix uses
+        archMapper = arch:
+          builtins.getAttr arch {
+            "aarch64" = "arm64";
+            "x86_64" = "amd64";
+          };
         builder = pkgs.dockerTools.streamLayeredImage {
           name = "apollo-mcp-server";
-          tag = "latest";
+          tag = archMapper pkgs.stdenv.hostPlatform.uname.processor;
 
           # Use the latest commit time for reproducible builds
           created = commitDate;
