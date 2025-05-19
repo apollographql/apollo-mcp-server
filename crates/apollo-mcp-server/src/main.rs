@@ -58,7 +58,7 @@ struct Args {
     #[arg(long)]
     sse_address: Option<IpAddr>,
 
-    /// Start the server using the SSE transport on the given port
+    /// Start the server using the SSE transport on the given port (default: 5000)
     #[arg(long)]
     sse_port: Option<u16>,
 
@@ -140,12 +140,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let transport = args
-        .sse_port
-        .map_or(Transport::Stdio, |port| Transport::SSE {
+    let transport = if args.sse_port.is_some() || args.sse_address.is_some() {
+        Transport::SSE {
             address: args.sse_address.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            port,
-        });
+            port: args.sse_port.unwrap_or(5000),
+        }
+    } else {
+        Transport::Stdio
+    };
 
     env::set_current_dir(args.directory)?;
     Ok(Server::builder()
