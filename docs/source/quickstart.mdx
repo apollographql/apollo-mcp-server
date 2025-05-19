@@ -55,12 +55,11 @@ You can run the Apollo MCP Server together with a graph in a local development e
 
     ```sh showLineNumbers=false
       rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
-      --mcp --sse-port 5000 \
+      --mcp \
       --mcp-operations ./graphql/TheSpaceDevs/operations/ExploreCelestialBodies.graphql ./graphql/TheSpaceDevs/operations/GetAstronautDetails.graphql ./graphql/TheSpaceDevs/operations/GetAstronautsCurrentlyInSpace.graphql ./graphql/TheSpaceDevs/operations/SearchUpcomingLaunches.graphql
     ``` 
 
     - `--mcp` starts an Apollo MCP Server
-    - `--sse-port` sets the port of the server's SSE transport 
     - `--mcp-operations` sets the list of operations
 
 1. Start MCP Inspector, then open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274):
@@ -71,7 +70,7 @@ You can run the Apollo MCP Server together with a graph in a local development e
 
 1. Fill in the details in Inspector:
     - **Transport Type**: Select `SSE`
-    - **URL**: Enter `http://localhost:5000/sse` (its port must match the `--mcp-port` of the server)
+    - **URL**: Enter `http://localhost:5000/sse` (5000 is the default port of the MCP server)
 
 1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
 
