@@ -159,9 +159,14 @@
             packages.apollo-mcp
           ];
 
-          config = {
+          config = let
+            sse-port = 5000;
+          in {
             # Make the entrypoint the server
-            Entrypoint = ["apollo-mcp-server" "-d" "/data"];
+            Entrypoint = ["apollo-mcp-server" "-d" "/data" "--sse-port" "${builtins.toString sse-port}"];
+
+            # Listen on container port for SSE requests
+            Expose = "${builtins.toString sse-port}/tcp";
 
             # Drop to local user
             User = "1000";
