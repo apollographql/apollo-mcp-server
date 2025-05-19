@@ -35,7 +35,7 @@ const STYLES: Styles = Styles::styled()
 struct Args {
     /// The working directory to use
     #[arg(long, short = 'd')]
-    directory: PathBuf,
+    directory: Option<PathBuf>,
 
     /// The path to the GraphQL API schema file
     #[arg(long, short = 's')]
@@ -139,7 +139,10 @@ async fn main() -> anyhow::Result<()> {
         .sse_port
         .map_or(Transport::Stdio, |port| Transport::SSE { port });
 
-    env::set_current_dir(args.directory)?;
+    if let Some(directory) = args.directory {
+        env::set_current_dir(directory)?;
+    }
+
     Ok(Server::builder()
         .transport(transport)
         .schema_source(schema_source)

@@ -12,8 +12,6 @@
                 "apollo-mcp-server",
                 "--",
                 "-i",
-                "--directory",
-                ".",
                 "--schema",
                 "graphql/weather/api.graphql",
                 "--manifest",
@@ -47,8 +45,6 @@
             },
             "args": [
                 "-i",
-                "--directory",
-                ".",
                 "--schema",
                 "graphql/weather/api.graphql",
                 "--manifest",
