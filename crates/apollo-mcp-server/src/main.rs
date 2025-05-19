@@ -13,6 +13,7 @@ use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::env;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -53,7 +54,11 @@ struct Args {
     #[arg(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
 
-    /// Start the server using the SSE transport on the given port
+    /// The IP address to bind the SSE server to (default: 127.0.0.1)
+    #[arg(long)]
+    sse_address: Option<IpAddr>,
+
+    /// Start the server using the SSE transport on the given port (default: 5000)
     #[arg(long)]
     sse_port: Option<u16>,
 
@@ -135,9 +140,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let transport = args
-        .sse_port
-        .map_or(Transport::Stdio, |port| Transport::SSE { port });
+    let transport = if args.sse_port.is_some() || args.sse_address.is_some() {
+        Transport::SSE {
+            address: args.sse_address.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            port: args.sse_port.unwrap_or(5000),
+        }
+    } else {
+        Transport::Stdio
+    };
 
     if let Some(directory) = args.directory {
         env::set_current_dir(directory)?;

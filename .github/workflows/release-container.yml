@@ -3,14 +3,22 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish
+        required: true
+        type: string
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  FQDN: ghcr.io/${{ github.repository }}
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   # Build a container for x86_64 and aarch64 linux
-  container:
+  build:
     name: Release Container
     strategy:
       matrix:
@@ -25,14 +33,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref }}
-
-      # Extract needed info for use with the other steps
-      - id: repo-meta
-        name: Extract Metadata
-        shell: bash
-        run: |
-          echo "fqdn=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
-          echo "name=`basename ${{ github.repository }}`" >> $GITHUB_OUTPUT
 
       - uses: nixbuild/nix-quick-install-action@v30
         with:
@@ -53,25 +53,51 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Container
-        run: nix run .#streamImage | docker image load
-
-      - name: Tag the Container
-        run: |
-          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:latest"
-          docker image tag "${{ steps.repo-meta.outputs.name }}:latest" "${{ steps.repo-meta.outputs.fqdn }}:${{ github.ref_name }}"
-
-      - name: Push the Container
-        run: docker image push --all-tags "${{ steps.repo-meta.outputs.fqdn }}"
-
-      - id: digest-meta
-        name: Extract the digest
+      - id: build
+        name: Build Container
         shell: bash
-        run: echo "digest=`docker manifest inspect ${{ steps.repo-meta.outputs.fqdn }}:latest --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
+        run: |
+          nix run .#streamImage | docker image load
+          echo "id=`docker image ls -q | head -n1`" >> $GITHUB_OUTPUT
+          echo "arch=`docker image ls --format '{{ .Tag }}' | head -n1`" >> $GITHUB_OUTPUT
+
+      - id: deploy
+        name: Tag and push the container
+        env:
+          TAG: ${{ env.VERSION }}-${{ steps.build.outputs.arch }}
+        run: |
+          docker image tag "${{ steps.build.outputs.id }}" "$FQDN:$TAG"
+          docker image push "$FQDN:$TAG"
+          echo "digest=`docker manifest inspect $FQDN:$TAG --verbose | nix run nixpkgs#jq -- -r .Descriptor.digest`" >> $GITHUB_OUTPUT
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
         with:
-          subject-name: ${{ steps.repo-meta.outputs.fqdn }}
-          subject-digest: ${{ steps.digest-meta.outputs.digest }}
+          subject-name: ${{ env.FQDN }}
+          subject-digest: ${{ steps.deploy.outputs.digest }}
           push-to-registry: true
+
+  bundle:
+    name: Bundle into multiarch container
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create multiarch manifest
+        run: |
+          docker manifest create $FQDN:$VERSION $FQDN:$VERSION-amd64 $FQDN:$VERSION-arm64
+          docker manifest annotate $FQDN:$VERSION $FQDN:$VERSION-amd64 --arch amd64
+          docker manifest annotate $FQDN:$VERSION $FQDN:$VERSION-arm64 --arch arm64
+
+          docker manifest create $FQDN:latest $FQDN:$VERSION-amd64 $FQDN:$VERSION-arm64
+          docker manifest annotate $FQDN:latest $FQDN:$VERSION-amd64 --arch amd64
+          docker manifest annotate $FQDN:latest $FQDN:$VERSION-arm64 --arch arm64
+      - name: Push the multiarch manifests
+        run: |
+          docker manifest push $FQDN:$VERSION
+          docker manifest push $FQDN:latest
