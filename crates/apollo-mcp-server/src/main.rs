@@ -13,6 +13,7 @@ use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::env;
+use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
@@ -52,6 +53,10 @@ struct Args {
     /// Headers to send to the endpoint
     #[arg(long = "header", action = clap::ArgAction::Append)]
     headers: Vec<String>,
+
+    /// The IP address to bind the SSE server to (default: 127.0.0.1)
+    #[arg(long)]
+    sse_address: Option<IpAddr>,
 
     /// Start the server using the SSE transport on the given port
     #[arg(long)]
@@ -137,7 +142,10 @@ async fn main() -> anyhow::Result<()> {
 
     let transport = args
         .sse_port
-        .map_or(Transport::Stdio, |port| Transport::SSE { port });
+        .map_or(Transport::Stdio, |port| Transport::SSE {
+            address: args.sse_address.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            port,
+        });
 
     env::set_current_dir(args.directory)?;
     Ok(Server::builder()

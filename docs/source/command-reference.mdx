@@ -66,6 +66,7 @@ apollo-mcp-server [OPTIONS] --directory <DIRECTORY>
 | `-e, --endpoint <ENDPOINT>`                         | The GraphQL endpoint the server will invoke.<br />[default: `http://127.0.0.1:4000`]                                                                                                                                                         |
 | `--header <HEADERS>`                                | Headers to send to the endpoint.                                                                                                                                                                                                          |
 | `--sse-port <SSE_PORT>`                             | Start the server using the SSE transport on the given port.                                                                                                                                                                               |
+| `--sse-address <SSE_ADDRESS>`                       | The IP address to bind the SSE server to (default: 127.0.0.1).                                                                                                                                                                           |
 | `-i, --introspection`                               | Expose the schema to the MCP client through `schema` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                                                                                                 |
 | `-u, --uplink`                                      | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                                                                                                              |
 | `-x, --explorer`                                    | Expose a tool to open queries in Apollo Explorer (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                                                         |
@@ -88,6 +89,7 @@ The mapping of `rover dev` options to MCP Server options:
 | :-------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--mcp-directory <DIRECTORY>` | `-d, --directory <DIRECTORY>` |
 | `--mcp-sse-port <PORT>`  |  `--sse-port <PORT>` |
+| `--mcp-sse-address <ADDRESS>` | `--sse-address <ADDRESS>` |
 | `--mcp-introspection` | `-i, --introspection`  |
 | `--mcp-uplink` |  `-u, --uplink` |
 | `--mcp-operations [<OPERATIONS>...]` |  `-o, --operations [<OPERATIONS>...]` |

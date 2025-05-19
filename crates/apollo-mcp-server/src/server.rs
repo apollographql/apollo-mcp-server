@@ -14,7 +14,7 @@ use rmcp::model::{
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer, ServerHandler, ServiceError, serde_json};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -56,7 +56,7 @@ pub struct Server {
 #[derive(Clone)]
 pub enum Transport {
     Stdio,
-    SSE { port: u16 },
+    SSE { address: IpAddr, port: u16 },
 }
 
 /// Types ending with Map cause incorrect assumptions by buildstructor, so use an alias
@@ -237,10 +237,10 @@ impl Starting {
             running.spawn_change_listener(change_receiver);
         }
 
-        if let Transport::SSE { port } = self.transport {
-            info!(port = ?port, "Starting MCP server in SSE mode");
+        if let Transport::SSE { address, port } = self.transport {
+            info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
             let running = running.clone();
-            let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+            let listen_address = SocketAddr::new(address, port);
             SseServer::serve_with_config(SseServerConfig {
                 bind: listen_address,
                 sse_path: "/sse".to_string(),
