@@ -17,6 +17,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### 🚀 Features
 - Add an optional `--sse-address` argument to set the bind address of the MCP server. Defaults to 127.0.0.1. (#63)
+- split out the execute tool into separate --execute-introspection flag, `--introspection` is now `--introspection --execute-introspection`
 
 ### 🐛 Fixes
 - Fixed PowerShell script (#55)
