@@ -63,7 +63,7 @@ struct Args {
     sse_port: Option<u16>,
 
     /// Expose the schema to the MCP client through `introspect` tool
-    #[arg(long, short = 'i')]
+    #[arg(long, short = 'i', required_if_eq("execute_introspection", "true"))]
     introspection: bool,
 
     /// Allow the use of the `execute` tool with operations build from the schema tool
