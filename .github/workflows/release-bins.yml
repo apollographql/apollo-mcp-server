@@ -34,7 +34,7 @@ jobs:
           # machines, so we run that bundle on a macOS runner
           - os: macos-latest
             bundle: darwin
-            targets: cross-aarch64-apple-darwin
+            targets: cross-aarch64-apple-darwin cross-x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
