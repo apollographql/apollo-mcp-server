@@ -4,6 +4,15 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
       - "v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish
+        required: true
+        type: string
+
+env:
+  VERSION: ${{ inputs.version || github.ref_name }}
 
 jobs:
   build:
@@ -80,7 +89,6 @@ jobs:
 
           KEYCHAIN_NAME: "apollo-mcp-server-keychain"
           ENTITLEMENTS_PATH: "macos-entitlements.plist"
-          VERSION: ${{ github.ref_name }}
         run: |
           echo "Pre-check: Valid Codesigning Identify"
           security find-identity -v -p codesigning
@@ -163,8 +171,6 @@ jobs:
           rm -rf $EPHEMERAL_KEYCHAIN/
 
       - name: Create release bundles
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
           mkdir artifacts
           for RELEASE in release/*/; do
@@ -182,7 +188,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*
-          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          prerelease: ${{ contains(env.VERSION, '-rc.') }}
           make_latest: false # this runs for each combination in the matrix - don't mark as latest until all are done
 
       - name: Generate artifact attestation
@@ -198,4 +204,4 @@ jobs:
       - name: Make latest
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          prerelease: ${{ contains(env.VERSION, '-rc.') }}
