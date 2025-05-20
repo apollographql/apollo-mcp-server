@@ -163,7 +163,19 @@
             sse-port = 5000;
           in {
             # Make the entrypoint the server
-            Entrypoint = ["apollo-mcp-server" "-d" "/data" "--sse-port" "${builtins.toString sse-port}"];
+            Entrypoint = [
+              "apollo-mcp-server"
+
+              # Always consider /data to be the CWD for the process
+              "-d"
+              "/data"
+
+              # Use SSE transport by default, bound to all addresses
+              "--sse-address"
+              "0.0.0.0"
+              "--sse-port"
+              "${builtins.toString sse-port}"
+            ];
 
             # Listen on container port for SSE requests
             Expose = "${builtins.toString sse-port}/tcp";
