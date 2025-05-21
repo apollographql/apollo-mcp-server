@@ -504,8 +504,7 @@ impl Running {
         {
             let schema = &*self.schema.lock().await;
             let updated_operations: Vec<Operation> = operations
-                .iter()
-                .cloned()
+                .into_iter()
                 .map(|operation| {
                     operation.into_operation(
                         schema,
