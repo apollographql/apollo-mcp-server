@@ -15,7 +15,7 @@ git clone https://github.com/apollographql/apollo-mcp-server
 cd apollo-mcp-server
 cargo build
 
-# Built binaries will be located in ./target/debug/mcp-apollo-server
+# Built binaries will be located in ./target/debug/apollo-mcp-server
 ```
 
 If you don't have an MCP client you plan on using right away, you can inspect the tools of the Apollo MCP server using the MCP Inspector:
@@ -36,10 +36,10 @@ Here is an example configuration you can use _(Note: you must provide your fill 
 {
   "mcpServers": {
     "thespacedevs": {
-      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/target/debug/mcp-apollo-server",
+      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
       "args": [
         "--directory",
-        "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/graphql/TheSpaceDevs",
+        "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/graphql/TheSpaceDevs",
         "--schema",
         "api.graphql",
         "--operations",
@@ -68,10 +68,10 @@ There are operations located at `./operations/*.graphql` for you to use in your 
 ```bash
 docker run \
   -it --rm \
-  --name mcp-apollo-server \
+  --name apollo-mcp-server \
   -p 5000:5000 \
   -v $PWD/graphql/TheSpaceDevs:/data \
-  ghcr.io/apollographql/mcp-apollo:latest \
+  ghcr.io/apollographql/apollo-mcp-server:latest \
   --sse-port 5000 \
   --schema api.graphql \
   --operations operations \
@@ -101,11 +101,10 @@ Here is an example configuration you can use _(Note: you must provide your fill 
 {
   "mcpServers": {
     "thespacedevs": {
-      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/target/debug/mcp-apollo-server",
+      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
       "args": [
         "--directory",
-        "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/graphql/TheSpaceDevs",
-        "--sse-port 5000",
+        "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/graphql/TheSpaceDevs",
         "--schema",
         "api.graphql",
         "--operations",
@@ -165,11 +164,10 @@ export APOLLO_GRAPH_REF=my-new-graph@current
 {
   "mcpServers": {
     "thespacedevs": {
-      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/target/debug/mcp-apollo-server",
+      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
       "args": [
         "--directory",
         "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/graphql/TheSpaceDevs",
-        "--sse-port 5000",
         "--schema",
         "api.graphql",
         "--manifest",
