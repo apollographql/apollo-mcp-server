@@ -40,11 +40,10 @@
         overlays = [(import rust-overlay)];
       };
 
-      # Define our toolchains for both native and cross compilation targets
-      nativeToolchain = p: p.rust-bin.stable.latest.default;
+      # Define the toolchain based on the rust-toolchain file
+      toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-        inherit crane;
-        toolchain = nativeToolchain;
+        inherit crane toolchain;
       };
 
       # Supporting tools
@@ -62,7 +61,7 @@
         buildInputs =
           [
             mcphost
-            (nativeToolchain unstable-pkgs)
+            toolchain
           ]
           ++ apollo-mcp-builder.dependencies
           ++ mcp-server-tools
@@ -108,10 +107,9 @@
           ];
 
           crossBuild = target: let
-            crossToolchain = p:
-              p.rust-bin.stable.latest.minimal.override {
-                targets = [target];
-              };
+            crossToolchain = toolchain.override {
+              targets = [target];
+            };
             apollo-mcp-cross = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
               inherit crane;
               toolchain = crossToolchain;
