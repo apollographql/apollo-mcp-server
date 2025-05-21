@@ -131,16 +131,18 @@ async fn main() -> anyhow::Result<()> {
 
     let schema_source = if let Some(path) = args.schema {
         SchemaSource::File { path, watch: true }
-    } else {
+    } else if args.uplink {
         SchemaSource::Registry(uplink_config()?)
+    } else {
+        bail!(ServerError::NoSchema);
     };
 
     let operation_source = if let Some(manifest) = args.manifest {
         OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
-    } else if args.uplink {
-        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
+    } else if args.uplink {
+        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
