@@ -40,8 +40,9 @@ Choose one of the options for running an MCP example:
 
 - Running `rover dev` to start an MCP Server using the Streamable HTTP transport
 - Running a local binary of the MCP Server using the stdio transport
+- Running a container of the MCP Server using the SSE transport
 
-Both use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) to connect to and inspect the running server.
+All use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) to connect to and inspect the running server.
 <br/>
 
 <Tabs>
@@ -50,14 +51,14 @@ Both use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) t
 
 You can run the Apollo MCP Server together with a graph in a local development environment with a single `rover dev` command. Rover starts an MCP Server that communicates via the Streamable HTTP transport.
 
-1. Install [Apollo Rover CLI](/rover/getting-started) v0.31 or later. 
+1. Install [Apollo Rover CLI](/rover/getting-started) v0.31 or later.
 1. From the root directory of your local repo, run `rover dev` to start a local graph, using `--mcp*` options to start and configure an Apollo MCP Server.
 
     ```sh showLineNumbers=false
       rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
       --mcp \
       --mcp-operations ./graphql/TheSpaceDevs/operations/ExploreCelestialBodies.graphql ./graphql/TheSpaceDevs/operations/GetAstronautDetails.graphql ./graphql/TheSpaceDevs/operations/GetAstronautsCurrentlyInSpace.graphql ./graphql/TheSpaceDevs/operations/SearchUpcomingLaunches.graphql
-    ``` 
+    ```
 
     - `--mcp` starts an Apollo MCP Server
     - `--mcp-operations` sets the list of operations
@@ -95,7 +96,7 @@ You can run an Apollo MCP Server locally to communicate over stdio.
     --directory <absolute-path-to-MCP-example-dir>
     --schema api.graphql \
     --operations operations \
-    --endpoint https://thespacedevs-production.up.railway.app/ 
+    --endpoint https://thespacedevs-production.up.railway.app/
     ```
 1. Open a browser and go to the Inspector URL at [`http://127.0.0.1:6274`](http://127.0.0.1:6274).
 1. Fill in the details in Inspector:
@@ -106,6 +107,50 @@ You can run an Apollo MCP Server locally to communicate over stdio.
 
     <img
       src="./images/mcp-getstarted-inspector-stdio.jpg"
+      alt="MCP Inspector connected to running Apollo MCP Server"
+      class="screenshot"
+      width="600"
+    />
+
+</Tab>
+
+<Tab label="Container + SSE">
+
+You can run an Apollo MCP Server in a container to communicate over SSE.
+
+1. Pull in the official Apollo MCP Server container:
+
+    ```sh showLineNumbers=false
+    docker image pull ghcr.io/apollographql/apollo-mcp-server:latest
+    ```
+
+1. Start the container:
+
+    ```sh showLineNumbers=false
+    docker run \
+      -it --rm \
+      -v <absolute-path-to-MCP-example-dir>:/data \
+      -p 5000:5000
+      ghcr.io/apollographql/apollo-mcp-server:latest \
+        --schema api.graphql \
+        --operations operations \
+        --endpoint https://thespacedevs-production.up.railway.app/
+    ```
+
+1. Start MCP Inspector, then open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274):
+
+    ```sh
+    npx @modelcontextprotocol/inspector
+    ```
+
+1. Fill in the details in Inspector:
+    - **Transport Type**: Select `SSE`
+    - **URL**: Enter `http://localhost:5000/sse` (5000 is the default port of the MCP server)
+
+1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
+
+    <img
+      src="./images/mcp-getstarted-inspector-sse.jpg"
       alt="MCP Inspector connected to running Apollo MCP Server"
       class="screenshot"
       width="600"
@@ -172,4 +217,3 @@ Check out these blog posts to learn more about Apollo MCP Server:
 
 - [Getting started with Apollo MCP Server](https://www.apollographql.com/blog/getting-started-with-apollo-mcp-server-for-any-graphql-api)
 - [The Future of MCP is GraphQL](https://www.apollographql.com/blog/the-future-of-mcp-is-graphql)
-

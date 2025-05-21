@@ -39,7 +39,7 @@ If your machine doesn't have the `curl` command, you can get the latest version 
 These installation methods currently don't support Intel-based Macs. Support is planned for a future release.
 
 </Note>
-
+{/*
 ### Windows PowerShell installer
 
 To install or upgrade to the **latest release** of Apollo MCP Server:
@@ -53,11 +53,21 @@ To install or upgrade to a **specific version** of Apollo MCP Server (recommende
 ```bash
 # Note the `v` prefixing the version number
 iwr 'https://mcp.apollo.dev/download/win/v0.3.0' | iex
+
+### Download container image
+
+To pull the **latest release** docker container of Apollo MCP Server:
+
+```bash
+docker image pull ghcr.io/apollographql/apollo-mcp-server:latest
 ```
 
-{/* ### Download container image
+To pull a **specific version** of Apollo MCP Server (recommended for CI environments to ensure predictable behavior):
 
-TODO */}
+```bash
+# Note the `v` prefixing the version number
+docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.1.0
+```
 
 ## Set up graph
 
@@ -77,11 +87,11 @@ You can manually define the GraphQL operations that are exposed by Apollo MCP Se
 - Persisted query manifests
 - GraphOS-managed persisted queries
 
-Alternatively, you can let an AI model read your graph schema via GraphQL introspection and have it determine the available operations. 
+Alternatively, you can let an AI model read your graph schema via GraphQL introspection and have it determine the available operations.
 
 ### From operation files
 
-An operation file is a `.graphql` file containing a single GraphQL operation. 
+An operation file is a `.graphql` file containing a single GraphQL operation.
 
 <CodeColumns cols={2}>
 
@@ -161,14 +171,14 @@ apollo-mcp-server \
 
 The MCP Server supports hot reloading of GraphOS-managed persisted queries, so it can automatically pick up changes from GraphOS without restarting.
 
-If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router. 
+If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router.
 
-Use the `--header` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration. 
+Use the `--header` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration.
 
 
 ### From schema introspection
 
-For use cases where not all operations can be pre-defined, Apollo MCP Server supports tool creation based on introspection of the graph schema. This allows AI agents to explore a graph and execute operations dynamically.  
+For use cases where not all operations can be pre-defined, Apollo MCP Server supports tool creation based on introspection of the graph schema. This allows AI agents to explore a graph and execute operations dynamically.
 
 To enable these schema-aware tools, run the MCP Server with the `--introspection` option, which exposes two new tools:
 
@@ -182,7 +192,7 @@ The MCP client can use these tools to provide schema information to the model an
 Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/overview) so you can control the parts of your graph that AI can introspect. [Learn more](/apollo-mcp-server/best-practices#use-contract-variants-to-control-ai-access-to-graphs)
 
 </Tip>
-{/* 
+{/*
 ### Documenting tools
 
 TODO
@@ -213,7 +223,7 @@ docker run \
 
 ### Debug locally over stdio transport
 
-You can inspect a local Apollo MCP Server by running it with MCP Inspector. 
+You can inspect a local Apollo MCP Server by running it with MCP Inspector.
 
 1. Run the MCP Server with Inspector:
 

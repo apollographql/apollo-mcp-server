@@ -12,6 +12,27 @@ This feature is [experimental](/graphos/resources/feature-launch-stages#experime
 
 ## Installation
 
+### Container
+
+A prebuilt container containing the Apollo MCP Server is built with every release at `ghcr.io/apollographql/apollo-mcp-server`.
+
+Available tags include the following:
+
+- `latest`: The latest versioned release, including release candidates
+- `v<VERSION>`: The fixed release version
+- `v<VERSION>-rc.<NUMBER>`: The fixed release candidate of the specified version
+
+<Note>
+
+The container sets a few defaults for ease of use:
+
+- **Working Directory is `/data`**: Make sure to mount static schemas / operations to this location
+  using the volume flag when running [(`-v` / `--version`)](https://docs.docker.com/reference/cli/docker/container/run/#volume).
+- **SSE Transport on port 5000**: Make sure to export container port 5000 for SSE connections to
+  the MCP server using the port flag when running [(`-p` / `--port`)](https://docs.docker.com/reference/cli/docker/container/run/#publish)
+
+</Note>
+
 ### Linux / MacOS installer
 
 To install or upgrade to the **latest release** of Apollo MCP Server:
@@ -34,7 +55,7 @@ If your machine doesn't have the `curl` command, you can get the latest version 
 These installation methods currently don't support Intel-based Macs. Support is planned for a future release.
 
 </Note>
-
+{/*
 ### Windows PowerShell installer
 
 To install or upgrade to the **latest release** of Apollo MCP Server:
@@ -85,11 +106,11 @@ Specifying either the HTTP port or address (or both) will enable the Streamable 
 
 ### Mapping rover dev options
 
-You can use the [`rover dev`](/rover/commands/dev) command of Rover CLI v0.31 or later to run an Apollo MCP Server instance for local development. 
+You can use the [`rover dev`](/rover/commands/dev) command of Rover CLI v0.31 or later to run an Apollo MCP Server instance for local development.
 
-Running `rover dev --mcp` starts an MCP Server. Additional options, `--mcp*`, directly configure the MCP Server. 
+Running `rover dev --mcp` starts an MCP Server. Additional options, `--mcp*`, directly configure the MCP Server.
 
-The mapping of `rover dev` options to MCP Server options: 
+The mapping of `rover dev` options to MCP Server options:
 
 | `rover dev` option                                    | Equivalent MCP Server option                          |
 |:------------------------------------------------------|:------------------------------------------------------|
@@ -105,4 +126,3 @@ The mapping of `rover dev` options to MCP Server options:
 | `--mcp-allow-mutations <ALLOW_MUTATIONS>`             | `-m, --allow-mutations <ALLOW_MUTATIONS>`             |
 | `--mcp-disable-type-description`                      | `--disable-type-description`                          |
 | `--mcp-disable-schema-description`                    | `--disable-schema-description`                        |
-
