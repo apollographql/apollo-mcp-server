@@ -15,7 +15,6 @@ use rmcp::serde_json::{Value, json};
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// The name of the tool to execute an ad hoc GraphQL operation
 pub(crate) const EXECUTE_TOOL_NAME: &str = "execute";
@@ -31,7 +30,7 @@ fn default_depth() -> u32 {
 /// A tool to get detailed information about specific types from the GraphQL schema.
 #[derive(Clone)]
 pub struct Introspect {
-    schema: Arc<Mutex<Valid<Schema>>>,
+    schema: Arc<Valid<Schema>>,
     pub tool: Tool,
 }
 
@@ -46,7 +45,7 @@ pub struct IntrospectInput {
 
 impl Introspect {
     pub fn new(
-        schema: Arc<Mutex<Valid<Schema>>>,
+        schema: Arc<Valid<Schema>>,
         root_query_type: Option<String>,
         root_mutation_type: Option<String>,
     ) -> Self {
@@ -69,10 +68,9 @@ impl Introspect {
     }
 
     pub async fn execute(&self, input: IntrospectInput) -> Result<CallToolResult, McpError> {
-        let schema = self.schema.lock().await;
         let type_name = input.type_name.as_str();
-        let mut tree_shaker = SchemaTreeShaker::new(&schema);
-        match schema.types.get(type_name) {
+        let mut tree_shaker = SchemaTreeShaker::new(&self.schema);
+        match self.schema.types.get(type_name) {
             Some(extended_type) => tree_shaker.retain_type(
                 extended_type,
                 if input.depth > 0 {
@@ -105,17 +103,19 @@ impl Introspect {
                                 | ExtendedType::Interface(_)
                                 | ExtendedType::Union(_)
                         )
-                        && schema
-                            .root_operation(OperationType::Query)
-                            .is_none_or(|root_name| {
+                        && self.schema.root_operation(OperationType::Query).is_none_or(
+                            |root_name| {
                                 extended_type.name() != root_name || type_name == root_name.as_str()
-                            })
-                        && schema
+                            },
+                        )
+                        && self
+                            .schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
                                 extended_type.name() != root_name || type_name == root_name.as_str()
                             })
-                        && schema
+                        && self
+                            .schema
                             .root_operation(OperationType::Subscription)
                             .is_none_or(|root_name| extended_type.name() == root_name)
                 })

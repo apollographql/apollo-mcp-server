@@ -8,12 +8,11 @@ license = "Elastic-2.0"
 anyhow = "1.0.98"
 apollo-compiler.workspace = true
 apollo-federation.workspace = true
+apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 buildstructor = "0.6.0"
 clap = { version = "4.5.36", features = ["derive"] }
-derive-new = "0.7.0"
 futures.workspace = true
 lz-str = "0.2.1"
-apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 regex = "1.11.1"
 reqwest.workspace = true
 rmcp = { version = "0.1", features = [
@@ -23,16 +22,7 @@ rmcp = { version = "0.1", features = [
 ] }
 serde.workspace = true
 thiserror.workspace = true
-tokio = { version = "1.44.2", features = [
-  "fs",
-  "io-std",
-  "macros",
-  "net",
-  "rt",
-  "rt-multi-thread",
-  "signal",
-  "time",
-] }
+tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"

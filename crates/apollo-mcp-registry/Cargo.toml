@@ -17,20 +17,13 @@ futures.workspace = true
 graphql_client = "0.14.0"
 insta.workspace = true
 notify = "8.0.0"
-parking_lot = "0.12"
 reqwest.workspace = true
 secrecy = "0.10.3"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { version = "1.0", features = [
-  "fs",
-  "sync",
-  "time",
-  "rt-multi-thread",
-  "macros",
-] }
-tokio-stream = "0.1"
+tokio.workspace = true
+tokio-stream.workspace = true
 tower = "0.5.2"
 tracing.workspace = true
 url = "2.4"

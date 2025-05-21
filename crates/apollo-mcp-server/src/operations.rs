@@ -1,5 +1,6 @@
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError};
+use crate::event::Event;
 use crate::graphql;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::{Document, OperationType, Selection};
@@ -10,9 +11,10 @@ use apollo_compiler::{
     ast::{Definition, OperationDefinition, Type},
     parser::Parser,
 };
-use apollo_mcp_registry::uplink::persisted_queries::{
-    ManifestSource, PersistedQueryManifestPoller,
-};
+use apollo_mcp_registry::files;
+use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
+use apollo_mcp_registry::uplink::persisted_queries::event::Event as ManifestEvent;
+use futures::{Stream, StreamExt};
 use regex::Regex;
 use rmcp::{
     model::Tool,
@@ -23,89 +25,98 @@ use rmcp::{
     serde_json::{self, Value},
 };
 use serde::Serialize;
+use std::fs;
 use std::path::PathBuf;
 use tracing::{info, warn};
 
+const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
+
 /// The source of the operations exposed as MCP tools
+#[derive(Clone)]
 pub enum OperationSource {
-    /// Static GraphQL document files (no hot reloading)
+    /// GraphQL document files
     Files(Vec<PathBuf>),
 
-    /// Persisted Query manifest (including sources that support hot reloading)
+    /// Persisted Query manifest
     Manifest(ManifestSource),
 
     /// No operations provided
     None,
 }
 
-#[derive(Clone)]
-pub enum OperationPoller {
-    /// Static GraphQL document files (no hot reloading)
-    Files(Vec<PathBuf>),
+impl OperationSource {
+    pub async fn into_stream(self) -> impl Stream<Item = Event> {
+        match self {
+            OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
+            OperationSource::Manifest(manifest_source) => manifest_source
+                .into_stream()
+                .await
+                .map(|event| {
+                    let ManifestEvent::UpdateManifest(operations) = event;
+                    Event::OperationsUpdated(
+                        operations.into_iter().map(RawOperation::from).collect(),
+                    )
+                })
+                .boxed(),
+            OperationSource::None => {
+                futures::stream::once(async { Event::OperationsUpdated(vec![]) }).boxed()
+            }
+        }
+    }
 
-    /// Persisted Query manifest (including sources that support hot reloading)
-    Manifest(PersistedQueryManifestPoller),
-
-    /// No operations defined
-    None,
+    fn stream_file_changes(paths: Vec<PathBuf>) -> impl Stream<Item = Event> {
+        futures::stream::select_all(paths.clone().into_iter().map(move |raw_path| {
+            let paths = paths.clone();
+            files::watch(raw_path.as_ref()).map(move |_| {
+                let operations = paths
+                    .iter()
+                    .filter_map(|path| {
+                        if path.is_dir() {
+                            match fs::read_dir(path) {
+                                Ok(entries) => Some(
+                                    entries
+                                        .filter_map(|entry| {
+                                            let entry = entry.ok()?;
+                                            let path = entry.path();
+                                            if path.extension()?.to_str()?
+                                                == OPERATION_DOCUMENT_EXTENSION
+                                            {
+                                                Some(path)
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                                Err(_) => None,
+                            }
+                        } else {
+                            Some(vec![path.clone()])
+                        }
+                    })
+                    .flatten()
+                    .filter_map(|path| {
+                        fs::read_to_string(&path).ok().and_then(|content| {
+                            (!content.trim().is_empty()).then(|| RawOperation::from(content))
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Event::OperationsUpdated(operations.clone())
+            })
+        }))
+        .boxed()
+    }
 }
 
-impl OperationPoller {
-    pub async fn operations(
-        &self,
-        schema: &Valid<apollo_compiler::Schema>,
-        custom_scalars: Option<&CustomScalarMap>,
-        mutation_mode: MutationMode,
-        disable_type_description: bool,
-        disable_schema_description: bool,
-    ) -> Result<Vec<Operation>, OperationError> {
-        match self {
-            OperationPoller::Files(paths) => paths
-                .iter()
-                .map(|operation| {
-                    let operation = std::fs::read_to_string(operation)?;
-                    Operation::from_document(
-                        &operation,
-                        schema,
-                        None,
-                        custom_scalars,
-                        mutation_mode,
-                        disable_type_description,
-                        disable_schema_description,
-                    )
-                })
-                .collect::<Result<Vec<Operation>, OperationError>>(),
-            OperationPoller::Manifest(manifest_poller) => manifest_poller
-                .get_all_operations()
-                .into_iter()
-                .map(|(pq_id, operation)| {
-                    Operation::from_document(
-                        &operation,
-                        schema,
-                        Some(pq_id),
-                        custom_scalars,
-                        mutation_mode,
-                        disable_type_description,
-                        disable_schema_description,
-                    )
-                })
-                .collect::<Result<Vec<Operation>, OperationError>>(),
-            OperationPoller::None => Ok(Vec::default()),
-        }
-        .inspect(|operations| {
-            if operations.is_empty() {
-                if !matches!(self, OperationPoller::None) {
-                    warn!("No operations found");
-                }
-            } else {
-                info!(
-                    "Loaded {} operations:\n{}",
-                    operations.len(),
-                    serde_json::to_string_pretty(&operations)
-                        .unwrap_or(String::from("<unable to serialize>"))
-                );
-            }
-        })
+impl From<ManifestSource> for OperationSource {
+    fn from(manifest_source: ManifestSource) -> Self {
+        OperationSource::Manifest(manifest_source)
+    }
+}
+
+impl From<Vec<PathBuf>> for OperationSource {
+    fn from(paths: Vec<PathBuf>) -> Self {
+        OperationSource::Files(paths)
     }
 }
 
@@ -121,10 +132,55 @@ pub enum MutationMode {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct RawOperation {
+    source_text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    persisted_query_id: Option<String>,
+}
+
+impl From<String> for RawOperation {
+    fn from(source_text: String) -> Self {
+        Self {
+            source_text,
+            persisted_query_id: None,
+        }
+    }
+}
+
+impl From<(String, String)> for RawOperation {
+    fn from((persisted_query_id, source_text): (String, String)) -> Self {
+        Self {
+            persisted_query_id: Some(persisted_query_id),
+            source_text,
+        }
+    }
+}
+
+impl RawOperation {
+    pub(crate) fn into_operation(
+        self,
+        schema: &Valid<apollo_compiler::Schema>,
+        custom_scalars: Option<&CustomScalarMap>,
+        mutation_mode: MutationMode,
+        disable_type_description: bool,
+        disable_schema_description: bool,
+    ) -> Result<Operation, OperationError> {
+        Operation::from_document(
+            &self.source_text,
+            schema,
+            None,
+            custom_scalars,
+            mutation_mode,
+            disable_type_description,
+            disable_schema_description,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     tool: Tool,
-    source_text: String,
-    persisted_query_id: Option<String>,
+    inner: RawOperation,
 }
 
 impl AsRef<Tool> for Operation {
@@ -136,6 +192,12 @@ impl AsRef<Tool> for Operation {
 impl From<Operation> for Tool {
     fn from(value: Operation) -> Tool {
         value.tool
+    }
+}
+
+impl Operation {
+    pub(crate) fn into_inner(self) -> RawOperation {
+        self.inner
     }
 }
 
@@ -259,8 +321,10 @@ impl Operation {
         }
         Ok(Operation {
             tool,
-            source_text: source_text.to_string(),
-            persisted_query_id,
+            inner: RawOperation {
+                source_text: source_text.to_string(),
+                persisted_query_id,
+            },
         })
     }
 
@@ -470,6 +534,7 @@ fn schema_factory(
         ..Default::default()
     })
 }
+
 fn description(name: &Name, graphql_schema: &GraphqlSchema) -> Option<String> {
     if let Some(input_object) = graphql_schema.get_input_object(name) {
         input_object.description.as_ref().map(|d| d.to_string())
@@ -505,6 +570,7 @@ fn description(name: &Name, graphql_schema: &GraphqlSchema) -> Option<String> {
         None
     }
 }
+
 fn type_to_schema(
     description: Option<String>,
     variable_type: &Type,
@@ -637,11 +703,11 @@ fn type_to_schema(
 
 impl graphql::Executable for Operation {
     fn persisted_query_id(&self) -> Option<String> {
-        self.persisted_query_id.clone()
+        self.inner.persisted_query_id.clone()
     }
 
     fn operation(&self, _input: Value) -> Result<String, McpError> {
-        Ok(self.source_text.clone())
+        Ok(self.inner.source_text.clone())
     }
 
     fn variables(&self, input: Value) -> Result<Value, McpError> {
@@ -761,17 +827,19 @@ mod tests {
         .unwrap();
 
         insta::assert_debug_snapshot!(operation, @r###"
-            Operation {
-                tool: Tool {
-                    name: "MutationName",
-                    description: "The returned value is optional and has type `String`",
-                    input_schema: {
-                        "type": String("object"),
-                    },
+        Operation {
+            tool: Tool {
+                name: "MutationName",
+                description: "The returned value is optional and has type `String`",
+                input_schema: {
+                    "type": String("object"),
                 },
+            },
+            inner: RawOperation {
                 source_text: "mutation MutationName { id }",
                 persisted_query_id: None,
-            }
+            },
+        }
         "###);
     }
 
@@ -789,17 +857,19 @@ mod tests {
         .unwrap();
 
         insta::assert_debug_snapshot!(operation, @r###"
-            Operation {
-                tool: Tool {
-                    name: "MutationName",
-                    description: "The returned value is optional and has type `String`",
-                    input_schema: {
-                        "type": String("object"),
-                    },
+        Operation {
+            tool: Tool {
+                name: "MutationName",
+                description: "The returned value is optional and has type `String`",
+                input_schema: {
+                    "type": String("object"),
                 },
+            },
+            inner: RawOperation {
                 source_text: "mutation MutationName { id }",
                 persisted_query_id: None,
-            }
+            },
+        }
         "###);
     }
 

@@ -4,8 +4,7 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
-use apollo_mcp_server::operations::MutationMode;
-use apollo_mcp_server::operations::OperationSource;
+use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
 use clap::Parser;
@@ -116,11 +115,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let operation_source = if let Some(manifest) = args.manifest {
-        OperationSource::Manifest(ManifestSource::LocalHotReload(vec![manifest]))
+        OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if args.uplink {
-        OperationSource::Manifest(ManifestSource::Uplink(uplink_config()?))
+        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else if !args.operations.is_empty() {
-        OperationSource::Files(args.operations)
+        OperationSource::from(args.operations)
     } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);

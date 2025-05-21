@@ -28,14 +28,12 @@ const DEFAULT_WATCH_DURATION: Duration = Duration::from_millis(100);
 ///
 /// returns: impl Stream<Item=()>
 ///
-pub(crate) fn watch(path: &Path) -> impl Stream<Item = ()> + use<> {
+pub fn watch(path: &Path) -> impl Stream<Item = ()> + use<> {
     watch_with_duration(path, DEFAULT_WATCH_DURATION)
 }
 
 #[allow(clippy::panic)] // TODO: code copied from router contained existing panics
 fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()> + use<> {
-    // Due to the vagaries of file watching across multiple platforms, instead of watching the
-    // supplied path (file), we are going to watch the parent (directory) of the path.
     let config_file_path = PathBuf::from(path);
     let watched_path = config_file_path.clone();
 
@@ -58,6 +56,8 @@ fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()
                     event.kind,
                     EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime))
                         | EventKind::Modify(ModifyKind::Data(DataChange::Any))
+                        | EventKind::Create(_)
+                        | EventKind::Remove(_)
                 ) && event.paths.contains(&watched_path)
                 {
                     loop {
