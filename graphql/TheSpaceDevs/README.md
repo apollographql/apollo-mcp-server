@@ -43,10 +43,7 @@ Here is an example configuration you can use _(Note: you must provide your fill 
         "--schema",
         "api.graphql",
         "--operations",
-        "operations/ExploreCelestialBodies.graphql",
-        "operations/GetAstronautDetails.graphql",
-        "operations/GetAstronautsCurrentlyInSpace.graphql",
-        "operations/SearchUpcomingLaunches.graphql",
+        "operations",
         "--endpoint",
         "https://thespacedevs-production.up.railway.app/",
         "--introspection"
@@ -77,7 +74,7 @@ docker run \
   ghcr.io/apollographql/mcp-apollo:latest \
   --sse-port 5000 \
   --schema api.graphql \
-  --operations operations/ExploreCelestialBodies.graphql operations/GetAstronautDetails.graphql operations/GetAstronautsCurrentlyInSpace.graphql operations/SearchUpcomingLaunches.graphql \
+  --operations operations \
   --endpoint https://thespacedevs-production.up.railway.app/
 ```
 
@@ -112,10 +109,7 @@ Here is an example configuration you can use _(Note: you must provide your fill 
         "--schema",
         "api.graphql",
         "--operations",
-        "operations/ExploreCelestialBodies.graphql",
-        "operations/GetAstronautDetails.graphql",
-        "operations/GetAstronautsCurrentlyInSpace.graphql",
-        "operations/SearchUpcomingLaunches.graphql",
+        "operations",
         "--endpoint",
         "https://thespacedevs-production.up.railway.app/",
         "--introspection"
