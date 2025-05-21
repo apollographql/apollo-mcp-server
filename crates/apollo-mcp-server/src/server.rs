@@ -33,6 +33,7 @@ pub use rmcp::ServiceExt;
 pub use rmcp::transport::SseServer;
 pub use rmcp::transport::sse_server::SseServerConfig;
 pub use rmcp::transport::stdio;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 /// An Apollo MCP Server
@@ -339,7 +340,7 @@ impl Starting {
     async fn start(self) -> Result<Running, ServerError> {
         info!("Starting MCP Server");
 
-        let peers = Arc::new(Vec::new());
+        let peers = Arc::new(RwLock::new(Vec::new()));
 
         let operations: Vec<_> = self
             .operations
@@ -385,7 +386,7 @@ impl Starting {
                     .flatten()
             })
             .flatten();
-        let schema = Arc::new(self.schema);
+        let schema = Arc::new(Mutex::new(self.schema));
         let introspect_tool = self
             .introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
@@ -400,7 +401,7 @@ impl Starting {
 
         let running = Running {
             schema,
-            operations: Arc::new(operations),
+            operations: Arc::new(Mutex::new(operations)),
             headers: self.headers,
             endpoint: self.endpoint,
             execute_tool,
@@ -440,15 +441,15 @@ impl Starting {
 
 #[derive(Clone)]
 struct Running {
-    schema: Arc<Valid<Schema>>,
-    operations: Arc<Vec<Operation>>,
+    schema: Arc<Mutex<Valid<Schema>>>,
+    operations: Arc<Mutex<Vec<Operation>>>,
     headers: HeaderMap,
     endpoint: String,
     execute_tool: Option<Execute>,
     introspect_tool: Option<Introspect>,
     explorer_tool: Option<Explorer>,
     custom_scalar_map: Option<CustomScalarMap>,
-    peers: Arc<Vec<Peer<RoleServer>>>,
+    peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
     cancellation_token: CancellationToken,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -464,6 +465,8 @@ impl Running {
         // input schemas and description are derived from the schema.
         let operations: Vec<Operation> = self
             .operations
+            .lock()
+            .await
             .iter()
             .cloned()
             .map(|operation| operation.into_inner())
@@ -483,15 +486,14 @@ impl Running {
             operations.len(),
             serde_json::to_string_pretty(&operations)?
         );
+        *self.operations.lock().await = operations;
+
+        // Update the schema itself
+        *self.schema.lock().await = schema;
 
         // Notify MCP clients that tools have changed
-        let peers = Self::notify_tool_list_changed(self.peers.clone()).await;
-        Ok(Running {
-            schema: Arc::new(schema),
-            operations: Arc::new(operations),
-            peers,
-            ..self
-        })
+        Self::notify_tool_list_changed(self.peers.clone()).await;
+        Ok(self)
     }
 
     async fn update_operations(
@@ -499,39 +501,38 @@ impl Running {
         operations: Vec<RawOperation>,
     ) -> Result<Running, ServerError> {
         // Update the operations based on the current schema
-        let updated_operations: Vec<Operation> = operations
-            .iter()
-            .cloned()
-            .map(|operation| {
-                operation.into_operation(
-                    &self.schema,
-                    self.custom_scalar_map.as_ref(),
-                    self.mutation_mode,
-                    self.disable_type_description,
-                    self.disable_schema_description,
-                )
-            })
-            .collect::<Result<_, OperationError>>()?;
+        {
+            let schema = &*self.schema.lock().await;
+            let updated_operations: Vec<Operation> = operations
+                .iter()
+                .cloned()
+                .map(|operation| {
+                    operation.into_operation(
+                        schema,
+                        self.custom_scalar_map.as_ref(),
+                        self.mutation_mode,
+                        self.disable_type_description,
+                        self.disable_schema_description,
+                    )
+                })
+                .collect::<Result<_, OperationError>>()?;
 
-        info!(
-            "Loaded {} operations:\n{}",
-            updated_operations.len(),
-            serde_json::to_string_pretty(&updated_operations)?
-        );
+            info!(
+                "Loaded {} operations:\n{}",
+                updated_operations.len(),
+                serde_json::to_string_pretty(&updated_operations)?
+            );
+            *self.operations.lock().await = updated_operations;
+        }
 
         // Notify MCP clients that tools have changed
-        let peers = Self::notify_tool_list_changed(self.peers.clone()).await;
-        Ok(Running {
-            operations: Arc::new(updated_operations),
-            peers,
-            ..self
-        })
+        Self::notify_tool_list_changed(self.peers.clone()).await;
+        Ok(self)
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
-    async fn notify_tool_list_changed(
-        peers: Arc<Vec<Peer<RoleServer>>>,
-    ) -> Arc<Vec<Peer<RoleServer>>> {
+    async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
+        let mut peers = peers.write().await;
         if !peers.is_empty() {
             info!(
                 "Persisted query manifest changed, notifying {} peers of tool change",
@@ -559,7 +560,7 @@ impl Running {
                 }
             }
         }
-        Arc::new(retained_peers)
+        *peers = retained_peers;
     }
 }
 
@@ -595,6 +596,8 @@ impl ServerHandler for Running {
                     .await
             } else {
                 self.operations
+                    .lock()
+                    .await
                     .iter()
                     .find(|op| op.as_ref().name == request.name)
                     .ok_or(tool_not_found(&request.name))?
@@ -613,6 +616,8 @@ impl ServerHandler for Running {
             next_cursor: None,
             tools: self
                 .operations
+                .lock()
+                .await
                 .iter()
                 .map(|op| op.as_ref().clone())
                 .chain(
@@ -641,13 +646,13 @@ impl ServerHandler for Running {
     }
 
     fn set_peer(&mut self, p: Peer<RoleServer>) {
-        let peers = self
-            .peers
-            .iter()
-            .cloned()
-            .chain(std::iter::once(p))
-            .collect();
-        self.peers = Arc::new(peers);
+        let peers = self.peers.clone();
+        tokio::spawn(async move {
+            let mut peers = peers.write().await;
+            // TODO: we need a way to remove these! The Rust SDK seems to leek running servers
+            //  forever - it never times them out or disconnects them.
+            peers.push(p);
+        });
     }
 
     fn get_info(&self) -> ServerInfo {
