@@ -11,7 +11,7 @@ use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
-use rmcp::serde_json::{Value, json};
+use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -140,7 +140,8 @@ pub struct Input {
     query: String,
 
     /// The variable values
-    variables: Option<String>,
+    #[serde(default)]
+    variables: String,
 }
 
 impl Execute {
@@ -179,9 +180,35 @@ impl graphql::Executable for Execute {
 
     fn variables(&self, input: Value) -> Result<Value, McpError> {
         serde_json::from_value::<Input>(input)
-            .map(|input| json!(input.variables))
+            .and_then(|input| serde_json::from_str(input.variables.as_str()))
             .map_err(|_| {
                 McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graphql::Executable;
+    use rmcp::serde_json::json;
+
+    #[test]
+    fn execute_query_with_variables() {
+        let execute = Execute::new(MutationMode::None);
+
+        let query = "query GetUser($id: ID!) { user(id: $id) { id name } }";
+        let variables = json!({ "id": "123" });
+
+        let input = json!({
+            "query": query,
+            "variables": variables.to_string()
+        });
+
+        assert_eq!(
+            Executable::operation(&execute, input.clone()),
+            Ok(query.to_string())
+        );
+        assert_eq!(Executable::variables(&execute, input), Ok(variables));
     }
 }
