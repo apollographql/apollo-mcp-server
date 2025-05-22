@@ -192,6 +192,7 @@ struct Configuring {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -208,6 +209,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -231,6 +233,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -246,6 +249,7 @@ struct SchemaConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -272,6 +276,7 @@ impl SchemaConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -287,6 +292,7 @@ struct OperationsConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -304,6 +310,7 @@ impl OperationsConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -567,145 +574,6 @@ impl Running {
         }
         *peers = retained_peers;
     }
-<<<<<<< HEAD
-
-    /// Spawn a listener for any changes to the operation manifest.
-    fn spawn_change_listener(&self, mut change_receiver: mpsc::Receiver<ManifestChanged>) {
-        let peers = self.peers.clone();
-        let operations = self.operations.clone();
-        let operation_poller = self.operation_poller.clone();
-        let custom_scalars = self.custom_scalar_map.clone();
-        let schema = self.schema.clone();
-        let mutation_mode = self.mutation_mode;
-        let disable_type_description = self.disable_type_description;
-        let disable_schema_description = self.disable_schema_description;
-        tokio::spawn(async move {
-            while change_receiver.recv().await.is_some() {
-                match operation_poller
-                    .operations(
-                        &*schema.lock().await,
-                        custom_scalars.as_ref(),
-                        mutation_mode,
-                        disable_type_description,
-                        disable_schema_description,
-                    )
-                    .await
-                {
-                    Ok(new_operations) => *operations.lock().await = new_operations,
-                    // TODO: ideally, we'd send the server to the error state here because it's
-                    //  no longer configured correctly. To do this, we'd have to receive the PQ
-                    //  updates through the same stream where schema changes are tracked. However,
-                    //  the router code ported into apollo-mcp-registry does not work that way -
-                    //  it has a separate PQ update mechanism. That will need to be rewritten, or
-                    //  maybe there's some way to bridge the PQ changes into the same stream.
-                    Err(e) => error!("Failed to update operations: {:?}", e),
-                }
-
-                Self::notify_tool_list_changed(peers.clone()).await;
-            }
-        });
-    }
-}
-
-struct StateMachine {}
-
-impl StateMachine {
-    pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
-        let mut stream = stream::select_all(vec![
-            server.schema_source.into_stream().boxed(),
-            Self::ctrl_c_stream().boxed(),
-        ])
-        .take_while(|msg| future::ready(!matches!(msg, Event::Shutdown)))
-        .chain(stream::iter(vec![Event::Shutdown]))
-        .boxed();
-        let mut state = State::Starting(Starting {
-            transport: server.transport,
-            operation_source: server.operation_source,
-            endpoint: server.endpoint,
-            headers: server.headers,
-            introspection: server.introspection,
-            execute_introspection: server.execute_introspection,
-            explorer: server.explorer,
-            custom_scalar_map: server.custom_scalar_map,
-            mutation_mode: server.mutation_mode,
-            disable_type_description: server.disable_type_description,
-            disable_schema_description: server.disable_schema_description,
-        });
-        while let Some(event) = stream.next().await {
-            state = match event {
-                Event::UpdateSchema(schema_state) => {
-                    let schema = Self::sdl_to_api_schema(schema_state)?;
-                    match state {
-                        State::Starting(starting) => starting.run(schema).await.into(),
-                        State::Running(running) => running.update_schema(schema).await.into(),
-                        other => other,
-                    }
-                }
-                Event::NoMoreSchema => match state {
-                    State::Starting { .. } => State::Error(ServerError::NoSchema),
-                    _ => state,
-                },
-                Event::Shutdown => match state {
-                    State::Running(running) => {
-                        running.cancellation_token.cancel();
-                        State::Stopping
-                    }
-                    _ => State::Stopping,
-                },
-            };
-            if matches!(&state, State::Error(_) | State::Stopping) {
-                break;
-            }
-        }
-        match state {
-            State::Error(e) => Err(e),
-            _ => Ok(()),
-        }
-    }
-
-    fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
-        match Supergraph::new(&schema_state.sdl) {
-            Ok(supergraph) => Ok(supergraph
-                .to_api_schema(ApiSchemaOptions::default())
-                .map_err(ServerError::Federation)?
-                .schema()
-                .clone()),
-            Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
-                .map_err(|e| ServerError::GraphQLSchema(e.into())),
-        }
-    }
-
-    #[allow(clippy::expect_used)]
-    fn ctrl_c_stream() -> impl Stream<Item = Event> {
-        #[cfg(not(unix))]
-        {
-            async {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to install CTRL+C signal handler");
-            }
-            .map(|_| Event::Shutdown)
-            .into_stream()
-            .boxed()
-        }
-
-        #[cfg(unix)]
-        future::select(
-            tokio::signal::ctrl_c().map(|s| s.ok()).boxed(),
-            async {
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("Failed to install SIGTERM signal handler")
-                    .recv()
-                    .await
-            }
-            .boxed(),
-        )
-        .map(|_| Event::Shutdown)
-        .into_stream()
-        .boxed()
-    }
-=======
->>>>>>> origin/main
 }
 
 impl ServerHandler for Running {
@@ -843,6 +711,7 @@ impl StateMachine {
             endpoint: server.endpoint,
             headers: server.headers,
             introspection: server.introspection,
+            execute_introspection: server.execute_introspection,
             explorer: server.explorer,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,
