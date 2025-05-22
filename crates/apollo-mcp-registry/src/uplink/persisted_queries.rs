@@ -1,5 +1,6 @@
 use graphql_client::GraphQLQuery;
 
+pub mod event;
 mod manifest;
 mod manifest_poller;
 
@@ -7,9 +8,7 @@ pub use manifest::FullPersistedQueryOperationId;
 pub use manifest::ManifestOperation;
 pub use manifest::PersistedQueryManifest;
 pub use manifest::SignedUrlChunk;
-pub use manifest_poller::ManifestChanged;
 pub use manifest_poller::ManifestSource;
-pub use manifest_poller::PersistedQueryManifestPoller;
 pub use manifest_poller::PersistedQueryManifestPollerState;
 
 use crate::uplink::UplinkRequest;

@@ -10,7 +10,6 @@ use tokio_stream::wrappers::ReceiverStream;
 use tower::BoxError;
 use url::Url;
 
-pub mod event;
 pub mod persisted_queries;
 pub mod schema;
 
@@ -136,7 +135,7 @@ impl Endpoints {
 }
 
 /// Configuration for polling Apollo Uplink.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct UplinkConfig {
     /// The Apollo key: `<YOUR_GRAPH_API_KEY>`
     pub apollo_key: SecretString,

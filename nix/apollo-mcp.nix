@@ -113,7 +113,14 @@ in {
 
           # Use zig for both CC and linker since it actually supports cross-compilation
           # nicely.
-          cargoExtraArgs = "--release --target ${zig-target}";
+          cargoExtraArgs = lib.strings.concatStringsSep " " ([
+              "--target ${zig-target}"
+            ]
+            # x86_64-apple-darwin compilation has a bug that causes release builds to
+            # fail with "bad relocation", so we build debug targets for it instead.
+            # See: https://github.com/rust-cross/cargo-zigbuild/issues/338
+            ++ (lib.optionals (target != "x86_64-apple-darwin") ["--release"]));
+
           cargoCheckCommand = mkCmd "check";
           cargoBuildCommand = mkCmd "zigbuild";
 

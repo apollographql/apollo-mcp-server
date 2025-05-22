@@ -4,8 +4,7 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
-use apollo_mcp_server::operations::MutationMode;
-use apollo_mcp_server::operations::OperationSource;
+use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
 use clap::Parser;
@@ -101,30 +100,53 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()))
-        .with_ansi(true)
-        .init();
+    let args = Args::parse();
+
+    let transport = if args.sse_port.is_some() || args.sse_address.is_some() {
+        Transport::SSE {
+            address: args.sse_address.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            port: args.sse_port.unwrap_or(5000),
+        }
+    } else {
+        Transport::Stdio
+    };
+
+    // When using the Stdio transport, send output stderr since stdout is used for MCP messages
+    match transport {
+        Transport::SSE { .. } => tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
+            )
+            .with_ansi(true)
+            .init(),
+        Transport::Stdio => tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
+            )
+            .with_writer(std::io::stderr)
+            .with_ansi(true)
+            .init(),
+    };
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed as ELv2 (https://go.apollo.dev/elv2)",
         std::env!("CARGO_PKG_VERSION")
     );
 
-    let args = Args::parse();
-
     let schema_source = if let Some(path) = args.schema {
         SchemaSource::File { path, watch: true }
-    } else {
+    } else if args.uplink {
         SchemaSource::Registry(uplink_config()?)
+    } else {
+        bail!(ServerError::NoSchema);
     };
 
     let operation_source = if let Some(manifest) = args.manifest {
-        OperationSource::Manifest(ManifestSource::LocalHotReload(vec![manifest]))
-    } else if args.uplink {
-        OperationSource::Manifest(ManifestSource::Uplink(uplink_config()?))
+        OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if !args.operations.is_empty() {
-        OperationSource::Files(args.operations)
+        OperationSource::from(args.operations)
+    } else if args.uplink {
+        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
@@ -142,15 +164,6 @@ async fn main() -> anyhow::Result<()> {
             _ => bail!(ServerError::Header(header)),
         }
     }
-
-    let transport = if args.sse_port.is_some() || args.sse_address.is_some() {
-        Transport::SSE {
-            address: args.sse_address.unwrap_or(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            port: args.sse_port.unwrap_or(5000),
-        }
-    } else {
-        Transport::Stdio
-    };
 
     if let Some(directory) = args.directory {
         env::set_current_dir(directory)?;

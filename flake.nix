@@ -40,11 +40,10 @@
         overlays = [(import rust-overlay)];
       };
 
-      # Define our toolchains for both native and cross compilation targets
-      nativeToolchain = p: p.rust-bin.stable.latest.default;
+      # Define the toolchain based on the rust-toolchain file
+      toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-        inherit crane;
-        toolchain = nativeToolchain;
+        inherit crane toolchain;
       };
 
       # Supporting tools
@@ -62,7 +61,7 @@
         buildInputs =
           [
             mcphost
-            (nativeToolchain unstable-pkgs)
+            toolchain
           ]
           ++ apollo-mcp-builder.dependencies
           ++ mcp-server-tools
@@ -101,16 +100,16 @@
             "aarch64-pc-windows-gnullvm"
             "aarch64-unknown-linux-gnu"
             "aarch64-unknown-linux-musl"
+            "x86_64-apple-darwin"
             "x86_64-pc-windows-gnullvm"
             "x86_64-unknown-linux-gnu"
             "x86_64-unknown-linux-musl"
           ];
 
           crossBuild = target: let
-            crossToolchain = p:
-              p.rust-bin.stable.latest.minimal.override {
-                targets = [target];
-              };
+            crossToolchain = toolchain.override {
+              targets = [target];
+            };
             apollo-mcp-cross = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
               inherit crane;
               toolchain = crossToolchain;
@@ -158,9 +157,26 @@
             packages.apollo-mcp
           ];
 
-          config = {
+          config = let
+            sse-port = 5000;
+          in {
             # Make the entrypoint the server
-            Entrypoint = ["apollo-mcp-server" "-d" "/data"];
+            Entrypoint = [
+              "apollo-mcp-server"
+
+              # Always consider /data to be the CWD for the process
+              "-d"
+              "/data"
+
+              # Use SSE transport by default, bound to all addresses
+              "--sse-address"
+              "0.0.0.0"
+              "--sse-port"
+              "${builtins.toString sse-port}"
+            ];
+
+            # Listen on container port for SSE requests
+            Expose = "${builtins.toString sse-port}/tcp";
 
             # Drop to local user
             User = "1000";

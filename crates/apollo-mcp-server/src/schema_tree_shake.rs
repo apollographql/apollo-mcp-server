@@ -549,6 +549,15 @@ fn retain_type(
     };
 
     if let Some(tree_node) = tree_shaker.named_type_nodes.get_mut(type_name) {
+        // If we have already visited this node, early return to avoid infinite recursion.
+        // depth_limit and selection_set both have inherent exit cases and may add more types with multiple passes, so never early return for them.
+        if tree_node.retain
+            && selection_set.is_none()
+            && matches!(depth_limit, DepthLimit::Unlimited)
+        {
+            return;
+        }
+
         tree_node.retain = true;
         if let Some(selected_fields) = selected_fields.as_ref() {
             let additional_fields = selected_fields
@@ -1076,5 +1085,44 @@ mod test {
         assert!(shaken_schema.types.contains_key("Level2"));
         assert!(shaken_schema.types.contains_key("Level3"));
         assert!(shaken_schema.types.contains_key("Level4"));
+    }
+
+    #[test]
+    fn should_work_with_recursive_schemas() {
+        let source_text = r#"
+            type Query { id: TypeA }
+            type TypeA { id: TypeB }
+            type TypeB { id: TypeA }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Unlimited);
+        assert_eq!(
+            shaker.shaken().unwrap().to_string(),
+            "type Query {\n  id: TypeA\n}\n\ntype TypeA {\n  id: TypeB\n}\n\ntype TypeB {\n  id: TypeA\n}\n"
+        );
+    }
+
+    #[test]
+    fn should_work_with_recursive_and_depth() {
+        let source_text = r#"
+            type Query { field1: TypeA, field2: TypeB }
+            type TypeA { id: TypeB }
+            type TypeB { id: TypeC }
+            type TypeC { id: TypeA }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Limited(3));
+        assert_eq!(
+            shaker.shaken().unwrap().to_string(),
+            "type Query {\n  field1: TypeA\n  field2: TypeB\n}\n\ntype TypeA {\n  id: TypeB\n}\n\ntype TypeB {\n  id: TypeC\n}\n\ntype TypeC {\n  id: TypeA\n}\n"
+        );
     }
 }

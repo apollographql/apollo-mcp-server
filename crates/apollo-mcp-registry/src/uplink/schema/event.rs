@@ -2,16 +2,13 @@ use crate::uplink::schema::SchemaState;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
-/// Messages that are broadcast across the app.
+/// Schema events
 pub enum Event {
     /// The schema was updated.
     UpdateSchema(SchemaState),
 
     /// There are no more updates to the schema
     NoMoreSchema,
-
-    /// The server should gracefully shut down.
-    Shutdown,
 }
 
 impl Debug for Event {
@@ -22,9 +19,6 @@ impl Debug for Event {
             }
             Event::NoMoreSchema => {
                 write!(f, "NoMoreSchema")
-            }
-            Event::Shutdown => {
-                write!(f, "Shutdown")
             }
         }
     }

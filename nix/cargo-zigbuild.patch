@@ -19,7 +19,7 @@ index 9890768..354246c 100644
                  sdkroot
              } else {
                  Path::new("/")
-@@ -1282,6 +1282,26 @@ pub fn prepare_zig_linker(target: &str) -> Result<ZigWrapper> {
+@@ -1282,6 +1282,27 @@ pub fn prepare_zig_linker(target: &str) -> Result<ZigWrapper> {
              } else {
                  cc_args.push(format!("-target {arch}-macos-gnu{abi_suffix}"));
              }
@@ -41,6 +41,7 @@ index 9890768..354246c 100644
 +                            .join("Frameworks")
 +                            .display()
 +                    ),
++                    "-headerpad_max_install_names".to_string(),
 +                ]);
 +            }
          }

@@ -11,6 +11,8 @@ This document outlines the steps required to prepare and execute a new release o
 - [ ] Update the version number in [Cargo.toml](./Cargo.toml)
 - [ ] Update the version number in [the *nix install script](./scripts/nix/install.sh)
 - [ ] Update the version number in [the Windows install script](./scripts/windows/install.ps1)
+- [ ] Update the version number in [the command reference](./docs/source/command-reference.mdx)
+- [ ] Update the version number in [user guide](./docs/source/guides/index.mdx)
 - [ ] Create a PR with these changes and get it approved and merged
 - [ ] Check out `main` and `git pull` to pick up your merged changes
 - [ ] Sync your tags with the repo: `git tag -d $(git tag) && git fetch --tags`

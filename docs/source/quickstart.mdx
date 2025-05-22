@@ -94,7 +94,7 @@ You can run an Apollo MCP Server locally to communicate over stdio.
     npx @modelcontextprotocol/inspector apollo-mcp-server \
     --directory <absolute-path-to-MCP-example-dir>
     --schema api.graphql \
-    --operations operations/ExploreCelestialBodies.graphql operations/GetAstronautDetails.graphql operations/GetAstronautsCurrentlyInSpace.graphql operations/SearchUpcomingLaunches.graphql \
+    --operations operations \
     --endpoint https://thespacedevs-production.up.railway.app/ 
     ```
 1. Open a browser and go to the Inspector URL at [`http://127.0.0.1:6274`](http://127.0.0.1:6274).
@@ -133,10 +133,7 @@ This quickstart using Claude Desktop as the MCP client. Configure Claude Desktop
             "--schema",
             "api.graphql",
             "--operations",
-            "operations/ExploreCelestialBodies.graphql",
-            "operations/GetAstronautDetails.graphql",
-            "operations/GetAstronautsCurrentlyInSpace.graphql",
-            "operations/SearchUpcomingLaunches.graphql",
+            "operations",
             "--endpoint",
             "https://thespacedevs-production.up.railway.app/"
           ]

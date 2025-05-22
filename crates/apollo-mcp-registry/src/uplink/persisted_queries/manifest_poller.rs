@@ -1,17 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
 
-use futures::prelude::*;
-use parking_lot::RwLock;
-use reqwest::Client;
-use tokio::fs::read_to_string;
-use tokio::sync::mpsc;
-use tower::BoxError;
-
+use super::event::Event;
 use crate::uplink::UplinkConfig;
-use crate::uplink::persisted_queries::manifest::FullPersistedQueryOperationId;
 use crate::uplink::persisted_queries::manifest::PersistedQueryManifest;
 use crate::uplink::persisted_queries::manifest::SignedUrlChunk;
 use crate::uplink::persisted_queries::{
@@ -19,6 +11,10 @@ use crate::uplink::persisted_queries::{
     PersistedQueriesManifestQuery,
 };
 use crate::uplink::stream_from_uplink_transforming_new_response;
+use futures::prelude::*;
+use reqwest::Client;
+use tokio::fs::read_to_string;
+use tower::BoxError;
 
 /// Holds the current state of persisted queries
 #[derive(Debug)]
@@ -27,109 +23,35 @@ pub struct PersistedQueryManifestPollerState {
     pub persisted_query_manifest: PersistedQueryManifest,
 }
 
-/// The result of the first time build of the persisted query manifest.
-#[derive(Debug)]
-pub enum ManifestPollResultOnStartup {
-    LoadedOperations,
-    Err(BoxError),
-}
-
-/// A notification when the persisted query manifest changes.
-pub struct ManifestChanged;
-
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ManifestSource {
     LocalStatic(Vec<PathBuf>),
     LocalHotReload(Vec<PathBuf>),
     Uplink(UplinkConfig),
 }
 
-/// Manages polling uplink for persisted query chunks and unpacking those chunks into a [`PersistedQueryManifest`].
-#[derive(Clone, Debug)]
-pub struct PersistedQueryManifestPoller {
-    pub state: Arc<RwLock<PersistedQueryManifestPollerState>>,
-    _drop_signal: mpsc::Sender<()>,
-}
-
-impl PersistedQueryManifestPoller {
-    /// Create a new [`PersistedQueryManifestPoller`] from an UplinkConfig.
-    /// Starts polling immediately and this function only returns after all chunks have been fetched
-    /// and the [`PersistedQueryManifest`] has been fully populated.
-    pub async fn new(
-        manifest_source: ManifestSource,
-        change_sender: mpsc::Sender<ManifestChanged>,
-    ) -> Result<Self, BoxError> {
-        let manifest_stream = create_manifest_stream(manifest_source).await?;
-
-        // Initialize state
-        let state = Arc::new(RwLock::new(PersistedQueryManifestPollerState {
-            persisted_query_manifest: PersistedQueryManifest::default(),
-        }));
-
-        // Start the background polling task
-        let (_drop_signal, drop_receiver) = mpsc::channel::<()>(1);
-        let (ready_sender, mut ready_receiver) = mpsc::channel::<ManifestPollResultOnStartup>(1);
-
-        let state_clone = state.clone();
-
-        tokio::task::spawn(async move {
-            poll_manifest_stream(
-                manifest_stream,
-                state_clone,
-                ready_sender,
-                change_sender,
-                drop_receiver,
-            )
-            .await;
-        });
-
-        match ready_receiver.recv().await {
-            Some(ManifestPollResultOnStartup::LoadedOperations) => Ok(Self {
-                state,
-                _drop_signal,
-            }),
-            Some(ManifestPollResultOnStartup::Err(e)) => Err(e),
-            None => Err("could not receive ready event for persisted query layer".into()),
-        }
-    }
-
-    /// Get the operation body associated with the given persisted query ID and optional client name
-    pub fn get_operation_body(
-        &self,
-        persisted_query_id: &str,
-        client_name: Option<String>,
-    ) -> Option<String> {
-        let state = self.state.read();
-        if let Some(body) = state
-            .persisted_query_manifest
-            .get(&FullPersistedQueryOperationId {
-                operation_id: persisted_query_id.to_string(),
-                client_name: client_name.clone(),
-            })
-            .cloned()
-        {
-            Some(body)
-        } else if client_name.is_some() {
-            state
-                .persisted_query_manifest
-                .get(&FullPersistedQueryOperationId {
-                    operation_id: persisted_query_id.to_string(),
-                    client_name: None,
+impl ManifestSource {
+    pub async fn into_stream(self) -> impl Stream<Item = Event> {
+        match create_manifest_stream(self).await {
+            Ok(stream) => stream
+                .map(|result| match result {
+                    Ok(manifest) => Event::UpdateManifest(
+                        manifest
+                            .iter()
+                            .map(|(k, v)| (k.operation_id.clone(), v.clone()))
+                            .collect(),
+                    ),
+                    Err(e) => {
+                        tracing::error!("error from manifest stream: {}", e);
+                        Event::UpdateManifest(vec![])
+                    }
                 })
-                .cloned()
-        } else {
-            None
+                .boxed(),
+            Err(e) => {
+                tracing::error!("failed to create manifest stream: {}", e);
+                futures::stream::empty().boxed()
+            }
         }
-    }
-
-    /// Get all operations in the manifest
-    pub fn get_all_operations(&self) -> Vec<(String, String)> {
-        let state = self.state.read();
-        state
-            .persisted_query_manifest
-            .iter()
-            .map(|(k, v)| (k.operation_id.clone(), v.clone()))
-            .collect()
     }
 }
 
@@ -232,46 +154,6 @@ async fn create_manifest_stream(
                 .gzip(true)
                 .build()?;
             Ok(create_uplink_stream(uplink_config, client).boxed())
-        }
-    }
-}
-
-async fn poll_manifest_stream(
-    mut manifest_stream: Pin<Box<ManifestStream>>,
-    state: Arc<RwLock<PersistedQueryManifestPollerState>>,
-    ready_sender: mpsc::Sender<ManifestPollResultOnStartup>,
-    change_sender: mpsc::Sender<ManifestChanged>,
-    mut drop_receiver: mpsc::Receiver<()>,
-) {
-    let mut ready_sender = Some(ready_sender);
-
-    loop {
-        tokio::select! {
-            manifest_result = manifest_stream.next() => {
-                match manifest_result {
-                    Some(Ok(new_manifest)) => {
-                        let operation_count = new_manifest.len();
-                        *state.write() = PersistedQueryManifestPollerState {
-                            persisted_query_manifest: new_manifest,
-                        };
-                        tracing::info!("persisted query manifest successfully updated ({} operations total)", operation_count);
-
-                        if let Some(sender) = ready_sender.take() {
-                            let _ = sender.send(ManifestPollResultOnStartup::LoadedOperations).await;
-                        } else {
-                            let _ = change_sender.send(ManifestChanged).await;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        tracing::error!("Error polling manifest: {}", e);
-                        if let Some(sender) = ready_sender.take() {
-                            let _ = sender.send(ManifestPollResultOnStartup::Err(e)).await;
-                        }
-                    }
-                    None => break,
-                }
-            }
-            _ = drop_receiver.recv() => break,
         }
     }
 }
