@@ -28,7 +28,7 @@ npx @modelcontextprotocol/inspector
 
 This option is typically used when you have built the source repository and use the binary outputs in the `target/build/*` folder.
 
-There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration along with the `--introspection` option that enables the LLM to generate a dynamic operation along with the ability to execute it. 
+There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration along with the `--introspection` option that enables the LLM to generate a dynamic operation. 
 
 Here is an example configuration you can use _(Note: you must provide your fill path to the binary in the command. Make sure to replace the command with the path to where you cloned the repository)_:
 
@@ -55,7 +55,7 @@ Here is an example configuration you can use _(Note: you must provide your fill 
 
 ## Using Server-Side-Events (SSE) with Apollo MCP server
 
-There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration along with the `--introspection` option that enables the LLM to generate a dynamic operation along with the ability to execute it. 
+There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration along with the `--introspection` option that enables the LLM to generate a dynamic operation. 
 
 ### Running SSE with `rover dev`
 
