@@ -71,7 +71,7 @@ async fn manifest_from_uplink_chunks(
         .await?
     }
 
-    tracing::info!(
+    tracing::debug!(
         "Loaded {} persisted queries.",
         new_persisted_query_manifest.len()
     );
@@ -175,7 +175,7 @@ async fn load_local_manifests(paths: Vec<PathBuf>) -> Result<PersistedQueryManif
         complete_manifest.add_chunk(&chunk);
     }
 
-    tracing::info!(
+    tracing::debug!(
         "Loaded {} persisted queries from local files.",
         complete_manifest.len()
     );
@@ -241,7 +241,7 @@ fn create_hot_reload_stream(
     // Combine all watchers into a single stream
     stream::select_all(file_watchers).map(move |result| {
         result.map(|(path, chunk)| {
-            tracing::info!(
+            tracing::debug!(
                 "hot reloading persisted query manifest file at path: {}",
                 path.to_string_lossy()
             );

@@ -5,8 +5,8 @@ use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::{Deserialize, Serialize};
-use tracing::info;
-use tracing::log::Level::Info;
+use tracing::debug;
+use tracing::log::Level::Debug;
 use tracing::log::log_enabled;
 
 pub(crate) const EXPLORER_TOOL_NAME: &str = "explorer";
@@ -74,13 +74,13 @@ impl Explorer {
     }
 
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
-        let pretty = if log_enabled!(Info) {
+        let pretty = if log_enabled!(Debug) {
             Some(serde_json::to_string_pretty(&input).unwrap_or("<unable to serialize>".into()))
         } else {
             None
         };
         let url = self.create_explorer_url(input)?;
-        info!(?url, input=?pretty, "Opening Apollo Explorer");
+        debug!(?url, input=?pretty, "Opening Apollo Explorer");
         webbrowser::open(url.as_str())
             .map(|_| CallToolResult {
                 content: vec![Content::text("success")],

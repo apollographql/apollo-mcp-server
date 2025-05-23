@@ -15,6 +15,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### 🚀 Features
+
+- Add a `--log` option to specify the log level used by the MCP Server (default is INFO). Reduce the level of many messages emitted by the server so INFO is less verbose. (#82)
+
 ### 🐛 Fixes
 
 - Fix issues with the `introspect` tool. (#83)
