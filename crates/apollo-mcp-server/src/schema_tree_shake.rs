@@ -1128,7 +1128,7 @@ mod test {
     }
 
     #[test]
-    fn should_retain_directives() {
+    fn should_retain_builtin_directives() {
         let source_text = r#"
             type Query {
                 field1: String @deprecated(reason: "Use 'field2' instead")
@@ -1144,6 +1144,28 @@ mod test {
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  field1: String @deprecated(reason: \"Use 'field2' instead\")\n  field2: String\n}\n"
+        );
+    }
+
+    #[test]
+    fn should_retain_custom_directives() {
+        let source_text = r#"
+            type Query {
+                field1: String @CustomDirective(arg: "Use 'field2' instead")
+                field2: String
+            }
+            directive @CustomDirective(arg: CustomScalar) on FIELD_DEFINITION
+            scalar CustomScalar
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Limited(3));
+        assert_eq!(
+            shaker.shaken().unwrap().to_string(),
+            "directive @CustomDirective(arg: CustomScalar) on FIELD_DEFINITION\n\ntype Query {\n  field1: String @CustomDirective(arg: \"Use 'field2' instead\")\n  field2: String\n}\n\nscalar CustomScalar\n"
         );
     }
 }
