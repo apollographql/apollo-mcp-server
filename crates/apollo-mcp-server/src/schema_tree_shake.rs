@@ -826,10 +826,11 @@ fn retain_directive(
     if let Some(tree_directive_node) = tree_shaker.directive_nodes.get_mut(directive_name) {
         tree_directive_node.retain = true;
         tree_directive_node.node.arguments.iter().for_each(|arg| {
-            if let Some(arg_type) = tree_shaker.schema.types.get(arg.name.as_str()) {
+            let arg_type_name = arg.ty.inner_named_type();
+            if let Some(arg_type) = tree_shaker.schema.types.get(arg_type_name) {
                 retain_type(tree_shaker, arg_type, None, depth_limit.decrement())
             } else {
-                tracing::error!("argument type {} not found", arg.name);
+                tracing::error!("argument type {} not found", arg_type_name);
             }
         });
     }
@@ -1123,6 +1124,26 @@ mod test {
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
             "type Query {\n  field1: TypeA\n  field2: TypeB\n}\n\ntype TypeA {\n  id: TypeB\n}\n\ntype TypeB {\n  id: TypeC\n}\n\ntype TypeC {\n  id: TypeA\n}\n"
+        );
+    }
+
+    #[test]
+    fn should_retain_directives() {
+        let source_text = r#"
+            type Query {
+                field1: String @deprecated(reason: "Use 'field2' instead")
+                field2: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        shaker.retain_operation_type(OperationType::Query, None, DepthLimit::Limited(3));
+        assert_eq!(
+            shaker.shaken().unwrap().to_string(),
+            "type Query {\n  field1: String @deprecated(reason: \"Use 'field2' instead\")\n  field2: String\n}\n"
         );
     }
 }
