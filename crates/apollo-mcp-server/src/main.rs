@@ -93,9 +93,9 @@ struct Args {
     #[arg(long)]
     disable_schema_description: bool,
 
-    /// The log level for the MCP Server (default: INFO)
-    #[arg(long = "log", short = 'l', global = true)]
-    log_level: Option<Level>,
+    /// The log level for the MCP Server
+    #[arg(long = "log", short = 'l', global = true, default_value_t = Level::INFO)]
+    log_level: Level,
 }
 
 #[tokio::main]
@@ -112,15 +112,14 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // When using the Stdio transport, send output stderr since stdout is used for MCP messages
-    let log_level = args.log_level.unwrap_or(Level::INFO);
     match transport {
         Transport::SSE { .. } => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(log_level.into()))
+            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
             .with_ansi(true)
             .with_target(false)
             .init(),
         Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(log_level.into()))
+            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
             .with_writer(std::io::stderr)
             .with_ansi(true)
             .with_target(false)
