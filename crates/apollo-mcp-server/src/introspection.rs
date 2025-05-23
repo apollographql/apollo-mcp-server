@@ -117,7 +117,9 @@ impl Introspect {
                             })
                         && schema
                             .root_operation(OperationType::Subscription)
-                            .is_none_or(|root_name| extended_type.name() == root_name)
+                            .is_none_or(|root_name| {
+                                extended_type.name() != root_name || type_name == root_name.as_str()
+                            })
                 })
                 .map(|(_, extended_type)| extended_type.serialize())
                 .map(|serialized| serialized.to_string())
