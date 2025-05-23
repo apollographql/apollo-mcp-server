@@ -11,9 +11,24 @@ This feature is [experimental](/graphos/resources/feature-launch-stages#experime
 
 Let's run Apollo MCP Server for the first time! You will:
 
-- Understand an MCP Server example.
-- Run an MCP Server example.
-- Connect an MCP client (Claude Desktop) to the MCP Server.
+- Understand an MCP Server example
+- Run an MCP Server example
+- Connect an MCP client (Claude Desktop) to the MCP Server
+
+## What You'll Build
+
+In this quickstart, you'll create a working AI integration where Claude Desktop can query space-related data through GraphQL. By the end, you'll be able to:
+
+- Ask Claude natural questions like "Who are the astronauts currently in space?" or "What rocket launches are coming up?"
+- See Claude use MCP tools to fetch real-time data from The Space Devs API
+- Understand how GraphQL operations become AI-accessible tools
+
+Here's what the end result looks like:
+
+> **You**: "Tell me about the astronauts currently in space"  
+> **Claude**: *[Uses GetAstronautsCurrentlyInSpace tool]* "There are currently 7 astronauts aboard the International Space Station..."
+
+This example uses a pre-built space API, but the same approach works with any GraphQL API - including your own production services.
 
 <OdysseyCallout>
 
@@ -23,106 +38,173 @@ If you learn best with videos and exercises, this [interactive course](https://w
 
 ## Prerequisites
 
-- Clone the [Apollo MCP Server repo](https://github.com/apollographql/apollo-mcp-server).
+- Clone the [Apollo MCP Server repo](https://github.com/apollographql/apollo-mcp-server)
+- Install [Apollo Rover CLI](/rover/getting-started) v0.31 or later
 
-## Step 1: Understand MCP Server example
+## Step 1: Understand the Example
 
 This guide uses an MCP example from the Apollo MCP Server repo. The example uses APIs from [The Space Devs](https://thespacedevs.com/), and it defines a federated graph and the GraphQL operations of the graph to expose as MCP tools.
 
-Let's walk through the example files. They're located in the repo in `graphql/TheSpaceDevs/`:
-- `supergraph.yaml` is a [supergraph configuration file](/rover/commands/supergraphs#yaml-configuration-file) for the Rover CLI.
-- The `operations/` directory has `*.graphql`operations schema files. Each file defines a GraphQL operation on the graph, and Apollo MCP Server creates an MCP tool from each operation file it's given.
-- The `persisted_queries/` directory has a persisted query manifest (PQM) file. It defines the operations that've been registered with the graph as persisted queries and that can be read and turned into tools by the MCP Server.
+The example files located in `graphql/TheSpaceDevs/` include:
+- **A federated graph** connecting to The Space Devs API
+  - `supergraph.yaml` is a [supergraph configuration file](/rover/commands/supergraphs#yaml-configuration-file) used by the Rover CLI
+- **4 pre-built operations** that become your AI tools:
+  - `ExploreCelestialBodies` - Search planets, moons, and stars
+  - `GetAstronautDetails` - Get info about specific astronauts  
+  - `GetAstronautsCurrentlyInSpace` - See who's in space right now
+  - `SearchUpcomingLaunches` - Find upcoming rocket launches
 
-## Step 2: Run MCP Server example
+## Step 2: Run the MCP Server
 
-Choose one of the options for running an MCP example:
-
-- Running `rover dev` to start an MCP Server using the SSE transport
-- Running a local binary of the MCP Server using the stdio transport
-
-Both use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) to connect to and inspect the running server.
-<br/>
-
-<Tabs>
-
-<Tab label="rover dev + SSE">
-
-You can run the Apollo MCP Server together with a graph in a local development environment with a single `rover dev` command. Rover starts an MCP Server that communicates via SSE transport.
-
-1. Install [Apollo Rover CLI](/rover/getting-started) v0.31 or later. 
-1. From the root directory of your local repo, run `rover dev` to start a local graph, using `--mcp*` options to start and configure an Apollo MCP Server.
+1. From the root directory of your local repo, run `rover dev` to start a local graph with an MCP Server:
 
     ```sh showLineNumbers=false
-      rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
-      --mcp \
-      --mcp-operations ./graphql/TheSpaceDevs/operations/ExploreCelestialBodies.graphql ./graphql/TheSpaceDevs/operations/GetAstronautDetails.graphql ./graphql/TheSpaceDevs/operations/GetAstronautsCurrentlyInSpace.graphql ./graphql/TheSpaceDevs/operations/SearchUpcomingLaunches.graphql
-    ``` 
+    rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
+    --mcp \
+    --mcp-operations ./graphql/TheSpaceDevs/operations/ExploreCelestialBodies.graphql ./graphql/TheSpaceDevs/operations/GetAstronautDetails.graphql ./graphql/TheSpaceDevs/operations/GetAstronautsCurrentlyInSpace.graphql ./graphql/TheSpaceDevs/operations/SearchUpcomingLaunches.graphql
+    ```
 
-    - `--mcp` starts an Apollo MCP Server
-    - `--mcp-operations` sets the list of operations
+    This command:
+    - Starts a local graph using the supergraph configuration
+    - Starts an MCP Server with the `--mcp` flag
+    - Exposes the specified operations as MCP tools
 
-1. Start MCP Inspector, then open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274):
+2. Start MCP Inspector to verify the server is running:
 
     ```sh
     npx @modelcontextprotocol/inspector
     ```
 
-1. Fill in the details in Inspector:
-    - **Transport Type**: Select `SSE`
-    - **URL**: Enter `http://localhost:5000/sse` (5000 is the default port of the MCP server)
+3. Open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274)
 
-1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
+4. In Inspector:
+    - Select `SSE` as the Transport Type
+    - Enter `http://localhost:5000/sse` as the URL
+    - Click **Connect**, then **List Tools**
 
-    <img
-      src="./images/mcp-getstarted-inspector-sse.jpg"
-      alt="MCP Inspector connected to running Apollo MCP Server"
-      class="screenshot"
-      width="600"
-    />
+    You should see the tools from your server listed.
 
-</Tab>
+## Step 3: Connect Claude Desktop
 
-<Tab label="Local binary + stdio">
+First, locate your Claude configuration file:
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
-You can run an Apollo MCP Server locally to communicate over stdio.
+Then add the following configuration
 
-1. Download the binary of the latest version of Apollo MCP Server. Add it to your path.
-1. Use MCP Inspector to run the Apollo MCP Server binary:
+1. Open Claude's JSON config file and add this configuration:
 
-    ```sh showLineNumbers=false
+    ```json
+    {
+      "mcpServers": {
+        "thespacedevs": {
+            "command": "npx",
+            "args": [
+                "mcp-remote",
+                "http://127.0.0.1:5000/sse",
+                "--transport",
+                "sse-first"
+            ]
+        }
+      }
+    }
+    ```
+
+2. Restart Claude
+
+## Step 4: Test Your Setup
+
+Let's verify everything is working:
+
+1. In Claude Desktop, type: "What MCP tools do you have available?"
+   - Claude should list tools like `ExploreCelestialBodies`, `GetAstronautDetails`, etc.
+
+2. Try a real query: "Who are the astronauts currently in space?"
+   - Claude should use the `GetAstronautsCurrentlyInSpace` tool and return current data
+
+3. If Claude can't see the tools:
+   - Ensure you restarted Claude Desktop after editing the config
+   - Check that your MCP server is still running
+   - Verify the port numbers match between your server and Claude config
+
+## Troubleshooting
+
+### Common Issues
+
+#### MCP Server Won't Start
+- **Error**: "Port 5000 is already in use"
+  - Solution: Kill any existing processes using port 5000 or specify a different port with `--port` flag
+- **Error**: "Failed to load supergraph configuration"
+  - Solution: Verify you're running the command from the repo root directory
+  - Solution: Check that the path to `supergraph.yaml` is correct
+
+#### MCP Inspector Connection Issues
+- **Error**: "Failed to connect to server"
+  - Solution: Ensure the MCP server is running (check terminal output)
+  - Solution: Verify you're using the correct URL (`http://localhost:5000/sse`)
+  - Solution: Check if your firewall is blocking the connection
+
+#### Claude Desktop Issues
+- **Problem**: Claude doesn't recognize the tools
+  - Solution: Verify the config file path is correct for your OS
+  - Solution: Ensure the JSON is properly formatted (no trailing commas)
+  - Solution: Try restarting Claude Desktop completely
+- **Problem**: "Connection refused" errors
+  - Solution: Check if the MCP server is still running
+  - Solution: Verify the port numbers match in both the server and Claude config
+
+#### GraphQL Operation Issues
+- **Error**: "Operation not found"
+  - Solution: Verify the operation files exist in the specified path
+  - Solution: Check that the operation names match exactly
+- **Error**: "Schema validation failed"
+  - Solution: Ensure your GraphQL operations match the schema
+  - Solution: Check for syntax errors in your operation files
+
+### Getting Help
+
+If you're still having issues:
+1. Check the [Apollo MCP Server GitHub issues](https://github.com/apollographql/apollo-mcp-server/issues)
+2. Join the [Apollo Community MCP Server Category](https://community.apollographql.com/c/mcp-server/41)
+3. Contact your Apollo representative for direct support
+
+## Next Steps
+
+See the [user guide](/apollo-mcp-server/guides) to learn how to create tools from:
+- [Operation schema files](/apollo-mcp-server/guides#from-operation-schema-files)
+- [Persisted query manifests](/apollo-mcp-server/guides/#from-persisted-query-manifests)
+- [Schema introspection](/apollo-mcp-server/guides/#from-schema-introspection)
+
+### Additional Resources
+
+Check out these blog posts to learn more about Apollo MCP Server:
+- [Getting started with Apollo MCP Server](https://www.apollographql.com/blog/getting-started-with-apollo-mcp-server-for-any-graphql-api)
+- [The Future of MCP is GraphQL](https://www.apollographql.com/blog/the-future-of-mcp-is-graphql)
+
+### Advanced Options
+
+<details>
+<summary>Alternative ways to run the MCP Server</summary>
+
+#### Using STDIO Transport
+
+You can run the MCP Server using STDIO transport instead of SSE. This is useful for certain environments or when you need more direct control over the server process.
+
+1. Download the binary of the latest version of Apollo MCP Server
+2. Use MCP Inspector to run the server:
+
+    ```sh
     npx @modelcontextprotocol/inspector apollo-mcp-server \
-    --directory <absolute-path-to-MCP-example-dir>
+    --directory <absolute-path-to-MCP-example-dir> \
     --schema api.graphql \
     --operations operations \
-    --endpoint https://thespacedevs-production.up.railway.app/ 
+    --endpoint https://thespacedevs-production.up.railway.app/
     ```
-1. Open a browser and go to the Inspector URL at [`http://127.0.0.1:6274`](http://127.0.0.1:6274).
-1. Fill in the details in Inspector:
-    - **Transport Type**: Select `STDIO`
-    - **Command**: Should be prepopulated with the command to run the MCP Server
 
-1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
+3. Configure Claude Desktop to use STDIO:
 
-    <img
-      src="./images/mcp-getstarted-inspector-stdio.jpg"
-      alt="MCP Inspector connected to running Apollo MCP Server"
-      class="screenshot"
-      width="600"
-    />
-
-</Tab>
-</Tabs>
-
-## Step 3: Connect an MCP client
-
-This quickstart using Claude Desktop as the MCP client. Configure Claude Desktop to use the tools from your MCP Server with these steps:
-
-1. Open Claude's JSON config file, and add a configuration to connect to the MCP Server. You can connect via stdio or SSE transport:
-
-    <CodeColumns cols={2}>
-
-    ```json title="stdio"
+    ```json
     {
       "mcpServers": {
         "thespacedevs": {
@@ -142,36 +224,5 @@ This quickstart using Claude Desktop as the MCP client. Configure Claude Desktop
     }
     ```
 
-    ```json title="SSE"
-    {
-      "mcpServers": {
-        "thespacedevs": {
-            "command": "npx",
-            "args": [
-                "mcp-remote",
-                "http://127.0.0.1:5000/sse",
-                "--transport",
-                "sse-first"
-            ]
-        }
-      }
-    }
-    ```
-
-    </CodeColumns>
-
-1. Restart Claude, then check that your server's tools are available from the input box.
-
-That's it! You've hooked up the Apollo MCP Server to Claude and can now use the MCP Server's tools in Claude.
-
-## Next steps
-
-See the [user guide](/apollo-mcp-server/guides) to learn how to create tools from [operation schema files](/apollo-mcp-server/guides#from-operation-schema-files), [persisted query manifests](/apollo-mcp-server/guides/#from-persisted-query-manifests), or [schema introspection](/apollo-mcp-server/guides/#from-schema-introspection).
-
-### Additional resources
-
-Check out these blog posts to learn more about Apollo MCP Server:
-
-- [Getting started with Apollo MCP Server](https://www.apollographql.com/blog/getting-started-with-apollo-mcp-server-for-any-graphql-api)
-- [The Future of MCP is GraphQL](https://www.apollographql.com/blog/the-future-of-mcp-is-graphql)
+</details>
 
