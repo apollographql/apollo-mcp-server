@@ -2,6 +2,7 @@ use crate::operations::RawOperation;
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
 use std::fmt::Debug;
 use std::fmt::Formatter;
+use std::io;
 
 /// MCP Server events
 pub enum Event {
@@ -10,6 +11,9 @@ pub enum Event {
 
     /// The operations have been updated
     OperationsUpdated(Vec<RawOperation>),
+
+    /// An error occurred when loading operations
+    OperationError(io::Error),
 
     /// The server should gracefully shut down
     Shutdown,
@@ -23,6 +27,9 @@ impl Debug for Event {
             }
             Event::OperationsUpdated(operations) => {
                 write!(f, "OperationsChanged({:?})", operations)
+            }
+            Event::OperationError(e) => {
+                write!(f, "OperationError({:?}", e)
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")

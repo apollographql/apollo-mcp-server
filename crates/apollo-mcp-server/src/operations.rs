@@ -25,8 +25,10 @@ use rmcp::{
     serde_json::{self, Value},
 };
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
@@ -65,44 +67,70 @@ impl OperationSource {
     }
 
     fn stream_file_changes(paths: Vec<PathBuf>) -> impl Stream<Item = Event> {
-        futures::stream::select_all(paths.clone().into_iter().map(move |raw_path| {
-            let paths = paths.clone();
-            files::watch(raw_path.as_ref()).map(move |_| {
-                let operations = paths
-                    .iter()
-                    .filter_map(|path| {
+        let path_count = paths.len();
+        let state = Arc::new(Mutex::new(HashMap::<PathBuf, Vec<RawOperation>>::new()));
+        futures::stream::select_all(paths.into_iter().map(|path| {
+            let state = Arc::clone(&state);
+            files::watch(path.as_ref())
+                .filter_map(move |_| {
+                    let path = path.clone();
+                    let state = Arc::clone(&state);
+                    async move {
+                        let mut operations = Vec::new();
                         if path.is_dir() {
-                            match fs::read_dir(path) {
-                                Ok(entries) => Some(
-                                    entries
-                                        .filter_map(|entry| {
-                                            let entry = entry.ok()?;
-                                            let path = entry.path();
-                                            if path.extension()?.to_str()?
-                                                == OPERATION_DOCUMENT_EXTENSION
-                                            {
-                                                Some(path)
-                                            } else {
-                                                None
+                            // Handle a directory
+                            if let Ok(entries) = fs::read_dir(&path) {
+                                for entry in entries.flatten() {
+                                    let entry_path = entry.path();
+                                    if entry_path.extension().and_then(|e| e.to_str())
+                                        == Some(OPERATION_DOCUMENT_EXTENSION)
+                                    {
+                                        if let Ok(content) = fs::read_to_string(&entry_path) {
+                                            // Be forgiving of empty files in the directory case.
+                                            // It likely means a new file was created in an editor,
+                                            // but the operation hasn't been written yet.
+                                            if !content.trim().is_empty() {
+                                                operations.push(RawOperation::from(content));
                                             }
-                                        })
-                                        .collect::<Vec<_>>(),
-                                ),
-                                Err(_) => None,
+                                        }
+                                    }
+                                }
                             }
                         } else {
-                            Some(vec![path.clone()])
+                            // Handle a single file
+                            match fs::read_to_string(&path) {
+                                Ok(content) => {
+                                    if !content.trim().is_empty() {
+                                        operations.push(RawOperation::from(content));
+                                    } else {
+                                        warn!(?path, "Empty operation file");
+                                    }
+                                }
+                                Err(e) => return Some(Event::OperationError(e)),
+                            }
                         }
-                    })
-                    .flatten()
-                    .filter_map(|path| {
-                        fs::read_to_string(&path).ok().and_then(|content| {
-                            (!content.trim().is_empty()).then(|| RawOperation::from(content))
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                Event::OperationsUpdated(operations.clone())
-            })
+                        match state.lock() {
+                            Ok(mut state) => {
+                                state.insert(path.clone(), operations);
+                                // All paths send an initial event on startup. To avoid repeated
+                                // operation events on startup, wait until all paths have been
+                                // loaded, then send a single event with the operations for all
+                                // paths.
+                                if state.len() == path_count {
+                                    Some(Event::OperationsUpdated(
+                                        state.values().flatten().cloned().collect::<Vec<_>>(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(_) => Some(Event::OperationError(std::io::Error::other(
+                                "State mutex poisoned",
+                            ))),
+                        }
+                    }
+                })
+                .boxed()
         }))
         .boxed()
     }
