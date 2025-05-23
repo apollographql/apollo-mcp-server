@@ -42,7 +42,7 @@ impl TryFrom<&PathBuf> for CustomScalarMap {
 
     fn try_from(file_path_buf: &PathBuf) -> Result<Self, Self::Error> {
         let custom_scalars_config_path = file_path_buf.as_path();
-        tracing::info!(custom_scalars_config=?custom_scalars_config_path, "Loading custom_scalars_config");
+        tracing::debug!(custom_scalars_config=?custom_scalars_config_path, "Loading custom_scalars_config");
         let string_custom_scalar_file = std::fs::read_to_string(custom_scalars_config_path)?;
         CustomScalarMap::from_str(string_custom_scalar_file.as_str())
     }

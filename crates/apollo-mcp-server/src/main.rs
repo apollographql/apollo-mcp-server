@@ -16,7 +16,7 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
-use tracing::info;
+use tracing::{Level, info};
 use tracing_subscriber::EnvFilter;
 
 /// Clap styling
@@ -92,6 +92,10 @@ struct Args {
     /// Disable schema type definitions referenced by all fields returned by the operation in the tool description
     #[arg(long)]
     disable_schema_description: bool,
+
+    /// The log level for the MCP Server (default: INFO)
+    #[arg(long = "log", short = 'l', global = true)]
+    log_level: Option<Level>,
 }
 
 #[tokio::main]
@@ -108,19 +112,18 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // When using the Stdio transport, send output stderr since stdout is used for MCP messages
+    let log_level = args.log_level.unwrap_or(Level::INFO);
     match transport {
         Transport::SSE { .. } => tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
-            )
+            .with_env_filter(EnvFilter::from_default_env().add_directive(log_level.into()))
             .with_ansi(true)
+            .with_target(false)
             .init(),
         Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into()),
-            )
+            .with_env_filter(EnvFilter::from_default_env().add_directive(log_level.into()))
             .with_writer(std::io::stderr)
             .with_ansi(true)
+            .with_target(false)
             .init(),
     };
 

@@ -17,7 +17,7 @@ use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer, ServerHandler, ServiceError, serde_json};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 use apollo_compiler::validation::Valid;
@@ -198,7 +198,7 @@ struct Configuring {
 
 impl Configuring {
     async fn set_schema(self, schema: Valid<Schema>) -> Result<SchemaConfigured, ServerError> {
-        info!("Received schema:\n{}", schema);
+        debug!("Received schema:\n{}", schema);
         Ok(SchemaConfigured {
             transport: self.transport,
             schema,
@@ -217,7 +217,7 @@ impl Configuring {
         self,
         operations: Vec<RawOperation>,
     ) -> Result<OperationsConfigured, ServerError> {
-        info!(
+        debug!(
             "Received {} operations:\n{}",
             operations.len(),
             serde_json::to_string_pretty(&operations)?
@@ -252,12 +252,12 @@ struct SchemaConfigured {
 
 impl SchemaConfigured {
     async fn set_schema(self, schema: Valid<Schema>) -> Result<SchemaConfigured, ServerError> {
-        info!("Received schema:\n{}", schema);
+        debug!("Received schema:\n{}", schema);
         Ok(SchemaConfigured { schema, ..self })
     }
 
     async fn set_operations(self, operations: Vec<RawOperation>) -> Result<Starting, ServerError> {
-        info!(
+        debug!(
             "Received {} operations:\n{}",
             operations.len(),
             serde_json::to_string_pretty(&operations)?
@@ -293,7 +293,7 @@ struct OperationsConfigured {
 
 impl OperationsConfigured {
     async fn set_schema(self, schema: Valid<Schema>) -> Result<Starting, ServerError> {
-        info!("Received schema:\n{}", schema);
+        debug!("Received schema:\n{}", schema);
         Ok(Starting {
             transport: self.transport,
             schema,
@@ -313,7 +313,7 @@ impl OperationsConfigured {
         self,
         operations: Vec<RawOperation>,
     ) -> Result<OperationsConfigured, ServerError> {
-        info!(
+        debug!(
             "Received {} operations:\n{}",
             operations.len(),
             serde_json::to_string_pretty(&operations)?
@@ -338,8 +338,6 @@ struct Starting {
 
 impl Starting {
     async fn start(self) -> Result<Running, ServerError> {
-        info!("Starting MCP Server");
-
         let peers = Arc::new(RwLock::new(Vec::new()));
 
         let operations: Vec<_> = self
@@ -356,7 +354,7 @@ impl Starting {
             })
             .collect::<Result<_, OperationError>>()?;
 
-        info!(
+        debug!(
             "Loaded {} operations:\n{}",
             operations.len(),
             serde_json::to_string_pretty(&operations)?
@@ -459,7 +457,7 @@ struct Running {
 impl Running {
     /// Update a running server with a new schema.
     async fn update_schema(self, schema: Valid<Schema>) -> Result<Running, ServerError> {
-        info!("Schema updated:\n{}", schema);
+        debug!("Schema updated:\n{}", schema);
 
         // Update the operations based on the new schema. This is necessary because the MCP tool
         // input schemas and description are derived from the schema.
@@ -481,7 +479,7 @@ impl Running {
             })
             .collect::<Result<_, OperationError>>()?;
 
-        info!(
+        debug!(
             "Updated {} operations:\n{}",
             operations.len(),
             serde_json::to_string_pretty(&operations)?
@@ -516,7 +514,7 @@ impl Running {
                 })
                 .collect::<Result<_, OperationError>>()?;
 
-            info!(
+            debug!(
                 "Loaded {} operations:\n{}",
                 updated_operations.len(),
                 serde_json::to_string_pretty(&updated_operations)?
@@ -533,8 +531,8 @@ impl Running {
     async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
         let mut peers = peers.write().await;
         if !peers.is_empty() {
-            info!(
-                "Persisted query manifest changed, notifying {} peers of tool change",
+            debug!(
+                "Operations changed, notifying {} peers of tool change",
                 peers.len()
             );
         }
