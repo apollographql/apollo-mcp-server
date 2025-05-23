@@ -507,7 +507,13 @@ fn selection_set_to_fields(
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
 ) -> Vec<Node<Field>> {
     match selection_set {
-        Selection::Field(field) => vec![field.clone()],
+        Selection::Field(field) => {
+            if field.name == "__typename" {
+                vec![]
+            } else {
+                vec![field.clone()]
+            }
+        }
         Selection::FragmentSpread(fragment) => named_fragments
             .get(fragment.fragment_name.as_str())
             .map(|f| {
