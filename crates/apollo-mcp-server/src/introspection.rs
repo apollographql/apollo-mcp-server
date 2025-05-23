@@ -142,8 +142,7 @@ pub struct Input {
     query: String,
 
     /// The variable values
-    #[serde(default)]
-    variables: String,
+    variables: Option<String>,
 }
 
 impl Execute {
@@ -181,11 +180,17 @@ impl graphql::Executable for Execute {
     }
 
     fn variables(&self, input: Value) -> Result<Value, McpError> {
-        serde_json::from_value::<Input>(input)
-            .and_then(|input| serde_json::from_str(input.variables.as_str()))
-            .map_err(|_| {
-                McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
+        let input = serde_json::from_value::<Input>(input).map_err(|_| {
+            McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
+        })?;
+        input
+            .variables
+            .map(|v| {
+                serde_json::from_str(&v).map_err(|_| {
+                    McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
+                })
             })
+            .unwrap_or(Ok(Value::Null))
     }
 }
 
@@ -212,5 +217,67 @@ mod tests {
             Ok(query.to_string())
         );
         assert_eq!(Executable::variables(&execute, input), Ok(variables));
+    }
+
+    #[test]
+    fn execute_query_without_variables() {
+        let execute = Execute::new(MutationMode::None);
+
+        let query = "query GetUser($id: ID!) { user(id: $id) { id name } }";
+
+        let input = json!({
+            "query": query,
+        });
+
+        assert_eq!(
+            Executable::operation(&execute, input.clone()),
+            Ok(query.to_string())
+        );
+        assert_eq!(Executable::variables(&execute, input), Ok(Value::Null));
+    }
+
+    #[test]
+    fn execute_query_invalid_input() {
+        let execute = Execute::new(MutationMode::None);
+
+        let input = json!({
+            "nonsense": "whatever",
+        });
+
+        assert_eq!(
+            Executable::operation(&execute, input.clone()),
+            Err(McpError::new(
+                ErrorCode::INVALID_PARAMS,
+                "Invalid input".to_string(),
+                None
+            ))
+        );
+        assert_eq!(
+            Executable::variables(&execute, input),
+            Err(McpError::new(
+                ErrorCode::INVALID_PARAMS,
+                "Invalid input".to_string(),
+                None
+            ))
+        );
+    }
+
+    #[test]
+    fn execute_query_invalid_variables() {
+        let execute = Execute::new(MutationMode::None);
+
+        let input = json!({
+            "query": "query GetUser($id: ID!) { user(id: $id) { id name } }",
+            "variables": "garbage",
+        });
+
+        assert_eq!(
+            Executable::variables(&execute, input),
+            Err(McpError::new(
+                ErrorCode::INVALID_PARAMS,
+                "Invalid input".to_string(),
+                None
+            ))
+        );
     }
 }
