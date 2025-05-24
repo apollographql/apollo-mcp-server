@@ -44,6 +44,7 @@ pub struct Server {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -70,6 +71,7 @@ impl Server {
         endpoint: String,
         headers: Headers,
         introspection: bool,
+        execute_introspection: bool,
         explorer: bool,
         custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
@@ -88,6 +90,7 @@ impl Server {
             endpoint,
             headers,
             introspection,
+            execute_introspection,
             explorer,
             custom_scalar_map,
             mutation_mode,
@@ -189,6 +192,7 @@ struct Configuring {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -205,6 +209,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -228,6 +233,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -243,6 +249,7 @@ struct SchemaConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -269,6 +276,7 @@ impl SchemaConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -284,6 +292,7 @@ struct OperationsConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -301,6 +310,7 @@ impl OperationsConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
             explorer: self.explorer,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -329,6 +339,7 @@ struct Starting {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
+    execute_introspection: bool,
     explorer: bool,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -360,7 +371,9 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
+        let execute_tool = self
+            .execute_introspection
+            .then(|| Execute::new(self.mutation_mode));
 
         let root_query_type = self
             .introspection
@@ -696,6 +709,7 @@ impl StateMachine {
             endpoint: server.endpoint,
             headers: server.headers,
             introspection: server.introspection,
+            execute_introspection: server.execute_introspection,
             explorer: server.explorer,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,

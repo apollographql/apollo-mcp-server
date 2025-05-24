@@ -36,6 +36,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The `execute` tool did not handle variables correctly (#77)
 - Cycles in schema type definitions would lead to stack overflow (#74)
 
+## [UNRELEASED]
+
+### ❗ BREAKING ❗
+- split out the execute tool into separate --execute-introspection flag, `--introspection` is now `--introspection --execute-introspection`
+
 ## [0.2.0] - 2025-05-21
 
 ### 🚀 Features

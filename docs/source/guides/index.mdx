@@ -164,7 +164,7 @@ Use the `--header` option when running the MCP Server to pass the header to the 
 
 For use cases where not all operations can be pre-defined, Apollo MCP Server supports tool creation based on introspection of the graph schema. This allows AI agents to explore a graph and execute operations dynamically.  
 
-To enable these schema-aware tools, run the MCP Server with the `--introspection` option, which exposes two new tools:
+To enable these schema-aware tools, run the MCP Server with the `--introspection` option, which exposes the introspect tool, and `--execute-introspection` which enables the execute tool
 
 * `introspect` - returns information about schema types
 * `execute` - executes an operation on the GraphQL endpoint
