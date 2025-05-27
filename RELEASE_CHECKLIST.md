@@ -12,7 +12,7 @@ This document outlines the steps required to prepare and execute a new release o
 - [ ] Update the version number in [the *nix install script](./scripts/nix/install.sh)
 - [ ] Update the version number in [the Windows install script](./scripts/windows/install.ps1)
 - [ ] Update the version number in [the command reference](./docs/source/command-reference.mdx)
-- [ ] Update the version number in [user guide](./docs/source/guides/index.mdx)
+- [ ] Update the version numbers in [user guide](./docs/source/guides/index.mdx)
 - [ ] Create a PR with these changes
 - [ ] Copy and paste the section of the change log for this release into the PR comment
 - [ ] Get the PR approved and merged

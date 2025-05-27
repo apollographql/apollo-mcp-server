@@ -113,50 +113,6 @@ You can run an Apollo MCP Server locally to communicate over stdio.
     />
 
 </Tab>
-
-<Tab label="Container + SSE">
-
-You can run an Apollo MCP Server in a container to communicate over SSE.
-
-1. Pull in the official Apollo MCP Server container:
-
-    ```sh showLineNumbers=false
-    docker image pull ghcr.io/apollographql/apollo-mcp-server:latest
-    ```
-
-1. Start the container:
-
-    ```sh showLineNumbers=false
-    docker run \
-      -it --rm \
-      -v <absolute-path-to-MCP-example-dir>:/data \
-      -p 5000:5000
-      ghcr.io/apollographql/apollo-mcp-server:latest \
-        --schema api.graphql \
-        --operations operations \
-        --endpoint https://thespacedevs-production.up.railway.app/
-    ```
-
-1. Start MCP Inspector, then open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274):
-
-    ```sh
-    npx @modelcontextprotocol/inspector
-    ```
-
-1. Fill in the details in Inspector:
-    - **Transport Type**: Select `SSE`
-    - **URL**: Enter `http://localhost:5000/sse` (5000 is the default port of the MCP server)
-
-1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
-
-    <img
-      src="./images/mcp-getstarted-inspector-sse.jpg"
-      alt="MCP Inspector connected to running Apollo MCP Server"
-      class="screenshot"
-      width="600"
-    />
-
-</Tab>
 </Tabs>
 
 ## Step 3: Connect an MCP client

@@ -66,7 +66,7 @@ To pull a **specific version** of Apollo MCP Server (recommended for CI environm
 
 ```bash
 # Note the `v` prefixing the version number
-docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.1.0
+docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.2.0
 ```
 
 ## Set up graph
@@ -196,26 +196,29 @@ Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/
 ### Documenting tools
 
 TODO
+*/}
 
 ## Deploying a container
 
-Apollo MCP Server is available as a standalone docker container. Container images are downloadable from TBD.
+Apollo MCP Server is available as a standalone docker container. Container images are downloadable using
+the image `ghcr.io/apollographql/apollo-mcp-server`.
 
-By default, the container expects all schema and operation files to be present in the `/data` folder within the container.
+By default, the container expects all schema and operation files to be present in the `/data` folder within the container
+and that clients will use SSE transport on container port 5000.
 
-An example `docker run` command that runs the MCP Server for the weather example:
+An example `docker run` command that runs the MCP Server for the space dev example:
 
-```sh
+```sh showLineNumbers=false
 docker run \
   -it --rm \
   --name apollo-mcp-server \
   -p 5000:5000 \
-  -v $PWD/graphql/weather:/data \
+  -v $PWD/graphql/TheSpaceDevs:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest \
-  --http-port 5000 \
-  -s api.graphql \
-  -o operations/forecast.graphql operations/alerts.graphql operations/all.graphql
-``` */}
+    --schema api.graphql \
+    --operations operations/ \
+    --endpoint https://thespacedevs-production.up.railway.app/
+```
 
 ## Debugging with MCP Inspector
 
@@ -251,6 +254,12 @@ Starting MCP inspector...
 When running the MCP Server over the Streamable HTTP transport, you can run MCP Inspector as follows.
 
 1. Start the MCP Server in Streamable HTTP mode:
+
+<Tip>
+
+You can also deploy the server as a container using the instructions in [Deploying a Container](#deploying-a-container).
+
+</Tip>
 
 ```sh
 target/debug/apollo-mcp-server \
