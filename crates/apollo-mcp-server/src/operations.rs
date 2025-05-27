@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
 
@@ -192,7 +192,7 @@ impl RawOperation {
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
-    ) -> Result<Operation, OperationError> {
+    ) -> Result<Option<Operation>, OperationError> {
         Operation::from_document(
             &self.source_text,
             schema,
@@ -229,11 +229,11 @@ impl Operation {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn operation_defs(
     source_text: &str,
     allow_mutations: bool,
-    mutation_mode: MutationMode,
-) -> Result<(Document, Node<OperationDefinition>, Option<String>), OperationError> {
+) -> Result<Option<(Document, Node<OperationDefinition>, Option<String>)>, OperationError> {
     let document = Parser::new()
         .parse_ast(source_text, "operation.graphql")
         .map_err(|e| OperationError::GraphQLDocument(Box::new(e)))?;
@@ -276,17 +276,25 @@ pub fn operation_defs(
 
     match operation.operation_type {
         OperationType::Subscription => {
-            return Err(OperationError::SubscriptionNotAllowed(operation));
+            debug!(
+                "Skipping subscription operation {}",
+                operation_name(&operation)?
+            );
+            return Ok(None);
         }
         OperationType::Mutation => {
             if !allow_mutations {
-                return Err(OperationError::MutationNotAllowed(operation, mutation_mode));
+                warn!(
+                    "Skipping mutation operation {}",
+                    operation_name(&operation)?
+                );
+                return Ok(None);
             }
         }
         OperationType::Query => {}
     }
 
-    Ok((document, operation, comments.map(|c| c.to_string())))
+    Ok(Some((document, operation, comments.map(|c| c.to_string()))))
 }
 
 impl Operation {
@@ -298,62 +306,56 @@ impl Operation {
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
-    ) -> Result<Self, OperationError> {
-        let (document, operation, comments) = operation_defs(
-            source_text,
-            mutation_mode != MutationMode::None,
-            mutation_mode,
-        )?;
+    ) -> Result<Option<Self>, OperationError> {
+        if let Some((document, operation, comments)) =
+            operation_defs(source_text, mutation_mode != MutationMode::None)?
+        {
+            let operation_name = operation_name(&operation)?;
 
-        let operation_name = operation
-            .name
-            .as_ref()
-            .ok_or_else(|| {
-                OperationError::MissingName(operation.serialize().no_indent().to_string())
-            })?
-            .to_string();
+            let description = Self::tool_description(
+                comments,
+                &document,
+                graphql_schema,
+                &operation,
+                disable_type_description,
+                disable_schema_description,
+            );
 
-        let description = Self::tool_description(
-            comments,
-            &document,
-            graphql_schema,
-            &operation,
-            disable_type_description,
-            disable_schema_description,
-        );
+            let object = serde_json::to_value(get_json_schema(
+                &operation,
+                graphql_schema,
+                custom_scalar_map,
+            ))?;
+            let Value::Object(schema) = object else {
+                return Err(OperationError::Internal(
+                    "Schemars should have returned an object".to_string(),
+                ));
+            };
 
-        let object = serde_json::to_value(get_json_schema(
-            &operation,
-            graphql_schema,
-            custom_scalar_map,
-        ))?;
-        let Value::Object(schema) = object else {
-            return Err(OperationError::Internal(
-                "Schemars should have returned an object".to_string(),
-            ));
-        };
-
-        let tool: Tool = Tool::new(operation_name.clone(), description, schema);
-        let character_count = tool_character_length(&tool);
-        match character_count {
-            Ok(length) => info!(
-                "Tool {} loaded with a character count of {}. Estimated tokens: {}",
-                operation_name,
-                length,
-                length / 4 // We don't know the tokenization algorithm, so we just use 4 characters per token as a rough estimate. https://docs.anthropic.com/en/docs/resources/glossary#tokens
-            ),
-            Err(_) => info!(
-                "Tool {} loaded with an unknown character count",
-                operation_name
-            ),
+            let tool: Tool = Tool::new(operation_name.clone(), description, schema);
+            let character_count = tool_character_length(&tool);
+            match character_count {
+                Ok(length) => info!(
+                    "Tool {} loaded with a character count of {}. Estimated tokens: {}",
+                    operation_name,
+                    length,
+                    length / 4 // We don't know the tokenization algorithm, so we just use 4 characters per token as a rough estimate. https://docs.anthropic.com/en/docs/resources/glossary#tokens
+                ),
+                Err(_) => info!(
+                    "Tool {} loaded with an unknown character count",
+                    operation_name
+                ),
+            }
+            Ok(Some(Operation {
+                tool,
+                inner: RawOperation {
+                    source_text: source_text.to_string(),
+                    persisted_query_id,
+                },
+            }))
+        } else {
+            Ok(None)
         }
-        Ok(Operation {
-            tool,
-            inner: RawOperation {
-                source_text: source_text.to_string(),
-                persisted_query_id,
-            },
-        })
     }
 
     /// Generate a description for an operation based on documentation in the schema
@@ -500,6 +502,14 @@ impl Operation {
 
         lines.join("\n")
     }
+}
+
+fn operation_name(operation: &Node<OperationDefinition>) -> Result<String, OperationError> {
+    Ok(operation
+        .name
+        .as_ref()
+        .ok_or_else(|| OperationError::MissingName(operation.serialize().no_indent().to_string()))?
+        .to_string())
 }
 
 fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
@@ -752,7 +762,6 @@ mod tests {
 
     use crate::{
         custom_scalar_map::CustomScalarMap,
-        errors::OperationError,
         operations::{MutationMode, Operation},
     };
 
@@ -803,42 +812,37 @@ mod tests {
 
     #[test]
     fn subscriptions() {
-        let error = Operation::from_document(
-            "subscription SubscriptionName { id }",
-            &SCHEMA,
-            None,
-            None,
-            MutationMode::None,
-            false,
-            false,
-        )
-        .err()
-        .unwrap();
-
-        if let OperationError::SubscriptionNotAllowed(_) = error {
-        } else {
-            unreachable!()
-        }
+        assert!(
+            Operation::from_document(
+                "subscription SubscriptionName { id }",
+                &SCHEMA,
+                None,
+                None,
+                MutationMode::None,
+                false,
+                false,
+            )
+            .unwrap()
+            .is_none()
+        );
     }
 
     #[test]
     fn mutation_mode_none() {
-        let error = Operation::from_document(
-            "mutation MutationName { id }",
-            &SCHEMA,
-            None,
-            None,
-            MutationMode::None,
-            false,
-            false,
-        )
-        .err()
-        .unwrap();
-
-        if let OperationError::MutationNotAllowed(_, _) = error {
-        } else {
-            unreachable!()
-        }
+        assert!(
+            Operation::from_document(
+                "mutation MutationName { id }",
+                &SCHEMA,
+                None,
+                None,
+                MutationMode::None,
+                false,
+                false,
+            )
+            .ok()
+            .unwrap()
+            .is_none()
+        );
     }
 
     #[test]
@@ -852,6 +856,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_debug_snapshot!(operation, @r###"
@@ -882,6 +887,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_debug_snapshot!(operation, @r###"
@@ -912,6 +918,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -942,6 +949,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -982,6 +990,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1028,6 +1037,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1090,6 +1100,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1142,6 +1153,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1198,6 +1210,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1244,6 +1257,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1316,6 +1330,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1382,6 +1397,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1515,6 +1531,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1544,6 +1561,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1573,6 +1591,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1606,6 +1625,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
         let tool = Tool::from(operation);
 
@@ -1774,6 +1794,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(
@@ -1854,6 +1875,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(
@@ -1880,6 +1902,7 @@ mod tests {
             false,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(
@@ -1899,6 +1922,7 @@ mod tests {
             false,
             true,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(
@@ -1922,6 +1946,7 @@ mod tests {
             true,
             false,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(
@@ -1949,6 +1974,7 @@ mod tests {
             true,
             true,
         )
+        .unwrap()
         .unwrap();
 
         insta::assert_snapshot!(

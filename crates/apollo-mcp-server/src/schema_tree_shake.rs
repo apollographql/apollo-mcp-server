@@ -848,7 +848,7 @@ mod test {
     use rstest::{fixture, rstest};
 
     use crate::{
-        operations::{MutationMode, operation_defs},
+        operations::operation_defs,
         schema_tree_shake::{DepthLimit, SchemaTreeShaker},
     };
 
@@ -980,7 +980,9 @@ mod test {
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
         let (operation_document, operation_def, _comments) =
-            operation_defs("query TestQuery { id }", false, MutationMode::None).unwrap();
+            operation_defs("query TestQuery { id }", false)
+                .unwrap()
+                .unwrap();
         shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),

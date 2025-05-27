@@ -32,6 +32,7 @@ fn default_depth() -> u32 {
 #[derive(Clone)]
 pub struct Introspect {
     schema: Arc<Mutex<Valid<Schema>>>,
+    allow_mutations: bool,
     pub tool: Tool,
 }
 
@@ -52,6 +53,7 @@ impl Introspect {
     ) -> Self {
         Self {
             schema,
+            allow_mutations: root_mutation_type.is_some(),
             tool: Tool::new(
                 INTROSPECT_TOOL_NAME,
                 format!(
@@ -113,7 +115,8 @@ impl Introspect {
                         && schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
-                                extended_type.name() != root_name || type_name == root_name.as_str()
+                                extended_type.name() != root_name
+                                    || (type_name == root_name.as_str() && self.allow_mutations)
                             })
                         && schema
                             .root_operation(OperationType::Subscription)
@@ -169,12 +172,8 @@ impl graphql::Executable for Execute {
         })?;
 
         // validate the operation
-        operation_defs(
-            &input.query,
-            self.mutation_mode == MutationMode::All,
-            self.mutation_mode,
-        )
-        .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?;
+        operation_defs(&input.query, self.mutation_mode == MutationMode::All)
+            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?;
 
         Ok(input.query)
     }

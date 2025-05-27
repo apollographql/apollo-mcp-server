@@ -352,7 +352,10 @@ impl Starting {
                     self.disable_schema_description,
                 )
             })
-            .collect::<Result<_, OperationError>>()?;
+            .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         debug!(
             "Loaded {} operations:\n{}",
@@ -477,7 +480,10 @@ impl Running {
                     self.disable_schema_description,
                 )
             })
-            .collect::<Result<_, OperationError>>()?;
+            .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
+            .into_iter()
+            .flatten()
+            .collect();
 
         debug!(
             "Updated {} operations:\n{}",
@@ -512,7 +518,10 @@ impl Running {
                         self.disable_schema_description,
                     )
                 })
-                .collect::<Result<_, OperationError>>()?;
+                .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
+                .into_iter()
+                .flatten()
+                .collect();
 
             debug!(
                 "Loaded {} operations:\n{}",
