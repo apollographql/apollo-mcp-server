@@ -9,7 +9,7 @@ anyhow = "1.0.98"
 apollo-compiler.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
-buildstructor = "0.6.0"
+bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive"] }
 futures.workspace = true
 lz-str = "0.2.1"

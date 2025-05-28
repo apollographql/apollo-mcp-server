@@ -6,7 +6,7 @@ use crate::graphql::Executable;
 use crate::introspection::{EXECUTE_TOOL_NAME, Execute, INTROSPECT_TOOL_NAME, Introspect};
 use crate::operations::{MutationMode, Operation, OperationSource, RawOperation};
 use apollo_compiler::ast::OperationType;
-use buildstructor::buildstructor;
+use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use rmcp::model::{
     CallToolRequestParam, CallToolResult, ErrorCode, ListToolsResult, PaginatedRequestParam,
@@ -57,10 +57,7 @@ pub enum Transport {
     SSE { address: IpAddr, port: u16 },
 }
 
-/// Types ending with Map cause incorrect assumptions by buildstructor, so use an alias
-type Headers = HeaderMap;
-
-#[buildstructor]
+#[bon]
 impl Server {
     #[builder]
     pub fn new(
@@ -68,9 +65,10 @@ impl Server {
         schema_source: SchemaSource,
         operation_source: OperationSource,
         endpoint: String,
-        headers: Headers,
+        headers: HeaderMap,
         introspection: bool,
         explorer: bool,
+        #[builder(required)]
         custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
         disable_type_description: bool,
