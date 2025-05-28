@@ -15,18 +15,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [UNRELEASED]
 
 ### 🚀 Features
-
+- Implement the Streamable HTTP transport. Enable with `--http-port` and/or `--http-address`. (#98)
 - Include both the type description and field description in input schema (#100)
 - Hide String, ID, Int, Float, and Boolean descriptions in input schema (#100)
 
 ### 🐛 Fixes
 
 - Fix error with recursive input types (#100)
-
-## [Unreleased]
-
-### 🚀 Features
-- Implement the Streamable HTTP transport. Enable with `--http-port` and/or `--http-address`. (#98)
 
 ## [0.2.1] - 2025-05-27
 
