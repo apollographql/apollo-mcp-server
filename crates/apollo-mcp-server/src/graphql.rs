@@ -69,7 +69,11 @@ pub trait Executable {
                 is_error: Some(
                     json.get("errors")
                         .filter(|value| !matches!(value, Value::Null))
-                        .is_some(),
+                        .is_some()
+                        && json
+                            .get("data")
+                            .filter(|value| !matches!(value, Value::Null))
+                            .is_none(),
                 ),
             })
     }
