@@ -37,6 +37,18 @@
   # Generate a derivation for just the dependencies of the project so that they
   # can be cached across all of the various checks and builders.
   cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+
+  # Meta information about the packages
+  packageInfo = with lib; {
+    meta = {
+      description = "Apollo MCP Server";
+      homepage = "https://www.apollographql.com/docs/apollo-mcp-server";
+      license = licenses.elastic20;
+
+      # The main binary that should be run when using `nix run`
+      mainProgram = "apollo-mcp-server";
+    };
+  };
 in {
   # Expose the list of build dependencies for inheriting in dev shells
   nativeDependencies = craneCommonArgs.nativeBuildInputs;
@@ -69,7 +81,7 @@ in {
 
   # List of packages exposed by this project
   packages = {
-    apollo-mcp = craneLib.buildPackage craneCommonArgs;
+    apollo-mcp = (craneLib.buildPackage craneCommonArgs) // packageInfo;
 
     # Builder for apollo-mcp-server. Takes the rust target triple for specifying
     # the cross-compile target. Set the target to the same as the host for native builds.
@@ -97,7 +109,7 @@ in {
             "${cargo-zigbuild-patched}/bin/cargo-zigbuild ${cmd}"
           ]);
     in
-      craneLib.buildPackage (craneCommonArgs
+      (craneLib.buildPackage (craneCommonArgs
         // {
           pname = craneCommonArgs.pname + "-${target}";
           nativeBuildInputs = [
@@ -126,6 +138,7 @@ in {
 
           # Make sure to compile it for the specified target
           CARGO_BUILD_TARGET = target;
-        });
+        }))
+      // packageInfo;
   };
 }
