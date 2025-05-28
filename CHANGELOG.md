@@ -13,6 +13,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### 📚 Documentation
 -->
 
+## [Unreleased]
+
+### 🚀 Features
+- Implement the Streamable HTTP transport. Enable with `--http-port` and/or `--http-address`. (#98)
+
 ## [0.2.1] - 2025-05-27
 
 ### 🐛 Fixes
