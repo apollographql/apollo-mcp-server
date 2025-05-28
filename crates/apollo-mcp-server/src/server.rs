@@ -68,8 +68,7 @@ impl Server {
         headers: HeaderMap,
         introspection: bool,
         explorer: bool,
-        #[builder(required)]
-        custom_scalar_map: Option<CustomScalarMap>,
+        #[builder(required)] custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
