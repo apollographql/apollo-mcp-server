@@ -2111,7 +2111,9 @@ mod tests {
         insta::assert_debug_snapshot!(operation.tool, @r###"
         Tool {
             name: "Test",
-            description: "",
+            description: Some(
+                "",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -2136,6 +2138,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
     }
