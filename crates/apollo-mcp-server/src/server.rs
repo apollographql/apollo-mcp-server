@@ -425,6 +425,7 @@ impl Starting {
                 sse_path: "/sse".to_string(),
                 post_path: "/message".to_string(),
                 ct: cancellation_token,
+                sse_keep_alive: None,
             })
             .await?
             .with_service(move || running.clone());
@@ -549,16 +550,8 @@ impl Running {
         for peer in peers.iter() {
             match peer.notify_tool_list_changed().await {
                 Ok(_) => retained_peers.push(peer.clone()),
-                Err(ServiceError::Transport(e)) if e.get_ref().is_some() => {
-                    if e.to_string() == *"disconnected" {
-                        // This always gets a "disconnected" error due to a bug in the SDK, but it actually works
-                        retained_peers.push(peer.clone());
-                    } else {
-                        error!(
-                            "Failed to notify peer of tool list change: {:?} - dropping peer",
-                            e
-                        );
-                    }
+                Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed) => {
+                    error!("Failed to notify peer of tool list change - dropping peer",);
                 }
                 Err(e) => {
                     error!("Failed to notify peer of tool list change {:?}", e);
@@ -615,7 +608,7 @@ impl ServerHandler for Running {
 
     async fn list_tools(
         &self,
-        _request: PaginatedRequestParam,
+        _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         Ok(ListToolsResult {
@@ -651,15 +644,16 @@ impl ServerHandler for Running {
         })
     }
 
-    fn set_peer(&mut self, p: Peer<RoleServer>) {
-        let peers = self.peers.clone();
-        tokio::spawn(async move {
-            let mut peers = peers.write().await;
-            // TODO: we need a way to remove these! The Rust SDK seems to leek running servers
-            //  forever - it never times them out or disconnects them.
-            peers.push(p);
-        });
-    }
+    // TODO: how to get list of peers to notify of tool changes?
+    // fn set_peer(&mut self, p: Peer<RoleServer>) {
+    //     let peers = self.peers.clone();
+    //     tokio::spawn(async move {
+    //         let mut peers = peers.write().await;
+    //         // TODO: we need a way to remove these! The Rust SDK seems to leek running servers
+    //         //  forever - it never times them out or disconnects them.
+    //         peers.push(p);
+    //     });
+    // }
 
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -776,6 +770,7 @@ impl StateMachine {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
         match Supergraph::new(&schema_state.sdl) {
             Ok(supergraph) => Ok(supergraph

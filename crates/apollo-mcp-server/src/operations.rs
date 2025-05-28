@@ -514,7 +514,9 @@ fn operation_name(operation: &Node<OperationDefinition>) -> Result<String, Opera
 
 fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
     let tool_schema_string = serde_json::to_string_pretty(&serde_json::json!(tool.input_schema))?;
-    Ok(tool.name.len() + tool.description.len() + tool_schema_string.len())
+    Ok(tool.name.len()
+        + tool.description.as_ref().map(|d| d.len()).unwrap_or(0)
+        + tool_schema_string.len())
 }
 
 fn get_json_schema(
@@ -863,10 +865,13 @@ mod tests {
         Operation {
             tool: Tool {
                 name: "MutationName",
-                description: "The returned value is optional and has type `String`",
+                description: Some(
+                    "The returned value is optional and has type `String`",
+                ),
                 input_schema: {
                     "type": String("object"),
                 },
+                annotations: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -894,10 +899,13 @@ mod tests {
         Operation {
             tool: Tool {
                 name: "MutationName",
-                description: "The returned value is optional and has type `String`",
+                description: Some(
+                    "The returned value is optional and has type `String`",
+                ),
                 input_schema: {
                     "type": String("object"),
                 },
+                annotations: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -925,10 +933,13 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -956,7 +967,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -965,6 +978,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -997,7 +1011,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "required": Array [
@@ -1009,6 +1025,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1044,7 +1061,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "required": Array [
@@ -1064,6 +1083,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1107,7 +1127,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "required": Array [
@@ -1122,6 +1144,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1160,7 +1183,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1177,6 +1202,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1217,7 +1243,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1229,6 +1257,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1264,7 +1293,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1289,6 +1320,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1337,7 +1369,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1359,6 +1393,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1404,7 +1439,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "required": Array [
@@ -1421,6 +1458,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1538,13 +1576,16 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {},
                 },
             },
+            annotations: None,
         }
         "###);
     }
@@ -1568,13 +1609,16 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {},
                 },
             },
+            annotations: None,
         }
         "###);
     }
@@ -1598,7 +1642,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1607,6 +1653,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
     }
@@ -1632,7 +1679,9 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
-            description: "The returned value is optional and has type `String`",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
@@ -1642,6 +1691,7 @@ mod tests {
                     },
                 },
             },
+            annotations: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -1798,7 +1848,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###"
         Get a list of A
         The returned value is an array of type `A`
@@ -1879,7 +1929,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###"Overridden tool #description"###
         );
     }
@@ -1906,7 +1956,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###"The returned value is optional and has type `String`"###
         );
     }
@@ -1926,7 +1976,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###"
                 The returned value is optional and has type `String`
                 ---
@@ -1950,7 +2000,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###"
                 """the description for the enum"""
                 enum RealEnum {
@@ -1978,7 +2028,7 @@ mod tests {
         .unwrap();
 
         insta::assert_snapshot!(
-            operation.tool.description.as_ref(),
+            operation.tool.description.unwrap(),
             @r###""###
         );
     }

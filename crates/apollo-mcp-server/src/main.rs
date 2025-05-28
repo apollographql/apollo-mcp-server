@@ -188,6 +188,7 @@ async fn main() -> anyhow::Result<()> {
         .await?)
 }
 
+#[allow(clippy::result_large_err)]
 fn uplink_config() -> Result<UplinkConfig, ServerError> {
     Ok(UplinkConfig {
         apollo_key: SecretString::from(

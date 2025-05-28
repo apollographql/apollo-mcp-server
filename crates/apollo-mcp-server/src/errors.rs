@@ -79,6 +79,9 @@ pub enum ServerError {
 
     #[error("Failed to start server")]
     StartupError(#[from] JoinError),
+
+    #[error("Failed to initialize MCP server")]
+    McpInitializeError(#[from] rmcp::service::ServerInitializeError<std::io::Error>),
 }
 
 /// An MCP tool error
