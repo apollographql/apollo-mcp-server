@@ -72,7 +72,7 @@ docker run \
   -p 5000:5000 \
   -v $PWD/graphql/TheSpaceDevs:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest \
-  --sse-port 5000 \
+  --http-port 5000 \
   --schema api.graphql \
   --operations operations \
   --endpoint https://thespacedevs-production.up.railway.app/

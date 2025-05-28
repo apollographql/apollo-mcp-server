@@ -196,7 +196,7 @@ docker run \
   -p 5000:5000 \
   -v $PWD/graphql/weather:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest \
-  --sse-port 5000 \
+  --http-port 5000 \
   -s api.graphql \
   -o operations/forecast.graphql operations/alerts.graphql operations/all.graphql
 ``` */}
@@ -230,16 +230,16 @@ Starting MCP inspector...
 
 1. In a browser, go to the URL returned by Inspector, then click **Connect** and **List Tools**. You should see the tools for the operations you provided.
 
-### Debug over SSE transport
+### Debug over the Streamable HTTP transport
 
-When running the MCP Server over SSE transport, you can run MCP Inspector with the SSE transport.
+When running the MCP Server over the Streamable HTTP transport, you can run MCP Inspector as follows.
 
-1. Start the MCP Server in SSE mode:
+1. Start the MCP Server in Streamable HTTP mode:
 
 ```sh
 target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
-  --sse-port 5000 -s graphql/weather/api.graphql \
+  --http-port 5000 -s graphql/weather/api.graphql \
   -o graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
 ```
 
@@ -250,7 +250,7 @@ npx @modelcontextprotocol/inspector
 ```
 
 1. In a browser, go to the URL returned by Inspector, then fill in the details:
-    - **Transport Type**: Select `SSE`
-    - **URL**: Enter `http://localhost:5000/sse`, where the port must match the `--sse-port` option
+    - **Transport Type**: Select `Streamable HTTP`
+    - **URL**: Enter `http://localhost:5000/mcp`, where the port must match the `--http-port` option
 
 1. Click **Connect** and **List Tools**. You should see the tools for the operations you provided.

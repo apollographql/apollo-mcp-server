@@ -19,6 +19,7 @@ rmcp = { version = "0.1", features = [
   "server",
   "transport-io",
   "transport-sse-server",
+  "transport-streamable-http-server",
 ] }
 serde.workspace = true
 thiserror.workspace = true

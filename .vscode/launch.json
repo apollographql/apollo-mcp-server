@@ -4,7 +4,7 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Run apollo-mcp-server [SSE]",
+            "name": "Run apollo-mcp-server [Streamable HTTP]",
             "runtimeExecutable": "cargo",
             "runtimeArgs": [
                 "run",
@@ -16,7 +16,7 @@
                 "graphql/weather/api.graphql",
                 "--manifest",
                 "graphql/weather/persisted_queries/apollo.json",
-                "--sse-port",
+                "--http-port",
                 "5000",
                 "--allow-mutations",
                 "all",
@@ -31,7 +31,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug apollo-mcp-server [SSE]",
+            "name": "Debug apollo-mcp-server [Streamable HTTP]",
             "cargo": {
                 "args": [
                     "build",
@@ -49,7 +49,7 @@
                 "graphql/weather/api.graphql",
                 "--manifest",
                 "graphql/weather/persisted_queries/apollo.json",
-                "--sse-port",
+                "--http-port",
                 "5000",
                 "--allow-mutations",
                 "all",

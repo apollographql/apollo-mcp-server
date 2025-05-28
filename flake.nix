@@ -158,7 +158,7 @@
           ];
 
           config = let
-            sse-port = 5000;
+            http-port = 5000;
           in {
             # Make the entrypoint the server
             Entrypoint = [
@@ -168,15 +168,15 @@
               "-d"
               "/data"
 
-              # Use SSE transport by default, bound to all addresses
-              "--sse-address"
+              # Use Streamable HTTP transport by default, bound to all addresses
+              "--http-address"
               "0.0.0.0"
-              "--sse-port"
-              "${builtins.toString sse-port}"
+              "--http-port"
+              "${builtins.toString http-port}"
             ];
 
-            # Listen on container port for SSE requests
-            Expose = "${builtins.toString sse-port}/tcp";
+            # Listen on container port for Streamable HTTP requests
+            Expose = "${builtins.toString http-port}/tcp";
 
             # Drop to local user
             User = "1000";

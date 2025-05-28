@@ -58,27 +58,30 @@ apollo-mcp-server [OPTIONS] --directory <DIRECTORY>
 
 ## Options
 
-| Option                                     | Description                                                                                                                                                                                                                          |
-| :-------------------------------------------------- |:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `-d, --directory <DIRECTORY>`                       | The working directory to use. Defaults the current working directory.                                                                                                                                                                |
-| `-s, --schema <SCHEMA>`                             | The path to the GraphQL API schema file.                                                                                                                                                                                             |
-| `-c, --custom-scalars-config <CUSTOM_SCALARS_CONFIG>` | The path to the GraphQL custom_scalars_config file.                               |
-| `-e, --endpoint <ENDPOINT>`                         | The GraphQL endpoint the server will invoke.<br />[default: `http://127.0.0.1:4000`]                                                                                                                                                 |
-| `--header <HEADERS>`                                | Headers to send to the endpoint.                                                                                                                                                                                                     |
-| `--sse-port <SSE_PORT>`                             | Start the server using the SSE transport on the given port (default: 5000).                                                                                                                                                          |
-| `--sse-address <SSE_ADDRESS>`                       | The IP address to bind the SSE server to (default: 127.0.0.1).                                                                                                                                                                       |
-| `-i, --introspection`                               | Expose the schema to the MCP client through `introspect` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                    |
-| `-u, --uplink`                                      | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
-| `-x, --explorer`                                    | Expose a tool to open queries in Apollo Explorer (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                                                     |
-| `-o, --operations [<OPERATIONS>...]`                | Operation files to expose as MCP tools. [Learn more](/apollo-mcp-server/guides/#from-operation-files).                                                                                                                        |
-| `--manifest <MANIFEST>`                             | The path to the persisted query manifest containing operations.                                                                                                                                                                      |
-| `--disable-type-description`                        | Disable operation root field types in tool description.                                                                                                                                                                              |
-| `--disable-schema-description`                      | Disable schema type definitions referenced by all fields returned by the operation in the tool description.                                                                                                                          |
-| `-m, --allow-mutations <ALLOW_MUTATIONS>`           | [default: `none`]<br /><br />Possible values:<ul><li>`none`: Don't allow any mutations</li><li>`explicit`: Allow explicit mutations, but don't allow the LLM to build them</li><li>`all`: Allow the LLM to build mutations</li></ul> |
-| `-l, --log <LOG_LEVEL>`                             | [default: `INFO`]<br /><br />Possible values:<ul><li>`TRACE`</li><li>`DEBUG`</li><li>`INFO`</li><li>`WARN`</li><li>`ERROR`</li></ul>                                                                                                 |
-| `-h, --help`                                        | Print help (see a summary with `-h`).                                                                                                                                                                                                |
+| Option                                                | Description                                                                                                                                                                                                                          |
+|:------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `-d, --directory <DIRECTORY>`                         | The working directory to use. Defaults the current working directory.                                                                                                                                                                |
+| `-s, --schema <SCHEMA>`                               | The path to the GraphQL API schema file.                                                                                                                                                                                             |
+| `-c, --custom-scalars-config <CUSTOM_SCALARS_CONFIG>` | The path to the GraphQL custom_scalars_config file.                                                                                                                                                                                  |
+| `-e, --endpoint <ENDPOINT>`                           | The GraphQL endpoint the server will invoke.<br />[default: `http://127.0.0.1:4000`]                                                                                                                                                 |
+| `--header <HEADERS>`                                  | Headers to send to the endpoint.                                                                                                                                                                                                     |
+| `--sse-port <SSE_PORT>`                               | Start the server using the SSE transport on the given port (default: 5000).                                                                                                                                                          |
+| `--sse-address <SSE_ADDRESS>`                         | The IP address to bind the SSE server to (default: 127.0.0.1).                                                                                                                                                                       |
+| `--http-port <HTTP_PORT>`                             | Start the server using the Streamable HTTP transport on the given port (default: 5000).                                                                                                                                              |
+| `--http-address <HTTP_ADDRESS>`                       | The IP address to bind the Streamable HTTP server to (default: 127.0.0.1).                                                                                                                                                           |
+| `-i, --introspection`                                 | Expose the schema to the MCP client through `introspect` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                    |
+| `-u, --uplink`                                        | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
+| `-x, --explorer`                                      | Expose a tool to open queries in Apollo Explorer (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                                                     |
+| `-o, --operations [<OPERATIONS>...]`                  | Operation files to expose as MCP tools. [Learn more](/apollo-mcp-server/guides/#from-operation-files).                                                                                                                               |
+| `--manifest <MANIFEST>`                               | The path to the persisted query manifest containing operations.                                                                                                                                                                      |
+| `--disable-type-description`                          | Disable operation root field types in tool description.                                                                                                                                                                              |
+| `--disable-schema-description`                        | Disable schema type definitions referenced by all fields returned by the operation in the tool description.                                                                                                                          |
+| `-m, --allow-mutations <ALLOW_MUTATIONS>`             | [default: `none`]<br /><br />Possible values:<ul><li>`none`: Don't allow any mutations</li><li>`explicit`: Allow explicit mutations, but don't allow the LLM to build them</li><li>`all`: Allow the LLM to build mutations</li></ul> |
+| `-l, --log <LOG_LEVEL>`                               | [default: `INFO`]<br /><br />Possible values:<ul><li>`TRACE`</li><li>`DEBUG`</li><li>`INFO`</li><li>`WARN`</li><li>`ERROR`</li></ul>                                                                                                 |
+| `-h, --help`                                          | Print help (see a summary with `-h`).                                                                                                                                                                                                |
 
 Specifying either the SSE port or address (or both) will enable the SSE transport.
+Specifying either the HTTP port or address (or both) will enable the Streamable HTTP transport.
 
 ### Mapping rover dev options
 
@@ -88,18 +91,20 @@ Running `rover dev --mcp` starts an MCP Server. Additional options, `--mcp*`, di
 
 The mapping of `rover dev` options to MCP Server options: 
 
-| `rover dev` option                                     | Equivalent MCP Server option                                                                                                                                                                                                                                |
-| :-------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--mcp-directory <DIRECTORY>` | `-d, --directory <DIRECTORY>` |
-| `--mcp-sse-port <PORT>`  |  `--sse-port <PORT>` |
-| `--mcp-sse-address <ADDRESS>` | `--sse-address <ADDRESS>` |
-| `--mcp-introspection` | `-i, --introspection`  |
-| `--mcp-uplink` |  `-u, --uplink` |
-| `--mcp-operations [<OPERATIONS>...]` |  `-o, --operations [<OPERATIONS>...]` |
-| `--mcp-header <HEADERS>` | `--header <HEADERS>`   |
-| `--mcp-manifest <MANIFEST>` |  `--manifest <MANIFEST>`  |
+| `rover dev` option                                    | Equivalent MCP Server option                          |
+|:------------------------------------------------------|:------------------------------------------------------|
+| `--mcp-directory <DIRECTORY>`                         | `-d, --directory <DIRECTORY>`                         |
+| `--mcp-sse-port <PORT>`                               | `--sse-port <PORT>`                                   |
+| `--mcp-sse-address <ADDRESS>`                         | `--sse-address <ADDRESS>`                             |
+| `--mcp-http-port <PORT>`                              | `--http-port <PORT>`                                  |
+| `--mcp-http-address <ADDRESS>`                        | `--http-address <ADDRESS>`                            |
+| `--mcp-introspection`                                 | `-i, --introspection`                                 |
+| `--mcp-uplink`                                        | `-u, --uplink`                                        |
+| `--mcp-operations [<OPERATIONS>...]`                  | `-o, --operations [<OPERATIONS>...]`                  |
+| `--mcp-header <HEADERS>`                              | `--header <HEADERS>`                                  |
+| `--mcp-manifest <MANIFEST>`                           | `--manifest <MANIFEST>`                               |
 | `--mcp-custom-scalars-config <CUSTOM_SCALARS_CONFIG>` | `-c, --custom-scalars-config <CUSTOM_SCALARS_CONFIG>` |
-| `--mcp-allow-mutations <ALLOW_MUTATIONS>` | `-m, --allow-mutations <ALLOW_MUTATIONS>` |
-| `--mcp-disable-type-description` | `--disable-type-description` |
-| `--mcp-disable-schema-description` | `--disable-schema-description` |
+| `--mcp-allow-mutations <ALLOW_MUTATIONS>`             | `-m, --allow-mutations <ALLOW_MUTATIONS>`             |
+| `--mcp-disable-type-description`                      | `--disable-type-description`                          |
+| `--mcp-disable-schema-description`                    | `--disable-schema-description`                        |
 

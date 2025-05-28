@@ -38,7 +38,7 @@ Let's walk through the example files. They're located in the repo in `graphql/Th
 
 Choose one of the options for running an MCP example:
 
-- Running `rover dev` to start an MCP Server using the SSE transport
+- Running `rover dev` to start an MCP Server using the Streamable HTTP transport
 - Running a local binary of the MCP Server using the stdio transport
 
 Both use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) to connect to and inspect the running server.
@@ -46,9 +46,9 @@ Both use [MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) t
 
 <Tabs>
 
-<Tab label="rover dev + SSE">
+<Tab label="rover dev + Streamable HTTP">
 
-You can run the Apollo MCP Server together with a graph in a local development environment with a single `rover dev` command. Rover starts an MCP Server that communicates via SSE transport.
+You can run the Apollo MCP Server together with a graph in a local development environment with a single `rover dev` command. Rover starts an MCP Server that communicates via the Streamable HTTP transport.
 
 1. Install [Apollo Rover CLI](/rover/getting-started) v0.31 or later. 
 1. From the root directory of your local repo, run `rover dev` to start a local graph, using `--mcp*` options to start and configure an Apollo MCP Server.
@@ -69,13 +69,13 @@ You can run the Apollo MCP Server together with a graph in a local development e
     ```
 
 1. Fill in the details in Inspector:
-    - **Transport Type**: Select `SSE`
-    - **URL**: Enter `http://localhost:5000/sse` (5000 is the default port of the MCP server)
+    - **Transport Type**: Select `Streamable HTTP`
+    - **URL**: Enter `http://localhost:5000/mcp` (5000 is the default port of the MCP server)
 
 1. Click **Connect**, then click **List Tool**. Inspector should show the tools from your server.
 
     <img
-      src="./images/mcp-getstarted-inspector-sse.jpg"
+      src="./images/mcp-getstarted-inspector-http.jpg"
       alt="MCP Inspector connected to running Apollo MCP Server"
       class="screenshot"
       width="600"
@@ -118,7 +118,7 @@ You can run an Apollo MCP Server locally to communicate over stdio.
 
 This quickstart using Claude Desktop as the MCP client. Configure Claude Desktop to use the tools from your MCP Server with these steps:
 
-1. Open Claude's JSON config file, and add a configuration to connect to the MCP Server. You can connect via stdio or SSE transport:
+1. Open Claude's JSON config file, and add a configuration to connect to the MCP Server. You can connect via stdio or the Streamable HTTP transport:
 
     <CodeColumns cols={2}>
 
@@ -142,16 +142,14 @@ This quickstart using Claude Desktop as the MCP client. Configure Claude Desktop
     }
     ```
 
-    ```json title="SSE"
+    ```json title="Streamable HTTP"
     {
       "mcpServers": {
         "thespacedevs": {
             "command": "npx",
             "args": [
                 "mcp-remote",
-                "http://127.0.0.1:5000/sse",
-                "--transport",
-                "sse-first"
+                "http://127.0.0.1:5000/mcp"
             ]
         }
       }
