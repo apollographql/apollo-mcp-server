@@ -12,6 +12,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### 🛠 Maintenance
 ### 📚 Documentation
 -->
+## [UNRELEASED]
+
+### 🚀 Features
+
+- Include both the type description and field description in input schema (#100)
+- Hide String, ID, Int, Float, and Boolean descriptions in input schema (#100)
+
+### 🐛 Fixes
+
+- Fix error with recursive input types (#100)
 
 ## [Unreleased]
 

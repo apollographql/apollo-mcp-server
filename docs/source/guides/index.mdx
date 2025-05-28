@@ -63,6 +63,12 @@ TODO */}
 
 An Apollo MCP Server must know the schema of GraphQL API it supports. You can use either [the `--schema` or `--uplink` option](/apollo-mcp-server/command-reference#options) to provide the schema. If using `--schema` option, it can be either an API or supergraph schema.
 
+The schema is required for three main purposes:
+
+1. **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
+1. **Input Validation**: The schema is used to translate GraphQL input types into JSON Schema, ensuring that AI models provide correctly formatted inputs.
+1. **Introspection Support**: If you enable the `--introspection` option, the schema is used to provide information about available types and operations to AI models.
+
 ## Define GraphQL operations for tools
 
 You can manually define the GraphQL operations that are exposed by Apollo MCP Server as MCP tools. You can define these operations using:

@@ -16,6 +16,7 @@ use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::persisted_queries::event::Event as ManifestEvent;
 use futures::{Stream, StreamExt};
 use regex::Regex;
+use rmcp::schemars::Map;
 use rmcp::{
     model::Tool,
     schemars::schema::{
@@ -525,16 +526,16 @@ fn get_json_schema(
     custom_scalar_map: Option<&CustomScalarMap>,
 ) -> RootSchema {
     let mut obj = ObjectValidation::default();
+    let mut definitions = Map::new();
 
     operation.variables.iter().for_each(|variable| {
         let variable_name = variable.name.to_string();
-        let type_name = variable.ty.inner_named_type();
         let schema = type_to_schema(
-            // For the root description, for now we can use the type description.
-            description(type_name, graphql_schema),
+            None,
             variable.ty.as_ref(),
             graphql_schema,
             custom_scalar_map,
+            &mut definitions,
         );
         obj.properties.insert(variable_name.clone(), schema);
         if variable.ty.is_non_null() {
@@ -548,6 +549,7 @@ fn get_json_schema(
             object: Some(Box::new(obj)),
             ..Default::default()
         },
+        definitions,
         ..Default::default()
     }
 }
@@ -575,7 +577,7 @@ fn schema_factory(
     })
 }
 
-fn description(name: &Name, graphql_schema: &GraphqlSchema) -> Option<String> {
+fn input_object_description(name: &Name, graphql_schema: &GraphqlSchema) -> Option<String> {
     if let Some(input_object) = graphql_schema.get_input_object(name) {
         input_object.description.as_ref().map(|d| d.to_string())
     } else if let Some(scalar) = graphql_schema.get_scalar(name) {
@@ -616,6 +618,7 @@ fn type_to_schema(
     variable_type: &Type,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
+    definitions: &mut Map<String, Schema>,
 ) -> Schema {
     match variable_type {
         Type::NonNullNamed(named) | Type::Named(named) => match named.as_str() {
@@ -645,69 +648,124 @@ fn type_to_schema(
             ),
             _ => {
                 if let Some(input_type) = graphql_schema.get_input_object(named) {
-                    let mut obj = ObjectValidation::default();
+                    if !definitions.contains_key(named.as_str()) {
+                        definitions
+                            .insert(named.to_string(), Schema::Object(SchemaObject::default())); // Insert temporary value into map so any recursive references will not try to also create it.
+                        let mut obj = ObjectValidation::default();
 
-                    input_type.fields.iter().for_each(|(name, field)| {
-                        let description = field.description.as_ref().map(|n| n.to_string());
-                        obj.properties.insert(
-                            name.to_string(),
-                            type_to_schema(
-                                description,
-                                field.ty.as_ref(),
-                                graphql_schema,
-                                custom_scalar_map,
+                        input_type.fields.iter().for_each(|(name, field)| {
+                            let description = field.description.as_ref().map(|n| n.to_string());
+                            obj.properties.insert(
+                                name.to_string(),
+                                type_to_schema(
+                                    description,
+                                    field.ty.as_ref(),
+                                    graphql_schema,
+                                    custom_scalar_map,
+                                    definitions,
+                                ),
+                            );
+
+                            if field.is_required() {
+                                obj.required.insert(name.to_string());
+                            }
+                        });
+
+                        definitions.insert(
+                            named.to_string(),
+                            schema_factory(
+                                input_object_description(named, graphql_schema),
+                                Some(InstanceType::Object),
+                                Some(obj),
+                                None,
+                                None,
+                                None,
                             ),
                         );
-
-                        if field.is_required() {
-                            obj.required.insert(name.to_string());
-                        }
-                    });
-
-                    schema_factory(
-                        description,
-                        Some(InstanceType::Object),
-                        Some(obj),
-                        None,
-                        None,
-                        None,
-                    )
-                } else if graphql_schema.get_scalar(named).is_some() {
-                    if let Some(custom_scalar_map) = custom_scalar_map {
-                        if let Some(custom_scalar_schema_object) =
-                            custom_scalar_map.get(named.as_str())
-                        {
-                            let mut custom_schema = custom_scalar_schema_object.clone();
-                            let mut meta = *custom_schema.metadata.unwrap_or_default();
-                            // If description isn't included in custom schema, inject the one from the schema
-                            if meta.description.is_none() {
-                                meta.description = description;
-                            }
-                            custom_schema.metadata = Some(Box::new(meta));
-                            Schema::Object(custom_schema)
-                        } else {
-                            warn!(name=?named, "custom scalar missing from custom_scalar_map");
-                            schema_factory(description, None, None, None, None, None)
-                        }
-                    } else {
-                        warn!(name=?named, "custom scalars aren't currently supported without a custom_scalar_map");
-                        schema_factory(None, None, None, None, None, None)
                     }
+
+                    Schema::Object(SchemaObject {
+                        metadata: Some(Box::new(Metadata {
+                            description,
+                            ..Default::default()
+                        })),
+                        reference: Some(format!("#/definitions/{}", named)),
+                        ..Default::default()
+                    })
+                } else if graphql_schema.get_scalar(named).is_some() {
+                    if !definitions.contains_key(named.as_str()) {
+                        let default_description = input_object_description(named, graphql_schema);
+                        if let Some(custom_scalar_map) = custom_scalar_map {
+                            if let Some(custom_scalar_schema_object) =
+                                custom_scalar_map.get(named.as_str())
+                            {
+                                let mut custom_schema = custom_scalar_schema_object.clone();
+                                let mut meta = *custom_schema.metadata.unwrap_or_default();
+                                // If description isn't included in custom schema, inject the one from the schema
+                                if meta.description.is_none() {
+                                    meta.description = default_description;
+                                }
+                                custom_schema.metadata = Some(Box::new(meta));
+                                definitions
+                                    .insert(named.to_string(), Schema::Object(custom_schema));
+                            } else {
+                                warn!(name=?named, "custom scalar missing from custom_scalar_map");
+                                definitions.insert(
+                                    named.to_string(),
+                                    schema_factory(
+                                        default_description,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    ),
+                                );
+                            }
+                        } else {
+                            warn!(name=?named, "custom scalars aren't currently supported without a custom_scalar_map");
+                            definitions.insert(
+                                named.to_string(),
+                                schema_factory(default_description, None, None, None, None, None),
+                            );
+                        }
+                    }
+                    Schema::Object(SchemaObject {
+                        metadata: Some(Box::new(Metadata {
+                            description,
+                            ..Default::default()
+                        })),
+                        reference: Some(format!("#/definitions/{}", named)),
+                        ..Default::default()
+                    })
                 } else if let Some(enum_type) = graphql_schema.get_enum(named) {
-                    schema_factory(
-                        description,
-                        Some(InstanceType::String),
-                        None,
-                        None,
-                        None,
-                        Some(
-                            enum_type
-                                .values
-                                .iter()
-                                .map(|(_name, value)| serde_json::json!(value.value))
-                                .collect(),
-                        ),
-                    )
+                    if !definitions.contains_key(named.as_str()) {
+                        definitions.insert(
+                            named.to_string(),
+                            schema_factory(
+                                input_object_description(named, graphql_schema),
+                                Some(InstanceType::String),
+                                None,
+                                None,
+                                None,
+                                Some(
+                                    enum_type
+                                        .values
+                                        .iter()
+                                        .map(|(_name, value)| serde_json::json!(value.value))
+                                        .collect(),
+                                ),
+                            ),
+                        );
+                    }
+                    Schema::Object(SchemaObject {
+                        metadata: Some(Box::new(Metadata {
+                            description,
+                            ..Default::default()
+                        })),
+                        reference: Some(format!("#/definitions/{}", named)),
+                        ..Default::default()
+                    })
                 } else {
                     warn!(name=?named, "Type not found in schema");
                     schema_factory(None, None, None, None, None, None)
@@ -715,8 +773,13 @@ fn type_to_schema(
             }
         },
         Type::NonNullList(list_type) | Type::List(list_type) => {
-            let inner_type_schema =
-                type_to_schema(description, list_type, graphql_schema, custom_scalar_map);
+            let inner_type_schema = type_to_schema(
+                description,
+                list_type,
+                graphql_schema,
+                custom_scalar_map,
+                definitions,
+            );
             schema_factory(
                 None,
                 Some(InstanceType::Array),
@@ -1376,6 +1439,11 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
+                        "$ref": String("#/definitions/RealInputObject"),
+                    },
+                },
+                "definitions": Object {
+                    "RealInputObject": Object {
                         "type": String("object"),
                         "required": Array [
                             String("required"),
@@ -1394,29 +1462,6 @@ mod tests {
                 },
             },
             annotations: None,
-        }
-        "###);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "object",
-              "required": [
-                "required"
-              ],
-              "properties": {
-                "optional": {
-                  "description": "optional is a input field that is optional",
-                  "type": "string"
-                },
-                "required": {
-                  "description": "required is a input field that is required",
-                  "type": "string"
-                }
-              }
-            }
-          }
         }
         "###);
     }
@@ -1449,6 +1494,11 @@ mod tests {
                 ],
                 "properties": Object {
                     "id": Object {
+                        "$ref": String("#/definitions/RealEnum"),
+                    },
+                },
+                "definitions": Object {
+                    "RealEnum": Object {
                         "description": String("the description for the enum\n\nValues:\nENUM_VALUE_1: ENUM_VALUE_1 is a value\nENUM_VALUE_2: ENUM_VALUE_2 is a value"),
                         "type": String("string"),
                         "enum": Array [
@@ -1459,24 +1509,6 @@ mod tests {
                 },
             },
             annotations: None,
-        }
-        "###);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
-        {
-          "type": "object",
-          "required": [
-            "id"
-          ],
-          "properties": {
-            "id": {
-              "description": "the description for the enum\n\nValues:\nENUM_VALUE_1: ENUM_VALUE_1 is a value\nENUM_VALUE_2: ENUM_VALUE_2 is a value",
-              "type": "string",
-              "enum": [
-                "ENUM_VALUE_1",
-                "ENUM_VALUE_2"
-              ]
-            }
-          }
         }
         "###);
     }
@@ -1615,7 +1647,14 @@ mod tests {
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
-                    "id": Object {},
+                    "id": Object {
+                        "$ref": String("#/definitions/RealCustomScalar"),
+                    },
+                },
+                "definitions": Object {
+                    "RealCustomScalar": Object {
+                        "description": String("RealCustomScalar exists"),
+                    },
                 },
             },
             annotations: None,
@@ -1649,6 +1688,11 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
+                        "$ref": String("#/definitions/RealCustomScalar"),
+                    },
+                },
+                "definitions": Object {
+                    "RealCustomScalar": Object {
                         "description": String("RealCustomScalar exists"),
                     },
                 },
@@ -1686,23 +1730,17 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
+                        "$ref": String("#/definitions/RealCustomScalar"),
+                    },
+                },
+                "definitions": Object {
+                    "RealCustomScalar": Object {
                         "description": String("RealCustomScalar exists"),
                         "type": String("string"),
                     },
                 },
             },
             annotations: None,
-        }
-        "###);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "description": "RealCustomScalar exists",
-              "type": "string"
-            }
-          }
         }
         "###);
     }
@@ -2031,5 +2069,74 @@ mod tests {
             operation.tool.description.unwrap(),
             @r###""###
         );
+    }
+
+    #[test]
+    fn recursive_inputs() {
+        let operation = Operation::from_document(
+            r###"query Test($filter: Filter){
+                field(filter: $filter) {
+                    id
+                }
+            }"###,
+            &Schema::parse(
+                r#"
+                """the filter input"""
+                input Filter {
+                """the filter.field field"""
+                    field: String
+                    """the filter.filter field"""
+                    filter: Filter
+                }
+                type Query {
+                """the Query.field field"""
+                  field(
+                    """the filter argument"""
+                    filter: Filter
+                  ): String
+                }
+            "#,
+                "operation.graphql",
+            )
+            .unwrap(),
+            None,
+            None,
+            MutationMode::None,
+            true,
+            true,
+        )
+        .unwrap()
+        .unwrap();
+
+        insta::assert_debug_snapshot!(operation.tool, @r###"
+        Tool {
+            name: "Test",
+            description: "",
+            input_schema: {
+                "type": String("object"),
+                "properties": Object {
+                    "filter": Object {
+                        "$ref": String("#/definitions/Filter"),
+                    },
+                },
+                "definitions": Object {
+                    "Filter": Object {
+                        "description": String("the filter input"),
+                        "type": String("object"),
+                        "properties": Object {
+                            "field": Object {
+                                "description": String("the filter.field field"),
+                                "type": String("string"),
+                            },
+                            "filter": Object {
+                                "description": String("the filter.filter field"),
+                                "$ref": String("#/definitions/Filter"),
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        "###);
     }
 }

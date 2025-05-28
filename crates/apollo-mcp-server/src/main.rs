@@ -191,7 +191,7 @@ async fn main() -> anyhow::Result<()> {
         .mutation_mode(args.allow_mutations)
         .disable_type_description(args.disable_type_description)
         .disable_schema_description(args.disable_schema_description)
-        .and_custom_scalar_map(
+        .custom_scalar_map(
             args.custom_scalars_config
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
                 .transpose()?,

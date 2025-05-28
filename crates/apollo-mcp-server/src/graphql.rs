@@ -55,7 +55,7 @@ pub trait Executable {
                     None,
                 )
             })?
-            .text()
+            .json::<Value>()
             .await
             .map_err(|reqwest_error| {
                 McpError::new(
@@ -64,10 +64,17 @@ pub trait Executable {
                     None,
                 )
             })
-            .and_then(Content::json)
-            .map(|result| CallToolResult {
-                content: vec![result],
-                is_error: None,
+            .map(|json| CallToolResult {
+                content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
+                is_error: Some(
+                    json.get("errors")
+                        .filter(|value| !matches!(value, Value::Null))
+                        .is_some()
+                        && json
+                            .get("data")
+                            .filter(|value| !matches!(value, Value::Null))
+                            .is_none(),
+                ),
             })
     }
 }
