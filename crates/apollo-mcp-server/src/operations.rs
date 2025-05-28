@@ -16,6 +16,7 @@ use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::persisted_queries::event::Event as ManifestEvent;
 use futures::{Stream, StreamExt};
 use regex::Regex;
+use rmcp::model::ToolAnnotations;
 use rmcp::schemars::Map;
 use rmcp::{
     model::Tool,
@@ -333,7 +334,10 @@ impl Operation {
                 ));
             };
 
-            let tool: Tool = Tool::new(operation_name.clone(), description, schema);
+            let tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(
+                ToolAnnotations::new()
+                    .read_only(operation.operation_type != OperationType::Mutation),
+            );
             let character_count = tool_character_length(&tool);
             match character_count {
                 Ok(length) => info!(
