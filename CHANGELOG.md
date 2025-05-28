@@ -18,6 +18,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - Implement the Streamable HTTP transport. Enable with `--http-port` and/or `--http-address`. (#98)
 - Include both the type description and field description in input schema (#100)
 - Hide String, ID, Int, Float, and Boolean descriptions in input schema (#100)
+- Set the `readOnlyHint` tool annotation for tools based on GraphQL query operations (#103)
 
 ### 🐛 Fixes
 
