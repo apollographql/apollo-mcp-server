@@ -54,13 +54,13 @@ struct Args {
     headers: Vec<String>,
 
     /// The IP address to bind the SSE server to
-    /// 
+    ///
     /// [default: 127.0.0.1]
     #[arg(long)]
     sse_address: Option<IpAddr>,
 
     /// Start the server using the SSE transport on the given port
-    /// 
+    ///
     /// [default: 5000]
     #[arg(long)]
     sse_port: Option<u16>,
@@ -102,13 +102,13 @@ struct Args {
     log_level: Level,
 
     /// The IP address to bind the Streamable HTTP server to
-    /// 
+    ///
     /// [default: 127.0.0.1]
     #[arg(long, conflicts_with_all(["sse_port", "sse_address"]))]
     http_address: Option<IpAddr>,
 
     /// Start the server using the Streamable HTTP transport on the given port
-    /// 
+    ///
     /// [default: 5000]
     #[arg(long, conflicts_with_all(["sse_port", "sse_address"]))]
     http_port: Option<u16>,
