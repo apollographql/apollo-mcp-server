@@ -155,6 +155,7 @@
 
           contents = [
             packages.apollo-mcp
+            pkgs.cacert
           ];
 
           config = let
