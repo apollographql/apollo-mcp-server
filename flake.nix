@@ -38,6 +38,9 @@
       unstable-pkgs = import unstable {
         inherit system;
         overlays = [(import rust-overlay)];
+
+        # Elastic license is non-free, so we allow it to build here
+        config.allowUnfreePredicate = pkg: let lib = unstable-pkgs.lib; in lib.strings.hasPrefix "apollo-" (lib.getName pkg);
       };
 
       # Define the toolchain based on the rust-toolchain file
