@@ -1,6 +1,5 @@
-# You don't have to provide a query search input
-query GetAstronautsCurrentlyInSpace ($query: String!) {
-  astronauts(filters: { inSpace: true, search: $query }) {
+query GetAstronautsCurrentlyInSpace {
+  astronauts(filters: { inSpace: true, search: "" }) {
     results {
       id
       name

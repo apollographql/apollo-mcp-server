@@ -18,7 +18,7 @@
       "id": "83af5184f29c1eb5ce9b0d6da11285829f2f155d3815affbe66b56fa249f7603",
       "name": "GetAstronautsCurrentlyInSpace",
       "type": "query",
-      "body": "query GetAstronautsCurrentlyInSpace($query: String!) {\n  astronauts(filters: {inSpace: true, search: $query}) {\n    results {\n      id\n      name\n      timeInSpace\n      lastFlight\n      agency {\n        name\n        abbrev\n        country {\n          name\n          __typename\n        }\n        __typename\n      }\n      nationality {\n        name\n        nationalityName\n        __typename\n      }\n      image {\n        thumbnail\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"
+      "body": "query GetAstronautsCurrentlyInSpace {\n  astronauts(filters: {inSpace: true, search: \"\"}) {\n    results {\n      id\n      name\n      timeInSpace\n      lastFlight\n      agency {\n        name\n        abbrev\n        country {\n          name\n          __typename\n        }\n        __typename\n      }\n      nationality {\n        name\n        nationalityName\n        __typename\n      }\n      image {\n        thumbnail\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"
     },
     {
       "id": "824e3c8a1612c32a315450abbd5c7aedc0c402fdf6068583a54461f5b67d55be",
