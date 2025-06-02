@@ -546,7 +546,6 @@ fn get_json_schema(
             .map(|o| o.contains_key(&variable_name))
             .unwrap_or_default()
         {
-            // TODO: what should the behavior here be? Default values? hardcoded values?
             let schema = type_to_schema(
                 None,
                 variable.ty.as_ref(),
@@ -832,28 +831,25 @@ impl graphql::Executable for Operation {
         Ok(self.inner.source_text.clone())
     }
 
-    fn variables(&self, input: Value) -> Result<Value, McpError> {
+    fn variables(&self, input_variables: Value) -> Result<Value, McpError> {
         if let Some(raw_variables) = self.inner.variables.as_ref() {
-            // TODO: what should the behavior here be? Default values? hardcoded values?
-            let mut variables = serde_json::Map::new();
+            let mut variables = match input_variables {
+                Value::Null => Ok(serde_json::Map::new()),
+                Value::Object(obj) => Ok(obj.clone()),
+                _ => Err(McpError::new(
+                    ErrorCode::INVALID_PARAMS,
+                    "Invalid input".to_string(),
+                    None,
+                )),
+            }?;
+
             raw_variables.iter().for_each(|(key, value)| {
                 variables.insert(key.clone(), value.clone());
             });
 
-            if let Value::Object(input_variables) = input {
-                input_variables.iter().for_each(|(key, value)| {
-                    variables.insert(key.clone(), value.clone());
-                });
-                Ok(Value::Object(variables))
-            } else {
-                Err(McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "Expected input to be an object",
-                    None,
-                ))
-            }
+            Ok(Value::Object(variables))
         } else {
-            Ok(input)
+            Ok(input_variables)
         }
     }
 
