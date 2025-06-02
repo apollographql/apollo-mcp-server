@@ -23,7 +23,7 @@ pub trait Executable {
     /// Get the variables to execute the operation with
     fn variables(&self, input: Value) -> Result<Value, McpError>;
 
-    /// Get the headers to execute the operation with
+    /// Get the variables to execute the operation with
     fn headers(
         &self,
         default_headers: &HeaderMap<HeaderValue>,
