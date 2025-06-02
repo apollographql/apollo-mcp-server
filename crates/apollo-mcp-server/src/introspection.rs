@@ -9,6 +9,7 @@ use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -195,6 +196,13 @@ impl graphql::Executable for Execute {
                 None,
             )),
         }
+    }
+
+    fn headers(
+        &self,
+        default_headers: &HeaderMap<HeaderValue>,
+    ) -> Result<HeaderMap<HeaderValue>, McpError> {
+        Ok(default_headers.clone())
     }
 }
 

@@ -3,7 +3,7 @@
 use crate::errors::McpError;
 use apollo_compiler::response::serde_json_bytes::serde_json;
 use apollo_compiler::response::serde_json_bytes::serde_json::Value;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
 
 pub struct Request<'a> {
@@ -23,11 +23,17 @@ pub trait Executable {
     /// Get the variables to execute the operation with
     fn variables(&self, input: Value) -> Result<Value, McpError>;
 
+    /// Get the headers to execute the operation with
+    fn headers(
+        &self,
+        default_headers: &HeaderMap<HeaderValue>,
+    ) -> Result<HeaderMap<HeaderValue>, McpError>;
+
     /// Execute as a GraphQL operation using the endpoint and headers
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         reqwest::Client::new()
             .post(request.endpoint)
-            .headers(request.headers)
+            .headers(self.headers(&request.headers)?)
             .body(if let Some(id) = self.persisted_query_id() {
                 serde_json::json!({
                     "extensions": {
