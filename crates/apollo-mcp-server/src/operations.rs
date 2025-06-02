@@ -1055,6 +1055,8 @@ mod tests {
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
                 persisted_query_id: None,
+                headers: None,
+                variables: None,
             },
         }
         "###);
@@ -1103,6 +1105,8 @@ mod tests {
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
                 persisted_query_id: None,
+                headers: None,
+                variables: None,
             },
         }
         "###);
