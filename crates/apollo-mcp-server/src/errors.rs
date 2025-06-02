@@ -4,6 +4,8 @@ use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 use tokio::task::JoinError;
 
+use crate::event::CollectionError;
+
 /// An error in operation parsing
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
@@ -27,6 +29,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     File(#[from] std::io::Error),
+
+    #[error("Error loading collection: {0}")]
+    Collection(CollectionError),
 }
 
 /// An error in server initialization

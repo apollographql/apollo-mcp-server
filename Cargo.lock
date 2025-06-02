@@ -207,6 +207,7 @@ dependencies = [
  "bon",
  "clap",
  "futures",
+ "graphql_client",
  "insta",
  "lz-str",
  "regex",

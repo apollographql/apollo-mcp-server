@@ -772,6 +772,9 @@ impl StateMachine {
                 ServerEvent::OperationError(e) => {
                     State::Error(ServerError::Operation(OperationError::File(e)))
                 }
+                ServerEvent::CollectionError(e) => {
+                    State::Error(ServerError::Operation(OperationError::Collection(e)))
+                }
                 ServerEvent::Shutdown => match state {
                     State::Running(running) => {
                         running.cancellation_token.cancel();

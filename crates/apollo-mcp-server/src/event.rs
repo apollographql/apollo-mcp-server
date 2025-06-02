@@ -1,8 +1,28 @@
 use crate::operations::RawOperation;
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
+use reqwest::header::InvalidHeaderName;
+use reqwest::header::InvalidHeaderValue;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CollectionError {
+    #[error(transparent)]
+    HeaderName(InvalidHeaderName),
+
+    #[error(transparent)]
+    HeaderValue(InvalidHeaderValue),
+
+    #[error(transparent)]
+    Request(reqwest::Error),
+
+    #[error("Error in response: {0}")]
+    Response(String),
+
+    #[error("Invalid variables: {0}")]
+    InvalidVariables(String),
+}
 
 /// MCP Server events
 pub enum Event {
@@ -14,6 +34,9 @@ pub enum Event {
 
     /// An error occurred when loading operations
     OperationError(io::Error),
+
+    /// An error occurred when loading operations
+    CollectionError(CollectionError),
 
     /// The server should gracefully shut down
     Shutdown,
@@ -29,7 +52,10 @@ impl Debug for Event {
                 write!(f, "OperationsChanged({:?})", operations)
             }
             Event::OperationError(e) => {
-                write!(f, "OperationError({:?}", e)
+                write!(f, "OperationError({:?})", e)
+            }
+            Event::CollectionError(e) => {
+                write!(f, "OperationError({:?})", e)
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")
