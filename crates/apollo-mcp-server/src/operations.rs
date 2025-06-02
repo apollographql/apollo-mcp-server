@@ -146,12 +146,6 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
-// impl From<String> for OperationSource {
-//     fn from(collection_id: String) -> Self {
-//         OperationSource::Collection(collection_id)
-//     }
-// }
-
 impl From<Vec<PathBuf>> for OperationSource {
     fn from(paths: Vec<PathBuf>) -> Self {
         OperationSource::Files(paths)
@@ -169,12 +163,6 @@ pub enum MutationMode {
     All,
 }
 
-// pub struct OperationCollectionOperation {
-//     source_text: String,
-//     headers: Option<HashMap<String, String>>,
-//     variables: Option<HashMap<String, Value>>,
-// }
-
 #[derive(Debug, Clone, Serialize)]
 pub struct RawOperation {
     source_text: String,
@@ -185,17 +173,6 @@ pub struct RawOperation {
     #[serde(skip_serializing_if = "Option::is_none")]
     variables: Option<HashMap<String, Value>>,
 }
-
-// impl From<OperationCollectionOperation> for RawOperation {
-//     fn from(operation: OperationCollectionOperation) -> Self {
-//         Self {
-//             source_text: operation.source_text,
-//             persisted_query_id: None,
-//             headers: operation.headers,
-//             variables: operation.variables,
-//         }
-//     }
-// }
 
 impl From<String> for RawOperation {
     fn from(source_text: String) -> Self {
