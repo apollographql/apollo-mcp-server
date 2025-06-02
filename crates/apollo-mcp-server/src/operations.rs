@@ -359,6 +359,7 @@ impl Operation {
                 &operation,
                 graphql_schema,
                 custom_scalar_map,
+                raw_operation.variables.as_ref(),
             ))?;
             let Value::Object(schema) = object else {
                 return Err(OperationError::Internal(
@@ -557,22 +558,29 @@ fn get_json_schema(
     operation: &Node<OperationDefinition>,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
+    variable_overrides: Option<&HashMap<String, Value>>,
 ) -> RootSchema {
     let mut obj = ObjectValidation::default();
     let mut definitions = Map::new();
 
     operation.variables.iter().for_each(|variable| {
         let variable_name = variable.name.to_string();
-        let schema = type_to_schema(
-            None,
-            variable.ty.as_ref(),
-            graphql_schema,
-            custom_scalar_map,
-            &mut definitions,
-        );
-        obj.properties.insert(variable_name.clone(), schema);
-        if variable.ty.is_non_null() {
-            obj.required.insert(variable_name);
+        if !variable_overrides
+            .map(|o| o.contains_key(&variable_name))
+            .unwrap_or_default()
+        {
+            // TODO: what should the behavior here be? Default values? hardcoded values?
+            let schema = type_to_schema(
+                None,
+                variable.ty.as_ref(),
+                graphql_schema,
+                custom_scalar_map,
+                &mut definitions,
+            );
+            obj.properties.insert(variable_name.clone(), schema);
+            if variable.ty.is_non_null() {
+                obj.required.insert(variable_name);
+            }
         }
     });
 
