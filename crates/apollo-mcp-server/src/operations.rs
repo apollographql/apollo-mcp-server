@@ -914,7 +914,7 @@ impl graphql::Executable for Operation {
 
 #[cfg(test)]
 mod tests {
-    use std::{str::FromStr, sync::LazyLock};
+    use std::{collections::HashMap, str::FromStr, sync::LazyLock};
 
     use apollo_compiler::{Schema, parser::Parser, validation::Valid};
     use rmcp::{model::Tool, serde_json};
@@ -2513,6 +2513,57 @@ mod tests {
                                 "$ref": String("#/definitions/Filter"),
                             },
                         },
+                    },
+                },
+            },
+            annotations: Some(
+                ToolAnnotations {
+                    title: None,
+                    read_only_hint: Some(
+                        true,
+                    ),
+                    destructive_hint: None,
+                    idempotent_hint: None,
+                    open_world_hint: None,
+                },
+            ),
+        }
+        "###);
+    }
+
+    #[test]
+    fn with_variable_overrides() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($id: ID, $name: String) { id }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: Some(HashMap::from([(
+                    "id".to_string(),
+                    serde_json::Value::String("v".to_string()),
+                )])),
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool, @r###"
+        Tool {
+            name: "QueryName",
+            description: Some(
+                "The returned value is optional and has type `String`",
+            ),
+            input_schema: {
+                "type": String("object"),
+                "properties": Object {
+                    "name": Object {
+                        "type": String("string"),
                     },
                 },
             },
