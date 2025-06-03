@@ -5,6 +5,7 @@ use apollo_compiler::response::serde_json_bytes::serde_json;
 use apollo_compiler::response::serde_json_bytes::serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
+use std::borrow::Cow;
 
 pub struct Request<'a> {
     pub input: Value,
@@ -24,13 +25,13 @@ pub trait Executable {
     fn variables(&self, input: Value) -> Result<Value, McpError>;
 
     /// Get the headers to execute the operation with
-    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
+    fn headers(&self, default_headers: Cow<HeaderMap<HeaderValue>>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         reqwest::Client::new()
             .post(request.endpoint)
-            .headers(self.headers(&request.headers))
+            .headers(self.headers(Cow::Borrowed(&request.headers)))
             .body(if let Some(id) = self.persisted_query_id() {
                 serde_json::json!({
                     "extensions": {
