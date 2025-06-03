@@ -28,6 +28,7 @@ use rmcp::{
     serde_json::{self, Value},
 };
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -853,12 +854,12 @@ impl graphql::Executable for Operation {
         }
     }
 
-    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+    fn headers(&self, default_headers: Cow<HeaderMap<HeaderValue>>) -> HeaderMap<HeaderValue> {
         match self.inner.headers.as_ref() {
-            None => default_headers.clone(),
+            None => default_headers,
             Some(raw_headers) if default_headers.is_empty() => raw_headers.clone(),
             Some(raw_headers) => {
-                let mut headers = default_headers.clone();
+                let mut headers = default_headers;
                 raw_headers.iter().for_each(|(key, value)| {
                     if headers.contains_key(key) {
                         tracing::debug!(
