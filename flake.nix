@@ -157,6 +157,13 @@
             packages.apollo-mcp
           ];
 
+          # The server expects /data to exist, so we create it in the last layer to
+          # ensure that the server doesn't crash if nothing is mounted.
+          fakeRootCommands = ''
+            mkdir data
+            chmod a+r data
+          '';
+
           config = let
             http-port = 5000;
           in {
