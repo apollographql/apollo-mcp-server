@@ -169,7 +169,7 @@ pub struct RawOperation {
     #[serde(skip_serializing_if = "Option::is_none")]
     persisted_query_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    headers: Option<HashMap<String, String>>,
+    headers: Option<HeaderMap<HeaderValue>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     variables: Option<HashMap<String, Value>>,
 }
@@ -853,34 +853,17 @@ impl graphql::Executable for Operation {
         }
     }
 
-    fn headers(
-        &self,
-        default_headers: &HeaderMap<HeaderValue>,
-    ) -> Result<HeaderMap<HeaderValue>, McpError> {
-        if let Some(raw_headers) = self.inner.headers.as_ref() {
-            let mut headers = default_headers.clone();
-            raw_headers.iter().try_for_each(|(key, value)| {
-                let header_name = HeaderName::from_str(key.as_str()).map_err(|e| {
-                    McpError::new(
-                        ErrorCode::INVALID_PARAMS,
-                        format!("Failed to parse header name: {e}"),
-                        None,
-                    )
-                })?;
-                let header_value = HeaderValue::from_str(value.as_str()).map_err(|e| {
-                    McpError::new(
-                        ErrorCode::INVALID_PARAMS,
-                        format!("Failed to parse header value: {e}"),
-                        None,
-                    )
-                })?;
-
-                headers.insert(header_name, header_value);
-                Ok(())
-            })?;
-            Ok(headers)
-        } else {
-            Ok(default_headers.clone())
+    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+        match self.inner.headers.as_ref() {
+            None => default_headers.clone(),
+            Some(raw_headers) if default_headers.is_empty() => raw_headers.clone(),
+            Some(raw_headers) => {
+                let mut headers = default_headers.clone();
+                raw_headers.iter().for_each(|(key, value)| {
+                    headers.insert(key, value);
+                });
+                headers
+            }
         }
     }
 }
