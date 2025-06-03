@@ -172,6 +172,7 @@ pub struct RawOperation {
 }
 
 // Custom Serialize implementation for RawOperation
+// This is needed because reqwests HeaderMap/HeaderValue/HeaderName don't derive Serialize
 impl serde::Serialize for RawOperation {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
