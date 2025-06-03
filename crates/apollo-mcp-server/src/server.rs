@@ -28,13 +28,13 @@ pub use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 pub use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::schema::SchemaState;
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
-use futures::{FutureExt, Stream, StreamExt, future, stream};
+use futures::{FutureExt, Stream, StreamExt, stream};
 pub use rmcp::ServiceExt;
 pub use rmcp::transport::SseServer;
-use rmcp::transport::StreamableHttpServer;
 pub use rmcp::transport::sse_server::SseServerConfig;
 pub use rmcp::transport::stdio;
-use rmcp::transport::streamable_http_server::axum::StreamableHttpServerConfig;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
@@ -421,14 +421,19 @@ impl Starting {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
-                StreamableHttpServer::serve_with_config(StreamableHttpServerConfig {
-                    bind: listen_address,
-                    path: "/mcp".to_string(),
-                    ct: cancellation_token,
-                    sse_keep_alive: None,
-                })
-                .await?
-                .with_service(move || running.clone());
+                let service = StreamableHttpService::new(
+                    move || running.clone(),
+                    LocalSessionManager::default().into(),
+                    StreamableHttpServerConfig {
+                        sse_keep_alive: None,
+                        stateful_mode: true,
+                    },
+                );
+                let router = axum::Router::new().nest_service("/mcp", service);
+                let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
+                axum::serve(tcp_listener, router)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await?;
             }
             Transport::SSE { address, port } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
@@ -803,31 +808,33 @@ impl StateMachine {
 
     #[allow(clippy::expect_used)]
     fn ctrl_c_stream() -> impl Stream<Item = ServerEvent> {
-        #[cfg(not(unix))]
-        {
-            async {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to install CTRL+C signal handler");
-            }
+        shutdown_signal()
             .map(|_| ServerEvent::Shutdown)
             .into_stream()
             .boxed()
-        }
+    }
+}
 
-        #[cfg(unix)]
-        future::select(
-            tokio::signal::ctrl_c().map(|s| s.ok()).boxed(),
-            async {
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("Failed to install SIGTERM signal handler")
-                    .recv()
-                    .await
-            }
-            .boxed(),
-        )
-        .map(|_| ServerEvent::Shutdown)
-        .into_stream()
-        .boxed()
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install CTRL+C signal handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }

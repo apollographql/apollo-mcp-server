@@ -63,6 +63,7 @@
         nativeBuildInputs = apollo-mcp-builder.nativeDependencies;
         buildInputs =
           [
+            pkgs.git
             mcphost
             toolchain
           ]
