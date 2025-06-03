@@ -806,7 +806,6 @@ impl StateMachine {
         }
     }
 
-    #[allow(clippy::expect_used)]
     fn ctrl_c_stream() -> impl Stream<Item = ServerEvent> {
         shutdown_signal()
             .map(|_| ServerEvent::Shutdown)
@@ -815,6 +814,7 @@ impl StateMachine {
     }
 }
 
+#[allow(clippy::expect_used)]
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
