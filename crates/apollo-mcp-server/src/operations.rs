@@ -877,7 +877,7 @@ impl graphql::Executable for Operation {
                 if variables.contains_key(key) {
                     Err(McpError::new(
                         ErrorCode::INVALID_PARAMS,
-                        "Variable {key} conflict, only variables in input schema should be passed",
+                        "No such parameter: {key}",
                         None,
                     ))
                 } else {
