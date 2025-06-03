@@ -844,9 +844,21 @@ impl graphql::Executable for Operation {
                 )),
             }?;
 
-            raw_variables.iter().for_each(|(key, value)| {
-                variables.insert(key.clone(), value.clone());
-            });
+            raw_variables.iter().try_for_each(|(key, value)| {
+                if variables.contains_key(key) {
+                    Err(McpError::new(
+                        ErrorCode::INVALID_PARAMS,
+                        format!(
+                            "Variable conflict, only variables in input schema should be passed",
+                            key
+                        ),
+                        None,
+                    ))
+                } else {
+                    variables.insert(key, value);
+                    Ok(())
+                }
+            })?;
 
             Ok(Value::Object(variables))
         } else {
