@@ -1,18 +1,20 @@
 {
     "rust-analyzer.check.command": "clippy",
-    "rust-analyzer.cargo.features": ["json"],
     "[rust]": {
         "editor.defaultFormatter": "rust-lang.rust-analyzer",
         "editor.formatOnSave": true,       
     },
     "cSpell.words": [
+        "clippy",
         "insta",
         "peekable",
+        "redactions",
         "reqwest",
         "rmcp",
         "rstest",
         "schemars",
         "serde",
+        "Streamable",
         "Subschema",
         "subschemas",
         "Supergraph",
