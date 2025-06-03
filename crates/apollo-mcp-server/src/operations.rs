@@ -860,6 +860,12 @@ impl graphql::Executable for Operation {
             Some(raw_headers) => {
                 let mut headers = default_headers.clone();
                 raw_headers.iter().for_each(|(key, value)| {
+                    if headers.contains_key(key) {
+                        tracing::debug!(
+                            "Header {} has a default value, overwriting with operation value",
+                            key
+                        );
+                    }
                     headers.insert(key, value);
                 });
                 headers
