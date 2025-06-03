@@ -198,11 +198,8 @@ impl graphql::Executable for Execute {
         }
     }
 
-    fn headers(
-        &self,
-        default_headers: &HeaderMap<HeaderValue>,
-    ) -> Result<HeaderMap<HeaderValue>, McpError> {
-        Ok(default_headers.clone())
+    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+        default_headers.clone()
     }
 }
 

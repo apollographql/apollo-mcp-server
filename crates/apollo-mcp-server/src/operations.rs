@@ -16,7 +16,7 @@ use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::persisted_queries::event::Event as ManifestEvent;
 use futures::{Stream, StreamExt};
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{ErrorCode, ToolAnnotations};
 use rmcp::schemars::Map;
 use rmcp::{
@@ -28,11 +28,9 @@ use rmcp::{
     serde_json::{self, Value},
 };
 use serde::Serialize;
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 
@@ -164,15 +162,44 @@ pub enum MutationMode {
     All,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct RawOperation {
     source_text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     persisted_query_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     headers: Option<HeaderMap<HeaderValue>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     variables: Option<HashMap<String, Value>>,
+}
+
+// Custom Serialize implementation for RawOperation
+impl serde::Serialize for RawOperation {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("RawOperation", 4)?;
+        state.serialize_field("source_text", &self.source_text)?;
+        if let Some(ref id) = self.persisted_query_id {
+            state.serialize_field("persisted_query_id", id)?;
+        }
+        if let Some(ref variables) = self.variables {
+            state.serialize_field("variables", variables)?;
+        }
+        if let Some(ref headers) = self.headers {
+            state.serialize_field(
+                "variables",
+                headers
+                    .iter()
+                    .map(|(name, value)| {
+                        format!("{}: {}", name, value.to_str().unwrap_or_default())
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_str(),
+            )?;
+        }
+        state.end()
+    }
 }
 
 impl From<String> for RawOperation {
@@ -848,14 +875,11 @@ impl graphql::Executable for Operation {
                 if variables.contains_key(key) {
                     Err(McpError::new(
                         ErrorCode::INVALID_PARAMS,
-                        format!(
-                            "Variable conflict, only variables in input schema should be passed",
-                            key
-                        ),
+                        "Variable {key} conflict, only variables in input schema should be passed",
                         None,
                     ))
                 } else {
-                    variables.insert(key, value);
+                    variables.insert(key.clone(), value.clone());
                     Ok(())
                 }
             })?;
@@ -866,12 +890,12 @@ impl graphql::Executable for Operation {
         }
     }
 
-    fn headers(&self, default_headers: Cow<HeaderMap<HeaderValue>>) -> HeaderMap<HeaderValue> {
+    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
         match self.inner.headers.as_ref() {
-            None => default_headers,
+            None => default_headers.clone(),
             Some(raw_headers) if default_headers.is_empty() => raw_headers.clone(),
             Some(raw_headers) => {
-                let mut headers = default_headers;
+                let mut headers = default_headers.clone();
                 raw_headers.iter().for_each(|(key, value)| {
                     if headers.contains_key(key) {
                         tracing::debug!(
@@ -879,7 +903,7 @@ impl graphql::Executable for Operation {
                             key
                         );
                     }
-                    headers.insert(key, value);
+                    headers.insert(key, value.clone());
                 });
                 headers
             }
