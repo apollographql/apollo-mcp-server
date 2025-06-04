@@ -189,7 +189,7 @@ impl serde::Serialize for RawOperation {
         }
         if let Some(ref headers) = self.headers {
             state.serialize_field(
-                "variables",
+                "headers",
                 headers
                     .iter()
                     .map(|(name, value)| {
