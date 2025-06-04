@@ -88,12 +88,22 @@ impl OperationSource {
                                     if entry_path.extension().and_then(|e| e.to_str())
                                         == Some(OPERATION_DOCUMENT_EXTENSION)
                                     {
-                                        if let Ok(content) = fs::read_to_string(&entry_path) {
-                                            // Be forgiving of empty files in the directory case.
-                                            // It likely means a new file was created in an editor,
-                                            // but the operation hasn't been written yet.
-                                            if !content.trim().is_empty() {
-                                                operations.push(RawOperation::from(content));
+                                        match fs::read_to_string(&entry_path) {
+                                            Ok(content) => {
+                                                // Be forgiving of empty files in the directory case.
+                                                // It likely means a new file was created in an editor,
+                                                // but the operation hasn't been written yet.
+                                                if !content.trim().is_empty() {
+                                                    operations.push(RawOperation::from((
+                                                        content, entry_path,
+                                                    )));
+                                                }
+                                            }
+                                            Err(e) => {
+                                                return Some(Event::OperationError(
+                                                    e,
+                                                    entry_path.clone(),
+                                                ));
                                             }
                                         }
                                     }
@@ -104,12 +114,13 @@ impl OperationSource {
                             match fs::read_to_string(&path) {
                                 Ok(content) => {
                                     if !content.trim().is_empty() {
-                                        operations.push(RawOperation::from(content));
+                                        operations
+                                            .push(RawOperation::from((content, path.clone())));
                                     } else {
                                         warn!(?path, "Empty operation file");
                                     }
                                 }
-                                Err(e) => return Some(Event::OperationError(e)),
+                                Err(e) => return Some(Event::OperationError(e, path.clone())),
                             }
                         }
                         match state.lock() {
@@ -127,9 +138,10 @@ impl OperationSource {
                                     None
                                 }
                             }
-                            Err(_) => Some(Event::OperationError(std::io::Error::other(
-                                "State mutex poisoned",
-                            ))),
+                            Err(_) => Some(Event::OperationError(
+                                std::io::Error::other("State mutex poisoned"),
+                                path.clone(),
+                            )),
                         }
                     }
                 })
@@ -168,6 +180,7 @@ pub struct RawOperation {
     persisted_query_id: Option<String>,
     headers: Option<HeaderMap<HeaderValue>>,
     variables: Option<HashMap<String, Value>>,
+    source_path: Option<PathBuf>,
 }
 
 // Custom Serialize implementation for RawOperation
@@ -199,6 +212,9 @@ impl serde::Serialize for RawOperation {
                     .as_str(),
             )?;
         }
+        if let Some(ref path) = self.source_path {
+            state.serialize_field("source_path", path)?;
+        }
         state.end()
     }
 }
@@ -210,6 +226,19 @@ impl From<String> for RawOperation {
             persisted_query_id: None,
             headers: None,
             variables: None,
+            source_path: None,
+        }
+    }
+}
+
+impl From<(String, PathBuf)> for RawOperation {
+    fn from((source_text, source_path): (String, PathBuf)) -> Self {
+        Self {
+            source_text,
+            persisted_query_id: None,
+            headers: None,
+            variables: None,
+            source_path: Some(source_path),
         }
     }
 }
@@ -221,6 +250,7 @@ impl From<(String, String)> for RawOperation {
             source_text,
             headers: None,
             variables: None,
+            source_path: None,
         }
     }
 }
@@ -273,6 +303,7 @@ impl Operation {
 pub fn operation_defs(
     source_text: &str,
     allow_mutations: bool,
+    source_path: &Option<PathBuf>,
 ) -> Result<Option<(Document, Node<OperationDefinition>, Option<String>)>, OperationError> {
     let document = Parser::new()
         .parse_ast(source_text, "operation.graphql")
@@ -305,9 +336,14 @@ pub fn operation_defs(
         });
 
     let (operation, comments) = match (operation_defs.next(), operation_defs.next()) {
-        (None, _) => return Err(OperationError::NoOperations),
+        (None, _) => {
+            return Err(OperationError::NoOperations(
+                source_path.clone().unwrap_or_else(|| PathBuf::from("")),
+            ));
+        }
         (_, Some(_)) => {
             return Err(OperationError::TooManyOperations(
+                source_path.clone().unwrap_or_else(|| PathBuf::from("")),
                 2 + operation_defs.count(),
             ));
         }
@@ -318,7 +354,7 @@ pub fn operation_defs(
         OperationType::Subscription => {
             debug!(
                 "Skipping subscription operation {}",
-                operation_name(&operation)?
+                operation_name(source_path, &operation)?
             );
             return Ok(None);
         }
@@ -326,7 +362,7 @@ pub fn operation_defs(
             if !allow_mutations {
                 warn!(
                     "Skipping mutation operation {}",
-                    operation_name(&operation)?
+                    operation_name(source_path, &operation)?
                 );
                 return Ok(None);
             }
@@ -349,8 +385,9 @@ impl Operation {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
             mutation_mode != MutationMode::None,
+            &raw_operation.source_path,
         )? {
-            let operation_name = operation_name(&operation)?;
+            let operation_name = operation_name(&raw_operation.source_path, &operation)?;
 
             let description = Self::tool_description(
                 comments,
@@ -545,11 +582,19 @@ impl Operation {
     }
 }
 
-fn operation_name(operation: &Node<OperationDefinition>) -> Result<String, OperationError> {
+fn operation_name(
+    source_path: &Option<PathBuf>,
+    operation: &Node<OperationDefinition>,
+) -> Result<String, OperationError> {
     Ok(operation
         .name
         .as_ref()
-        .ok_or_else(|| OperationError::MissingName(operation.serialize().no_indent().to_string()))?
+        .ok_or_else(|| {
+            OperationError::MissingName(
+                source_path.clone().unwrap_or_else(|| PathBuf::from("")),
+                operation.serialize().no_indent().to_string(),
+            )
+        })?
         .to_string())
 }
 
@@ -914,6 +959,7 @@ impl graphql::Executable for Operation {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::{collections::HashMap, str::FromStr, sync::LazyLock};
 
     use apollo_compiler::{Schema, parser::Parser, validation::Valid};
@@ -978,6 +1024,7 @@ mod tests {
                     persisted_query_id: None,
                     headers: None,
                     variables: None,
+                    source_path: None,
                 },
                 &SCHEMA,
                 None,
@@ -999,6 +1046,7 @@ mod tests {
                     persisted_query_id: None,
                     headers: None,
                     variables: None,
+                    source_path: None,
                 },
                 &SCHEMA,
                 None,
@@ -1020,6 +1068,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1057,6 +1106,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
         }
         "###);
@@ -1070,6 +1120,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1107,6 +1158,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
         }
         "###);
@@ -1120,6 +1172,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1168,6 +1221,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1226,6 +1280,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1290,6 +1345,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1370,6 +1426,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1440,6 +1497,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1514,6 +1572,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1578,6 +1637,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1668,6 +1728,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1734,6 +1795,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1795,6 +1857,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: Some(PathBuf::from("operation.graphql")),
             },
             &SCHEMA,
             None,
@@ -1805,6 +1868,7 @@ mod tests {
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             TooManyOperations(
+                "operation.graphql",
                 2,
             ),
         )
@@ -1819,6 +1883,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: Some(PathBuf::from("operation.graphql")),
             },
             &SCHEMA,
             None,
@@ -1829,6 +1894,7 @@ mod tests {
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
             MissingName(
+                "operation.graphql",
                 "{ id }",
             ),
         )
@@ -1843,6 +1909,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: Some(PathBuf::from("operation.graphql")),
             },
             &SCHEMA,
             None,
@@ -1852,7 +1919,9 @@ mod tests {
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
-            NoOperations,
+            NoOperations(
+                "operation.graphql",
+            ),
         )
         "###);
     }
@@ -1865,6 +1934,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1874,7 +1944,9 @@ mod tests {
         );
         insta::assert_debug_snapshot!(operation, @r###"
         Err(
-            NoOperations,
+            NoOperations(
+                "",
+            ),
         )
         "###);
     }
@@ -1888,6 +1960,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1935,6 +2008,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -1989,6 +2063,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
@@ -2045,6 +2120,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             custom_scalar_map.ok().as_ref(),
@@ -2226,6 +2302,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &schema,
             None,
@@ -2312,6 +2389,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -2344,6 +2422,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -2368,6 +2447,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -2396,6 +2476,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -2428,6 +2509,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &SCHEMA,
             None,
@@ -2457,6 +2539,7 @@ mod tests {
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
+                source_path: None,
             },
             &Schema::parse(
                 r#"
@@ -2542,6 +2625,7 @@ mod tests {
                     "id".to_string(),
                     serde_json::Value::String("v".to_string()),
                 )])),
+                source_path: None,
             },
             &SCHEMA,
             None,

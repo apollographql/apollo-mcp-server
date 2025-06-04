@@ -980,7 +980,7 @@ mod test {
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
         let (operation_document, operation_def, _comments) =
-            operation_defs("query TestQuery { id }", false)
+            operation_defs("query TestQuery { id }", false, &None)
                 .unwrap()
                 .unwrap();
         shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
