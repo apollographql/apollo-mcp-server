@@ -15,7 +15,6 @@ use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
-use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -199,8 +198,8 @@ impl graphql::Executable for Execute {
         }
     }
 
-    fn headers(&self, default_headers: Cow<HeaderMap<HeaderValue>>) -> HeaderMap<HeaderValue> {
-        default_headers.into_owned()
+    fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+        default_headers.clone()
     }
 }
 
