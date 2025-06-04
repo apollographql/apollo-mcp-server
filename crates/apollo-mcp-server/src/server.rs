@@ -761,7 +761,7 @@ impl StateMachine {
                     State::Running(running) => running.update_operations(operations).await.into(),
                     other => other,
                 },
-                ServerEvent::OperationError(e) => {
+                ServerEvent::OperationError(e, _) => {
                     State::Error(ServerError::Operation(OperationError::File(e)))
                 }
                 ServerEvent::CollectionError(e) => {

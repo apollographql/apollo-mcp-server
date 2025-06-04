@@ -4,6 +4,7 @@ use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io;
+use std::path::PathBuf;
 
 /// MCP Server events
 pub enum Event {
@@ -14,7 +15,7 @@ pub enum Event {
     OperationsUpdated(Vec<RawOperation>),
 
     /// An error occurred when loading operations
-    OperationError(io::Error),
+    OperationError(io::Error, PathBuf),
 
     /// An error occurred when loading operations from collection
     CollectionError(CollectionError),
@@ -32,8 +33,8 @@ impl Debug for Event {
             Event::OperationsUpdated(operations) => {
                 write!(f, "OperationsChanged({:?})", operations)
             }
-            Event::OperationError(e) => {
-                write!(f, "OperationError({:?})", e)
+            Event::OperationError(e, path) => {
+                write!(f, "OperationError({:?}, {:?})", e, path)
             }
             Event::CollectionError(e) => {
                 write!(f, "OperationError({:?})", e)

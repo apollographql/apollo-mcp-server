@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
 use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
@@ -15,17 +17,17 @@ pub enum OperationError {
     #[error("Internal error: {0}")]
     Internal(String),
 
-    #[error("Operation is missing its required name: {0}")]
-    MissingName(String),
+    #[error("{0}: Operation is missing its required name: {1}")]
+    MissingName(PathBuf, String),
 
-    #[error("No operations defined")]
-    NoOperations,
+    #[error("{0}: No operations defined")]
+    NoOperations(PathBuf),
 
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Too many operations. Expected 1 but got {0}")]
-    TooManyOperations(usize),
+    #[error("{0}: Too many operations. Expected 1 but got {1}")]
+    TooManyOperations(PathBuf, usize),
 
     #[error(transparent)]
     File(#[from] std::io::Error),
