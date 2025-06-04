@@ -1,7 +1,8 @@
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError};
-use crate::event::{CollectionError, Event};
+use crate::event::Event;
 use crate::graphql;
+use crate::operation_collection::{CollectionEvent, CollectionSource};
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::{Document, OperationType, Selection};
 use apollo_compiler::schema::ExtendedType;
@@ -15,13 +16,8 @@ use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::persisted_queries::event::Event as ManifestEvent;
 use futures::{Stream, StreamExt};
-use graphql_client::{GraphQLQuery, Response};
-use operation_collection_query::{
-    OperationCollectionQueryOperationCollection,
-    OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
-};
 use regex::Regex;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{ErrorCode, ToolAnnotations};
 use rmcp::schemars::Map;
 use rmcp::{
@@ -36,24 +32,10 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use tracing::{debug, info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
-
-/// Configuration for polling Apollo Platform API.
-#[derive(Clone, Debug, Default)]
-pub struct PlatformApiConfig {
-    /// The Apollo key: `<YOUR_GRAPH_API_KEY>`
-    pub apollo_key: String,
-}
-
-#[derive(Clone)]
-pub struct CollectionSource {
-    pub collection_id: String,
-    pub platform_api_config: PlatformApiConfig,
-}
 
 /// The source of the operations exposed as MCP tools
 #[derive(Clone)]
@@ -71,50 +53,6 @@ pub enum OperationSource {
     None,
 }
 
-type Timestamp = String;
-
-/// Persisted query manifest query definition
-#[derive(GraphQLQuery)]
-#[graphql(
-    query_path = "src/operation_collection_query.graphql",
-    schema_path = "src/platform-api.graphql",
-    request_derives = "Debug",
-    response_derives = "PartialEq, Debug, Deserialize"
-)]
-struct OperationCollectionQuery;
-
-async fn fetch_operation_collection(
-    collection_id: String,
-    apollo_key: &str,
-) -> Result<Response<operation_collection_query::ResponseData>, CollectionError> {
-    let studio_api = "https://graphql-staging.api.apollographql.com/api/graphql";
-
-    let key_header_value =
-        HeaderValue::from_str(apollo_key).map_err(CollectionError::HeaderValue)?;
-
-    reqwest::Client::new()
-        .post(studio_api)
-        .headers(HeaderMap::from_iter(vec![
-            (
-                HeaderName::from_static("apollographql-client-name"),
-                HeaderValue::from_static("apollo-mcp-server"),
-            ),
-            // TODO: add apollographql-client-version header
-            (HeaderName::from_static("x-api-key"), key_header_value),
-        ]))
-        .json(&OperationCollectionQuery::build_query(
-            operation_collection_query::Variables {
-                operation_collection_id: collection_id,
-            },
-        ))
-        .send()
-        .await
-        .map_err(CollectionError::Request)?
-        .json::<Response<operation_collection_query::ResponseData>>()
-        .await
-        .map_err(CollectionError::Request)
-}
-
 impl OperationSource {
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
@@ -129,60 +67,19 @@ impl OperationSource {
                     )
                 })
                 .boxed(),
-            OperationSource::Collection(collection_source) => {
-                Self::stream_collection_operations(collection_source).boxed()
-            }
+            OperationSource::Collection(collection_source) => collection_source
+                .into_stream()
+                .map(|event| match event {
+                    CollectionEvent::OperationCollectionUpdate(operations) => {
+                        Event::OperationsUpdated(operations)
+                    }
+                    CollectionEvent::CollectionError(error) => Event::CollectionError(error),
+                })
+                .boxed(),
             OperationSource::None => {
                 futures::stream::once(async { Event::OperationsUpdated(vec![]) }).boxed()
             }
         }
-    }
-
-    fn stream_collection_operations(
-        collection_source: CollectionSource,
-    ) -> impl Stream<Item = Event> {
-        futures::stream::once(async move {
-            match fetch_operation_collection(
-                collection_source.collection_id.clone(),
-                &collection_source.platform_api_config.apollo_key,
-            )
-            .await
-            {
-                Ok(response_value) => {
-                    if let Some(response_value) = response_value.data {
-                        match response_value.operation_collection {
-                            OperationCollectionQueryOperationCollection::OperationCollection(
-                                collection,
-                            ) => {
-                                let raw_operations = collection
-                                    .operations
-                                    .iter()
-                                    .map(RawOperation::try_from)
-                                    .collect();
-                                match raw_operations {
-                                    Ok(raw_operations) => Event::OperationsUpdated(raw_operations),
-                                    Err(e) => Event::CollectionError(e),
-                                }
-                            }
-                            OperationCollectionQueryOperationCollection::NotFoundError(error) => {
-                                Event::CollectionError(CollectionError::Response(error.message))
-                            }
-                            OperationCollectionQueryOperationCollection::PermissionError(error) => {
-                                Event::CollectionError(CollectionError::Response(error.message))
-                            }
-                            OperationCollectionQueryOperationCollection::ValidationError(error) => {
-                                Event::CollectionError(CollectionError::Response(error.message))
-                            }
-                        }
-                    } else {
-                        Event::CollectionError(CollectionError::Response(
-                            "missing data".to_string(),
-                        ))
-                    }
-                }
-                Err(e) => Event::CollectionError(e),
-            }
-        })
     }
 
     fn stream_file_changes(paths: Vec<PathBuf>) -> impl Stream<Item = Event> {
@@ -286,10 +183,10 @@ pub enum MutationMode {
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
-    source_text: String,
-    persisted_query_id: Option<String>,
-    headers: Option<HeaderMap<HeaderValue>>,
-    variables: Option<HashMap<String, Value>>,
+    pub source_text: String,
+    pub persisted_query_id: Option<String>,
+    pub headers: Option<HeaderMap<HeaderValue>>,
+    pub variables: Option<HashMap<String, Value>>,
 }
 
 // Custom Serialize implementation for RawOperation
@@ -322,50 +219,6 @@ impl serde::Serialize for RawOperation {
             )?;
         }
         state.end()
-    }
-}
-
-impl TryFrom<&OperationCollectionQueryOperationCollectionOnOperationCollectionOperations>
-    for RawOperation
-{
-    type Error = CollectionError;
-
-    fn try_from(
-        operation: &OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
-    ) -> Result<Self, Self::Error> {
-        let variables =
-            if let Some(variables) = operation.current_operation_revision.variables.as_ref() {
-                if variables.trim().is_empty() {
-                    Some(HashMap::new())
-                } else {
-                    Some(
-                        serde_json::from_str::<HashMap<String, Value>>(variables)
-                            .map_err(|_| CollectionError::InvalidVariables(variables.clone()))?,
-                    )
-                }
-            } else {
-                None
-            };
-
-        let headers = if let Some(headers) = operation.current_operation_revision.headers.as_ref() {
-            let mut header_map = HeaderMap::new();
-            for header in headers {
-                header_map.insert(
-                    HeaderName::from_str(&header.name).map_err(CollectionError::HeaderName)?,
-                    HeaderValue::from_str(&header.value).map_err(CollectionError::HeaderValue)?,
-                );
-            }
-            Some(header_map)
-        } else {
-            None
-        };
-
-        Ok(Self {
-            source_text: operation.current_operation_revision.body.clone(),
-            persisted_query_id: None,
-            headers,
-            variables,
-        })
     }
 }
 

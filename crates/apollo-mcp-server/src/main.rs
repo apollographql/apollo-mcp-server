@@ -4,9 +4,8 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
-use apollo_mcp_server::operations::{
-    CollectionSource, MutationMode, OperationSource, PlatformApiConfig,
-};
+use apollo_mcp_server::operation_collection::{CollectionSource, PlatformApiConfig};
+use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
 use clap::Parser;
@@ -84,7 +83,7 @@ struct Args {
     operations: Vec<PathBuf>,
 
     /// The path to the persisted query manifest containing operations
-    #[arg(long)]
+    #[arg(long, conflicts_with_all(["operations", "collection"]))]
     manifest: Option<PathBuf>,
 
     // Configure when to allow mutations
@@ -116,7 +115,7 @@ struct Args {
     http_port: Option<u16>,
 
     /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long)]
+    #[arg(long, conflicts_with_all(["operations", "manifest"]))]
     collection: Option<String>,
 }
 
@@ -170,13 +169,13 @@ async fn main() -> anyhow::Result<()> {
         OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
-    } else if args.uplink {
-        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else if let Some(collection_id) = args.collection {
         OperationSource::from(CollectionSource {
             collection_id,
             platform_api_config: platform_api_config()?,
         })
+    } else if args.uplink {
+        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
     } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
@@ -239,5 +238,6 @@ fn platform_api_config() -> Result<PlatformApiConfig, ServerError> {
     Ok(PlatformApiConfig {
         apollo_key: env::var("APOLLO_KEY")
             .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
+        poll_interval: Duration::from_secs(30),
     })
 }

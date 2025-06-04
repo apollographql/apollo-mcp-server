@@ -1,28 +1,9 @@
+use crate::errors::CollectionError;
 use crate::operations::RawOperation;
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
-use reqwest::header::InvalidHeaderName;
-use reqwest::header::InvalidHeaderValue;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io;
-
-#[derive(Debug, thiserror::Error)]
-pub enum CollectionError {
-    #[error(transparent)]
-    HeaderName(InvalidHeaderName),
-
-    #[error(transparent)]
-    HeaderValue(InvalidHeaderValue),
-
-    #[error(transparent)]
-    Request(reqwest::Error),
-
-    #[error("Error in response: {0}")]
-    Response(String),
-
-    #[error("Invalid variables: {0}")]
-    InvalidVariables(String),
-}
 
 /// MCP Server events
 pub enum Event {

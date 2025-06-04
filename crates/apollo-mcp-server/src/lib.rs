@@ -5,6 +5,7 @@ mod explorer;
 mod graphql;
 mod introspection;
 pub mod json_schema;
+pub mod operation_collection;
 pub mod operations;
 pub mod sanitize;
 pub(crate) mod schema_tree_shake;

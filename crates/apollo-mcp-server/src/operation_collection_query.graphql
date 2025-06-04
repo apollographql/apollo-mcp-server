@@ -1,31 +1,15 @@
-query OperationCollectionQuery($operationCollectionId: ID!) {
-    operationCollection(id: $operationCollectionId) {
-        __typename
-        ... on OperationCollection {
-            id
-            name
-            operations {
-                id
-                lastUpdatedAt
-                name
-                currentOperationRevision {
-                    body
-                    headers {
-                        name
-                        value
-                    }
-                    variables
-                }
-            }
-        }
-        ... on NotFoundError {
-            message
-        }
-        ... on PermissionError {
-            message
-        }
-        ... on ValidationError {
-            message
-        }
+query OperationCollectionQuery($collectionEntryIds: [ID!]!) {
+  operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
+    currentOperationRevision {
+      body
+      headers {
+        name
+        value
+      }
+      variables
     }
+    id
+    name
+    lastUpdatedAt
+  }
 }

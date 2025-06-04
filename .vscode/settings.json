@@ -5,8 +5,8 @@
         "editor.formatOnSave": true,       
     },
     "cSpell.words": [
-        "clippy",
         "apollographql",
+        "clippy",
         "insta",
         "peekable",
         "redactions",
@@ -20,6 +20,7 @@
         "subschemas",
         "Supergraph",
         "thiserror",
-        "webbrowser"
+        "webbrowser",
+        "wiremock"
     ]
 }
