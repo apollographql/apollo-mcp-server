@@ -979,10 +979,13 @@ mod test {
             .unwrap();
         let schema = document.to_schema_validate().unwrap();
         let mut shaker = SchemaTreeShaker::new(&schema);
-        let (operation_document, operation_def, _comments) =
-            operation_defs("query TestQuery { id }", false, &None)
-                .unwrap()
-                .unwrap();
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query TestQuery { id }",
+            false,
+            "operation.graphql".to_string(),
+        )
+        .unwrap()
+        .unwrap();
         shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
         assert_eq!(
             shaker.shaken().unwrap().to_string(),
