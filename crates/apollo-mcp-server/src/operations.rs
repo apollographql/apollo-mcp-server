@@ -639,14 +639,14 @@ impl Operation {
 
 fn operation_name(
     operation: &Node<OperationDefinition>,
-    source_path: &String,
+    source_path: &str,
 ) -> Result<String, OperationError> {
     Ok(operation
         .name
         .as_ref()
         .ok_or_else(|| {
             OperationError::MissingName(
-                source_path.clone(),
+                source_path.to_owned(),
                 operation.serialize().no_indent().to_string(),
             )
         })?
@@ -1014,7 +1014,6 @@ impl graphql::Executable for Operation {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::{collections::HashMap, str::FromStr, sync::LazyLock};
 
     use apollo_compiler::{Schema, parser::Parser, validation::Valid};
