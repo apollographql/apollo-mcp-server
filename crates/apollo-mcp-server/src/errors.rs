@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
@@ -16,16 +14,16 @@ pub enum OperationError {
     Internal(String),
 
     #[error("{0}: Operation is missing its required name: {1}")]
-    MissingName(PathBuf, String),
+    MissingName(String, String),
 
     #[error("{0}: No operations defined")]
-    NoOperations(PathBuf),
+    NoOperations(String),
 
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
     #[error("{0}: Too many operations. Expected 1 but got {1}")]
-    TooManyOperations(PathBuf, usize),
+    TooManyOperations(String, usize),
 
     #[error(transparent)]
     File(#[from] std::io::Error),
