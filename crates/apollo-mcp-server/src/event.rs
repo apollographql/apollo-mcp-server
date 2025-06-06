@@ -13,7 +13,7 @@ pub enum Event {
     OperationsUpdated(Vec<RawOperation>),
 
     /// An error occurred when loading operations
-    OperationError(io::Error),
+    OperationError(io::Error, String),
 
     /// The server should gracefully shut down
     Shutdown,
@@ -28,8 +28,8 @@ impl Debug for Event {
             Event::OperationsUpdated(operations) => {
                 write!(f, "OperationsChanged({:?})", operations)
             }
-            Event::OperationError(e) => {
-                write!(f, "OperationError({:?}", e)
+            Event::OperationError(e, path) => {
+                write!(f, "OperationError({:?}, {:?})", e, path)
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")

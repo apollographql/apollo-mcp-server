@@ -13,17 +13,17 @@ pub enum OperationError {
     #[error("Internal error: {0}")]
     Internal(String),
 
-    #[error("Operation is missing its required name: {0}")]
-    MissingName(String),
+    #[error("{0}: Operation is missing its required name: {1}")]
+    MissingName(String, String),
 
-    #[error("No operations defined")]
-    NoOperations,
+    #[error("{0}: No operations defined")]
+    NoOperations(String),
 
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("Too many operations. Expected 1 but got {0}")]
-    TooManyOperations(usize),
+    #[error("{0}: Too many operations. Expected 1 but got {1}")]
+    TooManyOperations(String, usize),
 
     #[error(transparent)]
     File(#[from] std::io::Error),
