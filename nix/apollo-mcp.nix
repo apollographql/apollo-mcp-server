@@ -37,7 +37,7 @@
     meta = {
       description = "Apollo MCP Server";
       homepage = "https://www.apollographql.com/docs/apollo-mcp-server";
-      license = lib.licenses.elastic20;
+      license = lib.licenses.mit;
 
       # The main binary that should be run when using `nix run`
       mainProgram = "apollo-mcp-server";

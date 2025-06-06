@@ -2,7 +2,7 @@
 name = "apollo-mcp-server"
 version.workspace = true
 edition = "2024"
-license = "Elastic-2.0"
+license-file = "../LICENSE"
 
 [dependencies]
 anyhow = "1.0.98"
@@ -28,7 +28,6 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"
-webbrowser = "1.0.4"
 graphql_client.workspace = true
 tokio-stream.workspace = true
 

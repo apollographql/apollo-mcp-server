@@ -3,7 +3,6 @@ use crate::errors::{McpError, OperationError, ServerError};
 use crate::event::Event as ServerEvent;
 use crate::graphql;
 use crate::graphql::Executable;
-use crate::introspection::{EXECUTE_TOOL_NAME, Execute, INTROSPECT_TOOL_NAME, Introspect};
 use crate::operations::{MutationMode, Operation, OperationSource, RawOperation};
 use apollo_compiler::ast::OperationType;
 use bon::bon;
@@ -20,6 +19,8 @@ use std::sync::Arc;
 use tracing::{debug, error, info};
 
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
+use crate::introspection::tools::execute::{EXECUTE_TOOL_NAME, Execute};
+use crate::introspection::tools::introspect::{INTROSPECT_TOOL_NAME, Introspect};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
 use apollo_federation::{ApiSchemaOptions, Supergraph};

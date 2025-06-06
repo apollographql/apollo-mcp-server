@@ -10,7 +10,4 @@ See [the documentation](https://www.apollographql.com/docs/apollo-mcp-server/) f
 
 # Licensing
 
-Source code in this repository is covered by the Elastic License 2.0. The
-default throughout the repository is a license under the Elastic License 2.0,
-unless a file header or a license file in a subdirectory specifies another
-license. [See the LICENSE](./LICENSE) for the full license text.
+This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for the full license text.

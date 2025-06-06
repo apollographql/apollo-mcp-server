@@ -48,7 +48,7 @@ impl Explorer {
             variant,
             tool: Tool::new(
                 EXPLORER_TOOL_NAME,
-                "Open a GraphQL operation in Apollo Explorer",
+                "Get the URL to open a GraphQL operation in Apollo Explorer",
                 schema_from_type!(Input),
             ),
         }
@@ -80,13 +80,11 @@ impl Explorer {
             None
         };
         let url = self.create_explorer_url(input)?;
-        debug!(?url, input=?pretty, "Opening Apollo Explorer");
-        webbrowser::open(url.as_str())
-            .map(|_| CallToolResult {
-                content: vec![Content::text("success")],
-                is_error: None,
-            })
-            .map_err(|_| McpError::new(ErrorCode::INTERNAL_ERROR, "Unable to open browser", None))
+        debug!(?url, input=?pretty, "Created URL to open operation in Apollo Explorer");
+        Ok(CallToolResult {
+            content: vec![Content::text(url)],
+            is_error: None,
+        })
     }
 }
 

@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     info!(
-        "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed as ELv2 (https://go.apollo.dev/elv2)",
+        "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
         std::env!("CARGO_PKG_VERSION")
     );
 
