@@ -47,6 +47,3 @@ expect_used = "deny"
 indexing_slicing = "deny"
 unwrap_used = "deny"
 panic = "deny"
-
-[patch.crates-io]
-rmcp = { git = 'https://github.com/modelcontextprotocol/rust-sdk.git' }
