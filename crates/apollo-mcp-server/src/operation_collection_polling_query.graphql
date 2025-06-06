@@ -1,0 +1,20 @@
+query OperationCollectionPollingQuery($operationCollectionId: ID!) {
+    operationCollection(id: $operationCollectionId) {
+        __typename
+        ... on OperationCollection {
+            operations {
+                lastUpdatedAt
+                id
+            }
+        }
+        ... on NotFoundError {
+            message
+        }
+        ... on PermissionError {
+            message
+        }
+        ... on ValidationError {
+            message
+        }
+    }
+}

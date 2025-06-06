@@ -2,6 +2,7 @@ use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError};
 use crate::event::Event;
 use crate::graphql;
+use crate::operation_collection::{CollectionEvent, CollectionSource};
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::{Document, OperationType, Selection};
 use apollo_compiler::schema::ExtendedType;
@@ -45,6 +46,9 @@ pub enum OperationSource {
     /// Persisted Query manifest
     Manifest(ManifestSource),
 
+    /// Operation collection
+    Collection(CollectionSource),
+
     /// No operations provided
     None,
 }
@@ -61,6 +65,15 @@ impl OperationSource {
                     Event::OperationsUpdated(
                         operations.into_iter().map(RawOperation::from).collect(),
                     )
+                })
+                .boxed(),
+            OperationSource::Collection(collection_source) => collection_source
+                .into_stream()
+                .map(|event| match event {
+                    CollectionEvent::OperationCollectionUpdate(operations) => {
+                        Event::OperationsUpdated(operations)
+                    }
+                    CollectionEvent::CollectionError(error) => Event::CollectionError(error),
                 })
                 .boxed(),
             OperationSource::None => {
@@ -145,6 +158,12 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
+impl From<CollectionSource> for OperationSource {
+    fn from(collection_source: CollectionSource) -> Self {
+        OperationSource::Collection(collection_source)
+    }
+}
+
 impl From<Vec<PathBuf>> for OperationSource {
     fn from(paths: Vec<PathBuf>) -> Self {
         OperationSource::Files(paths)
@@ -164,10 +183,10 @@ pub enum MutationMode {
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
-    source_text: String,
-    persisted_query_id: Option<String>,
-    headers: Option<HeaderMap<HeaderValue>>,
-    variables: Option<HashMap<String, Value>>,
+    pub source_text: String,
+    pub persisted_query_id: Option<String>,
+    pub headers: Option<HeaderMap<HeaderValue>>,
+    pub variables: Option<HashMap<String, Value>>,
 }
 
 // Custom Serialize implementation for RawOperation

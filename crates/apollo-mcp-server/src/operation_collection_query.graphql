@@ -1,0 +1,15 @@
+query OperationCollectionQuery($collectionEntryIds: [ID!]!) {
+  operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
+    currentOperationRevision {
+      body
+      headers {
+        name
+        value
+      }
+      variables
+    }
+    id
+    name
+    lastUpdatedAt
+  }
+}

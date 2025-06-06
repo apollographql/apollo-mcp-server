@@ -4,6 +4,24 @@ use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 use tokio::task::JoinError;
 
+#[derive(Debug, thiserror::Error)]
+pub enum CollectionError {
+    #[error(transparent)]
+    HeaderName(InvalidHeaderName),
+
+    #[error(transparent)]
+    HeaderValue(InvalidHeaderValue),
+
+    #[error(transparent)]
+    Request(reqwest::Error),
+
+    #[error("Error in response: {0}")]
+    Response(String),
+
+    #[error("Invalid variables: {0}")]
+    InvalidVariables(String),
+}
+
 /// An error in operation parsing
 #[derive(Debug, thiserror::Error)]
 pub enum OperationError {
@@ -27,6 +45,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     File(#[from] std::io::Error),
+
+    #[error("Error loading collection: {0}")]
+    Collection(CollectionError),
 }
 
 /// An error in server initialization
