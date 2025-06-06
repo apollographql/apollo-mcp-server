@@ -23,6 +23,7 @@ rmcp = { version = "0.1", features = [
   "transport-streamable-http-server",
 ] }
 serde.workspace = true
+tantivy = "0.24.1"
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

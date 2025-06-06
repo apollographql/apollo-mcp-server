@@ -233,15 +233,24 @@ async fn main() -> anyhow::Result<()> {
         Transport::Stdio
     };
 
+    let mut env_filter = EnvFilter::from_default_env().add_directive(args.log_level.into());
+
+    // Suppress noisy dependency logging at the INFO level
+    if args.log_level == Level::INFO {
+        env_filter = env_filter
+            .add_directive("rmcp=warn".parse()?)
+            .add_directive("tantivy=warn".parse()?);
+    }
+
     // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
     match transport {
         Transport::SSE { .. } | Transport::StreamableHttp { .. } => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
+            .with_env_filter(env_filter)
             .with_ansi(true)
             .with_target(false)
             .init(),
         Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
+            .with_env_filter(env_filter)
             .with_writer(std::io::stderr)
             .with_ansi(true)
             .with_target(false)

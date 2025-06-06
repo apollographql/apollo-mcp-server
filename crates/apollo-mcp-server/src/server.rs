@@ -21,6 +21,7 @@ use tracing::{debug, error, info};
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 use crate::introspection::tools::execute::{EXECUTE_TOOL_NAME, Execute};
 use crate::introspection::tools::introspect::{INTROSPECT_TOOL_NAME, Introspect};
+use crate::introspection::tools::search::{SEARCH_TOOL_NAME, Search};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
@@ -392,6 +393,8 @@ impl Starting {
         let introspect_tool = self
             .introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
+        
+        let search_tool = self.introspection.then(|| Search::new(schema.clone()));
 
         let explorer_tool = self.explorer_graph_ref.map(Explorer::new);
 
@@ -404,6 +407,7 @@ impl Starting {
             endpoint: self.endpoint,
             execute_tool,
             introspect_tool,
+            search_tool,
             explorer_tool,
             custom_scalar_map: self.custom_scalar_map,
             peers,
@@ -462,6 +466,7 @@ struct Running {
     endpoint: String,
     execute_tool: Option<Execute>,
     introspect_tool: Option<Introspect>,
+    search_tool: Option<Search>,
     explorer_tool: Option<Explorer>,
     custom_scalar_map: Option<CustomScalarMap>,
     peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
@@ -595,31 +600,45 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if request.name == INTROSPECT_TOOL_NAME {
-            self.introspect_tool
-                .as_ref()
-                .ok_or(tool_not_found(&request.name))?
-                .execute(convert_arguments(request)?)
-                .await
-        } else if request.name == EXPLORER_TOOL_NAME {
-            self.explorer_tool
-                .as_ref()
-                .ok_or(tool_not_found(&request.name))?
-                .execute(convert_arguments(request)?)
-                .await
-        } else {
-            let graphql_request = graphql::Request {
-                input: Value::from(request.arguments.clone()),
-                endpoint: &self.endpoint,
-                headers: self.headers.clone(),
-            };
-            if request.name == EXECUTE_TOOL_NAME {
+        match request.name.as_ref() {
+            INTROSPECT_TOOL_NAME => {
+                self.introspect_tool
+                    .as_ref()
+                    .ok_or(tool_not_found(&request.name))?
+                    .execute(convert_arguments(request)?)
+                    .await
+            }
+            SEARCH_TOOL_NAME => {
+                self.search_tool
+                    .as_ref()
+                    .ok_or(tool_not_found(&request.name))?
+                    .execute(convert_arguments(request)?)
+                    .await
+            }
+            EXPLORER_TOOL_NAME => {
+                self.explorer_tool
+                    .as_ref()
+                    .ok_or(tool_not_found(&request.name))?
+                    .execute(convert_arguments(request)?)
+                    .await
+            }
+            EXECUTE_TOOL_NAME => {
                 self.execute_tool
                     .as_ref()
                     .ok_or(tool_not_found(&request.name))?
-                    .execute(graphql_request)
+                    .execute(graphql::Request {
+                        input: Value::from(request.arguments.clone()),
+                        endpoint: &self.endpoint,
+                        headers: self.headers.clone(),
+                    })
                     .await
-            } else {
+            }
+            _ => {
+                let graphql_request = graphql::Request {
+                    input: Value::from(request.arguments.clone()),
+                    endpoint: &self.endpoint,
+                    headers: self.headers.clone(),
+                };
                 self.operations
                     .lock()
                     .await
@@ -645,27 +664,10 @@ impl ServerHandler for Running {
                 .await
                 .iter()
                 .map(|op| op.as_ref().clone())
-                .chain(
-                    self.execute_tool
-                        .as_ref()
-                        .iter()
-                        .clone()
-                        .map(|e| e.tool.clone()),
-                )
-                .chain(
-                    self.introspect_tool
-                        .as_ref()
-                        .iter()
-                        .clone()
-                        .map(|e| e.tool.clone()),
-                )
-                .chain(
-                    self.explorer_tool
-                        .as_ref()
-                        .iter()
-                        .clone()
-                        .map(|e| e.tool.clone()),
-                )
+                .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .collect(),
         })
     }
