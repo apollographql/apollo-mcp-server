@@ -106,7 +106,7 @@ impl OperationSource {
                                             Err(e) => {
                                                 return Some(Event::OperationError(
                                                     e,
-                                                    entry_path.clone(),
+                                                    path.to_str().unwrap_or_default().to_string(),
                                                 ));
                                             }
                                         }
@@ -126,7 +126,12 @@ impl OperationSource {
                                         warn!(?path, "Empty operation file");
                                     }
                                 }
-                                Err(e) => return Some(Event::OperationError(e, path.clone())),
+                                Err(e) => {
+                                    return Some(Event::OperationError(
+                                        e,
+                                        path.to_str().unwrap_or_default().to_string(),
+                                    ));
+                                }
                             }
                         }
                         match state.lock() {
@@ -146,7 +151,7 @@ impl OperationSource {
                             }
                             Err(_) => Some(Event::OperationError(
                                 std::io::Error::other("State mutex poisoned"),
-                                path.clone(),
+                                path.to_str().unwrap_or_default().to_string(),
                             )),
                         }
                     }

@@ -3,7 +3,6 @@ use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::io;
-use std::path::PathBuf;
 
 /// MCP Server events
 pub enum Event {
@@ -14,7 +13,7 @@ pub enum Event {
     OperationsUpdated(Vec<RawOperation>),
 
     /// An error occurred when loading operations
-    OperationError(io::Error, PathBuf),
+    OperationError(io::Error, String),
 
     /// The server should gracefully shut down
     Shutdown,
