@@ -3,6 +3,7 @@
 use crate::errors::McpError;
 use crate::schema_from_type;
 use apollo_compiler::Schema;
+use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
@@ -10,7 +11,7 @@ use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
-use apollo_compiler::schema::ExtendedType;
+use apollo_compiler::ast::OperationType;
 use tantivy::schema::document::Value as TantivyValue;
 use tantivy::schema::*;
 use tantivy::{
@@ -18,6 +19,7 @@ use tantivy::{
     schema::{STORED, Schema as TantivySchema},
 };
 use tokio::sync::Mutex;
+use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
@@ -30,7 +32,9 @@ pub const INDEX_MEMORY_BYTES: usize = 50_000_000;
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]
 pub struct Search {
-    index: Arc<Index>,
+    schema: Arc<Mutex<Valid<Schema>>>,
+    index: Index,
+    allow_mutations: bool,
     pub tool: Tool,
 }
 
@@ -41,7 +45,7 @@ pub struct Input {
     terms: Vec<String>,
 }
 
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used)] // TODO: error handling
 fn index(graphql_schema: Arc<Mutex<Valid<Schema>>>) -> Index {
     let mut index_schema = TantivySchema::builder();
     let type_name_field = index_schema.add_text_field(TYPE_NAME_FIELD, TEXT | STORED);
@@ -52,6 +56,7 @@ fn index(graphql_schema: Arc<Mutex<Valid<Schema>>>) -> Index {
     let index = Index::create_in_ram(index_schema);
     let mut index_writer = index.writer(INDEX_MEMORY_BYTES).unwrap(); // TODO: error handling
 
+    // TODO: recurse down the schema types to build up paths to root for each matching field
     let graphql_schema = graphql_schema.try_lock().unwrap(); // TODO: error handling
     for (type_name, extended_type) in &graphql_schema.types {
         if !extended_type.is_built_in() {
@@ -66,28 +71,36 @@ fn index(graphql_schema: Arc<Mutex<Valid<Schema>>>) -> Index {
             }
 
             // Add fields
+            // TODO: index field parameters
             let fields = match extended_type {
-                ExtendedType::Object(obj) => {
-                    obj.fields
+                ExtendedType::Object(obj) => obj
+                    .fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ExtendedType::Interface(interface) => interface
+                    .fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ExtendedType::InputObject(input) => input
+                    .fields
+                    .iter()
+                    .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                ExtendedType::Enum(enum_type) => format!(
+                    "{}: {}",
+                    enum_type.name,
+                    enum_type
+                        .values
                         .iter()
-                        .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                        .map(|(name, _)| name.to_string())
                         .collect::<Vec<_>>()
-                        .join(", ")
-                }
-                ExtendedType::Interface(interface) => {
-                    interface.fields
-                        .iter()
-                        .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
-                ExtendedType::InputObject(input) => {
-                    input.fields
-                        .iter()
-                        .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                }
+                        .join(" | ")
+                ),
                 _ => String::new(),
             };
             doc.add_text(fields_field, &fields);
@@ -100,9 +113,11 @@ fn index(graphql_schema: Arc<Mutex<Valid<Schema>>>) -> Index {
 }
 
 impl Search {
-    pub fn new(schema: Arc<Mutex<Valid<Schema>>>) -> Self {
+    pub fn new(schema: Arc<Mutex<Valid<Schema>>>, allow_mutations: bool) -> Self {
         Self {
-            index: Arc::new(index(schema)),
+            schema: schema.clone(),
+            index: index(schema),
+            allow_mutations,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
                 "Search a GraphQL schema",
@@ -121,27 +136,33 @@ impl Search {
         })?;
         let searcher = reader.searcher();
 
-        let mut results = Vec::new();
+        let mut type_names = Vec::new();
 
         for term in input.terms {
             let query = tantivy::query::QueryParser::for_index(
                 &self.index,
                 vec![
-                    self.index.schema().get_field("type_name").map_err(|e| {
-                        McpError::new(
-                            ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to get type_name field: {}", e),
-                            None,
-                        )
-                    })?,
-                    self.index.schema().get_field("description").map_err(|e| {
-                        McpError::new(
-                            ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to get description field: {}", e),
-                            None,
-                        )
-                    })?,
-                    self.index.schema().get_field("fields").map_err(|e| {
+                    self.index
+                        .schema()
+                        .get_field(TYPE_NAME_FIELD)
+                        .map_err(|e| {
+                            McpError::new(
+                                ErrorCode::INTERNAL_ERROR,
+                                format!("Failed to get type_name field: {}", e),
+                                None,
+                            )
+                        })?,
+                    self.index
+                        .schema()
+                        .get_field(DESCRIPTION_FIELD)
+                        .map_err(|e| {
+                            McpError::new(
+                                ErrorCode::INTERNAL_ERROR,
+                                format!("Failed to get description field: {}", e),
+                                None,
+                            )
+                        })?,
+                    self.index.schema().get_field(FIELDS_FIELD).map_err(|e| {
                         McpError::new(
                             ErrorCode::INTERNAL_ERROR,
                             format!("Failed to get fields field: {}", e),
@@ -179,48 +200,53 @@ impl Search {
                 })?;
 
                 let type_name = doc
-                    .get_first(self.index.schema().get_field("type_name").map_err(|e| {
-                        McpError::new(
-                            ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to get type_name field: {}", e),
-                            None,
-                        )
-                    })?)
+                    .get_first(
+                        self.index
+                            .schema()
+                            .get_field(TYPE_NAME_FIELD)
+                            .map_err(|e| {
+                                McpError::new(
+                                    ErrorCode::INTERNAL_ERROR,
+                                    format!("Failed to get type_name field: {}", e),
+                                    None,
+                                )
+                            })?,
+                    )
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let description = doc
-                    .get_first(self.index.schema().get_field("description").map_err(|e| {
-                        McpError::new(
-                            ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to get description field: {}", e),
-                            None,
-                        )
-                    })?)
-                    .and_then(|v| v.as_str());
-
-                let fields = doc
-                    .get_first(self.index.schema().get_field("fields").map_err(|e| {
-                        McpError::new(
-                            ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to get fields field: {}", e),
-                            None,
-                        )
-                    })?)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-
-                results.push(format!(
-                    "{}\n{}Fields: {}\n",
-                    type_name,
-                    description.map_or(String::new(), |d| format!("Description: {}\n", d)),
-                    fields
-                ));
+                type_names.push(type_name.to_string());
             }
         }
 
+        let schema = self.schema.lock().await;
+        let mut tree_shaker = SchemaTreeShaker::new(&schema);
+        for type_name in type_names {
+            if let Some(extended_type) = schema.types.get(type_name.as_str()) {
+                tree_shaker.retain_type(
+                    extended_type,
+                    DepthLimit::Limited(1),
+                )
+            }
+        }
+        let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
+
         Ok(CallToolResult {
-            content: results.into_iter().map(Content::text).collect(),
+            content: shaken
+                .types
+                .iter()
+                .filter(|(_name, extended_type)| {
+                    !extended_type.is_built_in() &&
+                        schema
+                            .root_operation(OperationType::Mutation)
+                            .is_none_or(|root_name| {
+                                extended_type.name() != root_name || self.allow_mutations
+                            })
+                })
+                .map(|(_, extended_type)| extended_type.serialize())
+                .map(|serialized| serialized.to_string())
+                .map(Content::text)
+                .collect(),
             is_error: None,
         })
     }
