@@ -75,7 +75,7 @@ impl OperationSource {
             OperationSource::Collection(collection_source) => collection_source
                 .into_stream()
                 .map(|event| match event {
-                    CollectionEvent::OperationCollectionUpdate(operations) => {
+                    CollectionEvent::UpdateOperationCollection(operations) => {
                         match operations
                             .iter()
                             .map(RawOperation::try_from)

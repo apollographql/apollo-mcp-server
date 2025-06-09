@@ -143,8 +143,8 @@ pub struct CollectionSource {
 impl CollectionSource {
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         let (sender, receiver) = channel(2);
-        let collection_id = self.collection_id.clone();
-        let platform_api_config = self.platform_api_config.clone();
+        let collection_id = self.collection_id;
+        let platform_api_config = self.platform_api_config;
         let task = async move {
             let mut previous_updated_at = HashMap::new();
             loop {
@@ -157,7 +157,7 @@ impl CollectionSource {
                 {
                     Ok(Some(operations)) => {
                         if let Err(e) = sender
-                            .send(CollectionEvent::OperationCollectionUpdate(operations))
+                            .send(CollectionEvent::UpdateOperationCollection(operations))
                             .await
                         {
                             tracing::debug!(
