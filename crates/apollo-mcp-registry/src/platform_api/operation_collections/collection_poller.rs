@@ -15,7 +15,7 @@ use operation_collection_polling_query::{
 };
 use operation_collection_query::OperationCollectionQueryOperationCollectionEntries;
 
-const STUDIO_API: &str = "https://graphql.api.apollographql.com/api/graphql";
+const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
 
 type Timestamp = String;
 
@@ -92,7 +92,7 @@ pub async fn fetch_operation_collection(
         .map_err(CollectionError::HeaderValue)?;
 
     reqwest::Client::new()
-        .post(STUDIO_API)
+        .post(PLATFORM_API)
         .headers(HeaderMap::from_iter(vec![
             (
                 HeaderName::from_static("apollographql-client-name"),
@@ -198,7 +198,7 @@ async fn poll_operation_collection(
         .map_err(CollectionError::HeaderValue)?;
 
     let response = reqwest::Client::new()
-        .post(STUDIO_API)
+        .post(PLATFORM_API)
         .headers(HeaderMap::from_iter(vec![
             (
                 HeaderName::from_static("apollographql-client-name"),
