@@ -171,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
     } else if let Some(collection_id) = args.collection {
-        OperationSource::from(CollectionSource {
+        OperationSource::Collection(CollectionSource {
             collection_id,
             platform_api_config: platform_api_config()?,
         })

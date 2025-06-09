@@ -170,12 +170,6 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
-impl From<CollectionSource> for OperationSource {
-    fn from(collection_source: CollectionSource) -> Self {
-        OperationSource::Collection(collection_source)
-    }
-}
-
 impl From<Vec<PathBuf>> for OperationSource {
     fn from(paths: Vec<PathBuf>) -> Self {
         OperationSource::Files(paths)
