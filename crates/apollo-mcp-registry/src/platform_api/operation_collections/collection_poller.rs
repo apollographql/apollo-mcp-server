@@ -38,7 +38,7 @@ struct OperationCollectionEntriesQuery;
 struct OperationCollectionPollingQuery;
 
 fn changed_ids(
-    previous_updated_at: &mut HashMap<String, CollectionData>,
+    previous_updated_at: &mut HashMap<String, CollectionCache>,
     poll: OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
 ) -> Vec<String> {
     poll.operations
@@ -51,9 +51,9 @@ fn changed_ids(
                 } else {
                     previous_updated_at.insert(
                         operation.id.clone(),
-                        CollectionData {
+                        CollectionCache {
                             last_updated_at: updated_at,
-                            raw_operation: previous_operation.raw_operation.clone(),
+                            operation_data: previous_operation.operation_data.clone(),
                         },
                     );
                     Some(operation.id.clone())
@@ -61,9 +61,9 @@ fn changed_ids(
             } else {
                 previous_updated_at.insert(
                     operation.id.clone(),
-                    CollectionData {
+                    CollectionCache {
                         last_updated_at: updated_at,
-                        raw_operation: None,
+                        operation_data: None,
                     },
                 );
                 Some(operation.id.clone())
@@ -80,9 +80,9 @@ pub struct OperationData {
 }
 
 #[derive(Clone)]
-pub struct CollectionData {
+pub struct CollectionCache {
     last_updated_at: String,
-    raw_operation: Option<OperationData>,
+    operation_data: Option<OperationData>,
 }
 pub async fn fetch_operation_collection(
     collection_entry_ids: Vec<String>,
@@ -192,7 +192,7 @@ impl CollectionSource {
 async fn poll_operation_collection(
     collection_id: String,
     platform_api_config: &PlatformApiConfig,
-    previous_updated_at: &mut HashMap<String, CollectionData>,
+    previous_updated_at: &mut HashMap<String, CollectionCache>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
     let key_header_value = HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
         .map_err(CollectionError::HeaderValue)?;
@@ -238,22 +238,22 @@ async fn poll_operation_collection(
 
                 let mut updated_operations = HashMap::new();
                 for (id, collection_data) in previous_updated_at.clone() {
-                    if let Some(raw_operation) = collection_data.raw_operation.as_ref() {
-                        updated_operations.insert(id, raw_operation.clone());
+                    if let Some(operation_data) = collection_data.operation_data.as_ref() {
+                        updated_operations.insert(id, operation_data.clone());
                     }
                 }
 
                 for operation in full_response.operation_collection_entries {
                     let operation_id = operation.id.clone();
-                    let raw_operation = OperationData::from(&operation);
+                    let operation_data = OperationData::from(&operation);
                     previous_updated_at.insert(
                         operation_id.clone(),
-                        CollectionData {
+                        CollectionCache {
                             last_updated_at: operation.last_updated_at,
-                            raw_operation: Some(raw_operation.clone()),
+                            operation_data: Some(operation_data.clone()),
                         },
                     );
-                    updated_operations.insert(operation_id.clone(), raw_operation.clone());
+                    updated_operations.insert(operation_id.clone(), operation_data.clone());
                 }
 
                 Ok(Some(updated_operations.into_values().collect()))
