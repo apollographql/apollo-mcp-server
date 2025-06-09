@@ -1,4 +1,4 @@
-query OperationCollectionQuery($collectionEntryIds: [ID!]!) {
+query OperationCollectionEntriesQuery($collectionEntryIds: [ID!]!) {
   operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
     currentOperationRevision {
       body

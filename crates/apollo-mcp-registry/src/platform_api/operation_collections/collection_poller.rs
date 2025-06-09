@@ -9,11 +9,11 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::{error::CollectionError, event::CollectionEvent};
 use crate::platform_api::PlatformApiConfig;
+use operation_collection_entries_query::OperationCollectionEntriesQueryOperationCollectionEntries;
 use operation_collection_polling_query::{
     OperationCollectionPollingQueryOperationCollection,
     OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
 };
-use operation_collection_query::OperationCollectionQueryOperationCollectionEntries;
 
 const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
 
@@ -21,12 +21,12 @@ type Timestamp = String;
 
 #[derive(GraphQLQuery)]
 #[graphql(
-    query_path = "src/platform_api/operation_collections/operation_collection_query.graphql",
+    query_path = "src/platform_api/operation_collections/operation_collection_entries_query.graphql",
     schema_path = "src/platform_api/platform-api.graphql",
     request_derives = "Debug",
     response_derives = "PartialEq, Debug, Deserialize, Clone"
 )]
-struct OperationCollectionQuery;
+struct OperationCollectionEntriesQuery;
 
 #[derive(GraphQLQuery)]
 #[graphql(
@@ -87,7 +87,7 @@ pub struct CollectionData {
 pub async fn fetch_operation_collection(
     collection_entry_ids: Vec<String>,
     platform_api_config: &PlatformApiConfig,
-) -> Result<Response<operation_collection_query::ResponseData>, CollectionError> {
+) -> Result<Response<operation_collection_entries_query::ResponseData>, CollectionError> {
     let key_header_value = HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
         .map_err(CollectionError::HeaderValue)?;
 
@@ -102,21 +102,21 @@ pub async fn fetch_operation_collection(
             (HeaderName::from_static("x-api-key"), key_header_value),
         ]))
         .timeout(platform_api_config.timeout)
-        .json(&OperationCollectionQuery::build_query(
-            operation_collection_query::Variables {
+        .json(&OperationCollectionEntriesQuery::build_query(
+            operation_collection_entries_query::Variables {
                 collection_entry_ids,
             },
         ))
         .send()
         .await
         .map_err(CollectionError::Request)?
-        .json::<Response<operation_collection_query::ResponseData>>()
+        .json::<Response<operation_collection_entries_query::ResponseData>>()
         .await
         .map_err(CollectionError::Request)
 }
 
-impl From<&OperationCollectionQueryOperationCollectionEntries> for OperationData {
-    fn from(operation: &OperationCollectionQueryOperationCollectionEntries) -> Self {
+impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for OperationData {
+    fn from(operation: &OperationCollectionEntriesQueryOperationCollectionEntries) -> Self {
         Self {
             source_text: operation.current_operation_revision.body.clone(),
             headers: operation
