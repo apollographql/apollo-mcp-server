@@ -1,5 +1,5 @@
-use crate::errors::CollectionError;
 use crate::operations::RawOperation;
+use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
 use std::fmt::Debug;
 use std::fmt::Formatter;

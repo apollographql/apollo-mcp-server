@@ -1,26 +1,9 @@
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
+use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 use tokio::task::JoinError;
-
-#[derive(Debug, thiserror::Error)]
-pub enum CollectionError {
-    #[error(transparent)]
-    HeaderName(InvalidHeaderName),
-
-    #[error(transparent)]
-    HeaderValue(InvalidHeaderValue),
-
-    #[error(transparent)]
-    Request(reqwest::Error),
-
-    #[error("Error in response: {0}")]
-    Response(String),
-
-    #[error("Invalid variables: {0}")]
-    InvalidVariables(String),
-}
 
 /// An error in operation parsing
 #[derive(Debug, thiserror::Error)]

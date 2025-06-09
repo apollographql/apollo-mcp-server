@@ -1,10 +1,11 @@
 use anyhow::bail;
+use apollo_mcp_registry::platform_api::PlatformApiConfig;
+use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
-use apollo_mcp_server::operation_collection::{CollectionSource, PlatformApiConfig};
 use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
@@ -236,8 +237,11 @@ fn uplink_config() -> Result<UplinkConfig, ServerError> {
 
 fn platform_api_config() -> Result<PlatformApiConfig, ServerError> {
     Ok(PlatformApiConfig {
-        apollo_key: env::var("APOLLO_KEY")
-            .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
+        apollo_key: SecretString::from(
+            env::var("APOLLO_KEY")
+                .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
+        ),
         poll_interval: Duration::from_secs(30),
+        timeout: Duration::from_secs(30),
     })
 }
