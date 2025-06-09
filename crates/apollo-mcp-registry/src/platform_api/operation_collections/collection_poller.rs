@@ -88,9 +88,6 @@ pub async fn fetch_operation_collection(
     collection_entry_ids: Vec<String>,
     platform_api_config: &PlatformApiConfig,
 ) -> Result<Response<operation_collection_entries_query::ResponseData>, CollectionError> {
-    let key_header_value = HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-        .map_err(CollectionError::HeaderValue)?;
-
     reqwest::Client::new()
         .post(PLATFORM_API)
         .headers(HeaderMap::from_iter(vec![
@@ -99,7 +96,11 @@ pub async fn fetch_operation_collection(
                 HeaderValue::from_static("apollo-mcp-server"),
             ),
             // TODO: add apollographql-client-version header
-            (HeaderName::from_static("x-api-key"), key_header_value),
+            (
+                HeaderName::from_static("x-api-key"),
+                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
+                    .map_err(CollectionError::HeaderValue)?,
+            ),
         ]))
         .timeout(platform_api_config.timeout)
         .json(&OperationCollectionEntriesQuery::build_query(
@@ -194,9 +195,6 @@ async fn poll_operation_collection(
     platform_api_config: &PlatformApiConfig,
     previous_updated_at: &mut HashMap<String, CollectionCache>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let key_header_value = HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-        .map_err(CollectionError::HeaderValue)?;
-
     let response = reqwest::Client::new()
         .post(PLATFORM_API)
         .headers(HeaderMap::from_iter(vec![
@@ -205,7 +203,11 @@ async fn poll_operation_collection(
                 HeaderValue::from_static("apollo-mcp-server"),
             ),
             // TODO: add apollographql-client-version header
-            (HeaderName::from_static("x-api-key"), key_header_value),
+            (
+                HeaderName::from_static("x-api-key"),
+                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
+                    .map_err(CollectionError::HeaderValue)?,
+            ),
         ]))
         .timeout(platform_api_config.timeout)
         .json(&OperationCollectionPollingQuery::build_query(
@@ -227,7 +229,7 @@ async fn poll_operation_collection(
             let changed_ids = changed_ids(previous_updated_at, collection);
 
             if changed_ids.is_empty() {
-                tracing::info!("no operation changed");
+                tracing::debug!("no operation changed");
                 Ok(None)
             } else {
                 tracing::info!("changed operation ids: {:?}", changed_ids);

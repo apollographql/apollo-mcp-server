@@ -189,10 +189,10 @@ pub enum MutationMode {
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
-    pub source_text: String,
-    pub persisted_query_id: Option<String>,
-    pub headers: Option<HeaderMap<HeaderValue>>,
-    pub variables: Option<HashMap<String, Value>>,
+    source_text: String,
+    persisted_query_id: Option<String>,
+    headers: Option<HeaderMap<HeaderValue>>,
+    variables: Option<HashMap<String, Value>>,
 }
 
 // Custom Serialize implementation for RawOperation

@@ -29,7 +29,6 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"
 graphql_client.workspace = true
-tokio-stream.workspace = true
 
 [dev-dependencies]
 insta = { workspace = true }
