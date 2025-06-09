@@ -38,13 +38,7 @@ impl ManifestSource {
                     Ok(manifest) => Event::UpdateManifest(
                         manifest
                             .iter()
-                            .map(|(k, v)| {
-                                (
-                                    k.operation_id.clone(),
-                                    v.clone(),
-                                    "PersistedQuery".to_string(),
-                                )
-                            })
+                            .map(|(k, v)| (k.operation_id.clone(), v.clone()))
                             .collect(),
                     ),
                     Err(e) => {

@@ -14,7 +14,7 @@ pub enum Event {
     OperationsUpdated(Vec<RawOperation>),
 
     /// An error occurred when loading operations
-    OperationError(io::Error, String),
+    OperationError(io::Error, Option<String>),
 
     /// An error occurred when loading operations from collection
     CollectionError(CollectionError),

@@ -15,17 +15,23 @@ pub enum OperationError {
     #[error("Internal error: {0}")]
     Internal(String),
 
-    #[error("{0}: Operation is missing its required name: {1}")]
-    MissingName(String, String),
+    #[error("{0}Operation is missing its required name: {1}", .source_path.as_ref().map(|s| format!("{s}: ")).unwrap_or_default(), operation)]
+    MissingName {
+        source_path: Option<String>,
+        operation: String,
+    },
 
-    #[error("{0}: No operations defined")]
-    NoOperations(String),
+    #[error("{0}No operations defined", .source_path.as_ref().map(|s| format!("{s}: ")).unwrap_or_default())]
+    NoOperations { source_path: Option<String> },
 
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
-    #[error("{0}: Too many operations. Expected 1 but got {1}")]
-    TooManyOperations(String, usize),
+    #[error("{0}Too many operations. Expected 1 but got {1}", .source_path.as_ref().map(|s| format!("{s}: ")).unwrap_or_default(), count)]
+    TooManyOperations {
+        source_path: Option<String>,
+        count: usize,
+    },
 
     #[error(transparent)]
     File(#[from] std::io::Error),

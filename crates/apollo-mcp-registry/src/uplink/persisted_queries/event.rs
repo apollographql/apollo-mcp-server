@@ -4,7 +4,7 @@ use std::fmt::Formatter;
 /// Persisted Query events
 pub enum Event {
     /// The persisted query manifest was updated
-    UpdateManifest(Vec<(String, String, String)>),
+    UpdateManifest(Vec<(String, String)>),
 }
 
 impl Debug for Event {

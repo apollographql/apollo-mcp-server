@@ -982,7 +982,7 @@ mod test {
         let (operation_document, operation_def, _comments) = operation_defs(
             "query TestQuery { id }",
             false,
-            "operation.graphql".to_string(),
+            Some("operation.graphql".to_string()),
         )
         .unwrap()
         .unwrap();
