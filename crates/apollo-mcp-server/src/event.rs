@@ -16,7 +16,7 @@ pub enum Event {
     /// An error occurred when loading operations
     OperationError(io::Error),
 
-    /// An error occurred when loading operations
+    /// An error occurred when loading operations from collection
     CollectionError(CollectionError),
 
     /// The server should gracefully shut down
