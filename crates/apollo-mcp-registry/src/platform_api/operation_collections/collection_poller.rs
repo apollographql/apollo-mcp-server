@@ -8,11 +8,21 @@ use tokio::sync::mpsc::channel;
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{error::CollectionError, event::CollectionEvent};
-use crate::platform_api::PlatformApiConfig;
+use crate::platform_api::{
+    PlatformApiConfig,
+    operation_collections::collection_poller::operation_collection_query::{
+        OperationCollectionQueryOperationCollectionOnNotFoundError,
+        OperationCollectionQueryOperationCollectionOnPermissionError,
+        OperationCollectionQueryOperationCollectionOnValidationError,
+    },
+};
 use operation_collection_entries_query::OperationCollectionEntriesQueryOperationCollectionEntries;
 use operation_collection_polling_query::{
     OperationCollectionPollingQueryOperationCollection,
+    OperationCollectionPollingQueryOperationCollectionOnNotFoundError,
     OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
+    OperationCollectionPollingQueryOperationCollectionOnPermissionError,
+    OperationCollectionPollingQueryOperationCollectionOnValidationError,
 };
 use operation_collection_query::{
     OperationCollectionQueryOperationCollection,
@@ -167,50 +177,30 @@ pub struct CollectionSource {
 impl CollectionSource {
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         let (sender, receiver) = channel(2);
-        let collection_id = self.collection_id;
-        let platform_api_config = self.platform_api_config;
-        let task = async move {
+        tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
 
             match graphql_request::<OperationCollectionQuery>(
                 &OperationCollectionQuery::build_query(operation_collection_query::Variables {
-                    operation_collection_id: collection_id.clone(),
+                    operation_collection_id: self.collection_id.clone(),
                 }),
-                &platform_api_config,
+                &self.platform_api_config,
             )
             .await
             {
                 Ok(response) => match response.operation_collection {
-                    OperationCollectionQueryOperationCollection::NotFoundError(error) => {
+                    OperationCollectionQueryOperationCollection::NotFoundError(
+                        OperationCollectionQueryOperationCollectionOnNotFoundError { message },
+                    )
+                    | OperationCollectionQueryOperationCollection::PermissionError(
+                        OperationCollectionQueryOperationCollectionOnPermissionError { message },
+                    )
+                    | OperationCollectionQueryOperationCollection::ValidationError(
+                        OperationCollectionQueryOperationCollectionOnValidationError { message },
+                    ) => {
                         if let Err(e) = sender
                             .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                error.message,
-                            )))
-                            .await
-                        {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                            );
-                            return;
-                        }
-                    }
-                    OperationCollectionQueryOperationCollection::PermissionError(error) => {
-                        if let Err(e) = sender
-                            .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                error.message,
-                            )))
-                            .await
-                        {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                            );
-                            return;
-                        }
-                    }
-                    OperationCollectionQueryOperationCollection::ValidationError(error) => {
-                        if let Err(e) = sender
-                            .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                error.message,
+                                message,
                             )))
                             .await
                         {
@@ -270,11 +260,11 @@ impl CollectionSource {
             };
 
             loop {
-                tokio::time::sleep(platform_api_config.poll_interval).await;
+                tokio::time::sleep(self.platform_api_config.poll_interval).await;
 
                 match poll_operation_collection(
-                    collection_id.clone(),
-                    &platform_api_config,
+                    self.collection_id.clone(),
+                    &self.platform_api_config,
                     &mut previous_updated_at,
                 )
                 .await
@@ -309,10 +299,7 @@ impl CollectionSource {
                     }
                 }
             }
-        };
-
-        tokio::task::spawn(task);
-
+        });
         Box::pin(ReceiverStream::new(receiver))
     }
 }
@@ -408,14 +395,14 @@ async fn poll_operation_collection(
                 Ok(Some(updated_operations.into_values().collect()))
             }
         }
-        OperationCollectionPollingQueryOperationCollection::NotFoundError(error) => {
-            Err(CollectionError::Response(error.message))
-        }
-        OperationCollectionPollingQueryOperationCollection::PermissionError(error) => {
-            Err(CollectionError::Response(error.message))
-        }
-        OperationCollectionPollingQueryOperationCollection::ValidationError(error) => {
-            Err(CollectionError::Response(error.message))
-        }
+        OperationCollectionPollingQueryOperationCollection::NotFoundError(
+            OperationCollectionPollingQueryOperationCollectionOnNotFoundError { message },
+        )
+        | OperationCollectionPollingQueryOperationCollection::PermissionError(
+            OperationCollectionPollingQueryOperationCollectionOnPermissionError { message },
+        )
+        | OperationCollectionPollingQueryOperationCollection::ValidationError(
+            OperationCollectionPollingQueryOperationCollectionOnValidationError { message },
+        ) => Err(CollectionError::Response(message)),
     }
 }
