@@ -144,7 +144,7 @@ impl CollectionSource {
                         }
                     }
                     Ok(None) => {
-                        tracing::debug!("Operation collection unchanged");
+                        tracing::info!("Operation collection unchanged");
                     }
                     Err(err) => {
                         if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
@@ -223,7 +223,7 @@ async fn poll_operation_collection(
                 tracing::debug!("no operation changed");
                 Ok(None)
             } else {
-                tracing::info!("changed operation ids: {:?}", changed_ids);
+                tracing::debug!("changed operation ids: {:?}", changed_ids);
                 let full_response = graphql_request::<OperationCollectionEntriesQuery>(
                     &OperationCollectionEntriesQuery::build_query(
                         operation_collection_entries_query::Variables {
