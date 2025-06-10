@@ -11,22 +11,21 @@ use super::{error::CollectionError, event::CollectionEvent};
 use crate::platform_api::{
     PlatformApiConfig,
     operation_collections::collection_poller::operation_collection_query::{
-        OperationCollectionQueryOperationCollectionOnNotFoundError,
-        OperationCollectionQueryOperationCollectionOnPermissionError,
-        OperationCollectionQueryOperationCollectionOnValidationError,
+        OperationCollectionQueryOperationCollectionOnNotFoundError as NotFoundError,
+        OperationCollectionQueryOperationCollectionOnPermissionError as PermissionError,
+        OperationCollectionQueryOperationCollectionOnValidationError as ValidationError,
     },
 };
 use operation_collection_entries_query::OperationCollectionEntriesQueryOperationCollectionEntries;
 use operation_collection_polling_query::{
-    OperationCollectionPollingQueryOperationCollection,
-    OperationCollectionPollingQueryOperationCollectionOnNotFoundError,
-    OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
-    OperationCollectionPollingQueryOperationCollectionOnPermissionError,
-    OperationCollectionPollingQueryOperationCollectionOnValidationError,
+    OperationCollectionPollingQueryOperationCollection as PollingOperationCollectionResult,
+    OperationCollectionPollingQueryOperationCollectionOnNotFoundError as PollingNotFoundError,
+    OperationCollectionPollingQueryOperationCollectionOnPermissionError as PollingPermissionError,
+    OperationCollectionPollingQueryOperationCollectionOnValidationError as PollingValidationError,
 };
 use operation_collection_query::{
-    OperationCollectionQueryOperationCollection,
-    OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
+    OperationCollectionQueryOperationCollection as OperationCollectionResult,
+    OperationCollectionQueryOperationCollectionOnOperationCollectionOperations as OperationCollectionEntry,
 };
 
 const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
@@ -63,7 +62,7 @@ struct OperationCollectionQuery;
 
 fn changed_ids(
     previous_updated_at: &mut HashMap<String, CollectionCache>,
-    poll: OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
+    poll: operation_collection_polling_query::OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
 ) -> Vec<String> {
     poll.operations
         .iter()
@@ -109,12 +108,8 @@ pub struct CollectionCache {
     operation_data: Option<OperationData>,
 }
 
-impl From<&OperationCollectionQueryOperationCollectionOnOperationCollectionOperations>
-    for OperationData
-{
-    fn from(
-        operation: &OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
-    ) -> Self {
+impl From<&OperationCollectionEntry> for OperationData {
+    fn from(operation: &OperationCollectionEntry) -> Self {
         Self {
             source_text: operation
                 .operation_data
@@ -189,15 +184,9 @@ impl CollectionSource {
             .await
             {
                 Ok(response) => match response.operation_collection {
-                    OperationCollectionQueryOperationCollection::NotFoundError(
-                        OperationCollectionQueryOperationCollectionOnNotFoundError { message },
-                    )
-                    | OperationCollectionQueryOperationCollection::PermissionError(
-                        OperationCollectionQueryOperationCollectionOnPermissionError { message },
-                    )
-                    | OperationCollectionQueryOperationCollection::ValidationError(
-                        OperationCollectionQueryOperationCollectionOnValidationError { message },
-                    ) => {
+                    OperationCollectionResult::NotFoundError(NotFoundError { message })
+                    | OperationCollectionResult::PermissionError(PermissionError { message })
+                    | OperationCollectionResult::ValidationError(ValidationError { message }) => {
                         if let Err(e) = sender
                             .send(CollectionEvent::CollectionError(CollectionError::Response(
                                 message,
@@ -210,9 +199,7 @@ impl CollectionSource {
                             return;
                         }
                     }
-                    OperationCollectionQueryOperationCollection::OperationCollection(
-                        collection,
-                    ) => {
+                    OperationCollectionResult::OperationCollection(collection) => {
                         let operation_count = collection.operations.len();
                         let operations = collection
                             .operations
@@ -354,7 +341,7 @@ async fn poll_operation_collection(
     .await?;
 
     match response.operation_collection {
-        OperationCollectionPollingQueryOperationCollection::OperationCollection(collection) => {
+        PollingOperationCollectionResult::OperationCollection(collection) => {
             let changed_ids = changed_ids(previous_updated_at, collection);
 
             if changed_ids.is_empty() {
@@ -395,14 +382,10 @@ async fn poll_operation_collection(
                 Ok(Some(updated_operations.into_values().collect()))
             }
         }
-        OperationCollectionPollingQueryOperationCollection::NotFoundError(
-            OperationCollectionPollingQueryOperationCollectionOnNotFoundError { message },
-        )
-        | OperationCollectionPollingQueryOperationCollection::PermissionError(
-            OperationCollectionPollingQueryOperationCollectionOnPermissionError { message },
-        )
-        | OperationCollectionPollingQueryOperationCollection::ValidationError(
-            OperationCollectionPollingQueryOperationCollectionOnValidationError { message },
-        ) => Err(CollectionError::Response(message)),
+        PollingOperationCollectionResult::NotFoundError(PollingNotFoundError { message })
+        | PollingOperationCollectionResult::PermissionError(PollingPermissionError { message })
+        | PollingOperationCollectionResult::ValidationError(PollingValidationError { message }) => {
+            Err(CollectionError::Response(message))
+        }
     }
 }
