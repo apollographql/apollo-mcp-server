@@ -1,0 +1,62 @@
+fragment OperationData on OperationCollectionEntry {
+    name
+    currentOperationRevision {
+      body
+      headers {
+        name
+        value
+      }
+      variables
+    }
+}
+
+query OperationCollectionQuery($operationCollectionId: ID!) {
+    operationCollection(id: $operationCollectionId) {
+        __typename
+        ... on OperationCollection {
+            operations {
+                lastUpdatedAt
+                id
+                ...OperationData
+            }
+        }
+        ... on NotFoundError {
+            message
+        }
+        ... on PermissionError {
+            message
+        }
+        ... on ValidationError {
+            message
+        }
+    }
+}
+
+query OperationCollectionPollingQuery($operationCollectionId: ID!) {
+    operationCollection(id: $operationCollectionId) {
+        __typename
+        ... on OperationCollection {
+            operations {
+                lastUpdatedAt
+                id
+            }
+        }
+        ... on NotFoundError {
+            message
+        }
+        ... on PermissionError {
+            message
+        }
+        ... on ValidationError {
+            message
+        }
+    }
+}
+
+query OperationCollectionEntriesQuery($collectionEntryIds: [ID!]!) {
+  operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
+    id
+    lastUpdatedAt
+    ...OperationData
+  }
+}

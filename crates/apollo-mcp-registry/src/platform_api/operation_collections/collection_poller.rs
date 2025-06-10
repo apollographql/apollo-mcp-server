@@ -14,6 +14,10 @@ use operation_collection_polling_query::{
     OperationCollectionPollingQueryOperationCollection,
     OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
 };
+use operation_collection_query::{
+    OperationCollectionQueryOperationCollection,
+    OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
+};
 
 const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
@@ -22,7 +26,7 @@ type Timestamp = String;
 
 #[derive(GraphQLQuery)]
 #[graphql(
-    query_path = "src/platform_api/operation_collections/operation_collection_entries_query.graphql",
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
     schema_path = "src/platform_api/platform-api.graphql",
     request_derives = "Debug",
     response_derives = "PartialEq, Debug, Deserialize, Clone"
@@ -31,12 +35,21 @@ struct OperationCollectionEntriesQuery;
 
 #[derive(GraphQLQuery)]
 #[graphql(
-    query_path = "src/platform_api/operation_collections/operation_collection_polling_query.graphql",
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
     schema_path = "src/platform_api/platform-api.graphql",
     request_derives = "Debug",
     response_derives = "PartialEq, Debug, Deserialize"
 )]
 struct OperationCollectionPollingQuery;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
+    schema_path = "src/platform_api/platform-api.graphql",
+    request_derives = "Debug",
+    response_derives = "PartialEq, Debug, Deserialize"
+)]
+struct OperationCollectionQuery;
 
 fn changed_ids(
     previous_updated_at: &mut HashMap<String, CollectionCache>,
@@ -86,11 +99,20 @@ pub struct CollectionCache {
     operation_data: Option<OperationData>,
 }
 
-impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for OperationData {
-    fn from(operation: &OperationCollectionEntriesQueryOperationCollectionEntries) -> Self {
+impl From<&OperationCollectionQueryOperationCollectionOnOperationCollectionOperations>
+    for OperationData
+{
+    fn from(
+        operation: &OperationCollectionQueryOperationCollectionOnOperationCollectionOperations,
+    ) -> Self {
         Self {
-            source_text: operation.current_operation_revision.body.clone(),
+            source_text: operation
+                .operation_data
+                .current_operation_revision
+                .body
+                .clone(),
             headers: operation
+                .operation_data
                 .current_operation_revision
                 .headers
                 .as_ref()
@@ -100,7 +122,38 @@ impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for Operat
                         .map(|h| (h.name.clone(), h.value.clone()))
                         .collect()
                 }),
-            variables: operation.current_operation_revision.variables.clone(),
+            variables: operation
+                .operation_data
+                .current_operation_revision
+                .variables
+                .clone(),
+        }
+    }
+}
+impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for OperationData {
+    fn from(operation: &OperationCollectionEntriesQueryOperationCollectionEntries) -> Self {
+        Self {
+            source_text: operation
+                .operation_data
+                .current_operation_revision
+                .body
+                .clone(),
+            headers: operation
+                .operation_data
+                .current_operation_revision
+                .headers
+                .as_ref()
+                .map(|headers| {
+                    headers
+                        .iter()
+                        .map(|h| (h.name.clone(), h.value.clone()))
+                        .collect()
+                }),
+            variables: operation
+                .operation_data
+                .current_operation_revision
+                .variables
+                .clone(),
         }
     }
 }
@@ -118,7 +171,107 @@ impl CollectionSource {
         let platform_api_config = self.platform_api_config;
         let task = async move {
             let mut previous_updated_at = HashMap::new();
+
+            match graphql_request::<OperationCollectionQuery>(
+                &OperationCollectionQuery::build_query(operation_collection_query::Variables {
+                    operation_collection_id: collection_id.clone(),
+                }),
+                &platform_api_config,
+            )
+            .await
+            {
+                Ok(response) => match response.operation_collection {
+                    OperationCollectionQueryOperationCollection::NotFoundError(error) => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                error.message,
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        }
+                    }
+                    OperationCollectionQueryOperationCollection::PermissionError(error) => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                error.message,
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        }
+                    }
+                    OperationCollectionQueryOperationCollection::ValidationError(error) => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                error.message,
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        }
+                    }
+                    OperationCollectionQueryOperationCollection::OperationCollection(
+                        collection,
+                    ) => {
+                        let operation_count = collection.operations.len();
+                        let operations = collection
+                            .operations
+                            .into_iter()
+                            .map(|operation| {
+                                let operation_id = operation.id.clone();
+                                let operation_data = OperationData::from(&operation);
+                                previous_updated_at.insert(
+                                    operation_id.clone(),
+                                    CollectionCache {
+                                        last_updated_at: operation.last_updated_at,
+                                        operation_data: Some(operation_data.clone()),
+                                    },
+                                );
+                                operation_data
+                            })
+                            .collect::<Vec<_>>();
+
+                        if let Err(e) = sender
+                            .send(CollectionEvent::UpdateOperationCollection(operations))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to push to stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        } else if operation_count > MAX_COLLECTION_SIZE_FOR_POLLING {
+                            tracing::warn!(
+                                "Operation Collection polling disabled. Collection has {} operations which exceeds the maximum of {}.",
+                                operation_count,
+                                MAX_COLLECTION_SIZE_FOR_POLLING
+                            );
+                            return;
+                        }
+                    }
+                },
+                Err(err) => {
+                    if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                        tracing::debug!(
+                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                        );
+                    }
+                    return;
+                }
+            };
+
             loop {
+                tokio::time::sleep(platform_api_config.poll_interval).await;
+
                 match poll_operation_collection(
                     collection_id.clone(),
                     &platform_api_config,
@@ -155,8 +308,6 @@ impl CollectionSource {
                         }
                     }
                 }
-
-                tokio::time::sleep(platform_api_config.poll_interval).await;
             }
         };
 
