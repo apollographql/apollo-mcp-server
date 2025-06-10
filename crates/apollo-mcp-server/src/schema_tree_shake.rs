@@ -2,9 +2,9 @@
 
 use apollo_compiler::ast::{
     Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
-    FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition,
-    ObjectTypeDefinition, OperationDefinition, OperationType, ScalarTypeDefinition,
-    SchemaDefinition, Selection, UnionTypeDefinition,
+    FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition, ObjectTypeDefinition,
+    OperationDefinition, OperationType, ScalarTypeDefinition, SchemaDefinition, Selection,
+    UnionTypeDefinition,
 };
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::WithErrors;
@@ -280,7 +280,8 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                 .collect(),
                                         },
                                     )))
-                                } else if self.schema.root_operation(OperationType::Query).is_some() {
+                                } else if self.schema.root_operation(OperationType::Query).is_some()
+                                {
                                     None
                                 } else {
                                     tracing::error!("object type {} not found", object_def.name);

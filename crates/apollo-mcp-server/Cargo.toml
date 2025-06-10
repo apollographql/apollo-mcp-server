@@ -12,6 +12,7 @@ apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
+enumset = "1.1.6"
 futures.workspace = true
 lz-str = "0.2.1"
 regex = "1.11.1"

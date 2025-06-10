@@ -365,8 +365,6 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
-
         let root_query_type = self
             .introspection
             .then(|| {
@@ -390,11 +388,23 @@ impl Starting {
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
-        let introspect_tool = self
-            .introspection
-            .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
 
-        let search_tool = self.introspection.then(|| Search::new(schema.clone(), matches!(self.mutation_mode, MutationMode::All)));
+        let (execute_tool, introspect_tool, search_tool) = if self.introspection {
+            (
+                Some(Execute::new(self.mutation_mode)),
+                Some(Introspect::new(
+                    schema.clone(),
+                    root_query_type,
+                    root_mutation_type,
+                )),
+                Some(Search::new(
+                    schema.clone(),
+                    matches!(self.mutation_mode, MutationMode::All),
+                )?),
+            )
+        } else {
+            (None, None, None)
+        };
 
         let explorer_tool = self.explorer_graph_ref.map(Explorer::new);
 

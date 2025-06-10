@@ -2,6 +2,7 @@ use crate::errors::McpError;
 use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
+use apollo_compiler::ast::OperationType;
 use apollo_compiler::validation::Valid;
 use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::schemars::JsonSchema;
@@ -9,7 +10,6 @@ use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
-use apollo_compiler::ast::OperationType;
 use tokio::sync::Mutex;
 
 /// The name of the tool to get GraphQL schema type information
@@ -85,8 +85,8 @@ impl Introspect {
                 .types
                 .iter()
                 .filter(|(_name, extended_type)| {
-                    !extended_type.is_built_in() &&
-                        schema
+                    !extended_type.is_built_in()
+                        && schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
                                 extended_type.name() != root_name

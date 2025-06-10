@@ -1,3 +1,4 @@
+use crate::introspection::tools::search::IndexingError;
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
 use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
@@ -96,6 +97,9 @@ pub enum ServerError {
 
     #[error(transparent)]
     UrlParseError(ParseError),
+
+    #[error("Failed to index schema: {0}")]
+    Indexing(#[from] IndexingError),
 }
 
 /// An MCP tool error
