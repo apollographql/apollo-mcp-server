@@ -1,9 +1,6 @@
 use futures::Stream;
-use graphql_client::{GraphQLQuery, Response};
-use reqwest::{
-    RequestBuilder,
-    header::{HeaderMap, HeaderName, HeaderValue},
-};
+use graphql_client::GraphQLQuery;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -88,43 +85,6 @@ pub struct CollectionCache {
     operation_data: Option<OperationData>,
 }
 
-fn request_builder(
-    platform_api_config: &PlatformApiConfig,
-) -> Result<RequestBuilder, CollectionError> {
-    Ok(reqwest::Client::new()
-        .post(PLATFORM_API)
-        .headers(HeaderMap::from_iter(vec![
-            (
-                HeaderName::from_static("apollographql-client-name"),
-                HeaderValue::from_static("apollo-mcp-server"),
-            ),
-            // TODO: add apollographql-client-version header
-            (
-                HeaderName::from_static("x-api-key"),
-                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-                    .map_err(CollectionError::HeaderValue)?,
-            ),
-        ]))
-        .timeout(platform_api_config.timeout))
-}
-pub async fn fetch_operation_collection(
-    collection_entry_ids: Vec<String>,
-    platform_api_config: &PlatformApiConfig,
-) -> Result<Response<operation_collection_entries_query::ResponseData>, CollectionError> {
-    request_builder(platform_api_config)?
-        .json(&OperationCollectionEntriesQuery::build_query(
-            operation_collection_entries_query::Variables {
-                collection_entry_ids,
-            },
-        ))
-        .send()
-        .await
-        .map_err(CollectionError::Request)?
-        .json::<Response<operation_collection_entries_query::ResponseData>>()
-        .await
-        .map_err(CollectionError::Request)
-}
-
 impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for OperationData {
     fn from(operation: &OperationCollectionEntriesQueryOperationCollectionEntries) -> Self {
         Self {
@@ -199,25 +159,54 @@ impl CollectionSource {
     }
 }
 
+async fn graphql_request<Query>(
+    request_body: &graphql_client::QueryBody<Query::Variables>,
+    platform_api_config: &PlatformApiConfig,
+) -> Result<Query::ResponseData, CollectionError>
+where
+    Query: graphql_client::GraphQLQuery,
+{
+    let res = reqwest::Client::new()
+        .post(PLATFORM_API)
+        .headers(HeaderMap::from_iter(vec![
+            (
+                HeaderName::from_static("apollographql-client-name"),
+                HeaderValue::from_static("apollo-mcp-server"),
+            ),
+            // TODO: add apollographql-client-version header
+            (
+                HeaderName::from_static("x-api-key"),
+                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
+                    .map_err(CollectionError::HeaderValue)?,
+            ),
+        ]))
+        .timeout(platform_api_config.timeout)
+        .json(request_body)
+        .send()
+        .await
+        .map_err(CollectionError::Request)?;
+
+    let response_body: graphql_client::Response<Query::ResponseData> =
+        res.json().await.map_err(CollectionError::Request)?;
+    response_body
+        .data
+        .ok_or(CollectionError::Response("missing data".to_string()))
+}
+
 async fn poll_operation_collection(
     collection_id: String,
     platform_api_config: &PlatformApiConfig,
     previous_updated_at: &mut HashMap<String, CollectionCache>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let response = request_builder(platform_api_config)?
-        .json(&OperationCollectionPollingQuery::build_query(
+    let response = graphql_request::<OperationCollectionPollingQuery>(
+        &OperationCollectionPollingQuery::build_query(
             operation_collection_polling_query::Variables {
                 operation_collection_id: collection_id.clone(),
             },
-        ))
-        .send()
-        .await
-        .map_err(CollectionError::Request)?
-        .json::<Response<operation_collection_polling_query::ResponseData>>()
-        .await
-        .map_err(CollectionError::Request)?
-        .data
-        .ok_or(CollectionError::Response("missing data".to_string()))?;
+        ),
+        platform_api_config,
+    )
+    .await?;
 
     match response.operation_collection {
         OperationCollectionPollingQueryOperationCollection::OperationCollection(collection) => {
@@ -228,10 +217,15 @@ async fn poll_operation_collection(
                 Ok(None)
             } else {
                 tracing::info!("changed operation ids: {:?}", changed_ids);
-                let full_response = fetch_operation_collection(changed_ids, platform_api_config)
-                    .await?
-                    .data
-                    .ok_or(CollectionError::Response("missing data".to_string()))?;
+                let full_response = graphql_request::<OperationCollectionEntriesQuery>(
+                    &OperationCollectionEntriesQuery::build_query(
+                        operation_collection_entries_query::Variables {
+                            collection_entry_ids: changed_ids,
+                        },
+                    ),
+                    platform_api_config,
+                )
+                .await?;
 
                 let mut updated_operations = HashMap::new();
                 for (id, collection_data) in previous_updated_at.clone() {
