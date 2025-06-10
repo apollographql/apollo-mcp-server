@@ -37,7 +37,6 @@ tokio-stream = "0.1"
 tracing = "0.1.41"
 tracing-core = "0.1.33"
 tracing-subscriber = { version = "0.3.19", features = ["json"] }
-graphql_client = "0.14.0"
 
 [workspace.metadata]
 crane.name = "apollo-mcp"

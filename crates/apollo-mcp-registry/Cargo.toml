@@ -14,7 +14,7 @@ derive_more = { version = "2.0.1", default-features = false, features = [
 ] }
 derivative = "2.2.0"
 futures.workspace = true
-graphql_client.workspace = true
+graphql_client = "0.14.0"
 insta.workspace = true
 notify = "8.0.0"
 reqwest.workspace = true
