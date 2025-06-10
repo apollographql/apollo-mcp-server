@@ -1,6 +1,9 @@
 use futures::Stream;
 use graphql_client::{GraphQLQuery, Response};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::{
+    RequestBuilder,
+    header::{HeaderMap, HeaderName, HeaderValue},
+};
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -84,11 +87,11 @@ pub struct CollectionCache {
     last_updated_at: String,
     operation_data: Option<OperationData>,
 }
-pub async fn fetch_operation_collection(
-    collection_entry_ids: Vec<String>,
+
+fn request_builder(
     platform_api_config: &PlatformApiConfig,
-) -> Result<Response<operation_collection_entries_query::ResponseData>, CollectionError> {
-    reqwest::Client::new()
+) -> Result<RequestBuilder, CollectionError> {
+    Ok(reqwest::Client::new()
         .post(PLATFORM_API)
         .headers(HeaderMap::from_iter(vec![
             (
@@ -102,7 +105,13 @@ pub async fn fetch_operation_collection(
                     .map_err(CollectionError::HeaderValue)?,
             ),
         ]))
-        .timeout(platform_api_config.timeout)
+        .timeout(platform_api_config.timeout))
+}
+pub async fn fetch_operation_collection(
+    collection_entry_ids: Vec<String>,
+    platform_api_config: &PlatformApiConfig,
+) -> Result<Response<operation_collection_entries_query::ResponseData>, CollectionError> {
+    request_builder(platform_api_config)?
         .json(&OperationCollectionEntriesQuery::build_query(
             operation_collection_entries_query::Variables {
                 collection_entry_ids,
@@ -195,21 +204,7 @@ async fn poll_operation_collection(
     platform_api_config: &PlatformApiConfig,
     previous_updated_at: &mut HashMap<String, CollectionCache>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let response = reqwest::Client::new()
-        .post(PLATFORM_API)
-        .headers(HeaderMap::from_iter(vec![
-            (
-                HeaderName::from_static("apollographql-client-name"),
-                HeaderValue::from_static("apollo-mcp-server"),
-            ),
-            // TODO: add apollographql-client-version header
-            (
-                HeaderName::from_static("x-api-key"),
-                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-                    .map_err(CollectionError::HeaderValue)?,
-            ),
-        ]))
-        .timeout(platform_api_config.timeout)
+    let response = request_builder(platform_api_config)?
         .json(&OperationCollectionPollingQuery::build_query(
             operation_collection_polling_query::Variables {
                 operation_collection_id: collection_id.clone(),
