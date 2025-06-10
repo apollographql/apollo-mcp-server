@@ -16,6 +16,7 @@ use operation_collection_polling_query::{
 };
 
 const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
+const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
 
 type Timestamp = String;
 
@@ -126,12 +127,18 @@ impl CollectionSource {
                 .await
                 {
                     Ok(Some(operations)) => {
+                        let operations_count = operations.len();
                         if let Err(e) = sender
                             .send(CollectionEvent::UpdateOperationCollection(operations))
                             .await
                         {
                             tracing::debug!(
                                 "failed to push to stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            break;
+                        } else if operations_count > MAX_COLLECTION_SIZE_FOR_POLLING {
+                            tracing::warn!(
+                                "Operation Collection polling disabled. Collection has {operations_count} operations which exceeds the maximum of {MAX_COLLECTION_SIZE_FOR_POLLING}."
                             );
                             break;
                         }
