@@ -274,7 +274,7 @@ impl CollectionSource {
                         }
                     }
                     Ok(None) => {
-                        tracing::info!("Operation collection unchanged");
+                        tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
                         if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
