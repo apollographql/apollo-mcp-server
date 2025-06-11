@@ -1,7 +1,7 @@
 use crate::errors::McpError;
 use crate::operations::{MutationMode, operation_defs};
 use crate::{graphql, schema_from_type};
-use axum::http::{HeaderMap, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;

@@ -50,11 +50,6 @@ curl -sSL https://mcp.apollo.dev/download/nix/v0.3.0| sh
 
 If your machine doesn't have the `curl` command, you can get the latest version from the [`curl` downloads page](https://curl.se/download.html).
 
-<Note>
-
-These installation methods currently don't support Intel-based Macs. Support is planned for a future release.
-
-</Note>
 ### Windows PowerShell installer
 
 To install or upgrade to the **latest release** of Apollo MCP Server:
@@ -106,7 +101,7 @@ apollo-mcp-server [OPTIONS] --directory <DIRECTORY>
 | `--http-address <HTTP_ADDRESS>`                       | The IP address to bind the Streamable HTTP server to (default: 127.0.0.1).                                                                                                                                                           |
 | `-i, --introspection`                                 | Expose the schema to the MCP client through `introspect` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                    |
 | `-u, --uplink`                                        | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
-| `-x, --explorer`                                      | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`).                                                                                                    |
+| `-x, --explorer`                                      | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires `APOLLO_GRAPH_REF`).                                                                                                    |
 | `-o, --operations [<OPERATIONS>...]`                  | Operation files to expose as MCP tools. [Learn more](/apollo-mcp-server/guides/#from-operation-files).                                                                                                                               |
 | `--manifest <MANIFEST>`                               | The path to the persisted query manifest containing operations.                                                                                                                                                                      |
 | `--collection <COLLECTION_ID>`                        | The ID of an operation collection to use as the source for operations                                                                                                                                                                |
