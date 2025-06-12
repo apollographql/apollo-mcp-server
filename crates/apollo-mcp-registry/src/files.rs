@@ -34,8 +34,9 @@ pub fn watch(path: &Path) -> impl Stream<Item = ()> + use<> {
 
 #[allow(clippy::panic)] // TODO: code copied from router contained existing panics
 fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()> + use<> {
-    let config_file_path = PathBuf::from(path);
-    let watched_path = config_file_path.clone();
+    let path = PathBuf::from(path);
+    let is_dir = path.is_dir();
+    let watched_path = path.clone();
 
     let (watch_sender, watch_receiver) = mpsc::channel(1);
     let watch_receiver_stream = tokio_stream::wrappers::ReceiverStream::new(watch_receiver);
@@ -50,28 +51,37 @@ fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()
     let mut watcher = PollWatcher::new(
         move |res: Result<notify::Event, notify::Error>| match res {
             Ok(event) => {
-                // The two kinds of events of interest to use are writes to the metadata of a
-                // watched file and changes to the data of a watched file
+                // Events of interest are writes to the timestamp of a watched file or directory,
+                // changes to the data of a watched file, and the addition or removal of a file.
                 if matches!(
                     event.kind,
                     EventKind::Modify(ModifyKind::Metadata(MetadataKind::WriteTime))
                         | EventKind::Modify(ModifyKind::Data(DataChange::Any))
                         | EventKind::Create(_)
                         | EventKind::Remove(_)
-                ) && event.paths.contains(&watched_path)
-                {
-                    loop {
-                        match watch_sender.try_send(()) {
-                            Ok(_) => break,
-                            Err(err) => {
-                                tracing::warn!(
-                                    "could not process file watch notification. {}",
-                                    err.to_string()
-                                );
-                                if matches!(err, TrySendError::Full(_)) {
-                                    std::thread::sleep(Duration::from_millis(50));
-                                } else {
-                                    panic!("event channel failed: {err}");
+                ) {
+                    if !(event.paths.contains(&watched_path)
+                        || (is_dir && event.paths.iter().any(|p| p.starts_with(&watched_path)))) {
+                        tracing::trace!(
+                            "Ignoring change event with paths {:?} and kind {:?} - watched paths are {:?}",
+                            event.paths,
+                            event.kind,
+                            watched_path
+                        );
+                    } else {
+                        loop {
+                            match watch_sender.try_send(()) {
+                                Ok(_) => break,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "could not process file watch notification. {}",
+                                        err.to_string()
+                                    );
+                                    if matches!(err, TrySendError::Full(_)) {
+                                        std::thread::sleep(Duration::from_millis(50));
+                                    } else {
+                                        panic!("event channel failed: {err}");
+                                    }
                                 }
                             }
                         }
@@ -82,10 +92,10 @@ fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()
         },
         config,
     )
-    .unwrap_or_else(|_| panic!("could not create watch on: {config_file_path:?}"));
+    .unwrap_or_else(|_| panic!("could not create watch on: {path:?}"));
     watcher
-        .watch(&config_file_path, RecursiveMode::NonRecursive)
-        .unwrap_or_else(|_| panic!("could not watch: {config_file_path:?}"));
+        .watch(&path, RecursiveMode::NonRecursive)
+        .unwrap_or_else(|_| panic!("could not watch: {path:?}"));
     // Tell watchers once they should read the file once,
     // then listen to fs events.
     stream::once(future::ready(()))
