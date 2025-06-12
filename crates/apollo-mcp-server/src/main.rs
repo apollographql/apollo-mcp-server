@@ -3,15 +3,15 @@ use apollo_mcp_registry::platform_api::PlatformApiConfig;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
-use apollo_mcp_registry::uplink::{SecretString, UplinkConfig};
+use apollo_mcp_registry::uplink::{Endpoints, SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
-use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
+use clap::{ArgAction, Parser};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::env;
 use std::net::{IpAddr, Ipv4Addr};
@@ -20,6 +20,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tracing::{Level, info};
 use tracing_subscriber::EnvFilter;
+use url::{ParseError, Url};
 
 /// Clap styling
 const STYLES: Styles = Styles::styled()
@@ -118,6 +119,69 @@ struct Args {
     /// collection id to expose as MCP tools (requires APOLLO_KEY)
     #[arg(long, conflicts_with_all(["operations", "manifest"]))]
     collection: Option<String>,
+
+    /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
+    #[clap(long, env, action = ArgAction::Append)]
+    // Should be a Vec<Url> when https://github.com/clap-rs/clap/discussions/3796 is solved
+    apollo_uplink_endpoints: Option<String>,
+
+    #[clap(env)]
+    apollo_registry_url: Option<String>,
+
+    /// Your Apollo key.
+    #[clap(skip = std::env::var("APOLLO_KEY").ok())]
+    apollo_key: Option<String>,
+
+    /// Your Apollo graph reference.
+    #[clap(skip = std::env::var("APOLLO_GRAPH_REF").ok())]
+    apollo_graph_ref: Option<String>,
+}
+
+impl Args {
+    fn uplink_config(&self) -> Result<UplinkConfig, ServerError> {
+        Ok(UplinkConfig {
+            apollo_key: SecretString::from(
+                self.apollo_key
+                    .clone()
+                    .ok_or(ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
+            ),
+            apollo_graph_ref: self.apollo_graph_ref.clone().ok_or(
+                ServerError::EnvironmentVariable(String::from("APOLLO_GRAPH_REF")),
+            )?,
+            poll_interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(30),
+            endpoints: self
+                .apollo_uplink_endpoints
+                .as_ref()
+                .map(|endpoints| self.parse_endpoints(endpoints))
+                .transpose()?,
+        })
+    }
+    fn parse_endpoints(&self, endpoints: &str) -> std::result::Result<Endpoints, ServerError> {
+        Ok(Endpoints::fallback(
+            endpoints
+                .split(',')
+                .map(|endpoint| Url::parse(endpoint.trim()))
+                .collect::<Result<Vec<Url>, ParseError>>()
+                .map_err(ServerError::UrlParseError)?,
+        ))
+    }
+    fn platform_api_config(&self) -> Result<PlatformApiConfig, ServerError> {
+        Ok(PlatformApiConfig::new(
+            SecretString::from(
+                self.apollo_key
+                    .clone()
+                    .ok_or(ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
+            ),
+            Duration::from_secs(30),
+            Duration::from_secs(30),
+            self.apollo_registry_url
+                .as_ref()
+                .map(|url| Url::parse(url))
+                .transpose()
+                .map_err(ServerError::UrlParseError)?,
+        ))
+    }
 }
 
 #[tokio::main]
@@ -158,10 +222,13 @@ async fn main() -> anyhow::Result<()> {
         std::env!("CARGO_PKG_VERSION")
     );
 
-    let schema_source = if let Some(path) = args.schema {
-        SchemaSource::File { path, watch: true }
+    let schema_source = if let Some(path) = &args.schema {
+        SchemaSource::File {
+            path: path.clone(),
+            watch: true,
+        }
     } else if args.uplink {
-        SchemaSource::Registry(uplink_config()?)
+        SchemaSource::Registry(args.uplink_config()?)
     } else {
         bail!(ServerError::NoSchema);
     };
@@ -170,13 +237,13 @@ async fn main() -> anyhow::Result<()> {
         OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
-    } else if let Some(collection_id) = args.collection {
+    } else if let Some(collection_id) = &args.collection {
         OperationSource::Collection(CollectionSource {
-            collection_id,
-            platform_api_config: platform_api_config()?,
+            collection_id: collection_id.clone(),
+            platform_api_config: args.platform_api_config()?,
         })
     } else if args.uplink {
-        OperationSource::from(ManifestSource::Uplink(uplink_config()?))
+        OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
@@ -218,30 +285,4 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .start()
         .await?)
-}
-
-#[allow(clippy::result_large_err)]
-fn uplink_config() -> Result<UplinkConfig, ServerError> {
-    Ok(UplinkConfig {
-        apollo_key: SecretString::from(
-            env::var("APOLLO_KEY")
-                .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
-        ),
-        apollo_graph_ref: env::var("APOLLO_GRAPH_REF")
-            .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_GRAPH_REF")))?,
-        poll_interval: Duration::from_secs(10),
-        timeout: Duration::from_secs(30),
-        endpoints: None, // Use the default endpoints
-    })
-}
-
-fn platform_api_config() -> Result<PlatformApiConfig, ServerError> {
-    Ok(PlatformApiConfig {
-        apollo_key: SecretString::from(
-            env::var("APOLLO_KEY")
-                .map_err(|_| ServerError::EnvironmentVariable(String::from("APOLLO_KEY")))?,
-        ),
-        poll_interval: Duration::from_secs(30),
-        timeout: Duration::from_secs(30),
-    })
 }

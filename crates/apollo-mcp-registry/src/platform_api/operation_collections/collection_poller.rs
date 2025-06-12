@@ -28,7 +28,6 @@ use operation_collection_query::{
     OperationCollectionQueryOperationCollectionOnOperationCollectionOperations as OperationCollectionEntry,
 };
 
-const PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
 
 type Timestamp = String;
@@ -299,7 +298,7 @@ where
     Query: graphql_client::GraphQLQuery,
 {
     let res = reqwest::Client::new()
-        .post(PLATFORM_API)
+        .post(platform_api_config.registry_url.clone())
         .headers(HeaderMap::from_iter(vec![
             (
                 HeaderName::from_static("apollographql-client-name"),

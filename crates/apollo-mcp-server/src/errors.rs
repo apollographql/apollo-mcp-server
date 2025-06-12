@@ -4,6 +4,7 @@ use apollo_mcp_registry::platform_api::operation_collections::error::CollectionE
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 use tokio::task::JoinError;
+use url::ParseError;
 
 /// An error in operation parsing
 #[derive(Debug, thiserror::Error)]
@@ -86,6 +87,9 @@ pub enum ServerError {
 
     #[error("Failed to initialize MCP server")]
     McpInitializeError(#[from] rmcp::service::ServerInitializeError<std::io::Error>),
+
+    #[error(transparent)]
+    UrlParseError(ParseError),
 }
 
 /// An MCP tool error

@@ -10,7 +10,7 @@ apollo-compiler.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 bon = "3.6.3"
-clap = { version = "4.5.36", features = ["derive"] }
+clap = { version = "4.5.36", features = ["derive", "env"] }
 futures.workspace = true
 lz-str = "0.2.1"
 regex = "1.11.1"
@@ -27,6 +27,7 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"
+url.workspace = true
 
 [dev-dependencies]
 insta = { workspace = true }
