@@ -41,3 +41,24 @@ impl PlatformApiConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use secrecy::{ExposeSecret, SecretString};
+    use std::time::Duration;
+
+    #[test]
+    fn test_platform_api_config_with_none_endpoints() {
+        let config = PlatformApiConfig::new(
+            SecretString::from("test_apollo_key"),
+            Duration::from_secs(10),
+            Duration::from_secs(5),
+            None,
+        );
+        assert_eq!(config.apollo_key.expose_secret(), "test_apollo_key");
+        assert_eq!(config.poll_interval, Duration::from_secs(10));
+        assert_eq!(config.timeout, Duration::from_secs(5));
+        assert_eq!(config.registry_url.to_string(), DEFAULT_PLATFORM_API);
+    }
+}
