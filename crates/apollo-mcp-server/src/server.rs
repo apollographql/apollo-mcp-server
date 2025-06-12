@@ -47,7 +47,7 @@ pub struct Server {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
-    explorer: bool,
+    explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -71,7 +71,7 @@ impl Server {
         endpoint: String,
         headers: HeaderMap,
         introspection: bool,
-        explorer: bool,
+        explorer_graph_ref: Option<String>,
         #[builder(required)] custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
         disable_type_description: bool,
@@ -89,7 +89,7 @@ impl Server {
             endpoint,
             headers,
             introspection,
-            explorer,
+            explorer_graph_ref,
             custom_scalar_map,
             mutation_mode,
             disable_type_description,
@@ -190,7 +190,7 @@ struct Configuring {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
-    explorer: bool,
+    explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -206,7 +206,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
-            explorer: self.explorer,
+            explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
             disable_type_description: self.disable_type_description,
@@ -229,7 +229,7 @@ impl Configuring {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
-            explorer: self.explorer,
+            explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
             disable_type_description: self.disable_type_description,
@@ -244,7 +244,7 @@ struct SchemaConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
-    explorer: bool,
+    explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -270,7 +270,7 @@ impl SchemaConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
-            explorer: self.explorer,
+            explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
             disable_type_description: self.disable_type_description,
@@ -285,7 +285,7 @@ struct OperationsConfigured {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
-    explorer: bool,
+    explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -302,7 +302,7 @@ impl OperationsConfigured {
             endpoint: self.endpoint,
             headers: self.headers,
             introspection: self.introspection,
-            explorer: self.explorer,
+            explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
             disable_type_description: self.disable_type_description,
@@ -330,7 +330,7 @@ struct Starting {
     endpoint: String,
     headers: HeaderMap,
     introspection: bool,
-    explorer: bool,
+    explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
     disable_type_description: bool,
@@ -393,13 +393,7 @@ impl Starting {
             .introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
 
-        let explorer_tool = if self.explorer {
-            Some(Explorer::new(std::env::var("APOLLO_GRAPH_REF").map_err(
-                |_| ServerError::EnvironmentVariable("APOLLO_GRAPH_REF".to_string()),
-            )?))
-        } else {
-            None
-        };
+        let explorer_tool = self.explorer_graph_ref.map(Explorer::new);
 
         let cancellation_token = CancellationToken::new();
 
@@ -720,7 +714,7 @@ impl StateMachine {
             endpoint: server.endpoint,
             headers: server.headers,
             introspection: server.introspection,
-            explorer: server.explorer,
+            explorer_graph_ref: server.explorer_graph_ref,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,
             disable_type_description: server.disable_type_description,

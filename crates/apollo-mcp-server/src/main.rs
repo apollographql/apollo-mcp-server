@@ -73,11 +73,21 @@ struct Args {
     introspection: bool,
 
     /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, short = 'u')]
+    #[arg(
+        long,
+        short = 'u',
+        requires = "apollo_graph_ref",
+        requires = "apollo_key"
+    )]
     uplink: bool,
 
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, short = 'x')]
+    #[arg(
+        long,
+        short = 'x',
+        requires = "apollo_graph_ref",
+        requires = "apollo_key"
+    )]
     explorer: bool,
 
     /// Operation files to expose as MCP tools
@@ -117,7 +127,7 @@ struct Args {
     http_port: Option<u16>,
 
     /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]))]
+    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key")]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
@@ -266,12 +276,23 @@ async fn main() -> anyhow::Result<()> {
         env::set_current_dir(directory)?;
     }
 
+    let explorer_graph_ref = if args.explorer {
+        Some(
+            args.apollo_graph_ref
+                .ok_or(ServerError::EnvironmentVariable(String::from(
+                    "APOLLO_GRAPH_REF",
+                )))?,
+        )
+    } else {
+        None
+    };
+
     Ok(Server::builder()
         .transport(transport)
         .schema_source(schema_source)
         .operation_source(operation_source)
         .endpoint(args.endpoint)
-        .explorer(args.explorer)
+        .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(default_headers)
         .introspection(args.introspection)
         .mutation_mode(args.allow_mutations)
