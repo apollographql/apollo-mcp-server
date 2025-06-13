@@ -395,7 +395,7 @@ where
 {
     let res = client
         .post(url)
-        // .header("x-router-version", env!("CARGO_PKG_VERSION"))
+        .header("x-apollo-mcp-server-version", env!("CARGO_PKG_VERSION"))
         .json(request_body)
         .send()
         .await

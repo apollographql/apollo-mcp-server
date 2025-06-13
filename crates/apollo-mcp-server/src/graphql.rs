@@ -28,6 +28,10 @@ pub trait Executable {
 
     /// Execute as a GraphQL operation using the endpoint and headers
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
+        let client_metadata = serde_json::json!({
+            "type": "mcp",
+            "version": std::env!("CARGO_PKG_VERSION")
+        });
         reqwest::Client::new()
             .post(request.endpoint)
             .headers(self.headers(&request.headers))
@@ -38,6 +42,7 @@ pub trait Executable {
                             "version": 1,
                             "sha256Hash": id,
                         },
+                        "ApolloClientMetadata": client_metadata,
                     },
                     "variables": self.variables(request.input)?,
                 })
@@ -46,6 +51,9 @@ pub trait Executable {
                 serde_json::json!({
                     "query": self.operation(request.input.clone())?,
                     "variables": self.variables(request.input)?,
+                    "extensions": {
+                        "ApolloClientMetadata": client_metadata,
+                    },
                 })
                 .to_string()
             })

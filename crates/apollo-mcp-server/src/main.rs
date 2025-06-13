@@ -73,21 +73,11 @@ struct Args {
     introspection: bool,
 
     /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(
-        long,
-        short = 'u',
-        requires = "apollo_graph_ref",
-        requires = "apollo_key"
-    )]
+    #[arg(long, short = 'u')]
     uplink: bool,
 
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(
-        long,
-        short = 'x',
-        requires = "apollo_graph_ref",
-        requires = "apollo_key"
-    )]
+    #[arg(long, short = 'x')]
     explorer: bool,
 
     /// Operation files to expose as MCP tools
@@ -127,7 +117,7 @@ struct Args {
     http_port: Option<u16>,
 
     /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key")]
+    #[arg(long, conflicts_with_all(["operations", "manifest"]))]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
@@ -148,6 +138,7 @@ struct Args {
 }
 
 impl Args {
+    #[allow(clippy::result_large_err)]
     fn uplink_config(&self) -> Result<UplinkConfig, ServerError> {
         Ok(UplinkConfig {
             apollo_key: SecretString::from(
@@ -167,7 +158,9 @@ impl Args {
                 .transpose()?,
         })
     }
-    fn parse_endpoints(&self, endpoints: &str) -> std::result::Result<Endpoints, ServerError> {
+
+    #[allow(clippy::result_large_err)]
+    fn parse_endpoints(&self, endpoints: &str) -> Result<Endpoints, ServerError> {
         Ok(Endpoints::fallback(
             endpoints
                 .split(',')
@@ -176,6 +169,8 @@ impl Args {
                 .map_err(ServerError::UrlParseError)?,
         ))
     }
+
+    #[allow(clippy::result_large_err)]
     fn platform_api_config(&self) -> Result<PlatformApiConfig, ServerError> {
         Ok(PlatformApiConfig::new(
             SecretString::from(

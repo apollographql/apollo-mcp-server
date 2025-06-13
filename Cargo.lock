@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-registry"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "derivative",
  "derive_more 2.0.1",

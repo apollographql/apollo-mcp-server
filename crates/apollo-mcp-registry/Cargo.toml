@@ -1,8 +1,8 @@
 [package]
 name = "apollo-mcp-registry"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
-authors = ["Apollo <opensource@apollographql.com>"]
+authors.workspace = true
 license-file = "../LICENSE"
 repository = "https://github.com/apollographql/apollo-mcp-server"
 description = "Registry providing schema and operations to the MCP Server"
