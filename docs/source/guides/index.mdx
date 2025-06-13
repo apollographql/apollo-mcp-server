@@ -274,3 +274,22 @@ npx @modelcontextprotocol/inspector
     - **URL**: Enter `http://127.0.0.1:5000/mcp`, where the port must match the `--http-port` option
 
 1. Click **Connect** and **List Tools**. You should see the tools for the operations you provided.
+
+### Custom scalars configuration
+
+You can specify a custom scalars configuration JSON file to map a custom scalar to a [JSON schema type](https://json-schema.org/understanding-json-schema/reference/type). The JSON file is an object with custom scalar names as keys and JSON schema types as values:
+```json
+{
+   "MyCustomScalar": { "type": "string" }
+}
+```
+Other than JSON schema type, an overriding description can also be provided. In the following example the description provided in the schema, `scalar description`, would get overridden by the description found in the custom scalar configuration file, `override description`:
+```graphql
+"""scalar description"""
+scalar MyCustomScalar
+```
+```json
+{
+   "MyCustomScalar": { "type": "string", "description":  "override description" }
+}
+```
