@@ -256,16 +256,7 @@ async fn main() -> anyhow::Result<()> {
         OperationSource::None
     };
 
-    let mut default_headers = HeaderMap::new();
-    for header in args.headers {
-        let parts: Vec<&str> = header.split(':').map(|s| s.trim()).collect();
-        match (parts.first(), parts.get(1), parts.get(2)) {
-            (Some(key), Some(value), None) => {
-                default_headers.append(HeaderName::from_str(key)?, HeaderValue::from_str(value)?);
-            }
-            _ => bail!(ServerError::Header(header)),
-        }
-    }
+    let default_headers = parse_headers(args.headers)?;
 
     if let Some(directory) = args.directory {
         env::set_current_dir(directory)?;
@@ -301,4 +292,97 @@ async fn main() -> anyhow::Result<()> {
         .build()
         .start()
         .await?)
+}
+
+fn parse_headers(headers: Vec<String>) -> Result<HeaderMap, ServerError> {
+    let mut default_headers = HeaderMap::new();
+    for header in headers {
+        let parts: Vec<&str> = header.splitn(2, ':').map(|s| s.trim()).collect();
+        match (parts.first(), parts.get(1)) {
+            (Some(key), Some(value)) => {
+                default_headers.append(HeaderName::from_str(key)?, HeaderValue::from_str(value)?);
+            }
+            _ => return Err(ServerError::Header(header)),
+        }
+    }
+    Ok(default_headers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reqwest::header::AUTHORIZATION;
+
+    #[test]
+    fn test_parse_headers_empty() {
+        let headers = vec![];
+
+        let result = parse_headers(headers).unwrap();
+
+        assert_eq!(result.len(), 0)
+    }
+
+    #[test]
+    fn test_parse_headers_authorization() {
+        let headers = vec![
+            "Authorization: Bearer 1234567890".to_string(),
+            "X-TEST: abcde".to_string(),
+        ];
+
+        let result = parse_headers(headers).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result.get(AUTHORIZATION),
+            Some(&HeaderValue::from_str("Bearer 1234567890").unwrap()),
+        );
+        assert_eq!(
+            result.get("X-TEST"),
+            Some(&HeaderValue::from_str("abcde").unwrap()),
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_with_colon_in_value() {
+        let headers = vec![
+            "X-URL: https://example.com:8080/path".to_string(),
+            "X-API-KEY: user::graph::123".to_string(),
+        ];
+
+        let result = parse_headers(headers).unwrap();
+
+        assert_eq!(result.len(), 2);
+        assert_eq!(
+            result.get("X-URL"),
+            Some(&HeaderValue::from_str("https://example.com:8080/path").unwrap())
+        );
+        assert_eq!(
+            result.get("X-API-KEY"),
+            Some(&HeaderValue::from_str("user::graph::123").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_empty_value() {
+        let headers = vec!["Authorization:".to_string()];
+        let result = parse_headers(headers).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result.get(AUTHORIZATION),
+            Some(&HeaderValue::from_str("").unwrap())
+        );
+    }
+
+    #[test]
+    fn test_parse_headers_missing_colon() {
+        let headers = vec!["Authorization; Bearer 1234567890".to_string()];
+        let result = parse_headers(headers);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ServerError::Header(header) => assert_eq!(header, "Authorization; Bearer 1234567890"),
+            _ => panic!("Expected ServerError::Header"),
+        }
+    }
 }
