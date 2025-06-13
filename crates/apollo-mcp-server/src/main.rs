@@ -73,11 +73,21 @@ struct Args {
     introspection: bool,
 
     /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, short = 'u')]
+    #[arg(
+        long,
+        short = 'u',
+        requires = "apollo_key",
+        requires = "apollo_graph_ref"
+    )]
     uplink: bool,
 
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, short = 'x')]
+    #[arg(
+        long,
+        short = 'x',
+        requires = "apollo_key",
+        requires = "apollo_graph_ref"
+    )]
     explorer: bool,
 
     /// Operation files to expose as MCP tools
@@ -117,7 +127,7 @@ struct Args {
     http_port: Option<u16>,
 
     /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]))]
+    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key")]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
@@ -129,11 +139,11 @@ struct Args {
     apollo_registry_url: Option<String>,
 
     /// Your Apollo key.
-    #[clap(skip = std::env::var("APOLLO_KEY").ok())]
+    #[clap(env = "APOLLO_KEY", long)]
     apollo_key: Option<String>,
 
     /// Your Apollo graph reference.
-    #[clap(skip = std::env::var("APOLLO_GRAPH_REF").ok())]
+    #[clap(env = "APOLLO_GRAPH_REF", long)]
     apollo_graph_ref: Option<String>,
 }
 
