@@ -51,7 +51,7 @@ impl graphql::Executable for Execute {
         })?;
 
         // validate the operation
-        operation_defs(&input.query, self.mutation_mode == MutationMode::All)
+        operation_defs(&input.query, self.mutation_mode == MutationMode::All, None)
             .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?;
 
         Ok(input.query)
