@@ -81,36 +81,16 @@ struct OperationCollectionDefaultQuery;
 struct OperationCollectionDefaultPollingQuery;
 
 async fn handle_poll_result(
-    previous_updated_at: &mut HashMap<String, CollectionCache>,
+    previous_updated_at: &mut HashMap<String, OperationData>,
     poll: impl Iterator<Item = (String, String)>,
     platform_api_config: &PlatformApiConfig,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
     let change_ids: Vec<String> = poll
-        .filter_map(|(id, last_updated_at)| {
-            let updated_at = last_updated_at.clone();
-            if let Some(previous_operation) = previous_updated_at.get(&id) {
-                if updated_at == *previous_operation.last_updated_at {
-                    None
-                } else {
-                    previous_updated_at.insert(
-                        id.clone(),
-                        CollectionCache {
-                            last_updated_at: updated_at,
-                            operation_data: previous_operation.operation_data.clone(),
-                        },
-                    );
-                    Some(id.clone())
-                }
-            } else {
-                previous_updated_at.insert(
-                    id.clone(),
-                    CollectionCache {
-                        last_updated_at: updated_at,
-                        operation_data: None,
-                    },
-                );
-                Some(id.clone())
+        .filter_map(|(id, last_updated_at)| match previous_updated_at.get(&id) {
+            Some(previous_operation) if last_updated_at == previous_operation.last_updated_at => {
+                None
             }
+            _ => Some(id.clone()),
         })
         .collect();
 
@@ -129,34 +109,15 @@ async fn handle_poll_result(
         )
         .await?;
 
-        let mut updated_operations = HashMap::new();
-        for (id, collection_data) in previous_updated_at.clone() {
-            if let Some(operation_data) = collection_data.operation_data.as_ref() {
-                updated_operations.insert(id, operation_data.clone());
-            }
-        }
-
         for operation in full_response.operation_collection_entries {
-            let operation_id = operation.id.clone();
-            let operation_data = OperationData::from(&operation);
             previous_updated_at.insert(
-                operation_id.clone(),
-                CollectionCache {
-                    last_updated_at: operation.last_updated_at,
-                    operation_data: Some(operation_data.clone()),
-                },
+                operation.id.clone(),
+                OperationData::from(&operation).clone(),
             );
-            updated_operations.insert(operation_id.clone(), operation_data.clone());
         }
 
-        Ok(Some(updated_operations.into_values().collect()))
+        Ok(Some(previous_updated_at.clone().into_values().collect()))
     }
-}
-
-#[derive(Clone)]
-pub struct CollectionCache {
-    last_updated_at: String,
-    operation_data: Option<OperationData>,
 }
 
 #[derive(Clone)]
@@ -263,18 +224,12 @@ pub enum CollectionSource {
 
 async fn write_init_response(
     sender: &tokio::sync::mpsc::Sender<CollectionEvent>,
-    previous_updated_at: &mut HashMap<String, CollectionCache>,
+    previous_updated_at: &mut HashMap<String, OperationData>,
     operations: impl Iterator<Item = OperationData>,
 ) -> bool {
     let operations = operations
         .inspect(|operation_data| {
-            previous_updated_at.insert(
-                operation_data.id.clone(),
-                CollectionCache {
-                    last_updated_at: operation_data.last_updated_at.clone(),
-                    operation_data: Some(operation_data.clone()),
-                },
-            );
+            previous_updated_at.insert(operation_data.id.clone(), operation_data.clone());
         })
         .collect::<Vec<_>>();
     let operation_count = operations.len();
@@ -528,7 +483,7 @@ impl CollectionSource {
 async fn poll_operation_collection_id(
     collection_id: String,
     platform_api_config: &PlatformApiConfig,
-    previous_updated_at: &mut HashMap<String, CollectionCache>,
+    previous_updated_at: &mut HashMap<String, OperationData>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
     let response = graphql_request::<OperationCollectionPollingQuery>(
         &OperationCollectionPollingQuery::build_query(
@@ -563,7 +518,7 @@ async fn poll_operation_collection_id(
 async fn poll_operation_collection_default(
     graph_ref: String,
     platform_api_config: &PlatformApiConfig,
-    previous_updated_at: &mut HashMap<String, CollectionCache>,
+    previous_updated_at: &mut HashMap<String, OperationData>,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
     let response = graphql_request::<OperationCollectionDefaultPollingQuery>(
         &OperationCollectionDefaultPollingQuery::build_query(
