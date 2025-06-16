@@ -9,6 +9,11 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::{error::CollectionError, event::CollectionEvent};
 use crate::platform_api::PlatformApiConfig;
+use operation_collection_default_polling_query::OperationCollectionDefaultPollingQueryVariant;
+use operation_collection_default_query::{
+    OperationCollectionDefaultQueryVariant,
+    OperationCollectionDefaultQueryVariantOnGraphVariantMcpDefaultCollectionOperations as OperationCollectionDefaultEntry,
+};
 use operation_collection_entries_query::OperationCollectionEntriesQueryOperationCollectionEntries;
 use operation_collection_polling_query::{
     OperationCollectionPollingQueryOperationCollection as PollingOperationCollectionResult,
@@ -54,6 +59,24 @@ struct OperationCollectionPollingQuery;
     response_derives = "PartialEq, Debug, Deserialize"
 )]
 struct OperationCollectionQuery;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
+    schema_path = "src/platform_api/platform-api.graphql",
+    request_derives = "Debug",
+    response_derives = "PartialEq, Debug, Deserialize"
+)]
+struct OperationCollectionDefaultQuery;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
+    schema_path = "src/platform_api/platform-api.graphql",
+    request_derives = "Debug",
+    response_derives = "PartialEq, Debug, Deserialize"
+)]
+struct OperationCollectionDefaultPollingQuery;
 
 async fn handle_poll_result(
     previous_updated_at: &mut HashMap<String, OperationData>,
@@ -176,10 +199,40 @@ impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for Operat
         }
     }
 }
+impl From<&OperationCollectionDefaultEntry> for OperationData {
+    fn from(operation: &OperationCollectionDefaultEntry) -> Self {
+        Self {
+            id: operation.id.clone(),
+            last_updated_at: operation.last_updated_at.clone(),
+            source_text: operation
+                .operation_data
+                .current_operation_revision
+                .body
+                .clone(),
+            headers: operation
+                .operation_data
+                .current_operation_revision
+                .headers
+                .as_ref()
+                .map(|headers| {
+                    headers
+                        .iter()
+                        .map(|h| (h.name.clone(), h.value.clone()))
+                        .collect()
+                }),
+            variables: operation
+                .operation_data
+                .current_operation_revision
+                .variables
+                .clone(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub enum CollectionSource {
     Id(String, PlatformApiConfig),
+    Default(String, PlatformApiConfig),
 }
 
 async fn write_init_response(
@@ -217,6 +270,9 @@ impl CollectionSource {
         match self {
             CollectionSource::Id(id, platform_api_config) => {
                 self.collection_id_stream(id.clone(), platform_api_config.clone())
+            }
+            CollectionSource::Default(graph_ref, platform_api_config) => {
+                self.default_collection_stream(graph_ref.clone(), platform_api_config.clone())
             }
         }
     }
@@ -318,6 +374,123 @@ impl CollectionSource {
         });
         Box::pin(ReceiverStream::new(receiver))
     }
+
+    pub fn default_collection_stream(
+        &self,
+        graph_ref: String,
+        platform_api_config: PlatformApiConfig,
+    ) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
+        let (sender, receiver) = channel(2);
+        tokio::task::spawn(async move {
+            let mut previous_updated_at = HashMap::new();
+            match graphql_request::<OperationCollectionDefaultQuery>(
+                &OperationCollectionDefaultQuery::build_query(
+                    operation_collection_default_query::Variables {
+                        graph_ref: graph_ref.clone(),
+                    },
+                ),
+                &platform_api_config,
+            )
+            .await
+            {
+                Ok(response) => match response.variant {
+                    Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
+                        if let Some(collection) = variant.mcp_default_collection {
+                            let should_poll = write_init_response(
+                                &sender,
+                                &mut previous_updated_at,
+                                collection.operations.iter().map(OperationData::from),
+                            )
+                            .await;
+                            if !should_poll {
+                                return;
+                            }
+                        } else {
+                            tracing::debug!(
+                                "No default collection found for graph variant: {graph_ref}"
+                            );
+                        }
+                    }
+                    Some(OperationCollectionDefaultQueryVariant::InvalidRefFormat(err)) => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                err.message,
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        }
+                    }
+                    None => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                "{graphRef} not found".to_string(),
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                        }
+                        return;
+                    }
+                },
+                Err(err) => {
+                    if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                        tracing::debug!(
+                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                        );
+                    }
+                    return;
+                }
+            };
+
+            loop {
+                tokio::time::sleep(platform_api_config.poll_interval).await;
+
+                match poll_operation_collection_default(
+                    graph_ref.clone(),
+                    &platform_api_config,
+                    &mut previous_updated_at,
+                )
+                .await
+                {
+                    Ok(Some(operations)) => {
+                        let operations_count = operations.len();
+                        if let Err(e) = sender
+                            .send(CollectionEvent::UpdateOperationCollection(operations))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to push to stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            break;
+                        } else if operations_count > MAX_COLLECTION_SIZE_FOR_POLLING {
+                            tracing::warn!(
+                                "Operation Collection polling disabled. Collection has {operations_count} operations which exceeds the maximum of {MAX_COLLECTION_SIZE_FOR_POLLING}."
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!("Operation collection unchanged");
+                    }
+                    Err(err) => {
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Box::pin(ReceiverStream::new(receiver))
+    }
 }
 
 async fn poll_operation_collection_id(
@@ -353,6 +526,45 @@ async fn poll_operation_collection_id(
         | PollingOperationCollectionResult::ValidationError(PollingValidationError { message }) => {
             Err(CollectionError::Response(message))
         }
+    }
+}
+
+async fn poll_operation_collection_default(
+    graph_ref: String,
+    platform_api_config: &PlatformApiConfig,
+    previous_updated_at: &mut HashMap<String, OperationData>,
+) -> Result<Option<Vec<OperationData>>, CollectionError> {
+    let response = graphql_request::<OperationCollectionDefaultPollingQuery>(
+        &OperationCollectionDefaultPollingQuery::build_query(
+            operation_collection_default_polling_query::Variables { graph_ref },
+        ),
+        platform_api_config,
+    )
+    .await?;
+
+    match response.variant {
+        Some(OperationCollectionDefaultPollingQueryVariant::GraphVariant(variant)) => {
+            if let Some(collection) = variant.mcp_default_collection {
+                handle_poll_result(
+                    previous_updated_at,
+                    collection
+                        .operations
+                        .into_iter()
+                        .map(|operation| (operation.id, operation.last_updated_at))
+                        .collect(),
+                    platform_api_config,
+                )
+                .await
+            } else {
+                Ok(None) // TODO: remove operations?
+            }
+        }
+        Some(OperationCollectionDefaultPollingQueryVariant::InvalidRefFormat(err)) => {
+            Err(CollectionError::Response(err.message))
+        }
+        None => Err(CollectionError::Response(
+            "Default collection not found".to_string(),
+        )),
     }
 }
 
