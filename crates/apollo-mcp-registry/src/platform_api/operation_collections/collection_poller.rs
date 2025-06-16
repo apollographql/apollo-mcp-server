@@ -10,11 +10,11 @@ use tokio_stream::wrappers::ReceiverStream;
 use super::{error::CollectionError, event::CollectionEvent};
 use crate::platform_api::{
     PlatformApiConfig,
-    operation_collections::collection_poller::operation_collection_query::{
-        OperationCollectionQueryOperationCollectionOnNotFoundError as NotFoundError,
-        OperationCollectionQueryOperationCollectionOnPermissionError as PermissionError,
-        OperationCollectionQueryOperationCollectionOnValidationError as ValidationError,
-    },
+    operation_collections::collection_poller::operation_collection_default_polling_query::OperationCollectionDefaultPollingQueryVariant,
+};
+use operation_collection_default_query::{
+    OperationCollectionDefaultQueryVariant,
+    OperationCollectionDefaultQueryVariantOnGraphVariantMcpDefaultCollectionOperations as OperationCollectionDefaultEntry,
 };
 use operation_collection_entries_query::OperationCollectionEntriesQueryOperationCollectionEntries;
 use operation_collection_polling_query::{
@@ -25,7 +25,10 @@ use operation_collection_polling_query::{
 };
 use operation_collection_query::{
     OperationCollectionQueryOperationCollection as OperationCollectionResult,
+    OperationCollectionQueryOperationCollectionOnNotFoundError as NotFoundError,
     OperationCollectionQueryOperationCollectionOnOperationCollectionOperations as OperationCollectionEntry,
+    OperationCollectionQueryOperationCollectionOnPermissionError as PermissionError,
+    OperationCollectionQueryOperationCollectionOnValidationError as ValidationError,
 };
 
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
@@ -59,46 +62,95 @@ struct OperationCollectionPollingQuery;
 )]
 struct OperationCollectionQuery;
 
-fn changed_ids(
+#[derive(GraphQLQuery)]
+#[graphql(
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
+    schema_path = "src/platform_api/platform-api.graphql",
+    request_derives = "Debug",
+    response_derives = "PartialEq, Debug, Deserialize"
+)]
+struct OperationCollectionDefaultQuery;
+
+#[derive(GraphQLQuery)]
+#[graphql(
+    query_path = "src/platform_api/operation_collections/operation_collections.graphql",
+    schema_path = "src/platform_api/platform-api.graphql",
+    request_derives = "Debug",
+    response_derives = "PartialEq, Debug, Deserialize"
+)]
+struct OperationCollectionDefaultPollingQuery;
+
+async fn handle_poll_result(
     previous_updated_at: &mut HashMap<String, CollectionCache>,
-    poll: operation_collection_polling_query::OperationCollectionPollingQueryOperationCollectionOnOperationCollection,
-) -> Vec<String> {
-    poll.operations
-        .iter()
-        .filter_map(|operation| {
-            let updated_at = operation.last_updated_at.clone();
-            if let Some(previous_operation) = previous_updated_at.get(&operation.id) {
+    poll: impl Iterator<Item = (String, String)>,
+    platform_api_config: &PlatformApiConfig,
+) -> Result<Option<Vec<OperationData>>, CollectionError> {
+    let change_ids: Vec<String> = poll
+        .filter_map(|(id, last_updated_at)| {
+            let updated_at = last_updated_at.clone();
+            if let Some(previous_operation) = previous_updated_at.get(&id) {
                 if updated_at == *previous_operation.last_updated_at {
                     None
                 } else {
                     previous_updated_at.insert(
-                        operation.id.clone(),
+                        id.clone(),
                         CollectionCache {
                             last_updated_at: updated_at,
                             operation_data: previous_operation.operation_data.clone(),
                         },
                     );
-                    Some(operation.id.clone())
+                    Some(id.clone())
                 }
             } else {
                 previous_updated_at.insert(
-                    operation.id.clone(),
+                    id.clone(),
                     CollectionCache {
                         last_updated_at: updated_at,
                         operation_data: None,
                     },
                 );
-                Some(operation.id.clone())
+                Some(id.clone())
             }
         })
-        .collect()
-}
+        .collect();
 
-#[derive(Clone)]
-pub struct OperationData {
-    pub source_text: String,
-    pub headers: Option<Vec<(String, String)>>,
-    pub variables: Option<String>,
+    if change_ids.is_empty() {
+        tracing::debug!("no operation changed");
+        Ok(None)
+    } else {
+        tracing::debug!("changed operation ids: {:?}", change_ids);
+        let full_response = graphql_request::<OperationCollectionEntriesQuery>(
+            &OperationCollectionEntriesQuery::build_query(
+                operation_collection_entries_query::Variables {
+                    collection_entry_ids: change_ids,
+                },
+            ),
+            platform_api_config,
+        )
+        .await?;
+
+        let mut updated_operations = HashMap::new();
+        for (id, collection_data) in previous_updated_at.clone() {
+            if let Some(operation_data) = collection_data.operation_data.as_ref() {
+                updated_operations.insert(id, operation_data.clone());
+            }
+        }
+
+        for operation in full_response.operation_collection_entries {
+            let operation_id = operation.id.clone();
+            let operation_data = OperationData::from(&operation);
+            previous_updated_at.insert(
+                operation_id.clone(),
+                CollectionCache {
+                    last_updated_at: operation.last_updated_at,
+                    operation_data: Some(operation_data.clone()),
+                },
+            );
+            updated_operations.insert(operation_id.clone(), operation_data.clone());
+        }
+
+        Ok(Some(updated_operations.into_values().collect()))
+    }
 }
 
 #[derive(Clone)]
@@ -107,9 +159,19 @@ pub struct CollectionCache {
     operation_data: Option<OperationData>,
 }
 
+#[derive(Clone)]
+pub struct OperationData {
+    id: String,
+    last_updated_at: String,
+    pub source_text: String,
+    pub headers: Option<Vec<(String, String)>>,
+    pub variables: Option<String>,
+}
 impl From<&OperationCollectionEntry> for OperationData {
     fn from(operation: &OperationCollectionEntry) -> Self {
         Self {
+            id: operation.id.clone(),
+            last_updated_at: operation.last_updated_at.clone(),
             source_text: operation
                 .operation_data
                 .current_operation_revision
@@ -137,6 +199,37 @@ impl From<&OperationCollectionEntry> for OperationData {
 impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for OperationData {
     fn from(operation: &OperationCollectionEntriesQueryOperationCollectionEntries) -> Self {
         Self {
+            id: operation.id.clone(),
+            last_updated_at: operation.last_updated_at.clone(),
+            source_text: operation
+                .operation_data
+                .current_operation_revision
+                .body
+                .clone(),
+            headers: operation
+                .operation_data
+                .current_operation_revision
+                .headers
+                .as_ref()
+                .map(|headers| {
+                    headers
+                        .iter()
+                        .map(|h| (h.name.clone(), h.value.clone()))
+                        .collect()
+                }),
+            variables: operation
+                .operation_data
+                .current_operation_revision
+                .variables
+                .clone(),
+        }
+    }
+}
+impl From<&OperationCollectionDefaultEntry> for OperationData {
+    fn from(operation: &OperationCollectionDefaultEntry) -> Self {
+        Self {
+            id: operation.id.clone(),
+            last_updated_at: operation.last_updated_at.clone(),
             source_text: operation
                 .operation_data
                 .current_operation_revision
@@ -163,22 +256,72 @@ impl From<&OperationCollectionEntriesQueryOperationCollectionEntries> for Operat
 }
 
 #[derive(Clone)]
-pub struct CollectionSource {
-    pub collection_id: String,
-    pub platform_api_config: PlatformApiConfig,
+pub enum CollectionSource {
+    Id(String, PlatformApiConfig),
+    Default(String, PlatformApiConfig),
 }
 
+async fn write_init_response(
+    sender: &tokio::sync::mpsc::Sender<CollectionEvent>,
+    previous_updated_at: &mut HashMap<String, CollectionCache>,
+    operations: impl Iterator<Item = OperationData>,
+) -> bool {
+    let operations = operations
+        .inspect(|operation_data| {
+            previous_updated_at.insert(
+                operation_data.id.clone(),
+                CollectionCache {
+                    last_updated_at: operation_data.last_updated_at.clone(),
+                    operation_data: Some(operation_data.clone()),
+                },
+            );
+        })
+        .collect::<Vec<_>>();
+    let operation_count = operations.len();
+    if let Err(e) = sender
+        .send(CollectionEvent::UpdateOperationCollection(operations))
+        .await
+    {
+        tracing::debug!(
+            "failed to push to stream. This is likely to be because the server is shutting down: {e}"
+        );
+        false
+    } else if operation_count > MAX_COLLECTION_SIZE_FOR_POLLING {
+        tracing::warn!(
+            "Operation Collection polling disabled. Collection has {} operations which exceeds the maximum of {}.",
+            operation_count,
+            MAX_COLLECTION_SIZE_FOR_POLLING
+        );
+        false
+    } else {
+        true
+    }
+}
 impl CollectionSource {
-    pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
+    pub fn into_stream(&self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
+        match self {
+            CollectionSource::Id(id, platform_api_config) => {
+                self.collection_id_stream(id.clone(), platform_api_config.clone())
+            }
+            CollectionSource::Default(graph_ref, platform_api_config) => {
+                self.default_collection_stream(graph_ref.clone(), platform_api_config.clone())
+            }
+        }
+    }
+
+    fn collection_id_stream(
+        &self,
+        collection_id: String,
+        platform_api_config: PlatformApiConfig,
+    ) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         let (sender, receiver) = channel(2);
         tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
-
             match graphql_request::<OperationCollectionQuery>(
                 &OperationCollectionQuery::build_query(operation_collection_query::Variables {
-                    operation_collection_id: self.collection_id.clone(),
+                    operation_collection_id: collection_id.clone(),
                 }),
-                &self.platform_api_config,
+                &platform_api_config,
             )
             .await
             {
@@ -199,38 +342,13 @@ impl CollectionSource {
                         }
                     }
                     OperationCollectionResult::OperationCollection(collection) => {
-                        let operation_count = collection.operations.len();
-                        let operations = collection
-                            .operations
-                            .into_iter()
-                            .map(|operation| {
-                                let operation_id = operation.id.clone();
-                                let operation_data = OperationData::from(&operation);
-                                previous_updated_at.insert(
-                                    operation_id.clone(),
-                                    CollectionCache {
-                                        last_updated_at: operation.last_updated_at,
-                                        operation_data: Some(operation_data.clone()),
-                                    },
-                                );
-                                operation_data
-                            })
-                            .collect::<Vec<_>>();
-
-                        if let Err(e) = sender
-                            .send(CollectionEvent::UpdateOperationCollection(operations))
-                            .await
-                        {
-                            tracing::debug!(
-                                "failed to push to stream. This is likely to be because the server is shutting down: {e}"
-                            );
-                            return;
-                        } else if operation_count > MAX_COLLECTION_SIZE_FOR_POLLING {
-                            tracing::warn!(
-                                "Operation Collection polling disabled. Collection has {} operations which exceeds the maximum of {}.",
-                                operation_count,
-                                MAX_COLLECTION_SIZE_FOR_POLLING
-                            );
+                        let should_poll = write_init_response(
+                            &sender,
+                            &mut previous_updated_at,
+                            collection.operations.iter().map(OperationData::from),
+                        )
+                        .await;
+                        if !should_poll {
                             return;
                         }
                     }
@@ -246,11 +364,128 @@ impl CollectionSource {
             };
 
             loop {
-                tokio::time::sleep(self.platform_api_config.poll_interval).await;
+                tokio::time::sleep(platform_api_config.poll_interval).await;
 
-                match poll_operation_collection(
-                    self.collection_id.clone(),
-                    &self.platform_api_config,
+                match poll_operation_collection_id(
+                    collection_id.clone(),
+                    &platform_api_config,
+                    &mut previous_updated_at,
+                )
+                .await
+                {
+                    Ok(Some(operations)) => {
+                        let operations_count = operations.len();
+                        if let Err(e) = sender
+                            .send(CollectionEvent::UpdateOperationCollection(operations))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to push to stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            break;
+                        } else if operations_count > MAX_COLLECTION_SIZE_FOR_POLLING {
+                            tracing::warn!(
+                                "Operation Collection polling disabled. Collection has {operations_count} operations which exceeds the maximum of {MAX_COLLECTION_SIZE_FOR_POLLING}."
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        tracing::debug!("Operation collection unchanged");
+                    }
+                    Err(err) => {
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        Box::pin(ReceiverStream::new(receiver))
+    }
+
+    pub fn default_collection_stream(
+        &self,
+        graph_ref: String,
+        platform_api_config: PlatformApiConfig,
+    ) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
+        let (sender, receiver) = channel(2);
+        tokio::task::spawn(async move {
+            let mut previous_updated_at = HashMap::new();
+            match graphql_request::<OperationCollectionDefaultQuery>(
+                &OperationCollectionDefaultQuery::build_query(
+                    operation_collection_default_query::Variables {
+                        graph_ref: graph_ref.clone(),
+                    },
+                ),
+                &platform_api_config,
+            )
+            .await
+            {
+                Ok(response) => match response.variant {
+                    Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
+                        if let Some(collection) = variant.mcp_default_collection {
+                            let should_poll = write_init_response(
+                                &sender,
+                                &mut previous_updated_at,
+                                collection.operations.iter().map(OperationData::from),
+                            )
+                            .await;
+                            if !should_poll {
+                                return;
+                            }
+                        } else {
+                            tracing::debug!(
+                                "No default collection found for graph variant: {graph_ref}"
+                            );
+                        }
+                    }
+                    Some(OperationCollectionDefaultQueryVariant::InvalidRefFormat(err)) => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                err.message,
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                            return;
+                        }
+                    }
+                    None => {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(CollectionError::Response(
+                                "{graphRef} not found".to_string(),
+                            )))
+                            .await
+                        {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                        }
+                        return;
+                    }
+                },
+                Err(err) => {
+                    if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                        tracing::debug!(
+                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                        );
+                    }
+                    return;
+                }
+            };
+
+            loop {
+                tokio::time::sleep(platform_api_config.poll_interval).await;
+
+                match poll_operation_collection_default(
+                    graph_ref.clone(),
+                    &platform_api_config,
                     &mut previous_updated_at,
                 )
                 .await
@@ -290,6 +525,79 @@ impl CollectionSource {
     }
 }
 
+async fn poll_operation_collection_id(
+    collection_id: String,
+    platform_api_config: &PlatformApiConfig,
+    previous_updated_at: &mut HashMap<String, CollectionCache>,
+) -> Result<Option<Vec<OperationData>>, CollectionError> {
+    let response = graphql_request::<OperationCollectionPollingQuery>(
+        &OperationCollectionPollingQuery::build_query(
+            operation_collection_polling_query::Variables {
+                operation_collection_id: collection_id.clone(),
+            },
+        ),
+        platform_api_config,
+    )
+    .await?;
+
+    match response.operation_collection {
+        PollingOperationCollectionResult::OperationCollection(collection) => {
+            handle_poll_result(
+                previous_updated_at,
+                collection
+                    .operations
+                    .into_iter()
+                    .map(|operation| (operation.id, operation.last_updated_at)),
+                platform_api_config,
+            )
+            .await
+        }
+        PollingOperationCollectionResult::NotFoundError(PollingNotFoundError { message })
+        | PollingOperationCollectionResult::PermissionError(PollingPermissionError { message })
+        | PollingOperationCollectionResult::ValidationError(PollingValidationError { message }) => {
+            Err(CollectionError::Response(message))
+        }
+    }
+}
+
+async fn poll_operation_collection_default(
+    graph_ref: String,
+    platform_api_config: &PlatformApiConfig,
+    previous_updated_at: &mut HashMap<String, CollectionCache>,
+) -> Result<Option<Vec<OperationData>>, CollectionError> {
+    let response = graphql_request::<OperationCollectionDefaultPollingQuery>(
+        &OperationCollectionDefaultPollingQuery::build_query(
+            operation_collection_default_polling_query::Variables { graph_ref },
+        ),
+        platform_api_config,
+    )
+    .await?;
+
+    match response.variant {
+        Some(OperationCollectionDefaultPollingQueryVariant::GraphVariant(variant)) => {
+            if let Some(collection) = variant.mcp_default_collection {
+                handle_poll_result(
+                    previous_updated_at,
+                    collection
+                        .operations
+                        .into_iter()
+                        .map(|operation| (operation.id, operation.last_updated_at)),
+                    platform_api_config,
+                )
+                .await
+            } else {
+                Ok(None) // TODO: remove operations?
+            }
+        }
+        Some(OperationCollectionDefaultPollingQueryVariant::InvalidRefFormat(err)) => {
+            Err(CollectionError::Response(err.message))
+        }
+        None => Err(CollectionError::Response(
+            "Default collection not found".to_string(),
+        )),
+    }
+}
+
 async fn graphql_request<Query>(
     request_body: &graphql_client::QueryBody<Query::Variables>,
     platform_api_config: &PlatformApiConfig,
@@ -304,7 +612,10 @@ where
                 HeaderName::from_static("apollographql-client-name"),
                 HeaderValue::from_static("apollo-mcp-server"),
             ),
-            // TODO: add apollographql-client-version header
+            (
+                HeaderName::from_static("apollographql-client-version"),
+                HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+            ),
             (
                 HeaderName::from_static("x-api-key"),
                 HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
@@ -322,69 +633,4 @@ where
     response_body
         .data
         .ok_or(CollectionError::Response("missing data".to_string()))
-}
-
-async fn poll_operation_collection(
-    collection_id: String,
-    platform_api_config: &PlatformApiConfig,
-    previous_updated_at: &mut HashMap<String, CollectionCache>,
-) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let response = graphql_request::<OperationCollectionPollingQuery>(
-        &OperationCollectionPollingQuery::build_query(
-            operation_collection_polling_query::Variables {
-                operation_collection_id: collection_id.clone(),
-            },
-        ),
-        platform_api_config,
-    )
-    .await?;
-
-    match response.operation_collection {
-        PollingOperationCollectionResult::OperationCollection(collection) => {
-            let changed_ids = changed_ids(previous_updated_at, collection);
-
-            if changed_ids.is_empty() {
-                tracing::debug!("no operation changed");
-                Ok(None)
-            } else {
-                tracing::debug!("changed operation ids: {:?}", changed_ids);
-                let full_response = graphql_request::<OperationCollectionEntriesQuery>(
-                    &OperationCollectionEntriesQuery::build_query(
-                        operation_collection_entries_query::Variables {
-                            collection_entry_ids: changed_ids,
-                        },
-                    ),
-                    platform_api_config,
-                )
-                .await?;
-
-                let mut updated_operations = HashMap::new();
-                for (id, collection_data) in previous_updated_at.clone() {
-                    if let Some(operation_data) = collection_data.operation_data.as_ref() {
-                        updated_operations.insert(id, operation_data.clone());
-                    }
-                }
-
-                for operation in full_response.operation_collection_entries {
-                    let operation_id = operation.id.clone();
-                    let operation_data = OperationData::from(&operation);
-                    previous_updated_at.insert(
-                        operation_id.clone(),
-                        CollectionCache {
-                            last_updated_at: operation.last_updated_at,
-                            operation_data: Some(operation_data.clone()),
-                        },
-                    );
-                    updated_operations.insert(operation_id.clone(), operation_data.clone());
-                }
-
-                Ok(Some(updated_operations.into_values().collect()))
-            }
-        }
-        PollingOperationCollectionResult::NotFoundError(PollingNotFoundError { message })
-        | PollingOperationCollectionResult::PermissionError(PollingPermissionError { message })
-        | PollingOperationCollectionResult::ValidationError(PollingValidationError { message }) => {
-            Err(CollectionError::Response(message))
-        }
-    }
 }

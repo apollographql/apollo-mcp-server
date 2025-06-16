@@ -243,10 +243,21 @@ async fn main() -> anyhow::Result<()> {
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
     } else if let Some(collection_id) = &args.collection {
-        OperationSource::Collection(CollectionSource {
-            collection_id: collection_id.clone(),
-            platform_api_config: args.platform_api_config()?,
-        })
+        if collection_id == "default" {
+            OperationSource::Collection(CollectionSource::Default(
+                args.apollo_graph_ref
+                    .clone()
+                    .ok_or(ServerError::EnvironmentVariable(String::from(
+                        "APOLLO_GRAPH_REF",
+                    )))?,
+                args.platform_api_config()?,
+            ))
+        } else {
+            OperationSource::Collection(CollectionSource::Id(
+                collection_id.clone(),
+                args.platform_api_config()?,
+            ))
+        }
     } else if args.uplink {
         OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else {

@@ -8329,6 +8329,9 @@ enum GraphType {
 
 """A graph variant"""
 type GraphVariant {
+  """The default collection MCP servers will use if no explicit collection is provided"""
+
+  mcpDefaultCollection: OperationCollection
   """The variant's global identifier in the form `graphID@variant`."""
   id: ID!
 
