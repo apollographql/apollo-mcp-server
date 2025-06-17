@@ -5,7 +5,7 @@ use url::Url;
 
 pub mod operation_collections;
 
-const DEFAULT_PLATFORM_API: &str = "https://registry.apollographql.com/api/graphql";
+const DEFAULT_PLATFORM_API: &str = "https://graphql.api.apollographql.com/api/graphql";
 
 /// Configuration for polling Apollo Uplink.
 #[derive(Clone, Debug)]
