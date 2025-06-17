@@ -53,42 +53,6 @@ query OperationCollectionPollingQuery($operationCollectionId: ID!) {
     }
 }
 
-query OperationCollectionDefaultQuery($graphRef: ID!) {
-    variant(ref: $graphRef) {
-        __typename
-        ... on GraphVariant {
-          mcpDefaultCollection {
-            operations {
-                lastUpdatedAt
-                id
-                ...OperationData
-            }
-          }
-        }
-        ... on InvalidRefFormat {
-            message
-        }
-    }
-}
-
-query OperationCollectionDefaultPollingQuery($graphRef: ID!) {
-    variant(ref: $graphRef) {
-        __typename
-        ... on GraphVariant {
-          mcpDefaultCollection {
-            operations {
-                id
-                lastUpdatedAt
-            }
-            
-          }
-        }
-        ... on InvalidRefFormat {
-            message
-        }
-    }
-}
-
 query OperationCollectionEntriesQuery($collectionEntryIds: [ID!]!) {
   operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
     id
