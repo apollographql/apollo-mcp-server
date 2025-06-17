@@ -82,10 +82,18 @@ struct OperationCollectionDefaultPollingQuery;
 
 async fn handle_poll_result(
     previous_updated_at: &mut HashMap<String, OperationData>,
-    poll: impl Iterator<Item = (String, String)>,
+    poll: Vec<(String, String)>,
     platform_api_config: &PlatformApiConfig,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let change_ids: Vec<String> = poll
+    let mut keep_ids = poll.iter().map(|(id, _)| id);
+    for id in previous_updated_at.clone().keys() {
+        if keep_ids.all(|keep_id| keep_id != id) {
+            previous_updated_at.remove(id);
+        }
+    }
+
+    let changed_ids: Vec<String> = poll
+        .into_iter()
         .filter_map(|(id, last_updated_at)| match previous_updated_at.get(&id) {
             Some(previous_operation) if last_updated_at == previous_operation.last_updated_at => {
                 None
@@ -94,15 +102,15 @@ async fn handle_poll_result(
         })
         .collect();
 
-    if change_ids.is_empty() {
+    if changed_ids.is_empty() {
         tracing::debug!("no operation changed");
         Ok(None)
     } else {
-        tracing::debug!("changed operation ids: {:?}", change_ids);
+        tracing::debug!("changed operation ids: {:?}", changed_ids);
         let full_response = graphql_request::<OperationCollectionEntriesQuery>(
             &OperationCollectionEntriesQuery::build_query(
                 operation_collection_entries_query::Variables {
-                    collection_entry_ids: change_ids,
+                    collection_entry_ids: changed_ids,
                 },
             ),
             platform_api_config,
@@ -502,7 +510,8 @@ async fn poll_operation_collection_id(
                 collection
                     .operations
                     .into_iter()
-                    .map(|operation| (operation.id, operation.last_updated_at)),
+                    .map(|operation| (operation.id, operation.last_updated_at))
+                    .collect(),
                 platform_api_config,
             )
             .await
@@ -536,7 +545,8 @@ async fn poll_operation_collection_default(
                     collection
                         .operations
                         .into_iter()
-                        .map(|operation| (operation.id, operation.last_updated_at)),
+                        .map(|operation| (operation.id, operation.last_updated_at))
+                        .collect(),
                     platform_api_config,
                 )
                 .await
