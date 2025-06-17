@@ -81,13 +81,8 @@ struct Args {
     )]
     uplink: bool,
 
-    /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(
-        long,
-        short = 'x',
-        requires = "apollo_key",
-        requires = "apollo_graph_ref"
-    )]
+    /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_GRAPH_REF)
+    #[arg(long, short = 'x', requires = "apollo_graph_ref")]
     explorer: bool,
 
     /// Operation files to expose as MCP tools
