@@ -60,12 +60,11 @@ async fn handle_poll_result(
     poll: Vec<(String, String)>,
     platform_api_config: &PlatformApiConfig,
 ) -> Result<Option<Vec<OperationData>>, CollectionError> {
-    let mut keep_ids = poll.iter().map(|(id, _)| id);
-    for id in previous_updated_at.clone().keys() {
-        if keep_ids.all(|keep_id| keep_id != id) {
-            previous_updated_at.remove(id);
-        }
-    }
+    let removed_ids = previous_updated_at.clone();
+    let removed_ids = removed_ids
+        .keys()
+        .filter(|id| poll.iter().all(|(keep_id, _)| keep_id != *id))
+        .collect::<Vec<_>>();
 
     let changed_ids: Vec<String> = poll
         .into_iter()
@@ -77,26 +76,34 @@ async fn handle_poll_result(
         })
         .collect();
 
-    if changed_ids.is_empty() {
+    if changed_ids.is_empty() && removed_ids.is_empty() {
         tracing::debug!("no operation changed");
         Ok(None)
     } else {
-        tracing::debug!("changed operation ids: {:?}", changed_ids);
-        let full_response = graphql_request::<OperationCollectionEntriesQuery>(
-            &OperationCollectionEntriesQuery::build_query(
-                operation_collection_entries_query::Variables {
-                    collection_entry_ids: changed_ids,
-                },
-            ),
-            platform_api_config,
-        )
-        .await?;
+        if !removed_ids.is_empty() {
+            tracing::info!("removed operation ids: {:?}", removed_ids);
+            for id in removed_ids {
+                previous_updated_at.remove(id);
+            }
+        }
 
-        for operation in full_response.operation_collection_entries {
-            previous_updated_at.insert(
-                operation.id.clone(),
-                OperationData::from(&operation).clone(),
-            );
+        if !changed_ids.is_empty() {
+            tracing::info!("changed operation ids: {:?}", changed_ids);
+            let full_response = graphql_request::<OperationCollectionEntriesQuery>(
+                &OperationCollectionEntriesQuery::build_query(
+                    operation_collection_entries_query::Variables {
+                        collection_entry_ids: changed_ids,
+                    },
+                ),
+                platform_api_config,
+            )
+            .await?;
+            for operation in full_response.operation_collection_entries {
+                previous_updated_at.insert(
+                    operation.id.clone(),
+                    OperationData::from(&operation).clone(),
+                );
+            }
         }
 
         Ok(Some(previous_updated_at.clone().into_values().collect()))
