@@ -78,36 +78,36 @@ async fn handle_poll_result(
 
     if changed_ids.is_empty() && removed_ids.is_empty() {
         tracing::debug!("no operation changed");
-        Ok(None)
-    } else {
-        if !removed_ids.is_empty() {
-            tracing::info!("removed operation ids: {:?}", removed_ids);
-            for id in removed_ids {
-                previous_updated_at.remove(id);
-            }
-        }
-
-        if !changed_ids.is_empty() {
-            tracing::info!("changed operation ids: {:?}", changed_ids);
-            let full_response = graphql_request::<OperationCollectionEntriesQuery>(
-                &OperationCollectionEntriesQuery::build_query(
-                    operation_collection_entries_query::Variables {
-                        collection_entry_ids: changed_ids,
-                    },
-                ),
-                platform_api_config,
-            )
-            .await?;
-            for operation in full_response.operation_collection_entries {
-                previous_updated_at.insert(
-                    operation.id.clone(),
-                    OperationData::from(&operation).clone(),
-                );
-            }
-        }
-
-        Ok(Some(previous_updated_at.clone().into_values().collect()))
+        return Ok(None);
     }
+
+    if !removed_ids.is_empty() {
+        tracing::info!("removed operation ids: {:?}", removed_ids);
+        for id in removed_ids {
+            previous_updated_at.remove(id);
+        }
+    }
+
+    if !changed_ids.is_empty() {
+        tracing::info!("changed operation ids: {:?}", changed_ids);
+        let full_response = graphql_request::<OperationCollectionEntriesQuery>(
+            &OperationCollectionEntriesQuery::build_query(
+                operation_collection_entries_query::Variables {
+                    collection_entry_ids: changed_ids,
+                },
+            ),
+            platform_api_config,
+        )
+        .await?;
+        for operation in full_response.operation_collection_entries {
+            previous_updated_at.insert(
+                operation.id.clone(),
+                OperationData::from(&operation).clone(),
+            );
+        }
+    }
+
+    Ok(Some(previous_updated_at.clone().into_values().collect()))
 }
 
 #[derive(Clone)]
