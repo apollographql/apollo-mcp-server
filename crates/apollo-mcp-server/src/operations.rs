@@ -2,7 +2,7 @@ use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::{McpError, OperationError};
 use crate::event::Event;
 use crate::graphql;
-use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
+use crate::schema_tree_shake::{DepthLimit, RootOperationNames, SchemaTreeShaker};
 use apollo_compiler::ast::{Document, OperationType, Selection};
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
@@ -38,6 +38,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use bon::__::ide::builder_top_level::start_fn::doc;
 use tracing::{debug, info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
@@ -639,6 +640,15 @@ impl Operation {
         ));
 
         lines.join("\n")
+    }
+
+    fn argument_descriptions(&self,
+                             schema: &apollo_compiler::Schema,
+                             operation: &OperationDefinition,
+                             document: &Document,) -> HashMap<String, Vec<String>> {
+        let mut schema_tree_shaker = SchemaTreeShaker::new(schema);
+        schema_tree_shaker.retain_operation(operation, document, DepthLimit::Unlimited);
+        schema_tree_shaker.argument_descriptions().clone()
     }
 }
 

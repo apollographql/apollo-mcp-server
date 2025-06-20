@@ -1,17 +1,12 @@
 //! Tree shaking for GraphQL schemas
 
-use apollo_compiler::ast::{
-    Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
-    FieldDefinition, FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition,
-    NamedType, ObjectTypeDefinition, OperationDefinition, OperationType, ScalarTypeDefinition,
-    SchemaDefinition, Selection, Type, UnionTypeDefinition,
-};
+use apollo_compiler::ast::{Argument, Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field, FieldDefinition, FragmentDefinition, InputObjectTypeDefinition, InputValueDefinition, InterfaceTypeDefinition, NamedType, ObjectTypeDefinition, OperationDefinition, OperationType, ScalarTypeDefinition, SchemaDefinition, Selection, Type, UnionTypeDefinition, Value};
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::WithErrors;
 use apollo_compiler::{Name, Node, Schema};
 use std::collections::HashMap;
 
-struct RootOperationNames {
+pub struct RootOperationNames {
     query: String,
     mutation: String,
     subscription: String,
@@ -28,7 +23,7 @@ impl RootOperationNames {
             .unwrap_or(default_name.to_string())
     }
 
-    fn new(schema: &Schema) -> Self {
+    pub fn new(schema: &Schema) -> Self {
         Self {
             query: Self::operation_name(OperationType::Query, "query", schema),
             mutation: Self::operation_name(OperationType::Mutation, "mutation", schema),
@@ -36,7 +31,7 @@ impl RootOperationNames {
         }
     }
 
-    fn name_for_operation_type(&self, operation_type: OperationType) -> &str {
+    pub fn name_for_operation_type(&self, operation_type: OperationType) -> &str {
         match operation_type {
             OperationType::Query => &self.query,
             OperationType::Mutation => &self.mutation,
@@ -78,6 +73,7 @@ pub struct SchemaTreeShaker<'schema> {
     operation_types: Vec<OperationType>,
     operation_type_names: RootOperationNames,
     named_fragments: HashMap<String, Node<FragmentDefinition>>,
+    arguments_descriptions: HashMap<String, Vec<String>>,
 }
 
 struct TreeTypeNode {
@@ -91,6 +87,10 @@ struct TreeDirectiveNode<'schema> {
 }
 
 impl<'schema> SchemaTreeShaker<'schema> {
+    pub(crate) fn argument_descriptions(&self) -> &HashMap<String, Vec<String>> {
+        &self.arguments_descriptions
+    }
+
     pub fn new(schema: &'schema Schema) -> Self {
         let mut named_type_nodes: HashMap<String, TreeTypeNode> = HashMap::default();
         let mut directive_nodes: HashMap<String, TreeDirectiveNode> = HashMap::default();
@@ -133,6 +133,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             operation_types: Vec::default(),
             named_fragments: HashMap::default(),
             operation_type_names: RootOperationNames::new(schema),
+            arguments_descriptions: HashMap::default(),
         }
     }
 
@@ -170,6 +171,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
         document: &Document,
         depth_limit: DepthLimit,
     ) {
+        operation.variables.iter().for_each(|v| {
+            self.arguments_descriptions.insert(v.name.to_string(), Vec::default());
+        });
         self.named_fragments = document
             .definitions
             .iter()
@@ -531,6 +535,24 @@ fn selection_set_to_fields(
     }
 }
 
+fn retain_variable_descriptions(
+    tree_shaker: &mut SchemaTreeShaker,
+    field_type_argument_name: &str,
+    field_type_argument_description: Option<&str>,
+    operation_arguments: &HashMap<&str, &Name>) {
+    let variable_name  = operation_arguments.get(field_type_argument_name);
+
+    if let Some(variable_name) = variable_name {
+        let descriptions = tree_shaker.arguments_descriptions.entry(variable_name.to_string()).or_insert(Vec::default());
+        if let Some(description) =  field_type_argument_description {
+            if !description.trim().is_empty() { 
+                descriptions.push(description.to_string()) 
+            }
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
 fn retain_type(
     tree_shaker: &mut SchemaTreeShaker,
     extended_type: &ExtendedType,
@@ -599,6 +621,9 @@ fn retain_type(
                                 def.fields.get(field.name.as_str()),
                                 Some(&field.directives),
                                 Some(&field.selection_set),
+                                field.arguments.iter().filter_map(|a| {
+                                    a.value.as_variable().map(|v| (a.name.as_str(), v))
+                                }).collect::<HashMap<_, _>>(),
                             )
                         })
                         .collect::<Vec<_>>()
@@ -607,7 +632,7 @@ fn retain_type(
                     def.fields
                         .iter()
                         .map(|(name, field_definition)| {
-                            (name.as_str(), Some(field_definition), None, None)
+                            (name.as_str(), Some(field_definition), None, None, HashMap::default())
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -618,6 +643,7 @@ fn retain_type(
                         field_definition,
                         field_selection_directives,
                         field_selection_set,
+                        field_arguments,
                     )| {
                         if let Some(field_type) = field_definition {
                             let field_type_name = field_type.ty.inner_named_type();
@@ -635,6 +661,8 @@ fn retain_type(
                             }
 
                             field_type.arguments.iter().for_each(|arg| {
+                                retain_variable_descriptions(tree_shaker, arg.name.as_str(), arg.description.as_deref(), &field_arguments);
+
                                 let arg_type_name = arg.ty.inner_named_type();
                                 if let Some(arg_type) = tree_shaker.schema.types.get(arg_type_name)
                                 {
@@ -664,6 +692,10 @@ fn retain_type(
                         }
                         if let Some(field_selection_directives) = field_selection_directives {
                             field_selection_directives.iter().for_each(|directive| {
+                                // directive.arguments.iter().for_each(|arg| {
+                                //     // TODO: figure out how to get the description
+                                //     retain_variable_descriptions(tree_shaker, arg.name.as_str(), arg.description.as_deref(), &field_arguments);
+                                // });
                                 retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
