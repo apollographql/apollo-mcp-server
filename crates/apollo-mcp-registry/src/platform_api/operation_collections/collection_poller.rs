@@ -400,7 +400,7 @@ impl CollectionSource {
                 Ok(response) => match response.variant {
                     Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
                         match variant.mcp_default_collection {
-                            Some(DefaultCollectionResult::OperationCollection(collection)) => {
+                            DefaultCollectionResult::OperationCollection(collection) => {
                                 let should_poll = write_init_response(
                                     &sender,
                                     &mut previous_updated_at,
@@ -411,7 +411,7 @@ impl CollectionSource {
                                     return;
                                 }
                             }
-                            Some(DefaultCollectionResult::PermissionError(error)) => {
+                            DefaultCollectionResult::PermissionError(error) => {
                                 if let Err(e) = sender
                                     .send(CollectionEvent::CollectionError(
                                         CollectionError::Response(error.message),
@@ -423,11 +423,6 @@ impl CollectionSource {
                                     );
                                     return;
                                 }
-                            }
-                            None => {
-                                tracing::debug!(
-                                    "No default collection found for graph variant: {graph_ref}"
-                                );
                             }
                         }
                     }
@@ -565,7 +560,7 @@ async fn poll_operation_collection_default(
     match response.variant {
         Some(PollingDefaultGraphVariant::GraphVariant(variant)) => {
             match variant.mcp_default_collection {
-                Some(PollingDefaultCollection::OperationCollection(collection)) => {
+                PollingDefaultCollection::OperationCollection(collection) => {
                     handle_poll_result(
                         previous_updated_at,
                         collection
@@ -578,10 +573,9 @@ async fn poll_operation_collection_default(
                     .await
                 }
 
-                Some(PollingDefaultCollection::PermissionError(error)) => {
+                PollingDefaultCollection::PermissionError(error) => {
                     Err(CollectionError::Response(error.message))
                 }
-                None => Ok(None),
             }
         }
         Some(PollingDefaultGraphVariant::InvalidRefFormat(err)) => {
