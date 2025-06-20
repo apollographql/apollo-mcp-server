@@ -121,8 +121,8 @@ struct Args {
     #[arg(long, conflicts_with_all(["sse_port", "sse_address"]))]
     http_port: Option<u16>,
 
-    /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key")]
+    /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
+    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key", requires_if("default", "apollo_graph_ref"))]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
@@ -248,10 +248,21 @@ async fn main() -> anyhow::Result<()> {
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
     } else if let Some(collection_id) = &args.collection {
-        OperationSource::Collection(CollectionSource::Id(
-            collection_id.clone(),
-            args.platform_api_config()?,
-        ))
+        if collection_id == "default" {
+            OperationSource::Collection(CollectionSource::Default(
+                args.apollo_graph_ref
+                    .clone()
+                    .ok_or(ServerError::EnvironmentVariable(String::from(
+                        "APOLLO_GRAPH_REF",
+                    )))?,
+                args.platform_api_config()?,
+            ))
+        } else {
+            OperationSource::Collection(CollectionSource::Id(
+                collection_id.clone(),
+                args.platform_api_config()?,
+            ))
+        }
     } else if args.uplink {
         OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else {

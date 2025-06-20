@@ -53,6 +53,53 @@ query OperationCollectionPollingQuery($operationCollectionId: ID!) {
     }
 }
 
+query OperationCollectionDefaultQuery($graphRef: ID!) {
+    variant(ref: $graphRef) {
+        __typename
+        ... on GraphVariant {
+          mcpDefaultCollection {
+            __typename
+            ... on OperationCollection {
+              operations {
+                lastUpdatedAt
+                id
+                ...OperationData
+              }
+            }
+            ... on PermissionError {
+              message
+            }
+          }
+        }
+        ... on InvalidRefFormat {
+            message
+        }
+    }
+}
+
+query OperationCollectionDefaultPollingQuery($graphRef: ID!) {
+    variant(ref: $graphRef) {
+        __typename
+        ... on GraphVariant {
+          mcpDefaultCollection {
+            __typename
+            ... on OperationCollection {
+              operations {
+                id
+                lastUpdatedAt
+              }
+            }
+            ... on PermissionError {
+              message
+            }
+          }
+        }
+        ... on InvalidRefFormat {
+            message
+        }
+    }
+}
+
 query OperationCollectionEntriesQuery($collectionEntryIds: [ID!]!) {
   operationCollectionEntries(collectionEntryIds: $collectionEntryIds) {
     id
