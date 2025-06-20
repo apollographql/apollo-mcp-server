@@ -2,7 +2,6 @@ use std::convert::TryFrom;
 use std::env;
 use std::str;
 
-pub use anyhow;
 use camino::Utf8PathBuf;
 use once_cell::sync::Lazy;
 
