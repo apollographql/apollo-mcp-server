@@ -121,8 +121,8 @@ struct Args {
     #[arg(long, conflicts_with_all(["sse_port", "sse_address"]))]
     http_port: Option<u16>,
 
-    /// collection id to expose as MCP tools (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key")]
+    /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
+    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key", requires_if("default", "apollo_graph_ref"))]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
