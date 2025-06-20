@@ -4463,6 +4463,11 @@ input PublishSubgraphsSubgraphInput {
 """Queries defined by this subgraph"""
 type Query {
   """
+  This field accepts up to 400 requests per minute. This rate may be temporarily adjusted based on system conditions.
+  """
+  operationCollectionEntries(collectionEntryIds: [ID!]!): [OperationCollectionEntry!]!
+
+  """
   Returns details of the authenticated `User` or `Graph` executing this query. If this is an unauthenticated query (i.e., no API key is provided), this field returns null.
   """
   me: Identity

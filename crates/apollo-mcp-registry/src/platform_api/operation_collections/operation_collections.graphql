@@ -58,10 +58,16 @@ query OperationCollectionDefaultQuery($graphRef: ID!) {
         __typename
         ... on GraphVariant {
           mcpDefaultCollection {
-            operations {
+            __typename
+            ... on OperationCollection {
+              operations {
                 lastUpdatedAt
                 id
                 ...OperationData
+              }
+            }
+            ... on PermissionError {
+              message
             }
           }
         }
@@ -76,11 +82,16 @@ query OperationCollectionDefaultPollingQuery($graphRef: ID!) {
         __typename
         ... on GraphVariant {
           mcpDefaultCollection {
-            operations {
+            __typename
+            ... on OperationCollection {
+              operations {
                 id
                 lastUpdatedAt
+              }
             }
-            
+            ... on PermissionError {
+              message
+            }
           }
         }
         ... on InvalidRefFormat {
