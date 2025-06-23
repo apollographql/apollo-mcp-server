@@ -90,9 +90,9 @@ struct Args {
 
     /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
     #[arg(
-        long, 
-        conflicts_with_all(["operations", "manifest", "uplink_manifest"]), 
-        requires = "apollo_key", 
+        long,
+        conflicts_with_all(["operations", "manifest", "uplink_manifest"]),
+        requires = "apollo_key",
         requires_if("default", "apollo_graph_ref")
     )]
     collection: Option<String>,
@@ -258,17 +258,16 @@ async fn main() -> anyhow::Result<()> {
     } else if args.uplink_manifest {
         OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else if let Some(collection_id) = collection_id {
-            OperationSource::Collection(CollectionSource::Id(
-                collection_id,
-                args.platform_api_config()?,
-            ))
-        
+        OperationSource::Collection(CollectionSource::Id(
+            collection_id,
+            args.platform_api_config()?,
+        ))
     } else if let Some(graph_ref) = &args.apollo_graph_ref {
         OperationSource::Collection(CollectionSource::Default(
-                graph_ref.clone(),
-                args.platform_api_config()?,
-            ))
-    }else {
+            graph_ref.clone(),
+            args.platform_api_config()?,
+        ))
+    } else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
         }
