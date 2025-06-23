@@ -203,6 +203,7 @@ dependencies = [
  "apollo-compiler",
  "apollo-federation",
  "apollo-mcp-registry",
+ "axum",
  "bon",
  "clap",
  "futures",
