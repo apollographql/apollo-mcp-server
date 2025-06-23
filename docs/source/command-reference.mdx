@@ -106,7 +106,7 @@ apollo-mcp-server [OPTIONS] --directory <DIRECTORY>
 | `--http-port <HTTP_PORT>`                             | Start the server using the Streamable HTTP transport on the given port (default: 5000).                                                                                                                                              |
 | `--http-address <HTTP_ADDRESS>`                       | The IP address to bind the Streamable HTTP server to (default: 127.0.0.1).                                                                                                                                                           |
 | `-i, --introspection`                                 | Expose the schema to the MCP client through `introspect` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                    |
-| `-u, --uplink`                                        | Enable use of uplink to get the schema and persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
+| `--uplink-manifest`                                   | Enable use of uplink to get the persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
 | `-x, --explorer`                                      | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires `APOLLO_GRAPH_REF`).                                                                                                                     |
 | `-o, --operations [<OPERATIONS>...]`                  | Operation files to expose as MCP tools. [Learn more](/apollo-mcp-server/guides/#from-operation-files).                                                                                                                               |
 | `--manifest <MANIFEST>`                               | The path to the persisted query manifest containing operations.                                                                                                                                                                      |
@@ -134,7 +134,7 @@ The mapping of `rover dev` options to MCP Server options:
 | `--mcp-port <PORT>`                                   | `--http-port <PORT>`                                  |
 | `--mcp-address <ADDRESS>`                             | `--http-address <ADDRESS>`                            |
 | `--mcp-introspection`                                 | `-i, --introspection`                                 |
-| `--mcp-uplink`                                        | `-u, --uplink`                                        |
+| `--mcp-uplink-manifest`                               | `-u, --uplink-manifest`                               |
 | `--mcp-operations [<OPERATIONS>...]`                  | `-o, --operations [<OPERATIONS>...]`                  |
 | `--mcp-header <HEADERS>`                              | `--header <HEADERS>`                                  |
 | `--mcp-manifest <MANIFEST>`                           | `--manifest <MANIFEST>`                               |

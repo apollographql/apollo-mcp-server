@@ -67,7 +67,7 @@ docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.2.0
 
 ## Set up graph
 
-An Apollo MCP Server must know the schema of GraphQL API it supports. You can use either [the `--schema` or `--uplink` option](/apollo-mcp-server/command-reference#options) to provide the schema. If using `--schema` option, it can be either an API or supergraph schema.
+An Apollo MCP Server must know the schema of GraphQL API it supports. You can use either [the `--schema` option to provide the schema or `--apollo-graph-ref` and `--apollo-key` options to get the schema from uplink](/apollo-mcp-server/command-reference#options). If using `--schema` option, it can be either an API or supergraph schema.
 
 The schema is required for three main purposes:
 
@@ -149,7 +149,7 @@ For graphs managed by GraphOS, Apollo MCP Server can get operations by reading p
 To use GraphOS persisted queries, you must:
 
 - Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
-- Run Apollo MCP Server with the `--uplink` option
+- Run Apollo MCP Server with the `--uplink-manifest` option
 
 <Tip>
 
@@ -162,7 +162,7 @@ apollo-mcp-server \
   --directory <absolute path to this git repo> \
   --schema graphql/weather/api.graphql \
   --header "apollographql-client-name:my-web-app" \
-  --uplink
+  --uplink-manifest
 ```
 
 The MCP Server supports hot reloading of GraphOS-managed persisted queries, so it can automatically pick up changes from GraphOS without restarting.
