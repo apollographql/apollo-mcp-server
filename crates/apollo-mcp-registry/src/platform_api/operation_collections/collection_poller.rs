@@ -116,7 +116,7 @@ async fn handle_poll_result(
     }
 
     if !changed_ids.is_empty() {
-        tracing::info!("changed operation ids: {:?}", changed_ids);
+        tracing::debug!("changed operation ids: {:?}", changed_ids);
         let full_response = graphql_request::<OperationCollectionEntriesQuery>(
             &OperationCollectionEntriesQuery::build_query(
                 operation_collection_entries_query::Variables {
