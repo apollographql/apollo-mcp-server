@@ -270,12 +270,12 @@ async fn write_init_response(
     }
 }
 impl CollectionSource {
-    pub fn into_stream(&self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
+    pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         match self {
-            CollectionSource::Id(id, platform_api_config) => {
+            CollectionSource::Id(ref id, ref platform_api_config) => {
                 self.collection_id_stream(id.clone(), platform_api_config.clone())
             }
-            CollectionSource::Default(graph_ref, platform_api_config) => {
+            CollectionSource::Default(ref graph_ref, ref platform_api_config) => {
                 self.default_collection_stream(graph_ref.clone(), platform_api_config.clone())
             }
         }
