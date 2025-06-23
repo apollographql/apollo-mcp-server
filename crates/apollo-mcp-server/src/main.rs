@@ -72,14 +72,9 @@ struct Args {
     #[arg(long, short = 'i')]
     introspection: bool,
 
-    /// Enable use of uplink to get the schema and persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(
-        long,
-        short = 'u',
-        requires = "apollo_key",
-        requires = "apollo_graph_ref"
-    )]
-    uplink: bool,
+    /// Enable use of uplink to get the persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
+    #[arg(long, requires = "apollo_key", requires = "apollo_graph_ref")]
+    uplink_manifest: bool,
 
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_GRAPH_REF)
     #[arg(long, short = 'x', requires = "apollo_graph_ref")]
@@ -122,7 +117,12 @@ struct Args {
     http_port: Option<u16>,
 
     /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
-    #[arg(long, conflicts_with_all(["operations", "manifest"]), requires = "apollo_key", requires_if("default", "apollo_graph_ref"))]
+    #[arg(
+        long, 
+        conflicts_with_all(["operations", "manifest"]), 
+        requires = "apollo_key", 
+        requires_if("default", "apollo_graph_ref")
+    )]
     collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
@@ -237,35 +237,38 @@ async fn main() -> anyhow::Result<()> {
             path: path.clone(),
             watch: true,
         }
-    } else if args.uplink {
+    } else if args.apollo_graph_ref.is_some() {
         SchemaSource::Registry(args.uplink_config()?)
     } else {
         bail!(ServerError::NoSchema);
     };
 
+    let collection_id = args.collection.as_ref().and_then(|c| {
+        if c == "default" {
+            None
+        } else {
+            Some(c.clone())
+        }
+    });
+
     let operation_source = if let Some(manifest) = args.manifest {
         OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
-    } else if let Some(collection_id) = &args.collection {
-        if collection_id == "default" {
-            OperationSource::Collection(CollectionSource::Default(
-                args.apollo_graph_ref
-                    .clone()
-                    .ok_or(ServerError::EnvironmentVariable(String::from(
-                        "APOLLO_GRAPH_REF",
-                    )))?,
-                args.platform_api_config()?,
-            ))
-        } else {
-            OperationSource::Collection(CollectionSource::Id(
-                collection_id.clone(),
-                args.platform_api_config()?,
-            ))
-        }
-    } else if args.uplink {
+    } else if args.uplink_manifest {
         OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
-    } else {
+    } else if let Some(collection_id) = collection_id {
+            OperationSource::Collection(CollectionSource::Id(
+                collection_id,
+                args.platform_api_config()?,
+            ))
+        
+    } else if let Some(graph_ref) = &args.apollo_graph_ref {
+        OperationSource::Collection(CollectionSource::Default(
+                graph_ref.clone(),
+                args.platform_api_config()?,
+            ))
+    }else {
         if !args.introspection {
             bail!(ServerError::NoOperations);
         }
