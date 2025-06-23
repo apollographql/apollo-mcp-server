@@ -72,21 +72,30 @@ struct Args {
     #[arg(long, short = 'i')]
     introspection: bool,
 
-    /// Enable use of uplink to get the persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, requires = "apollo_key", requires = "apollo_graph_ref")]
-    uplink_manifest: bool,
-
     /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_GRAPH_REF)
     #[arg(long, short = 'x', requires = "apollo_graph_ref")]
     explorer: bool,
+
+    /// Enable use of uplink to get the persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
+    #[arg(long, requires = "apollo_key", requires = "apollo_graph_ref", conflicts_with_all(["operations", "collection", "manifest"]))]
+    uplink_manifest: bool,
 
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
     operations: Vec<PathBuf>,
 
     /// The path to the persisted query manifest containing operations
-    #[arg(long, conflicts_with_all(["operations", "collection"]))]
+    #[arg(long, conflicts_with_all(["operations", "collection, uplink_manifest"]))]
     manifest: Option<PathBuf>,
+
+    /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
+    #[arg(
+        long, 
+        conflicts_with_all(["operations", "manifest", "uplink_manifest"]), 
+        requires = "apollo_key", 
+        requires_if("default", "apollo_graph_ref")
+    )]
+    collection: Option<String>,
 
     // Configure when to allow mutations
     #[clap(long, short = 'm', default_value_t, value_enum)]
@@ -115,15 +124,6 @@ struct Args {
     /// [default: 5000]
     #[arg(long, conflicts_with_all(["sse_port", "sse_address"]))]
     http_port: Option<u16>,
-
-    /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
-    #[arg(
-        long, 
-        conflicts_with_all(["operations", "manifest"]), 
-        requires = "apollo_key", 
-        requires_if("default", "apollo_graph_ref")
-    )]
-    collection: Option<String>,
 
     /// The endpoints (comma separated) polled to fetch the latest supergraph schema.
     #[clap(long, env, action = ArgAction::Append)]
