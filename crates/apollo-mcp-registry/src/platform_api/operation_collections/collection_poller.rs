@@ -442,7 +442,7 @@ impl CollectionSource {
                     None => {
                         if let Err(e) = sender
                             .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                "{graphRef} not found".to_string(),
+                                format!("{graph_ref} not found"),
                             )))
                             .await
                         {
