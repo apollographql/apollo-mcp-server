@@ -91,7 +91,7 @@ struct Args {
     operations: Vec<PathBuf>,
 
     /// The path to the persisted query manifest containing operations
-    #[arg(long, conflicts_with_all(["operations", "collection, uplink_manifest"]))]
+    #[arg(long, conflicts_with_all(["operations", "collection", "uplink_manifest"]))]
     manifest: Option<PathBuf>,
 
     /// collection id to expose as MCP tools, or `default` to expose the default tools for the variant (requires APOLLO_KEY)
