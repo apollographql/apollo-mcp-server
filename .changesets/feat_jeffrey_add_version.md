@@ -1,3 +1,3 @@
 ### Add --version argument
 
-`apollo-mcp-server --version` will not print the version of apollo-mcp-server
+`apollo-mcp-server --version` will print the version of apollo-mcp-server currently installed
