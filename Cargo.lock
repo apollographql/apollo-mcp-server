@@ -208,6 +208,7 @@ dependencies = [
  "enumset",
  "futures",
  "insta",
+ "itertools",
  "lz-str",
  "regex",
  "reqwest",

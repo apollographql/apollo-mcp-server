@@ -4,6 +4,10 @@ expression: content
 ---
 scalar DateTime
 
+scalar JSON
+
+scalar Upload
+
 enum UserRole {
   ADMIN
   MODERATOR
@@ -11,11 +15,31 @@ enum UserRole {
   GUEST
 }
 
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DELETED
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 enum MediaType {
   IMAGE
   VIDEO
   AUDIO
   DOCUMENT
+}
+
+interface Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime!
 }
 
 type User implements Node {
@@ -111,11 +135,57 @@ type Notification {
   metadata: JSON
 }
 
+type PostAnalytics {
+  views: Int!
+  likes: Int!
+  shares: Int!
+  comments: Int!
+  engagement: Float!
+  demographics: Demographics!
+}
+
 type UserPreferences {
   theme: String!
   language: String!
   notifications: NotificationPreferences!
   privacy: PrivacySettings!
+}
+
+input CreateUserInput {
+  username: String!
+  email: String!
+  password: String!
+  role: UserRole = USER
+  profile: CreateUserProfileInput
+}
+
+input CreatePostInput {
+  title: String!
+  content: String!
+  status: ContentStatus = DRAFT
+  tags: [String!]
+  media: [Upload!]
+}
+
+input UpdatePostInput {
+  title: String
+  content: String
+  status: ContentStatus
+  tags: [String!]
+}
+
+input CreateCommentInput {
+  content: String!
+  postId: ID!
+  parentCommentId: ID
+}
+
+input NotificationFilter {
+  priority: NotificationPriority
+  read: Boolean
+  type: String
+  startDate: DateTime
+  endDate: DateTime
 }
 
 type Query {
@@ -139,3 +209,17 @@ type Mutation {
 }
 
 union SearchResult = User | Post | Comment | Tag
+
+input PostFilter {
+  status: ContentStatus
+  authorId: ID
+  tags: [String!]
+  dateRange: DateRangeInput
+}
+
+input UserPreferencesInput {
+  theme: String
+  language: String
+  notifications: NotificationPreferencesInput
+  privacy: PrivacySettingsInput
+}

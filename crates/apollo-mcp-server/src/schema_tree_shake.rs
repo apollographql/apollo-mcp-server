@@ -229,7 +229,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             })
             .collect();
 
-        let type_definitions = self
+        let type_definitions: Vec<_> = self
             .schema
             .types
             .iter()
@@ -466,6 +466,8 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 }
             })
             .collect();
+
+        tracing::info!("Tree shaking resulted in {} types", type_definitions.len());
 
         let mut document = Document::new();
         document.definitions = [
