@@ -77,7 +77,13 @@ struct Args {
     explorer: bool,
 
     /// Enable use of uplink to get the persisted queries (requires APOLLO_KEY and APOLLO_GRAPH_REF)
-    #[arg(long, requires = "apollo_key", requires = "apollo_graph_ref", conflicts_with_all(["operations", "collection", "manifest"]))]
+    #[arg(
+        long,
+        requires = "apollo_key",
+        requires = "apollo_graph_ref",
+        aliases = ["u", "uplink"], // Deprecated aliases for backward compatibility
+        conflicts_with_all(["operations", "collection", "manifest"])
+    )]
     uplink_manifest: bool,
 
     /// Operation files to expose as MCP tools
