@@ -4,7 +4,7 @@ members = ["crates/apollo-mcp-server", "crates/apollo-mcp-registry"]
 
 [workspace.package]
 authors = ["Apollo <opensource@apollographql.com>"]
-version = "0.4.1"
+version = "0.4.2"
 
 [workspace.dependencies]
 apollo-compiler = "1.27.0"
