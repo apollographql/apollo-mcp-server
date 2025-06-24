@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [0.4.2] - 2025-06-24
+
+## 🚀 Features
+
+### Pass in --collection default to use default collection - @Jephuff PR #151
+
+--collection default will use the configured default collection on the graph variant specified by the --apollo-graph-ref arg
+
+
+
 # [0.4.1] - 2025-06-20
 
 ## 🐛 Fixes
