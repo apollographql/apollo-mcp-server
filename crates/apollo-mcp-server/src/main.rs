@@ -32,6 +32,7 @@ const STYLES: Styles = Styles::styled()
 /// Arguments to the MCP server
 #[derive(Debug, clap::Parser)]
 #[command(
+    version,
     styles = STYLES,
     about = "Apollo MCP Server - invoke GraphQL operations from an AI agent",
 )]
