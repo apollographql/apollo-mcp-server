@@ -141,7 +141,7 @@ impl<'a> Path<'a> {
     }
 }
 
-impl<'a> fmt::Display for Path<'a> {
+impl<'a> Display for Path<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -595,7 +595,7 @@ impl Search {
             .map_err(|e| {
                 McpError::new(
                     ErrorCode::INVALID_PARAMS,
-                    format!("Terms must be single words: {}", e),
+                    format!("Invalid search terms: {}", e),
                     None,
                 )
             })?;
@@ -716,12 +716,14 @@ impl Search {
                 };
 
                 // The score of each type in the root path contributes to the total score of the path
+                // TODO: tweak this a bit - longer paths are still getting ranked higher in some cases, and short paths have very small values
                 if let Some(score) = scores.get(&current_type) {
-                    root_path_score += 2f32 * *score;
+                    root_path_score += *score;
                 }
 
-                // Each type in the path reduces the score by 20% so shorter paths are ranked higher
-                root_path_score *= 0.8f32.powf(current_path.types.len() as f32);
+                // Each type in the path reduces the score so shorter paths are ranked higher
+                // TODO: very deep type hierarchies could underflow
+                root_path_score *= 0.8f32.powf((current_path.types.len() - 1) as f32);
 
                 if referencing_types.is_empty() {
                     // This is a root type (no referencing types)
@@ -765,7 +767,7 @@ impl Search {
             for (i, type_name) in types.into_iter().enumerate() {
                 if let Some(extended_type) = schema.types.get(type_name.as_ref()) {
                     let depth = if i == path_len - 1 {
-                        DepthLimit::Limited(1) // TODO - more
+                        DepthLimit::Limited(1) // TODO - add more information about leaf type children?
                     } else {
                         DepthLimit::Limited(1)
                     };
