@@ -99,7 +99,11 @@ struct Args {
         long,
         conflicts_with_all(["operations", "manifest", "uplink_manifest"]),
         requires = "apollo_key",
-        requires_if("default", "apollo_graph_ref")
+        requires_ifs([
+            ("default", "apollo_graph_ref"),
+            ("Default", "apollo_graph_ref"),
+            ("DEFAULT", "apollo_graph_ref")
+        ])
     )]
     collection: Option<String>,
 
@@ -250,7 +254,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let collection_id = args.collection.as_ref().and_then(|c| {
-        if c == "default" {
+        if c == "default" || c == "Default" || c == "DEFAULT" {
             None
         } else {
             Some(c.clone())
