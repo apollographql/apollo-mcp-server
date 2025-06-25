@@ -81,10 +81,20 @@ struct Args {
         long,
         requires = "apollo_key",
         requires = "apollo_graph_ref",
-        aliases = ["u", "uplink"], // Deprecated aliases for backward compatibility
         conflicts_with_all(["operations", "collection", "manifest"])
     )]
     uplink_manifest: bool,
+
+    /// Deprecated aliases for uplink_manifest to make it backwards compatible
+    #[arg(
+        hide = true,
+        short = 'u',
+        long,
+        requires = "apollo_key",
+        requires = "apollo_graph_ref",
+        conflicts_with_all(["uplink_manifest"])
+    )]
+    uplink: bool,
 
     /// Operation files to expose as MCP tools
     #[arg(long = "operations", short = 'o', num_args=0..)]
@@ -265,13 +275,13 @@ async fn main() -> anyhow::Result<()> {
         OperationSource::from(ManifestSource::LocalHotReload(vec![manifest]))
     } else if !args.operations.is_empty() {
         OperationSource::from(args.operations)
-    } else if args.uplink_manifest {
-        OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else if let Some(collection_id) = collection_id {
         OperationSource::Collection(CollectionSource::Id(
             collection_id,
             args.platform_api_config()?,
         ))
+    } else if args.uplink_manifest || (args.uplink && args.collection.is_none()) {
+        OperationSource::from(ManifestSource::Uplink(args.uplink_config()?))
     } else if let Some(graph_ref) = &args.apollo_graph_ref {
         OperationSource::Collection(CollectionSource::Default(
             graph_ref.clone(),
