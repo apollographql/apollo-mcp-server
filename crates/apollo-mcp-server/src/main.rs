@@ -72,7 +72,7 @@ struct Args {
     #[arg(long, short = 'i')]
     introspection: bool,
 
-    /// Expose a tool to open queries in Apollo Explorer (requires APOLLO_GRAPH_REF)
+    /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     #[arg(long, short = 'x', requires = "apollo_graph_ref")]
     explorer: bool,
 
