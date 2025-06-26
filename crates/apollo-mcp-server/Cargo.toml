@@ -23,8 +23,10 @@ rmcp = { version = "0.2", features = [
   "transport-sse-server",
   "transport-streamable-http-server",
 ] }
+schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

@@ -1,8 +1,11 @@
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use url::Url;
 
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
@@ -18,7 +21,7 @@ pub struct Server {
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -28,11 +31,47 @@ pub struct Server {
     disable_schema_description: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Transport {
+    /// Use standard IO for server <> client communication
+    #[default]
     Stdio,
-    SSE { address: IpAddr, port: u16 },
-    StreamableHttp { address: IpAddr, port: u16 },
+
+    /// Host the MCP server on the supplied configuration, using SSE for communication
+    ///
+    /// Note: This is deprecated in favor of HTTP streams.
+    #[serde(rename = "sse")]
+    SSE {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+
+    /// Host the MCP server on the configuration, using stremable HTTP messages.
+    StreamableHttp {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+}
+
+impl Transport {
+    fn default_address() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    fn default_port() -> u16 {
+        5000
+    }
 }
 
 #[bon]
@@ -42,7 +81,7 @@ impl Server {
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
-        endpoint: String,
+        endpoint: Url,
         headers: HeaderMap,
         introspection: bool,
         explorer_graph_ref: Option<String>,
