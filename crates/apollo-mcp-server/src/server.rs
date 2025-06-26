@@ -14,9 +14,12 @@ use rmcp::model::{
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer, ServerHandler, ServiceError, serde_json};
-use std::net::{IpAddr, SocketAddr};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tracing::{debug, error, info};
+use url::Url;
 
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 use crate::introspection::tools::execute::{EXECUTE_TOOL_NAME, Execute};
@@ -44,7 +47,7 @@ pub struct Server {
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -54,11 +57,47 @@ pub struct Server {
     disable_schema_description: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Transport {
+    /// Use standard IO for server <> client communication
+    #[default]
     Stdio,
-    SSE { address: IpAddr, port: u16 },
-    StreamableHttp { address: IpAddr, port: u16 },
+
+    /// Host the MCP server on the supplied configuration, using SSE for communication
+    ///
+    /// Note: This is deprecated in favor of HTTP streams.
+    #[serde(rename = "sse")]
+    SSE {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+
+    /// Host the MCP server on the configuration, using stremable HTTP messages.
+    StreamableHttp {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+}
+
+impl Transport {
+    fn default_address() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    fn default_port() -> u16 {
+        5000
+    }
 }
 
 #[bon]
@@ -68,7 +107,7 @@ impl Server {
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
-        endpoint: String,
+        endpoint: Url,
         headers: HeaderMap,
         introspection: bool,
         explorer_graph_ref: Option<String>,
@@ -187,7 +226,7 @@ impl From<ServerError> for State {
 
 struct Configuring {
     transport: Transport,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -241,7 +280,7 @@ impl Configuring {
 struct SchemaConfigured {
     transport: Transport,
     schema: Valid<Schema>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -282,7 +321,7 @@ impl SchemaConfigured {
 struct OperationsConfigured {
     transport: Transport,
     operations: Vec<RawOperation>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -327,7 +366,7 @@ struct Starting {
     transport: Transport,
     schema: Valid<Schema>,
     operations: Vec<RawOperation>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
     introspection: bool,
     explorer_graph_ref: Option<String>,
@@ -459,7 +498,7 @@ struct Running {
     schema: Arc<Mutex<Valid<Schema>>>,
     operations: Arc<Mutex<Vec<Operation>>>,
     headers: HeaderMap,
-    endpoint: String,
+    endpoint: Url,
     execute_tool: Option<Execute>,
     introspect_tool: Option<Introspect>,
     explorer_tool: Option<Explorer>,
