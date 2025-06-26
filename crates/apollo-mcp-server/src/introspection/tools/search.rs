@@ -34,6 +34,7 @@ use tantivy::{
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info};
+use tracing::log::log_enabled;
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
@@ -234,6 +235,8 @@ impl SchemaExt for Schema {
                 }
                 let references = references.entry(named_type);
 
+                // Only traverse the children of a type the first time we visit it.
+                // After that, we still visit unique paths to the type, but not the child paths.
                 let traverse_children: bool = matches!(references, Entry::Vacant(_));
 
                 references.or_insert(
@@ -375,7 +378,6 @@ fn index(
 
     let schema = schema.try_lock()?;
 
-    // Collect all referencing types for each type
     let mut type_references: HashMap<String, Vec<String>> = HashMap::default();
 
     let root_types = if include_mutations {
@@ -401,7 +403,7 @@ fn index(
     // Create one document per type
     for (type_name, references) in &type_references {
         let type_name = NamedType::new_unchecked(type_name.as_str());
-        let extended_type = schema.types.get(&type_name).unwrap(); // TODO - we already have the extended type above, can store and avoid this lookup
+        let extended_type = schema.types.get(&type_name).unwrap();
         // TODO: include these?
         // if extended_type.is_built_in() {
         //     println!("Skipping built-in type: {}", extended_type.name());
@@ -423,10 +425,7 @@ fn index(
         for ref_type in references {
             doc.add_text(referencing_types_field, ref_type);
         }
-
-        // TODO: index documentation descriptions
-
-        // TODO: index field parameters so we get input types
+        
         let fields = match extended_type {
             ExtendedType::Object(obj) => obj
                 .fields
@@ -459,6 +458,40 @@ fn index(
             _ => String::new(),
         };
         doc.add_text(fields_field, &fields);
+
+        let field_descriptions = match extended_type {
+            ExtendedType::Object(obj) => obj
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::Interface(interface) => interface
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::InputObject(input) => input
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::Enum(enum_type) => enum_type
+                .values
+                .iter()
+                .flat_map(|(_, value)| value.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        doc.add_text(description_field, &field_descriptions);
+
         index_writer.add_document(doc)?;
     }
     index_writer.commit()?;
@@ -559,48 +592,61 @@ impl Search {
 
         // TODO: sanitize terms - LLM might try to put spaces, for example
 
-        // let mut query = BooleanQuery::new(
-        //     input
-        //         .terms
-        //         .iter()
-        //         .flat_map(|term| {
-        //             let lower = &term.to_lowercase();
-        //             vec![
-        //                 Term::from_field_text(type_name_field, lower),
-        //                 Term::from_field_text(description_field, lower),
-        //                 Term::from_field_text(fields_field, lower),
-        //                 // TODO: index referencing types?
-        //             ]
-        //         })
-        //         .map(|term| {
-        //             (
-        //                 Occur::Should,
-        //                 Box::new(TermQuery::new(term, IndexRecordOption::Basic)) as Box<dyn Query>,
-        //             )
-        //         })
-        //         .collect(),
-        // );
-        // query.set_minimum_number_should_match(1);
+        let mut query = BooleanQuery::new(
+            input
+                .terms
+                .iter()
+                .flat_map(|term| {
+                    let mut terms: Vec<Term> = Vec::new();
 
-        // TODO: remove this once we can replicate it above
-        let query = tantivy::query::QueryParser::for_index(
-                &self.index,
-                vec![
-                    type_name_field,
-                    description_field,
-                    fields_field,
-                ],
-            )
-            .parse_query(&input.terms.iter().join(" OR "))
-            .map_err(|e| {
-                McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    format!("Invalid search terms: {}", e),
-                    None,
-                )
-            })?;
+                    // TODO: error handling here instead of just returning empty vec
+                    if let FieldType::Str(str_options) = self.index.schema().get_field_entry(type_name_field).field_type() {
+                        if let Some(options) = str_options.get_indexing_options() {
+                            if let Some(mut text_analyzer) = self.index.tokenizers().get(options.tokenizer()) {
+                                let mut token_stream = text_analyzer.token_stream(term);
+                                token_stream.process(&mut |token| {
+                                    terms.push(Term::from_field_text(type_name_field, &token.text));
+                                    terms.push(Term::from_field_text(description_field, &token.text));
+                                    terms.push(Term::from_field_text(fields_field, &token.text));
+                                });
+                            }
+                        }
+                    }
+                    terms
+                })
+                .map(|term| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(term, IndexRecordOption::Basic)) as Box<dyn Query>,
+                    )
+                })
+                .collect(),
+        );
+        query.set_minimum_number_should_match(1);
 
-        println!("Query: {:?}", query);
+        // TODO: remove this, just for testing relative to the query created above
+        // let query = tantivy::query::QueryParser::for_index(
+        //         &self.index,
+        //         vec![
+        //             type_name_field,
+        //             description_field,
+        //             fields_field,
+        //         ],
+        //     )
+        //     .parse_query(&input.terms.iter().join(" OR "))
+        //     .map_err(|e| {
+        //         McpError::new(
+        //             ErrorCode::INVALID_PARAMS,
+        //             format!("Invalid search terms: {}", e),
+        //             None,
+        //         )
+        //     })?;
+        //
+        // if format!("{query:?}") != format!("{query_manual:?}") {
+        //     tracing::error!("Query mismatch: {:?} != {:?}", query, query_manual);
+        // }
+
+        debug!("Index query: {:?}", query);
 
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(100))
@@ -635,11 +681,15 @@ impl Search {
                 })?;
 
             scores.insert(type_name.to_string(), score);
+
+            if log_enabled!(tracing::log::Level::Debug) {
+                if let Ok(explanation) = query.explain(&searcher, doc_address) {
+                    println!("Explanation for {}: {}", type_name, explanation.to_pretty_json());
+                }
+            }
         }
 
         for (type_name, score) in scores.iter().take(10) {
-            // TODO: combine the score with the score for each type on the path to get a total
-            //  ranking for the root path
             let mut root_path_score = *score;
 
             // Build up root paths by looking up referencing types
@@ -717,18 +767,19 @@ impl Search {
 
                 // The score of each type in the root path contributes to the total score of the path
                 // TODO: tweak this a bit - longer paths are still getting ranked higher in some cases, and short paths have very small values
+                //  On the other hand, long paths with exact matches also get played down
                 if let Some(score) = scores.get(&current_type) {
-                    root_path_score += *score;
+                    root_path_score += 0.25f32 * *score; // TODO: Maybe exponentially less as distance increases?
                 }
-
-                // Each type in the path reduces the score so shorter paths are ranked higher
-                // TODO: very deep type hierarchies could underflow
-                root_path_score *= 0.8f32.powf((current_path.types.len() - 1) as f32);
 
                 if referencing_types.is_empty() {
                     // This is a root type (no referencing types)
-                    let mut root_path = current_path.clone();
+                    let mut root_path = current_path;
                     root_path.types.reverse();
+                    // reduce root path score based on length
+                    // TODO: make this relative to other paths? maybe do this at the end and normalize based on path length distribution?
+                    // TODO: very deep type hierarchies could underflow
+                    root_path_score *= 0.8f32.powf((root_path.types.len() - 1) as f32);
                     root_paths.insert(ScoredPath::new(root_path.clone(), root_path_score));
                     term_root_paths.push(root_path);
                 } else {
@@ -751,7 +802,7 @@ impl Search {
         // TODO: cap total size
         let mut root_paths = root_paths.iter().collect::<Vec<_>>();
         root_paths.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
-        root_paths.truncate(5);
+        root_paths.truncate(20);
 
         println!(
             "\n\n\nRoot paths for search terms: {}",
