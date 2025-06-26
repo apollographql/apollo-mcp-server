@@ -33,8 +33,8 @@ use tantivy::{
     schema::{STORED, Schema as TantivySchema},
 };
 use tokio::sync::Mutex;
-use tracing::{debug, info};
 use tracing::log::log_enabled;
+use tracing::{debug, info};
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
@@ -180,7 +180,9 @@ impl PartialEq for ScoredPath {
 impl Eq for ScoredPath {}
 
 impl PartialOrd for ScoredPath {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> { Some(self.cmp(other)) }
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl Ord for ScoredPath {
@@ -285,7 +287,8 @@ impl SchemaExt for Schema {
                                             }),
                                     );
                                     stack.extend(
-                                        interface.fields
+                                        interface
+                                            .fields
                                             .values()
                                             .flat_map(|field| &field.arguments)
                                             .map(|arg| arg.ty.inner_named_type())
@@ -425,7 +428,7 @@ fn index(
         for ref_type in references {
             doc.add_text(referencing_types_field, ref_type);
         }
-        
+
         let fields = match extended_type {
             ExtendedType::Object(obj) => obj
                 .fields
@@ -523,7 +526,7 @@ impl Search {
         let reader = self.index.reader().map_err(|e| {
             McpError::new(
                 ErrorCode::INTERNAL_ERROR,
-                format!("Failed to create index reader: {}", e),
+                format!("Failed to create index reader: {e}"),
                 None,
             )
         })?;
@@ -539,7 +542,7 @@ impl Search {
                 .map_err(|e| {
                     McpError::new(
                         ErrorCode::INTERNAL_ERROR,
-                        format!("Failed to get raw_type_name field: {}", e),
+                        format!("Failed to get raw_type_name field: {e}"),
                         None,
                     )
                 })?;
@@ -550,7 +553,7 @@ impl Search {
             .map_err(|e| {
                 McpError::new(
                     ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to get type_name field: {}", e),
+                    format!("Failed to get type_name field: {e}"),
                     None,
                 )
             })?;
@@ -561,7 +564,7 @@ impl Search {
             .map_err(|e| {
                 McpError::new(
                     ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to get description field: {}", e),
+                    format!("Failed to get description field: {e}"),
                     None,
                 )
             })?;
@@ -573,14 +576,14 @@ impl Search {
             .map_err(|e| {
                 McpError::new(
                     ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to get referencing_types field: {}", e),
+                    format!("Failed to get referencing_types field: {e}"),
                     None,
                 )
             })?;
         let fields_field = self.index.schema().get_field(FIELDS_FIELD).map_err(|e| {
             McpError::new(
                 ErrorCode::INTERNAL_ERROR,
-                format!("Failed to get fields field: {}", e),
+                format!("Failed to get fields field: {e}"),
                 None,
             )
         })?;
@@ -600,13 +603,23 @@ impl Search {
                     let mut terms: Vec<Term> = Vec::new();
 
                     // TODO: error handling here instead of just returning empty vec
-                    if let FieldType::Str(str_options) = self.index.schema().get_field_entry(type_name_field).field_type() {
+                    if let FieldType::Str(str_options) = self
+                        .index
+                        .schema()
+                        .get_field_entry(type_name_field)
+                        .field_type()
+                    {
                         if let Some(options) = str_options.get_indexing_options() {
-                            if let Some(mut text_analyzer) = self.index.tokenizers().get(options.tokenizer()) {
+                            if let Some(mut text_analyzer) =
+                                self.index.tokenizers().get(options.tokenizer())
+                            {
                                 let mut token_stream = text_analyzer.token_stream(term);
                                 token_stream.process(&mut |token| {
                                     terms.push(Term::from_field_text(type_name_field, &token.text));
-                                    terms.push(Term::from_field_text(description_field, &token.text));
+                                    terms.push(Term::from_field_text(
+                                        description_field,
+                                        &token.text,
+                                    ));
                                     terms.push(Term::from_field_text(fields_field, &token.text));
                                 });
                             }
@@ -653,7 +666,7 @@ impl Search {
             .map_err(|e| {
                 McpError::new(
                     ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to search: {}", e),
+                    format!("Failed to search: {e}"),
                     None,
                 )
             })?;
@@ -664,7 +677,7 @@ impl Search {
             let doc: TantivyDocument = searcher.doc(doc_address).map_err(|e| {
                 McpError::new(
                     ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to get document: {}", e),
+                    format!("Failed to get document: {e}"),
                     None,
                 )
             })?;
@@ -682,10 +695,14 @@ impl Search {
 
             scores.insert(type_name.to_string(), score);
 
-            if log_enabled!(tracing::log::Level::Debug) {
-                if let Ok(explanation) = query.explain(&searcher, doc_address) {
-                    println!("Explanation for {}: {}", type_name, explanation.to_pretty_json());
-                }
+            if log_enabled!(tracing::log::Level::Info)
+                && let Ok(explanation) = query.explain(&searcher, doc_address)
+            {
+                println!(
+                    "Explanation for {}: {}",
+                    type_name,
+                    explanation.to_pretty_json()
+                );
             }
         }
 
@@ -737,7 +754,7 @@ impl Search {
                     .map_err(|e| {
                         McpError::new(
                             ErrorCode::INTERNAL_ERROR,
-                            format!("Failed to search for type document: {}", e),
+                            format!("Failed to search for type document: {e}"),
                             None,
                         )
                     })?;
@@ -748,7 +765,7 @@ impl Search {
                             .map_err(|e| {
                                 McpError::new(
                                     ErrorCode::INTERNAL_ERROR,
-                                    format!("Failed to get type document: {}", e),
+                                    format!("Failed to get type document: {e}"),
                                     None,
                                 )
                             })
@@ -801,7 +818,11 @@ impl Search {
         // Take the top paths by score
         // TODO: cap total size
         let mut root_paths = root_paths.iter().collect::<Vec<_>>();
-        root_paths.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        root_paths.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         root_paths.truncate(20);
 
         println!(
