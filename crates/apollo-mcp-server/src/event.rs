@@ -27,16 +27,16 @@ impl Debug for Event {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Event::SchemaUpdated(event) => {
-                write!(f, "SchemaUpdated({:?})", event)
+                write!(f, "SchemaUpdated({event:?})")
             }
             Event::OperationsUpdated(operations) => {
-                write!(f, "OperationsChanged({:?})", operations)
+                write!(f, "OperationsChanged({operations:?})")
             }
             Event::OperationError(e, path) => {
-                write!(f, "OperationError({:?}, {:?})", e, path)
+                write!(f, "OperationError({e:?}, {path:?})")
             }
             Event::CollectionError(e) => {
-                write!(f, "OperationError({:?})", e)
+                write!(f, "OperationError({e:?})")
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")

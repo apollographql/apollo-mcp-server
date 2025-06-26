@@ -684,7 +684,7 @@ impl ServerHandler for Running {
 fn tool_not_found(name: &str) -> McpError {
     McpError::new(
         ErrorCode::METHOD_NOT_FOUND,
-        format!("Tool {} not found", name),
+        format!("Tool {name} not found"),
         None,
     )
 }

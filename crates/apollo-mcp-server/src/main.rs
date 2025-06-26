@@ -333,6 +333,7 @@ async fn main() -> anyhow::Result<()> {
         .await?)
 }
 
+#[allow(clippy::result_large_err)]
 fn parse_headers(headers: Vec<String>) -> Result<HeaderMap, ServerError> {
     let mut default_headers = HeaderMap::new();
     for header in headers {

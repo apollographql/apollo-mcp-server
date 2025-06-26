@@ -634,8 +634,7 @@ impl Operation {
             "has type"
         };
         lines.push(format!(
-            "The returned value {}{} `{}`",
-            optional, array, type_name
+            "The returned value {optional}{array} `{type_name}`"
         ));
 
         lines.join("\n")
@@ -838,7 +837,7 @@ fn type_to_schema(
                             description,
                             ..Default::default()
                         })),
-                        reference: Some(format!("#/definitions/{}", named)),
+                        reference: Some(format!("#/definitions/{named}")),
                         ..Default::default()
                     })
                 } else if graphql_schema.get_scalar(named).is_some() {
@@ -884,7 +883,7 @@ fn type_to_schema(
                             description,
                             ..Default::default()
                         })),
-                        reference: Some(format!("#/definitions/{}", named)),
+                        reference: Some(format!("#/definitions/{named}")),
                         ..Default::default()
                     })
                 } else if let Some(enum_type) = graphql_schema.get_enum(named) {
@@ -912,7 +911,7 @@ fn type_to_schema(
                             description,
                             ..Default::default()
                         })),
-                        reference: Some(format!("#/definitions/{}", named)),
+                        reference: Some(format!("#/definitions/{named}")),
                         ..Default::default()
                     })
                 } else {

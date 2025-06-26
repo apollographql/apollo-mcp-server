@@ -120,20 +120,13 @@ async fn fetch_chunk(http_client: Client, chunk_url: &String) -> Result<SignedUr
         .await
         .and_then(|r| r.error_for_status())
         .map_err(|e| -> BoxError {
-            format!(
-                "error fetching persisted queries manifest chunk from {}: {}",
-                chunk_url, e
-            )
-            .into()
+            format!("error fetching persisted queries manifest chunk from {chunk_url}: {e}").into()
         })?
         .json::<SignedUrlChunk>()
         .await
         .map_err(|e| -> BoxError {
-            format!(
-                "error reading body of persisted queries manifest chunk from {}: {}",
-                chunk_url, e
-            )
-            .into()
+            format!("error reading body of persisted queries manifest chunk from {chunk_url}: {e}")
+                .into()
         })?;
 
     chunk.validate()
