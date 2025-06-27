@@ -38,6 +38,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use apollo_compiler::parser::SourceSpan;
 use tracing::{debug, info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
@@ -434,6 +435,46 @@ pub fn operation_defs(
     Ok(Some((document, operation, comments.map(|c| c.to_string()))))
 }
 
+pub fn extract_overridden_variable_description(string: &str) -> Option<String> {
+    // Find the last instance of the comment character to ignore cases where the there is an
+    // operation description as a comment as well. This will only affect the very first variable.
+    let start = string.rfind('#')? + 1;
+    let end = string.rfind('\n')?;
+
+    if start <= end {
+        Some(string[start..end].trim().to_string())
+    } else {
+        None
+    }
+}
+
+pub fn variable_description_overrides(
+    source_text: &str,
+) -> Result<Option<HashMap<String, String>>, OperationError> {
+    let document = Parser::new()
+        .parse_ast(source_text, "operation.graphql")
+        .map_err(|e| OperationError::GraphQLDocument(Box::new(e)))?;
+    let mut argument_overrides_map: HashMap<String, String> = HashMap::new();
+    let mut last_offset: Option<usize> = Some(0);
+    let operation_definitions  = document.definitions.iter().filter_map(|def| def.as_operation_definition());
+    operation_definitions.for_each(|def| {
+        def.variables.iter().for_each(|v| {
+            if let Some(source_span) = v.location() {
+                let description = last_offset.map(|start_offset| &source_text[start_offset..source_span.offset()]);
+                if let Some(description) = description.filter(|d| !d.is_empty()) {
+                    if let Some(description) = extract_overridden_variable_description(description) {
+                        argument_overrides_map.insert(v.name.to_string(), description.trim().to_string());
+                    }
+                }
+
+                last_offset = Some(source_span.end_offset());
+            };
+        });
+    });
+
+    Ok(Some(argument_overrides_map))
+}
+
 impl Operation {
     pub fn from_document(
         raw_operation: RawOperation,
@@ -448,6 +489,7 @@ impl Operation {
             mutation_mode != MutationMode::None,
             raw_operation.source_path.clone(),
         )? {
+            let variable_description_overrides = variable_description_overrides(&raw_operation.source_text);
             let operation_name = operation_name(&operation, raw_operation.source_path.clone())?;
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
