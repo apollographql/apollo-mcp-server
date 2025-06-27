@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
                 collection_id,
                 config.graphos.platform_api_config()?,
             )),
+            runtime::OperationSource::Introspect => OperationSource::None,
             runtime::OperationSource::Local { paths } if !paths.is_empty() => {
                 OperationSource::from(paths)
             }
@@ -102,13 +103,24 @@ async fn main() -> anyhow::Result<()> {
                 OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
             }
 
-            runtime::OperationSource::Local { .. } | runtime::OperationSource::Unspecified => {
-                if !config.overrides.enable_introspection {
-                    anyhow::bail!(ServerError::NoOperations);
+            // TODO: Inference requires many different combinations and preferences
+            // TODO: We should maybe make this more explicit.
+            runtime::OperationSource::Local { .. } | runtime::OperationSource::Infer => {
+                if config.introspection.introspect.enabled {
+                    warn!("No operations specified, falling back to introspection");
+                    OperationSource::None
+                } else if let Some(ref graph_ref) = config.graphos.apollo_graph_ref {
+                    warn!(
+                        "No operations specified, falling back to the default collection in {}",
+                        graph_ref
+                    );
+                    OperationSource::Collection(CollectionSource::Default(
+                        graph_ref.clone(),
+                        config.graphos.platform_api_config()?,
+                    ))
+                } else {
+                    anyhow::bail!(ServerError::NoOperations)
                 }
-
-                warn!("No operations specified, falling back to introspection");
-                OperationSource::None
             }
         };
 
@@ -132,7 +144,8 @@ async fn main() -> anyhow::Result<()> {
         .endpoint(config.endpoint)
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(config.headers)
-        .introspection(config.overrides.enable_introspection)
+        .execute_introspection(config.introspection.execute.enabled)
+        .introspect_introspection(config.introspection.introspect.enabled)
         .mutation_mode(config.overrides.mutation_mode)
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)

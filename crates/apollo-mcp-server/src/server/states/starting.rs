@@ -58,12 +58,12 @@ impl Starting {
 
         let execute_tool = self
             .config
-            .introspection
+            .execute_introspection
             .then(|| Execute::new(self.config.mutation_mode));
 
         let root_query_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 self.schema
                     .root_operation(OperationType::Query)
@@ -73,7 +73,7 @@ impl Starting {
             .flatten();
         let root_mutation_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 matches!(self.config.mutation_mode, MutationMode::All)
                     .then(|| {
@@ -88,7 +88,7 @@ impl Starting {
         let schema = Arc::new(Mutex::new(self.schema));
         let introspect_tool = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
 
         let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);
