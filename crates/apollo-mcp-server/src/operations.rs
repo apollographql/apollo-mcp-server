@@ -35,6 +35,7 @@ use rmcp::{
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -506,6 +507,7 @@ impl Operation {
             let object = serde_json::to_value(get_json_schema(
                 &operation,
                 tree_shaker.argument_descriptions(),
+                variable_description_overrides,
                 graphql_schema,
                 custom_scalar_map,
                 raw_operation.variables.as_ref(),
@@ -709,7 +711,8 @@ fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
 
 fn get_json_schema(
     operation: &Node<OperationDefinition>,
-    argument_descriptions: &HashMap<String, Vec<String>>,
+    schema_argument_descriptions: &HashMap<String, Vec<String>>,
+    argument_descriptions_overrides: &HashMap<String, String>,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
     variable_overrides: Option<&HashMap<String, Value>>,
@@ -723,13 +726,16 @@ fn get_json_schema(
             .map(|o| o.contains_key(&variable_name))
             .unwrap_or_default()
         {
-            let joined_descriptions = argument_descriptions
-                .get(&variable_name)
-                .filter(|d| !d.is_empty())
-                .map(|d| d.join("#"));
+            let description: Option<String> = match argument_descriptions_overrides.get(&variable_name) {
+                Some(description) => Some(description.clone()),
+                None => schema_argument_descriptions
+                        .get(&variable_name)
+                        .filter(|d| !d.is_empty())
+                        .map(|d| d.join("#"))
+            };
 
             let schema = type_to_schema(
-                joined_descriptions,
+                description,
                 variable.ty.as_ref(),
                 graphql_schema,
                 custom_scalar_map,
