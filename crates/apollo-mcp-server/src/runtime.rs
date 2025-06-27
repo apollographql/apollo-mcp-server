@@ -5,6 +5,7 @@
 
 mod config;
 mod graphos;
+mod introspection;
 mod operation_source;
 mod overrides;
 mod schema_source;

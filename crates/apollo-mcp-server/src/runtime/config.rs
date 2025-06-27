@@ -7,32 +7,33 @@ use serde::Deserialize;
 use tracing::Level;
 use url::Url;
 
-use super::{OperationSource, SchemaSource, graphos::GraphOSCredentials, overrides::Overrides};
+use super::{
+    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
+    overrides::Overrides,
+};
 
 /// Configuration for the MCP server
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct Config {
-    /// Apollo-specific credential overrides
-    #[serde(default)]
-    pub graphos: GraphOSCredentials,
-
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,
 
     /// The target GraphQL endpoint
+    #[serde(default = "defaults::endpoint")]
     pub endpoint: Url,
+
+    /// Apollo-specific credential overrides
+    #[serde(default)]
+    pub graphos: GraphOSConfig,
 
     /// List of hard-coded headers to include in all GraphQL requests
     #[serde(default, deserialize_with = "parsers::map_from_str")]
     #[schemars(schema_with = "super::schemas::header_map")]
     pub headers: HeaderMap,
 
-    /// Operations
-    pub operations: OperationSource,
-
-    /// Overrides for server behaviour
+    /// Introspection configuration
     #[serde(default)]
-    pub overrides: Overrides,
+    pub introspection: Introspection,
 
     /// The log level to use for tracing
     #[serde(
@@ -42,7 +43,16 @@ pub struct Config {
     #[schemars(schema_with = "super::schemas::level")]
     pub log_level: Level,
 
+    /// Operations
+    #[serde(default)]
+    pub operations: OperationSource,
+
+    /// Overrides for server behaviour
+    #[serde(default)]
+    pub overrides: Overrides,
+
     /// The schema to load for operations
+    #[serde(default)]
     pub schema: SchemaSource,
 
     /// The type of server transport to use
@@ -52,9 +62,27 @@ pub struct Config {
 
 mod defaults {
     use tracing::Level;
+    use url::Url;
 
-    pub(super) fn log_level() -> Level {
+    pub(super) fn endpoint() -> Url {
+        // SAFETY: This should always parse correctly and is considered a breaking
+        // error otherwise. It is also explicitly tested in [test::default_endpoint_parses_correctly]
+        #[allow(clippy::unwrap_used)]
+        Url::parse("http://127.0.0.1:4000").unwrap()
+    }
+
+    pub(super) const fn log_level() -> Level {
         Level::INFO
+    }
+
+    #[cfg(test)]
+    mod test {
+        use super::endpoint;
+
+        #[test]
+        fn default_endpoint_parses_correctly() {
+            endpoint();
+        }
     }
 }
 
@@ -131,5 +159,15 @@ mod parsers {
         }
 
         deserializer.deserialize_str(MapFromStrVisitor)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Config;
+
+    #[test]
+    fn minimal_config_parses() {
+        serde_yaml::from_str::<Config>("").unwrap();
     }
 }
