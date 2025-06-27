@@ -11,7 +11,8 @@ use url::Url;
 
 /// Credentials to use with GraphOS
 #[derive(Debug, Deserialize, Default, JsonSchema)]
-pub struct GraphOSCredentials {
+#[serde(default)]
+pub struct GraphOSConfig {
     /// The apollo key
     #[schemars(with = "Option<String>")]
     pub apollo_key: Option<SecretString>,
@@ -26,7 +27,7 @@ pub struct GraphOSCredentials {
     pub uplink_endpoints: Vec<Url>,
 }
 
-impl GraphOSCredentials {
+impl GraphOSConfig {
     /// Generate an uplink config based on configuration params
     pub fn uplink_config(&self) -> Result<UplinkConfig, ServerError> {
         let config = UplinkConfig {

@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 /// Source for loaded operations
-#[derive(Debug, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OperationSource {
     /// Load operations from a GraphOS collection
@@ -13,22 +13,30 @@ pub enum OperationSource {
         id: IdOrDefault,
     },
 
+    /// Infer where to load operations based on other configuration options.
+    ///
+    /// Note: This setting tries to load the operations from introspection, if enabled
+    /// or from the default operation collection when APOLLO_GRAPH_REF is set.
+    #[default]
+    Infer,
+
+    /// Load operations by introspecting the schema
+    ///
+    /// Note: Requires introspection to be enabled
+    Introspect,
+
     /// Load operations from local GraphQL files / folders
     Local { paths: Vec<PathBuf> },
 
     /// Load operations from a persisted queries manifest file
     Manifest { path: PathBuf },
 
-    /// Load operations from uplink
+    /// Load operations from uplink manifest
     Uplink,
-
-    /// No configuration specified
-    #[default]
-    Unspecified,
 }
 
 /// Either a custom ID or the default variant
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum IdOrDefault {
     /// The ddefault tools for the variant (requires APOLLO_KEY)
     Default,
@@ -65,5 +73,30 @@ impl<'de> Deserialize<'de> for IdOrDefault {
         }
 
         deserializer.deserialize_str(IdOrDefaultVisitor)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::IdOrDefault;
+
+    #[test]
+    fn id_parses() {
+        let id = "something";
+
+        let actual: IdOrDefault = serde_yaml::from_str(id).unwrap();
+        let expected = IdOrDefault::Id(id.to_string());
+
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn default_parses() {
+        let id = "dEfAuLt";
+
+        let actual: IdOrDefault = serde_yaml::from_str(id).unwrap();
+        let expected = IdOrDefault::Default;
+
+        assert_eq!(actual, expected);
     }
 }
