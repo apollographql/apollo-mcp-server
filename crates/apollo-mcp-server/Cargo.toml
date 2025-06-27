@@ -37,6 +37,7 @@ url.workspace = true
 [dev-dependencies]
 insta = { workspace = true }
 rstest = "0.25.0"
+secrecy.workspace = true
 tracing-test = "0.2.5"
 
 [lints]

@@ -72,69 +72,57 @@ async fn main() -> anyhow::Result<()> {
         runtime::SchemaSource::Uplink => SchemaSource::Registry(config.graphos.uplink_config()?),
     };
 
-    let operation_source =
-        match config.operations {
-            // Default collection is special and requires other information
-            runtime::OperationSource::Collection {
-                id: IdOrDefault::Default,
-            } => {
+    let operation_source = match config.operations {
+        // Default collection is special and requires other information
+        runtime::OperationSource::Collection {
+            id: IdOrDefault::Default,
+        } => OperationSource::Collection(CollectionSource::Default(
+            config.graphos.graph_ref()?,
+            config.graphos.platform_api_config()?,
+        )),
+
+        runtime::OperationSource::Collection {
+            id: IdOrDefault::Id(collection_id),
+        } => OperationSource::Collection(CollectionSource::Id(
+            collection_id,
+            config.graphos.platform_api_config()?,
+        )),
+        runtime::OperationSource::Introspect => OperationSource::None,
+        runtime::OperationSource::Local { paths } if !paths.is_empty() => {
+            OperationSource::from(paths)
+        }
+        runtime::OperationSource::Manifest { path } => {
+            OperationSource::from(ManifestSource::LocalHotReload(vec![path]))
+        }
+        runtime::OperationSource::Uplink => {
+            OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
+        }
+
+        // TODO: Inference requires many different combinations and preferences
+        // TODO: We should maybe make this more explicit.
+        runtime::OperationSource::Local { .. } | runtime::OperationSource::Infer => {
+            if config.introspection.any_enabled() {
+                warn!("No operations specified, falling back to introspection");
+                OperationSource::None
+            } else if let Ok(graph_ref) = config.graphos.graph_ref() {
+                warn!(
+                    "No operations specified, falling back to the default collection in {}",
+                    graph_ref
+                );
                 OperationSource::Collection(CollectionSource::Default(
-                    config.graphos.apollo_graph_ref.clone().ok_or(
-                        ServerError::EnvironmentVariable(String::from("APOLLO_GRAPH_REF")),
-                    )?,
+                    graph_ref,
                     config.graphos.platform_api_config()?,
                 ))
+            } else {
+                anyhow::bail!(ServerError::NoOperations)
             }
-
-            runtime::OperationSource::Collection {
-                id: IdOrDefault::Id(collection_id),
-            } => OperationSource::Collection(CollectionSource::Id(
-                collection_id,
-                config.graphos.platform_api_config()?,
-            )),
-            runtime::OperationSource::Introspect => OperationSource::None,
-            runtime::OperationSource::Local { paths } if !paths.is_empty() => {
-                OperationSource::from(paths)
-            }
-            runtime::OperationSource::Manifest { path } => {
-                OperationSource::from(ManifestSource::LocalHotReload(vec![path]))
-            }
-            runtime::OperationSource::Uplink => {
-                OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
-            }
-
-            // TODO: Inference requires many different combinations and preferences
-            // TODO: We should maybe make this more explicit.
-            runtime::OperationSource::Local { .. } | runtime::OperationSource::Infer => {
-                if config.introspection.introspect.enabled {
-                    warn!("No operations specified, falling back to introspection");
-                    OperationSource::None
-                } else if let Some(ref graph_ref) = config.graphos.apollo_graph_ref {
-                    warn!(
-                        "No operations specified, falling back to the default collection in {}",
-                        graph_ref
-                    );
-                    OperationSource::Collection(CollectionSource::Default(
-                        graph_ref.clone(),
-                        config.graphos.platform_api_config()?,
-                    ))
-                } else {
-                    anyhow::bail!(ServerError::NoOperations)
-                }
-            }
-        };
+        }
+    };
 
     let explorer_graph_ref = config
         .overrides
         .enable_explorer
-        .then(|| {
-            config
-                .graphos
-                .apollo_graph_ref
-                .ok_or(ServerError::EnvironmentVariable(String::from(
-                    "APOLLO_GRAPH_REF",
-                )))
-        })
+        .then(|| config.graphos.graph_ref())
         .transpose()?;
 
     Ok(Server::builder()
