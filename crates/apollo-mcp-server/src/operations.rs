@@ -448,10 +448,12 @@ impl Operation {
             raw_operation.source_path.clone(),
         )? {
             let operation_name = operation_name(&operation, raw_operation.source_path.clone())?;
+            let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
+            tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
 
             let description = Self::tool_description(
                 comments,
-                &document,
+                &mut tree_shaker,
                 graphql_schema,
                 &operation,
                 disable_type_description,
@@ -460,6 +462,7 @@ impl Operation {
 
             let object = serde_json::to_value(get_json_schema(
                 &operation,
+                tree_shaker.argument_descriptions(),
                 graphql_schema,
                 custom_scalar_map,
                 raw_operation.variables.as_ref(),
@@ -499,7 +502,7 @@ impl Operation {
     /// Generate a description for an operation based on documentation in the schema
     fn tool_description(
         comments: Option<String>,
-        document: &Document,
+        tree_shaker: &mut SchemaTreeShaker,
         graphql_schema: &GraphqlSchema,
         operation_def: &Node<OperationDefinition>,
         disable_type_description: bool,
@@ -581,8 +584,6 @@ impl Operation {
                     lines.push(descriptions);
                 }
                 if !disable_schema_description {
-                    let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
-                    tree_shaker.retain_operation(operation_def, document, DepthLimit::Unlimited);
                     let shaken_schema =
                         tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
@@ -664,6 +665,7 @@ fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
 
 fn get_json_schema(
     operation: &Node<OperationDefinition>,
+    argument_descriptions: &HashMap<String, Vec<String>>,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
     variable_overrides: Option<&HashMap<String, Value>>,
@@ -677,8 +679,13 @@ fn get_json_schema(
             .map(|o| o.contains_key(&variable_name))
             .unwrap_or_default()
         {
+            let joined_descriptions = argument_descriptions
+                .get(&variable_name)
+                .filter(|d| !d.is_empty())
+                .map(|d| d.join("#"));
+
             let schema = type_to_schema(
-                None,
+                joined_descriptions,
                 variable.ty.as_ref(),
                 graphql_schema,
                 custom_scalar_map,
@@ -1031,8 +1038,8 @@ mod tests {
     static SCHEMA: LazyLock<Valid<Schema>> = LazyLock::new(|| {
         Schema::parse(
             r#"
-                type Query { id: String enum: RealEnum }
-                type Mutation { id: String }
+                type Query { id: String enum: RealEnum customQuery(""" id description """ id: ID!, """ a flag """ flag: Boolean): OutputType }
+                type Mutation {id: String }
 
                 """
                 RealCustomScalar exists
@@ -1063,6 +1070,13 @@ mod tests {
                     ENUM_VALUE_2 is a value
                     """
                     ENUM_VALUE_2
+                }
+
+                """
+                custom output type
+                """
+                type OutputType {
+                    id: ID!
                 }
             "#,
             "operation.graphql",
@@ -2676,6 +2690,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "filter": Object {
+                        "description": String("the filter argument"),
                         "$ref": String("#/definitions/Filter"),
                     },
                 },
@@ -2759,6 +2774,114 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+        }
+        "###);
+    }
+
+    #[test]
+    fn input_schema_includes_variable_descriptions() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($idArg: ID) { customQuery(id: $idArg) { id } }"
+                    .to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id description",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn input_schema_includes_joined_variable_descriptions_if_multiple() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($idArg: ID, $flag: Boolean) { customQuery(id: $idArg, flag: $flag) { id @skip(if: $flag) } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
+        {
+          "type": "object",
+          "properties": {
+            "flag": {
+              "description": "Skipped when true.#a flag",
+              "type": "boolean"
+            },
+            "idArg": {
+              "description": "id description",
+              "type": "string"
+            }
+          }
+        }
+        "#);
+    }
+
+    #[test]
+    fn input_schema_includes_directive_variable_descriptions() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($idArg: ID, $skipArg: Boolean) { customQuery(id: $idArg) { id @skip(if: $skipArg) } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id description",
+              "type": "string"
+            },
+            "skipArg": {
+              "description": "Skipped when true.",
+              "type": "boolean"
+            }
+          }
         }
         "###);
     }
