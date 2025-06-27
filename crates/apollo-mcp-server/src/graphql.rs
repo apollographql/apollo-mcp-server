@@ -5,10 +5,11 @@ use apollo_compiler::response::serde_json_bytes::serde_json;
 use apollo_compiler::response::serde_json_bytes::serde_json::Value;
 use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
+use url::Url;
 
 pub struct Request<'a> {
     pub input: Value,
-    pub endpoint: &'a str,
+    pub endpoint: &'a Url,
     pub headers: HeaderMap,
 }
 
@@ -33,7 +34,7 @@ pub trait Executable {
             "version": std::env!("CARGO_PKG_VERSION")
         });
         reqwest::Client::new()
-            .post(request.endpoint)
+            .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(if let Some(id) = self.persisted_query_id() {
                 serde_json::json!({

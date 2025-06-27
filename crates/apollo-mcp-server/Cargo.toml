@@ -22,7 +22,9 @@ rmcp = { version = "0.1", features = [
   "transport-sse-server",
   "transport-streamable-http-server",
 ] }
+schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
+serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -33,6 +35,7 @@ url.workspace = true
 [dev-dependencies]
 insta = { workspace = true }
 rstest = "0.25.0"
+secrecy.workspace = true
 tracing-test = "0.2.5"
 
 [lints]

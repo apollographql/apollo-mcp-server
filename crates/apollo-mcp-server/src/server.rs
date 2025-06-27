@@ -14,9 +14,13 @@ use rmcp::model::{
 use rmcp::serde_json::Value;
 use rmcp::service::RequestContext;
 use rmcp::{Peer, RoleServer, ServerHandler, ServiceError, serde_json};
-use std::net::{IpAddr, SocketAddr};
+use schemars::JsonSchema;
+use serde::Deserialize;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::ops::BitAnd as _;
 use std::sync::Arc;
 use tracing::{debug, error, info};
+use url::Url;
 
 use crate::explorer::{EXPLORER_TOOL_NAME, Explorer};
 use crate::introspection::tools::execute::{EXECUTE_TOOL_NAME, Execute};
@@ -44,9 +48,10 @@ pub struct Server {
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -54,11 +59,47 @@ pub struct Server {
     disable_schema_description: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Transport {
+    /// Use standard IO for server <> client communication
+    #[default]
     Stdio,
-    SSE { address: IpAddr, port: u16 },
-    StreamableHttp { address: IpAddr, port: u16 },
+
+    /// Host the MCP server on the supplied configuration, using SSE for communication
+    ///
+    /// Note: This is deprecated in favor of HTTP streams.
+    #[serde(rename = "sse")]
+    SSE {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+
+    /// Host the MCP server on the configuration, using stremable HTTP messages.
+    StreamableHttp {
+        /// The IP address to bind to
+        #[serde(default = "Transport::default_address")]
+        address: IpAddr,
+
+        /// The port to bind to
+        #[serde(default = "Transport::default_port")]
+        port: u16,
+    },
+}
+
+impl Transport {
+    fn default_address() -> IpAddr {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    }
+
+    fn default_port() -> u16 {
+        5000
+    }
 }
 
 #[bon]
@@ -68,9 +109,10 @@ impl Server {
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
-        endpoint: String,
+        endpoint: Url,
         headers: HeaderMap,
-        introspection: bool,
+        execute_introspection: bool,
+        introspect_introspection: bool,
         explorer_graph_ref: Option<String>,
         #[builder(required)] custom_scalar_map: Option<CustomScalarMap>,
         mutation_mode: MutationMode,
@@ -88,7 +130,8 @@ impl Server {
             operation_source,
             endpoint,
             headers,
-            introspection,
+            execute_introspection,
+            introspect_introspection,
             explorer_graph_ref,
             custom_scalar_map,
             mutation_mode,
@@ -187,9 +230,10 @@ impl From<ServerError> for State {
 
 struct Configuring {
     transport: Transport,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -205,7 +249,8 @@ impl Configuring {
             schema,
             endpoint: self.endpoint,
             headers: self.headers,
-            introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
+            introspect_introspection: self.introspect_introspection,
             explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -228,7 +273,8 @@ impl Configuring {
             operations,
             endpoint: self.endpoint,
             headers: self.headers,
-            introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
+            introspect_introspection: self.introspect_introspection,
             explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -241,9 +287,10 @@ impl Configuring {
 struct SchemaConfigured {
     transport: Transport,
     schema: Valid<Schema>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -269,7 +316,8 @@ impl SchemaConfigured {
             operations,
             endpoint: self.endpoint,
             headers: self.headers,
-            introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
+            introspect_introspection: self.introspect_introspection,
             explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -282,9 +330,10 @@ impl SchemaConfigured {
 struct OperationsConfigured {
     transport: Transport,
     operations: Vec<RawOperation>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -301,7 +350,8 @@ impl OperationsConfigured {
             operations: self.operations,
             endpoint: self.endpoint,
             headers: self.headers,
-            introspection: self.introspection,
+            execute_introspection: self.execute_introspection,
+            introspect_introspection: self.introspect_introspection,
             explorer_graph_ref: self.explorer_graph_ref,
             custom_scalar_map: self.custom_scalar_map,
             mutation_mode: self.mutation_mode,
@@ -327,9 +377,10 @@ struct Starting {
     transport: Transport,
     schema: Valid<Schema>,
     operations: Vec<RawOperation>,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -364,10 +415,12 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
+        let execute_tool = self
+            .execute_introspection
+            .then(|| Execute::new(self.mutation_mode));
 
         let root_query_type = self
-            .introspection
+            .introspect_introspection
             .then(|| {
                 self.schema
                     .root_operation(OperationType::Query)
@@ -376,21 +429,18 @@ impl Starting {
             })
             .flatten();
         let root_mutation_type = self
-            .introspection
+            .introspect_introspection
+            .bitand(matches!(self.mutation_mode, MutationMode::All))
             .then(|| {
-                matches!(self.mutation_mode, MutationMode::All)
-                    .then(|| {
-                        self.schema
-                            .root_operation(OperationType::Mutation)
-                            .map(Name::as_str)
-                            .map(|s| s.to_string())
-                    })
-                    .flatten()
+                self.schema
+                    .root_operation(OperationType::Mutation)
+                    .map(Name::as_str)
+                    .map(|s| s.to_string())
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
         let introspect_tool = self
-            .introspection
+            .introspect_introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
 
         let explorer_tool = self.explorer_graph_ref.map(Explorer::new);
@@ -459,7 +509,7 @@ struct Running {
     schema: Arc<Mutex<Valid<Schema>>>,
     operations: Arc<Mutex<Vec<Operation>>>,
     headers: HeaderMap,
-    endpoint: String,
+    endpoint: Url,
     execute_tool: Option<Execute>,
     introspect_tool: Option<Introspect>,
     explorer_tool: Option<Explorer>,
@@ -713,7 +763,8 @@ impl StateMachine {
             transport: server.transport,
             endpoint: server.endpoint,
             headers: server.headers,
-            introspection: server.introspection,
+            execute_introspection: server.execute_introspection,
+            introspect_introspection: server.introspect_introspection,
             explorer_graph_ref: server.explorer_graph_ref,
             custom_scalar_map: server.custom_scalar_map,
             mutation_mode: server.mutation_mode,
