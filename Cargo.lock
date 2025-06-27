@@ -213,6 +213,7 @@ dependencies = [
  "rmcp",
  "rstest",
  "schemars 1.0.1",
+ "secrecy",
  "serde",
  "serde_yaml",
  "thiserror 2.0.12",
