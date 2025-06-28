@@ -1,0 +1,453 @@
+//! Library for indexing and searching GraphQL schemas using Tantivy.
+
+use apollo_compiler::Schema;
+use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
+use apollo_compiler::schema::ExtendedType;
+use apollo_compiler::validation::Valid;
+use enumset::{EnumSet, EnumSetType};
+use error::{IndexingError, SearchError};
+use path::{RootPath, Scored};
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::Instant;
+use tantivy::collector::TopDocs;
+use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
+use tantivy::schema::document::Value as TantivyValue;
+use tantivy::schema::*;
+use tantivy::tokenizer::{Language, LowerCaser, SimpleTokenizer, Stemmer, TextAnalyzer};
+use tantivy::{
+    Index,
+    schema::{STORED, Schema as TantivySchema},
+};
+use tracing::{debug, info};
+use traverse::SchemaExt;
+
+pub mod error;
+mod path;
+mod traverse;
+
+pub const TYPE_NAME_FIELD: &str = "type_name";
+pub const DESCRIPTION_FIELD: &str = "description";
+pub const FIELDS_FIELD: &str = "fields";
+pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
+pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
+pub const INDEX_MEMORY_BYTES: usize = 50_000_000;
+
+const MAX_ROOT_PATHS: usize = 3;
+
+/// Types of operations to be included in the schema index. Unlike the AST types, these types can
+/// be included in an [`EnumSet`](EnumSet).
+#[derive(EnumSetType, Debug)]
+pub enum OperationType {
+    Query,
+    Mutation,
+    Subscription,
+}
+
+impl From<AstOperationType> for OperationType {
+    fn from(value: AstOperationType) -> Self {
+        match value {
+            AstOperationType::Query => OperationType::Query,
+            AstOperationType::Mutation => OperationType::Mutation,
+            AstOperationType::Subscription => OperationType::Subscription,
+        }
+    }
+}
+
+impl From<OperationType> for AstOperationType {
+    fn from(value: OperationType) -> Self {
+        match value {
+            OperationType::Query => AstOperationType::Query,
+            OperationType::Mutation => AstOperationType::Mutation,
+            OperationType::Subscription => AstOperationType::Subscription,
+        }
+    }
+}
+
+/// Index a GraphQL schema
+fn index_schema(
+    schema: &Valid<Schema>,
+    root_types: EnumSet<OperationType>,
+) -> Result<Index, IndexingError> {
+    let start_time = Instant::now();
+
+    // Register a custom analyzer with English stemming and lowercasing
+    // TODO: support other languages
+    let stem_analyzer = TextAnalyzer::builder(SimpleTokenizer::default())
+        .filter(LowerCaser)
+        .filter(Stemmer::new(Language::English))
+        .build();
+
+    // Create the schema builder and add fields with the custom analyzer
+    let mut index_schema = TantivySchema::builder();
+    let type_name_field = index_schema.add_text_field(
+        TYPE_NAME_FIELD,
+        TextOptions::default()
+            .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+            .set_stored(),
+    );
+    let description_field = index_schema.add_text_field(
+        DESCRIPTION_FIELD,
+        TextOptions::default()
+            .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+            .set_stored(),
+    );
+    let fields_field = index_schema.add_text_field(
+        FIELDS_FIELD,
+        TextOptions::default()
+            .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+            .set_stored(),
+    );
+
+    // The raw type name is indexed as as exact name (no stemming or lowercasing)
+    let raw_type_name_field = index_schema.add_text_field(
+        RAW_TYPE_NAME_FIELD,
+        TextOptions::default()
+            .set_indexing_options(TextFieldIndexing::default().set_tokenizer("raw"))
+            .set_stored(),
+    );
+    let referencing_types_field = index_schema.add_text_field(REFERENCING_TYPES_FIELD, STORED);
+
+    let index_schema = index_schema.build();
+    let index = Index::create_in_ram(index_schema);
+    index.tokenizers().register("en_stem", stem_analyzer);
+    let mut index_writer = index.writer(INDEX_MEMORY_BYTES)?;
+    let mut type_references: HashMap<String, Vec<String>> = HashMap::default();
+    for (extended_type, path) in schema.traverse(root_types) {
+        let entry = type_references
+            .entry(extended_type.name().to_string())
+            .or_default();
+        if let Some(ref_type) = path.referencing_type() {
+            entry.push(ref_type.to_string());
+        }
+    }
+
+    // Debug: Print the collected references
+    for (type_name, references) in &type_references {
+        debug!("Type '{}' is referenced by: {:?}", type_name, references);
+    }
+
+    for (type_name, references) in &type_references {
+        let type_name = NamedType::new_unchecked(type_name.as_str());
+        let extended_type = if let Some(extended_type) = schema.types.get(&type_name) {
+            extended_type
+        } else {
+            // This can never really happen since we got the type name from the schema above
+            continue;
+        };
+        if extended_type.is_built_in() {
+            continue;
+        }
+
+        let mut doc = TantivyDocument::default();
+        doc.add_text(type_name_field, extended_type.name());
+        doc.add_text(raw_type_name_field, extended_type.name());
+        doc.add_text(
+            description_field,
+            extended_type
+                .description()
+                .map(|d| d.to_string())
+                .unwrap_or(String::from("")),
+        );
+
+        // Add all referencing types for this type
+        for ref_type in references {
+            doc.add_text(referencing_types_field, ref_type);
+        }
+        let fields = match extended_type {
+            ExtendedType::Object(obj) => obj
+                .fields
+                .iter()
+                .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            ExtendedType::Interface(interface) => interface
+                .fields
+                .iter()
+                .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            ExtendedType::InputObject(input) => input
+                .fields
+                .iter()
+                .map(|(name, field)| format!("{}: {}", name, field.ty.inner_named_type()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            ExtendedType::Enum(enum_type) => format!(
+                "{}: {}",
+                enum_type.name,
+                enum_type
+                    .values
+                    .iter()
+                    .map(|(name, _)| name.to_string())
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            ),
+            _ => String::new(),
+        };
+        doc.add_text(fields_field, &fields);
+        let field_descriptions = match extended_type {
+            ExtendedType::Object(obj) => obj
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::Interface(interface) => interface
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::InputObject(input) => input
+                .fields
+                .iter()
+                .flat_map(|(_, field)| field.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ExtendedType::Enum(enum_type) => enum_type
+                .values
+                .iter()
+                .flat_map(|(_, value)| value.description.as_ref())
+                .map(|node| node.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            _ => String::new(),
+        };
+        doc.add_text(description_field, &field_descriptions);
+        index_writer.add_document(doc)?;
+    }
+    index_writer.commit()?;
+
+    let elapsed = start_time.elapsed();
+    info!("Indexed {} types in {:.2?}", type_references.len(), elapsed);
+
+    Ok(index)
+}
+
+#[derive(Clone)]
+pub struct SchemaIndex {
+    inner: Index,
+}
+
+impl SchemaIndex {
+    pub fn new(
+        schema: &Valid<Schema>,
+        root_types: EnumSet<OperationType>,
+    ) -> Result<Self, IndexingError> {
+        Ok(Self {
+            inner: index_schema(schema, root_types)?,
+        })
+    }
+
+    /// Search the schema for a set of terms
+    pub fn search<I>(&self, terms: I) -> Result<Vec<Scored<RootPath>>, SearchError>
+    where
+        I: IntoIterator<Item = String>,
+    {
+        let reader = self.inner.reader()?;
+        let searcher = reader.searcher();
+
+        let raw_type_name_field = self.inner.schema().get_field(RAW_TYPE_NAME_FIELD)?;
+        let type_name_field = self.inner.schema().get_field(TYPE_NAME_FIELD)?;
+        let description_field = self.inner.schema().get_field(DESCRIPTION_FIELD)?;
+        let referencing_types_field = self.inner.schema().get_field(REFERENCING_TYPES_FIELD)?;
+        let fields_field = self.inner.schema().get_field(FIELDS_FIELD)?;
+
+        let mut root_paths: HashSet<Scored<RootPath>> = Default::default();
+        let mut scores: HashMap<String, f32> = Default::default();
+
+        let mut query = BooleanQuery::new(
+            terms
+                .into_iter()
+                .flat_map(|term| {
+                    // TODO: error handling here instead of just returning empty vec
+                    let mut terms: Vec<Term> = Vec::new();
+                    if let FieldType::Str(str_options) = self
+                        .inner
+                        .schema()
+                        .get_field_entry(type_name_field)
+                        .field_type()
+                    {
+                        if let Some(options) = str_options.get_indexing_options() {
+                            if let Some(mut text_analyzer) =
+                                self.inner.tokenizers().get(options.tokenizer())
+                            {
+                                let mut token_stream = text_analyzer.token_stream(&term);
+                                token_stream.process(&mut |token| {
+                                    terms.push(Term::from_field_text(type_name_field, &token.text));
+                                    terms.push(Term::from_field_text(
+                                        description_field,
+                                        &token.text,
+                                    ));
+                                    terms.push(Term::from_field_text(fields_field, &token.text));
+                                });
+                            }
+                        }
+                    }
+                    terms
+                })
+                .map(|term| {
+                    (
+                        Occur::Should,
+                        Box::new(TermQuery::new(term, IndexRecordOption::Basic)) as Box<dyn Query>,
+                    )
+                })
+                .collect(),
+        );
+        query.set_minimum_number_should_match(1);
+        debug!("Index query: {:?}", query);
+
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(100))?;
+
+        for (score, doc_address) in top_docs {
+            let doc: TantivyDocument = searcher.doc(doc_address)?;
+            let type_name = doc
+                .get_first(raw_type_name_field)
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    SearchError::DocumentError(
+                        "Failed to extract type name from document".to_string(),
+                    )
+                })?;
+            scores.insert(type_name.to_string(), score);
+        }
+
+        for (type_name, score) in scores.iter().take(10) {
+            let mut root_path_score = *score;
+
+            // Build up root paths by looking up referencing types
+            let mut visited = HashSet::new();
+            let mut queue: VecDeque<RootPath<'static>> = VecDeque::new();
+            let mut term_root_paths = vec![];
+
+            // Start with the current type as a Path
+            let start_type = NamedType::new_unchecked(type_name);
+            let start_path = RootPath::new(vec![&start_type]);
+            let owned_types: Vec<Cow<'static, NamedType>> = start_path
+                .types
+                .iter()
+                .map(|t| Cow::Owned(NamedType::new_unchecked(t.to_string().as_str())))
+                .collect();
+            let start_path_static = RootPath { types: owned_types };
+            queue.push_back(start_path_static);
+
+            while let Some(current_path) = queue.pop_front() {
+                if term_root_paths.len() >= MAX_ROOT_PATHS {
+                    break; // Found maximum number of root types
+                }
+
+                let current_type = match current_path.types.last() {
+                    Some(t) => t.to_string(),
+                    None => {
+                        return Err(SearchError::DocumentError(
+                            "Path has no types; cannot determine current type".to_string(),
+                        ));
+                    }
+                };
+
+                // Avoid cycles
+                if visited.contains(&current_type) {
+                    continue;
+                }
+                visited.insert(current_type.clone());
+
+                // Create a query to find the document for the current type
+                let term = Term::from_field_text(raw_type_name_field, current_type.as_str());
+                let type_query = TermQuery::new(term, IndexRecordOption::Basic);
+                let type_search = searcher.search(&type_query, &TopDocs::with_limit(1))?;
+                let current_type_doc: Option<TantivyDocument> = type_search
+                    .first()
+                    .and_then(|(_, type_doc_address)| searcher.doc(*type_doc_address).ok());
+
+                let referencing_types: Vec<String> = if let Some(type_doc) = current_type_doc {
+                    type_doc
+                        .get_all(referencing_types_field)
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                } else {
+                    // println!("TYPE NOT FOUND: {current_type}"); // TODO
+                    Vec::new()
+                };
+
+                // The score of each type in the root path contributes to the total score of the path
+                // TODO: tweak this a bit - longer paths are still getting ranked higher in some cases, and short paths have very small values
+                //  On the other hand, long paths with exact matches also get played down
+
+                if let Some(score) = scores.get(&current_type) {
+                    root_path_score += 0.25f32 * *score;
+                }
+
+                if referencing_types.is_empty() {
+                    // This is a root type (no referencing types)
+                    let mut root_path = current_path;
+                    root_path.types.reverse();
+                    // reduce root path score based on length
+                    // TODO: make this relative to other paths? maybe do this at the end and normalize based on path length distribution?
+                    // TODO: very deep type hierarchies could underflow
+                    root_path_score *= 0.8f32.powf((root_path.types.len() - 1) as f32);
+                    root_paths.insert(Scored::new(root_path.clone(), root_path_score));
+                    term_root_paths.push(root_path);
+                } else {
+                    // Continue traversing up to a root type
+                    for ref_type in referencing_types {
+                        if !visited.contains(&ref_type) {
+                            let mut new_types = current_path.types.clone();
+                            new_types.push(Cow::Owned(NamedType::new_unchecked(&ref_type)));
+                            let new_path = RootPath { types: new_types };
+                            queue.push_back(new_path);
+                        }
+                    }
+                }
+            }
+        }
+
+        // TODO: add fields to the path so we can include just the relevant fields for non-leaf types?
+
+        // Sort by score
+        let mut root_paths = root_paths.into_iter().collect::<Vec<_>>();
+        root_paths.sort_by(|a, b| {
+            b.score()
+                .partial_cmp(&a.score())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        Ok(root_paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use insta::assert_snapshot;
+    use rstest::{fixture, rstest};
+
+    const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
+
+    #[fixture]
+    fn schema() -> Valid<Schema> {
+        Schema::parse(TEST_SCHEMA, "schema.graphql")
+            .expect("Failed to parse test schema")
+            .validate()
+            .expect("Failed to validate test schema")
+    }
+
+    #[rstest]
+    fn test_search(schema: Valid<Schema>) {
+        let search =
+            SchemaIndex::new(&schema, OperationType::Query | OperationType::Mutation).unwrap();
+
+        let results = search.search(vec!["dimensions".to_string()]).unwrap();
+
+        assert_snapshot!(
+            results
+                .iter()
+                .take(10) // Limit to top 10 results for snapshot
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
+}

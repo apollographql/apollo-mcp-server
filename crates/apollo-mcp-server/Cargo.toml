@@ -10,9 +10,9 @@ anyhow = "1.0.98"
 apollo-compiler.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
+apollo-schema-index = { path = "../apollo-schema-index" }
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
-enumset = "1.1.6"
 futures.workspace = true
 lz-str = "0.2.1"
 regex = "1.11.1"
@@ -24,18 +24,16 @@ rmcp = { version = "0.1", features = [
   "transport-streamable-http-server",
 ] }
 serde.workspace = true
-tantivy = "0.24.1"
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"
 url.workspace = true
-itertools = "0.14.0"
 
 [dev-dependencies]
-insta = { workspace = true }
-rstest = "0.25.0"
+insta.workspace = true
+rstest.workspace = true
 tracing-test = "0.2.5"
 
 [lints]

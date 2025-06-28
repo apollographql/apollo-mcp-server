@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/apollo-mcp-server", "crates/apollo-mcp-registry"]
+members = ["crates/apollo-mcp-server", "crates/apollo-mcp-registry", "crates/apollo-schema-index"]
 
 [workspace.package]
 authors = ["Apollo <opensource@apollographql.com>"]
@@ -21,6 +21,7 @@ reqwest = { version = "0.12.15", default-features = false, features = [
   "json",
   "native-tls-vendored",
 ] }
+rstest = "0.25.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"

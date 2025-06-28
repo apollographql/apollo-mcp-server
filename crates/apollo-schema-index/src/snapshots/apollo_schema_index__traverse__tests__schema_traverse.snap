@@ -1,9 +1,16 @@
 ---
-source: crates/apollo-mcp-server/src/introspection/tools/search.rs
+source: crates/apollo-schema-index/src/traverse.rs
 expression: paths
 ---
 [
     "Query",
+    "Query -> NotificationFilter",
+    "Query -> NotificationFilter -> DateTime",
+    "Query -> NotificationFilter -> NotificationPriority",
+    "Query -> PostFilter",
+    "Query -> PostFilter -> DateRangeInput",
+    "Query -> PostFilter -> DateRangeInput -> DateTime",
+    "Query -> PostFilter -> ContentStatus",
     "Query -> SearchResult",
     "Query -> SearchResult -> Tag",
     "Query -> SearchResult -> Tag -> Post",
@@ -49,6 +56,21 @@ expression: paths
     "Query -> Node",
     "Query -> Node -> DateTime",
     "Mutation",
+    "Mutation -> UserPreferencesInput",
+    "Mutation -> UserPreferencesInput -> PrivacySettingsInput",
+    "Mutation -> UserPreferencesInput -> NotificationPreferencesInput",
+    "Mutation -> Upload",
+    "Mutation -> CreateCommentInput",
+    "Mutation -> UpdatePostInput",
+    "Mutation -> UpdatePostInput -> ContentStatus",
+    "Mutation -> CreatePostInput",
+    "Mutation -> CreatePostInput -> Upload",
+    "Mutation -> CreatePostInput -> ContentStatus",
+    "Mutation -> CreateUserInput",
+    "Mutation -> CreateUserInput -> CreateUserProfileInput",
+    "Mutation -> CreateUserInput -> CreateUserProfileInput -> CreateLocationInput",
+    "Mutation -> CreateUserInput -> CreateUserProfileInput -> CreateLocationInput -> CreateCoordinatesInput",
+    "Mutation -> CreateUserInput -> UserRole",
     "Mutation -> UserPreferences",
     "Mutation -> Media",
     "Mutation -> Comment",

@@ -1,0 +1,20 @@
+transport:
+  type: streamable_http
+  port: 5000
+  address: 127.0.0.1
+overrides:
+  disable_type_description: false
+  disable_schema_description: false
+  enable_introspection: true
+  enable_explorer: false
+  mutation_mode: none
+endpoint: http://127.0.0.1:4000
+operations:
+  type: unspecified
+schema:
+  type: uplink
+graphos:
+  apollo_key: service:mcp-example:QSKGKKgfLu-3MXKNWdD34w
+  apollo_graph_ref: mcp-example@mcp
+  apollo_registry_url:
+  uplink_endpoints:

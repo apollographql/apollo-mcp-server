@@ -203,19 +203,17 @@ dependencies = [
  "apollo-compiler",
  "apollo-federation",
  "apollo-mcp-registry",
+ "apollo-schema-index",
  "bon",
  "clap",
- "enumset",
  "futures",
  "insta",
- "itertools",
  "lz-str",
  "regex",
  "reqwest",
  "rmcp",
  "rstest",
  "serde",
- "tantivy",
  "thiserror 2.0.12",
  "tokio",
  "tokio-util",
@@ -234,6 +232,21 @@ dependencies = [
  "memchr",
  "rowan",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "apollo-schema-index"
+version = "0.4.2"
+dependencies = [
+ "apollo-compiler",
+ "enumset",
+ "insta",
+ "itertools",
+ "rstest",
+ "tantivy",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -2,44 +2,11 @@
 source: crates/apollo-mcp-server/src/introspection/tools/search.rs
 expression: content
 ---
-scalar DateTime
-
-scalar JSON
-
-scalar Upload
-
 enum UserRole {
   ADMIN
   MODERATOR
   USER
   GUEST
-}
-
-enum ContentStatus {
-  DRAFT
-  PUBLISHED
-  ARCHIVED
-  DELETED
-}
-
-enum NotificationPriority {
-  LOW
-  MEDIUM
-  HIGH
-  URGENT
-}
-
-enum MediaType {
-  IMAGE
-  VIDEO
-  AUDIO
-  DOCUMENT
-}
-
-interface Node {
-  id: ID!
-  createdAt: DateTime!
-  updatedAt: DateTime!
 }
 
 type User implements Node {
@@ -54,15 +21,6 @@ type User implements Node {
   comments: [Comment!]!
   notifications: [Notification!]!
   preferences: UserPreferences!
-}
-
-type UserProfile {
-  firstName: String
-  lastName: String
-  bio: String
-  avatar: Media
-  socialLinks: [SocialLink!]!
-  location: Location
 }
 
 type Post implements Node & Content {
@@ -101,21 +59,6 @@ type Media {
   uploader: User!
 }
 
-type MediaMetadata {
-  size: Int!
-  format: String!
-  dimensions: Dimensions
-  duration: Int
-}
-
-type Tag {
-  id: ID!
-  name: String!
-  slug: String!
-  description: String
-  posts: [Post!]!
-}
-
 type Reaction {
   id: ID!
   type: String!
@@ -133,59 +76,6 @@ type Notification {
   read: Boolean!
   createdAt: DateTime!
   metadata: JSON
-}
-
-type PostAnalytics {
-  views: Int!
-  likes: Int!
-  shares: Int!
-  comments: Int!
-  engagement: Float!
-  demographics: Demographics!
-}
-
-type UserPreferences {
-  theme: String!
-  language: String!
-  notifications: NotificationPreferences!
-  privacy: PrivacySettings!
-}
-
-input CreateUserInput {
-  username: String!
-  email: String!
-  password: String!
-  role: UserRole = USER
-  profile: CreateUserProfileInput
-}
-
-input CreatePostInput {
-  title: String!
-  content: String!
-  status: ContentStatus = DRAFT
-  tags: [String!]
-  media: [Upload!]
-}
-
-input UpdatePostInput {
-  title: String
-  content: String
-  status: ContentStatus
-  tags: [String!]
-}
-
-input CreateCommentInput {
-  content: String!
-  postId: ID!
-  parentCommentId: ID
-}
-
-input NotificationFilter {
-  priority: NotificationPriority
-  read: Boolean
-  type: String
-  startDate: DateTime
-  endDate: DateTime
 }
 
 type Query {
@@ -206,20 +96,4 @@ type Mutation {
   deletePost(id: ID!): Boolean!
   uploadMedia(file: Upload!): Media!
   updateUserPreferences(id: ID!, preferences: UserPreferencesInput!): UserPreferences!
-}
-
-union SearchResult = User | Post | Comment | Tag
-
-input PostFilter {
-  status: ContentStatus
-  authorId: ID
-  tags: [String!]
-  dateRange: DateRangeInput
-}
-
-input UserPreferencesInput {
-  theme: String
-  language: String
-  notifications: NotificationPreferencesInput
-  privacy: PrivacySettingsInput
 }
