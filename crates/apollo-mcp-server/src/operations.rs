@@ -434,23 +434,19 @@ pub fn operation_defs(
     Ok(Some((document, operation, comments.map(|c| c.to_string()))))
 }
 
-pub fn extract_and_format_overridden_variable_description(string: &str) -> Option<String> {
-    let start = string.find('#')? + 1;
-    let end = string.rfind('\n')?;
+pub fn extract_and_format_comments(comments: Option<String>) -> Option<String> {
+    comments.and_then(|comments| {
+        let content = Regex::new(r"(\n|^)\s*#")
+            .ok()?
+            .replace_all(comments.as_str(), "$1");
+        let trimmed = content.trim();
 
-    if start <= end {
-        let substring = string[start..end].trim().to_string();
-        // Join multi-line comments into one line and remove any extra whitespaces
-        Some(
-            substring
-                .replace(['\n', '#'], "")
-                .split_whitespace()
-                .collect::<Vec<&str>>()
-                .join(" "),
-        )
-    } else {
-        None
-    }
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 pub fn variable_description_overrides(
@@ -458,30 +454,28 @@ pub fn variable_description_overrides(
     operation_definition: &Node<OperationDefinition>,
 ) -> HashMap<String, String> {
     let mut argument_overrides_map: HashMap<String, String> = HashMap::new();
-    let mut last_offset: Option<usize> = Some(0);
+    let mut last_offset = operation_definition
+        .name
+        .clone()
+        .and_then(|n| n.location())
+        .and_then(|span| {
+            source_text[span.end_offset()..]
+                .find('(')
+                .map(|i| i + 1 + span.end_offset())
+        });
     operation_definition
         .variables
         .iter()
         .for_each(|v| match v.location() {
             Some(source_span) => {
-                let mut substring = last_offset
-                    .map(|start_offset| &source_text[start_offset..source_span.end_offset()]);
+                let comment = last_offset
+                    .map(|start_offset| &source_text[start_offset..source_span.offset()]);
 
-                // If the offset is 0 then we just started processing and the first location is
-                // operation name so look for the opening parens which indicates the start of the
-                // variables arguments and use this as the starting offset instead.
-                if last_offset == Some(0) {
-                    last_offset = substring.unwrap_or_default().rfind('(').map(|i| i + 1);
-                    substring = last_offset
-                        .map(|start_offset| &source_text[start_offset..source_span.end_offset()]);
-                }
-
-                if let Some(description) = substring.filter(|d| !d.is_empty()) {
+                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#')) {
                     if let Some(description) =
-                        extract_and_format_overridden_variable_description(description)
+                        extract_and_format_comments(Some(description.to_string()))
                     {
-                        argument_overrides_map
-                            .insert(v.name.to_string(), description.trim().to_string());
+                        argument_overrides_map.insert(v.name.to_string(), description);
                     }
                 }
 
@@ -574,18 +568,7 @@ impl Operation {
         disable_type_description: bool,
         disable_schema_description: bool,
     ) -> String {
-        let comment_description = comments.and_then(|comments| {
-            let content = Regex::new(r"(\n|^)\s*#")
-                .ok()?
-                .replace_all(comments.as_str(), "$1");
-            let trimmed = content.trim();
-
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
+        let comment_description = extract_and_format_comments(comments);
 
         match comment_description {
             Some(description) => description,
@@ -3061,7 +3044,7 @@ mod tests {
           "type": "object",
           "properties": {
             "idArg": {
-              "description": "id comment override multi-line comment",
+              "description": "id comment override\n multi-line comment",
               "type": "string"
             }
           }
