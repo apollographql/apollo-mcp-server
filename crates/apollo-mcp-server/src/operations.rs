@@ -440,6 +440,7 @@ pub fn extract_and_format_overridden_variable_description(string: &str) -> Optio
 
     if start <= end {
         let substring = string[start..end].trim().to_string();
+        // Join multi-line comments into one line and remove any extra whitespaces
         Some(
             substring
                 .replace(['\n', '#'], "")
