@@ -467,6 +467,9 @@ pub fn variable_description_overrides(
                 let mut substring = last_offset
                     .map(|start_offset| &source_text[start_offset..source_span.end_offset()]);
 
+                // If the offset is 0 then we just started processing and the first location is 
+                // operation name so look for the opening parens which indicates the start of the 
+                // variables arguments and use this as the starting offset instead.
                 if last_offset == Some(0) {
                     last_offset = substring.unwrap_or_default().rfind('(').map(|i| i + 1);
                     substring = last_offset
