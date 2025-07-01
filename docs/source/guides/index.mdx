@@ -229,6 +229,12 @@ npx @modelcontextprotocol/inspector
 
 1. Click **Connect** and **List Tools**. You should see the tools for the operations you provided.
 
+#### MCP Inspector Connection Issues
+- **Error**: "Failed to connect to server"
+  - Solution: Ensure the MCP server is running (check terminal output)
+  - Solution: Verify you're using the correct URL (`http://127.0.0.1:5000/mcp`)
+  - Solution: Check if your firewall is blocking the connection
+
 ## Custom scalars configuration
 
 You can specify a custom scalars configuration JSON file to map a custom scalar to a [JSON schema type](https://json-schema.org/understanding-json-schema/reference/type). The JSON file is an object with custom scalar names as keys and JSON schema types as values:
