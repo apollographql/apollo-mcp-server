@@ -449,20 +449,33 @@ pub fn extract_and_format_comments(comments: Option<String>) -> Option<String> {
     })
 }
 
+pub fn find_opening_parens_offset(
+    source_text: &str,
+    operation_definition: &Node<OperationDefinition>,
+) -> Option<usize> {
+    let regex = match Regex::new(r"(?m)^\s*\(") {
+        Ok(regex) => regex,
+        Err(_) => return None,
+    };
+
+    operation_definition
+        .name
+        .as_ref()
+        .and_then(|n| n.location())
+        .map(|span| {
+            regex
+                .find(source_text[span.end_offset()..].as_ref())
+                .map(|m| m.start() + m.len() + span.end_offset())
+                .unwrap_or(0)
+        })
+}
+
 pub fn variable_description_overrides(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
 ) -> HashMap<String, String> {
     let mut argument_overrides_map: HashMap<String, String> = HashMap::new();
-    let mut last_offset = operation_definition
-        .name
-        .clone()
-        .and_then(|n| n.location())
-        .and_then(|span| {
-            source_text[span.end_offset()..]
-                .find('(')
-                .map(|i| i + 1 + span.end_offset())
-        });
+    let mut last_offset = find_opening_parens_offset(source_text, operation_definition);
     operation_definition
         .variables
         .iter()
@@ -3048,6 +3061,99 @@ mod tests {
               "type": "string"
             }
           }
+        }
+        "###);
+    }
+
+    #[test]
+    fn comment_with_parens_has_comments_extracted_correctly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName # a comment (with parens)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override\n multi-line comment",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn multiline_comment_with_odd_spacing_and_parens_has_comments_extracted_correctly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override\n multi-line comment",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn operation_with_no_variables_is_handled_properly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName { customQuery(id: \"123\") { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object"
         }
         "###);
     }
