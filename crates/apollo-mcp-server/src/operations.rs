@@ -436,7 +436,7 @@ pub fn operation_defs(
 
 pub fn extract_and_format_comments(comments: Option<String>) -> Option<String> {
     comments.and_then(|comments| {
-        let content = Regex::new(r"(\n|^)\s*#")
+        let content = Regex::new(r"(\n|^)\s*,*\s*#")
             .ok()?
             .replace_all(comments.as_str(), "$1");
         let trimmed = content.trim();
@@ -3102,7 +3102,7 @@ mod tests {
     fn multiline_comment_with_odd_spacing_and_parens_has_comments_extracted_correctly() {
         let operation = Operation::from_document(
             RawOperation {
-                source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID\n, \n# a flag\n$flag: Boolean) { customQuery(id: $idArg, skip: $flag) { id } }".to_string(),
                 persisted_query_id: None,
                 headers: None,
                 variables: None,
@@ -3122,6 +3122,10 @@ mod tests {
         {
           "type": "object",
           "properties": {
+            "flag": {
+              "description": "a flag",
+              "type": "boolean"
+            },
             "idArg": {
               "description": "id comment override\n multi-line comment",
               "type": "string"
