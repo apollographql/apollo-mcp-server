@@ -593,7 +593,7 @@ impl ServerHandler for Running {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         if request.name == INTROSPECT_TOOL_NAME {
             self.introspect_tool
@@ -608,10 +608,18 @@ impl ServerHandler for Running {
                 .execute(convert_arguments(request)?)
                 .await
         } else {
+            let mut headers = self.headers.clone();
+
+            if let Some(http_request_part) = context.extensions.get::<axum::http::request::Parts>()
+            {
+                if let Some(auth_header) = http_request_part.headers.get("authorization") {
+                    headers.insert("authorization", auth_header.clone());
+                }
+            }
             let graphql_request = graphql::Request {
                 input: Value::from(request.arguments.clone()),
                 endpoint: &self.endpoint,
-                headers: self.headers.clone(),
+                headers,
             };
             if request.name == EXECUTE_TOOL_NAME {
                 self.execute_tool
