@@ -2,10 +2,15 @@ use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, future, stream};
+use reqwest::header::HeaderMap;
 
-use crate::errors::{OperationError, ServerError};
+use crate::{
+    custom_scalar_map::CustomScalarMap,
+    errors::{OperationError, ServerError},
+    operations::MutationMode,
+};
 
-use super::{Server, ServerEvent};
+use super::{Server, ServerEvent, Transport};
 
 mod configuring;
 mod operations_configured;
@@ -21,6 +26,19 @@ use starting::Starting;
 
 pub(super) struct StateMachine {}
 
+/// Common configuration options for the states
+struct Config {
+    transport: Transport,
+    endpoint: String,
+    headers: HeaderMap,
+    introspection: bool,
+    explorer_graph_ref: Option<String>,
+    custom_scalar_map: Option<CustomScalarMap>,
+    mutation_mode: MutationMode,
+    disable_type_description: bool,
+    disable_schema_description: bool,
+}
+
 impl StateMachine {
     pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
         let schema_stream = server
@@ -33,15 +51,17 @@ impl StateMachine {
         let mut stream = stream::select_all(vec![schema_stream, operation_stream, ctrl_c_stream]);
 
         let mut state = State::Configuring(Configuring {
-            transport: server.transport,
-            endpoint: server.endpoint,
-            headers: server.headers,
-            introspection: server.introspection,
-            explorer_graph_ref: server.explorer_graph_ref,
-            custom_scalar_map: server.custom_scalar_map,
-            mutation_mode: server.mutation_mode,
-            disable_type_description: server.disable_type_description,
-            disable_schema_description: server.disable_schema_description,
+            config: Config {
+                transport: server.transport,
+                endpoint: server.endpoint,
+                headers: server.headers,
+                introspection: server.introspection,
+                explorer_graph_ref: server.explorer_graph_ref,
+                custom_scalar_map: server.custom_scalar_map,
+                mutation_mode: server.mutation_mode,
+                disable_type_description: server.disable_type_description,
+                disable_schema_description: server.disable_schema_description,
+            },
         });
 
         while let Some(event) = stream.next().await {

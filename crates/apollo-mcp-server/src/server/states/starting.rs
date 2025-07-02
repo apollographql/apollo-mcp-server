@@ -1,7 +1,6 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
-use reqwest::header::HeaderMap;
 use rmcp::{
     ServiceExt as _,
     transport::{
@@ -14,7 +13,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::{
-    custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
     explorer::Explorer,
     introspection::tools::{execute::Execute, introspect::Introspect},
@@ -22,20 +20,12 @@ use crate::{
     server::Transport,
 };
 
-use super::Running;
+use super::{Config, Running};
 
 pub(super) struct Starting {
-    pub(super) transport: Transport,
+    pub(super) config: Config,
     pub(super) schema: Valid<Schema>,
     pub(super) operations: Vec<RawOperation>,
-    pub(super) endpoint: String,
-    pub(super) headers: HeaderMap,
-    pub(super) introspection: bool,
-    pub(super) explorer_graph_ref: Option<String>,
-    pub(super) custom_scalar_map: Option<CustomScalarMap>,
-    pub(super) mutation_mode: MutationMode,
-    pub(super) disable_type_description: bool,
-    pub(super) disable_schema_description: bool,
 }
 
 impl Starting {
@@ -48,10 +38,10 @@ impl Starting {
             .map(|operation| {
                 operation.into_operation(
                     &self.schema,
-                    self.custom_scalar_map.as_ref(),
-                    self.mutation_mode,
-                    self.disable_type_description,
-                    self.disable_schema_description,
+                    self.config.custom_scalar_map.as_ref(),
+                    self.config.mutation_mode,
+                    self.config.disable_type_description,
+                    self.config.disable_schema_description,
                 )
             })
             .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
@@ -65,9 +55,13 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self.introspection.then(|| Execute::new(self.mutation_mode));
+        let execute_tool = self
+            .config
+            .introspection
+            .then(|| Execute::new(self.config.mutation_mode));
 
         let root_query_type = self
+            .config
             .introspection
             .then(|| {
                 self.schema
@@ -77,9 +71,10 @@ impl Starting {
             })
             .flatten();
         let root_mutation_type = self
+            .config
             .introspection
             .then(|| {
-                matches!(self.mutation_mode, MutationMode::All)
+                matches!(self.config.mutation_mode, MutationMode::All)
                     .then(|| {
                         self.schema
                             .root_operation(OperationType::Mutation)
@@ -91,30 +86,31 @@ impl Starting {
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
         let introspect_tool = self
+            .config
             .introspection
             .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
 
-        let explorer_tool = self.explorer_graph_ref.map(Explorer::new);
+        let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);
 
         let cancellation_token = CancellationToken::new();
 
         let running = Running {
             schema,
             operations: Arc::new(Mutex::new(operations)),
-            headers: self.headers,
-            endpoint: self.endpoint,
+            headers: self.config.headers,
+            endpoint: self.config.endpoint,
             execute_tool,
             introspect_tool,
             explorer_tool,
-            custom_scalar_map: self.custom_scalar_map,
+            custom_scalar_map: self.config.custom_scalar_map,
             peers,
             cancellation_token: cancellation_token.clone(),
-            mutation_mode: self.mutation_mode,
-            disable_type_description: self.disable_type_description,
-            disable_schema_description: self.disable_schema_description,
+            mutation_mode: self.config.mutation_mode,
+            disable_type_description: self.config.disable_type_description,
+            disable_schema_description: self.config.disable_schema_description,
         };
 
-        match self.transport {
+        match self.config.transport {
             Transport::StreamableHttp { address, port } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
