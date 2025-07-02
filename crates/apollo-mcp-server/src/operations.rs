@@ -35,11 +35,9 @@ use rmcp::{
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use apollo_compiler::parser::SourceSpan;
 use tracing::{debug, info, warn};
 
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
@@ -457,14 +455,20 @@ pub fn variable_description_overrides(
         .map_err(|e| OperationError::GraphQLDocument(Box::new(e)))?;
     let mut argument_overrides_map: HashMap<String, String> = HashMap::new();
     let mut last_offset: Option<usize> = Some(0);
-    let operation_definitions  = document.definitions.iter().filter_map(|def| def.as_operation_definition());
+    let operation_definitions = document
+        .definitions
+        .iter()
+        .filter_map(|def| def.as_operation_definition());
     operation_definitions.for_each(|def| {
         def.variables.iter().for_each(|v| {
             if let Some(source_span) = v.location() {
-                let description = last_offset.map(|start_offset| &source_text[start_offset..source_span.offset()]);
+                let description = last_offset
+                    .map(|start_offset| &source_text[start_offset..source_span.offset()]);
                 if let Some(description) = description.filter(|d| !d.is_empty()) {
-                    if let Some(description) = extract_overridden_variable_description(description) {
-                        argument_overrides_map.insert(v.name.to_string(), description.trim().to_string());
+                    if let Some(description) = extract_overridden_variable_description(description)
+                    {
+                        argument_overrides_map
+                            .insert(v.name.to_string(), description.trim().to_string());
                     }
                 }
 
@@ -490,7 +494,8 @@ impl Operation {
             mutation_mode != MutationMode::None,
             raw_operation.source_path.clone(),
         )? {
-            let variable_description_overrides = variable_description_overrides(&raw_operation.source_text);
+            let variable_description_overrides =
+                variable_description_overrides(&raw_operation.source_text)?.unwrap_or_default();
             let operation_name = operation_name(&operation, raw_operation.source_path.clone())?;
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
@@ -507,7 +512,7 @@ impl Operation {
             let object = serde_json::to_value(get_json_schema(
                 &operation,
                 tree_shaker.argument_descriptions(),
-                variable_description_overrides,
+                &variable_description_overrides,
                 graphql_schema,
                 custom_scalar_map,
                 raw_operation.variables.as_ref(),
@@ -726,13 +731,15 @@ fn get_json_schema(
             .map(|o| o.contains_key(&variable_name))
             .unwrap_or_default()
         {
-            let description: Option<String> = match argument_descriptions_overrides.get(&variable_name) {
-                Some(description) => Some(description.clone()),
-                None => schema_argument_descriptions
+            // use overridden description if there is one, otherwise use the schema description
+            let description: Option<String> =
+                match argument_descriptions_overrides.get(&variable_name) {
+                    Some(description) => Some(description.clone()),
+                    None => schema_argument_descriptions
                         .get(&variable_name)
                         .filter(|d| !d.is_empty())
-                        .map(|d| d.join("#"))
-            };
+                        .map(|d| d.join("#")),
+                };
 
             let schema = type_to_schema(
                 description,
@@ -2979,5 +2986,38 @@ mod tests {
 
         let op_details = operation.operation(Value::Null).unwrap();
         assert_eq!(op_details.operation_name, Some(String::from("CreateUser")));
+    }
+
+    #[test]
+    fn operation_variable_comments_override_schema_descriptions() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "# operation description\nquery QueryName(# id comment override\n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override",
+              "type": "string"
+            }
+          }
+        }
+        "###);
     }
 }
