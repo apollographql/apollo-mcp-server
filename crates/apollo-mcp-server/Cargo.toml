@@ -24,6 +24,7 @@ rmcp = { version = "0.1", features = [
   "transport-streamable-http-server",
 ] }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

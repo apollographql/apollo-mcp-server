@@ -1,14 +1,15 @@
 //! Tree shaking for GraphQL schemas
 
 use apollo_compiler::ast::{
-    Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
+    Argument, Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
     FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition, ObjectTypeDefinition,
     OperationDefinition, OperationType, ScalarTypeDefinition, SchemaDefinition, Selection,
     UnionTypeDefinition,
 };
 use apollo_compiler::schema::ExtendedType;
+use apollo_compiler::schema::InputValueDefinition;
 use apollo_compiler::validation::WithErrors;
-use apollo_compiler::{Node, Schema};
+use apollo_compiler::{Name, Node, Schema};
 use std::collections::HashMap;
 
 struct RootOperationNames {
@@ -16,6 +17,7 @@ struct RootOperationNames {
     mutation: String,
     subscription: String,
 }
+
 impl RootOperationNames {
     fn operation_name(
         operation_type: OperationType,
@@ -78,6 +80,7 @@ pub struct SchemaTreeShaker<'schema> {
     operation_types: Vec<OperationType>,
     operation_type_names: RootOperationNames,
     named_fragments: HashMap<String, Node<FragmentDefinition>>,
+    arguments_descriptions: HashMap<String, Vec<String>>,
 }
 
 struct TreeTypeNode {
@@ -91,6 +94,10 @@ struct TreeDirectiveNode<'schema> {
 }
 
 impl<'schema> SchemaTreeShaker<'schema> {
+    pub(crate) fn argument_descriptions(&self) -> &HashMap<String, Vec<String>> {
+        &self.arguments_descriptions
+    }
+
     pub fn new(schema: &'schema Schema) -> Self {
         let mut named_type_nodes: HashMap<String, TreeTypeNode> = HashMap::default();
         let mut directive_nodes: HashMap<String, TreeDirectiveNode> = HashMap::default();
@@ -133,6 +140,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             operation_types: Vec::default(),
             named_fragments: HashMap::default(),
             operation_type_names: RootOperationNames::new(schema),
+            arguments_descriptions: HashMap::default(),
         }
     }
 
@@ -511,6 +519,33 @@ fn selection_set_to_fields(
     }
 }
 
+fn retain_argument_descriptions(
+    tree_shaker: &mut SchemaTreeShaker,
+    arg: &Node<InputValueDefinition>,
+    operation_arguments: &HashMap<&str, &Name>,
+) {
+    let operation_argument_name = operation_arguments.get(arg.name.as_str());
+
+    if let Some(op_arg_name) = operation_argument_name {
+        if let Some(description) = arg.description.as_deref() {
+            if !description.trim().is_empty() {
+                let descriptions = tree_shaker
+                    .arguments_descriptions
+                    .entry(op_arg_name.to_string())
+                    .or_default();
+                descriptions.push(description.trim().to_string())
+            }
+        }
+    }
+}
+
+fn build_argument_name_to_value_map(arguments: &[Node<Argument>]) -> HashMap<&str, &Name> {
+    arguments
+        .iter()
+        .filter_map(|a| a.value.as_variable().map(|v| (a.name.as_str(), v)))
+        .collect::<HashMap<_, _>>()
+}
+
 fn retain_type(
     tree_shaker: &mut SchemaTreeShaker,
     extended_type: &ExtendedType,
@@ -579,6 +614,7 @@ fn retain_type(
                                 def.fields.get(field.name.as_str()),
                                 Some(&field.directives),
                                 Some(&field.selection_set),
+                                build_argument_name_to_value_map(&field.arguments),
                             )
                         })
                         .collect::<Vec<_>>()
@@ -587,7 +623,13 @@ fn retain_type(
                     def.fields
                         .iter()
                         .map(|(name, field_definition)| {
-                            (name.as_str(), Some(field_definition), None, None)
+                            (
+                                name.as_str(),
+                                Some(field_definition),
+                                None,
+                                None,
+                                HashMap::default(),
+                            )
                         })
                         .collect::<Vec<_>>(),
                 )
@@ -598,6 +640,7 @@ fn retain_type(
                         field_definition,
                         field_selection_directives,
                         field_selection_set,
+                        field_arguments,
                     )| {
                         if let Some(field_type) = field_definition {
                             let field_type_name = field_type.ty.inner_named_type();
@@ -615,6 +658,8 @@ fn retain_type(
                             }
 
                             field_type.arguments.iter().for_each(|arg| {
+                                retain_argument_descriptions(tree_shaker, arg, &field_arguments);
+
                                 let arg_type_name = arg.ty.inner_named_type();
                                 if let Some(arg_type) = tree_shaker.schema.types.get(arg_type_name)
                                 {
@@ -644,6 +689,22 @@ fn retain_type(
                         }
                         if let Some(field_selection_directives) = field_selection_directives {
                             field_selection_directives.iter().for_each(|directive| {
+                                if let Some(directive_definition) = tree_shaker
+                                    .schema
+                                    .directive_definitions
+                                    .get(&directive.name)
+                                {
+                                    let directive_args_map =
+                                        build_argument_name_to_value_map(&directive.arguments);
+                                    directive_definition.arguments.iter().for_each(|arg| {
+                                        retain_argument_descriptions(
+                                            tree_shaker,
+                                            arg,
+                                            &directive_args_map,
+                                        );
+                                    });
+                                }
+
                                 retain_directive(tree_shaker, directive.name.as_str(), depth_limit);
                             })
                         }
@@ -1178,5 +1239,163 @@ mod test {
             shaker.shaken().unwrap().to_string(),
             "input Filter {\n  field: String\n  filter: Filter\n}\n\ntype Query {\n  field(filter: Filter): String\n}\n"
         );
+    }
+
+    #[test]
+    fn should_retain_field_argument_descriptions() {
+        let source_text = r#"
+            type Query {
+                someQuery(""" an id """ id: ID!, """ other arg """ other: String): OutoutType
+            }
+
+            type OutoutType {
+                value: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query TestQuery($id1: ID, $other: String) { \
+                someQuery(id: $id1, other: $other, otherArg: $other) { \
+                    value
+                }
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let id_description = shaker.arguments_descriptions.get("id1");
+        let other_description = shaker.arguments_descriptions.get("other");
+
+        assert_eq!(shaker.arguments_descriptions.len(), 2);
+        assert!(id_description.is_some());
+        assert_eq!(*id_description.unwrap(), vec!["an id"]);
+        assert!(other_description.is_some());
+        assert_eq!(*other_description.unwrap(), vec!["other arg"]);
+    }
+
+    #[test]
+    fn should_retain_field_argument_descriptions_when_multiple_are_found() {
+        let source_text = r#"
+            type Query {
+                someQuery(""" an id """ id: ID!, """ other arg """ other: String, """ another arg """ otherArg: String): OutoutType
+                someQuery2(""" another id """ id: ID!, """ arg 2 """ other: String): OutoutType
+            }
+
+            type OutoutType {
+                value: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query TestQuery($id: ID, $other2: String) { \
+                someQuery(id: $id, other: $other2, otherArg: $other2) { \
+                    value
+                }
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let id_description = shaker.arguments_descriptions.get("id");
+        let other_description = shaker.arguments_descriptions.get("other2");
+
+        assert_eq!(shaker.arguments_descriptions.len(), 2);
+        assert!(id_description.is_some());
+        assert_eq!(*id_description.unwrap(), vec!["an id"]);
+        assert!(other_description.is_some());
+        assert_eq!(
+            *other_description.unwrap(),
+            vec!["other arg", "another arg"]
+        );
+    }
+
+    #[test]
+    fn should_retain_builtin_directive_argument_descriptions() {
+        let source_text = r#"
+            type Query {
+                someQuery(id: ID!, other: Boolean!): OutoutType
+            }
+
+            type OutoutType {
+                id: ID!
+                value: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query TestQuery($id: ID, $other: Boolean!) { \
+                someQuery(id: $id, other: $other) { \
+                    id
+                    value @skip(if: $other)
+                }
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let description = shaker.arguments_descriptions.get("other");
+
+        assert!(description.is_some());
+        assert_eq!(*description.unwrap(), vec!["Skipped when true."]);
+    }
+
+    #[test]
+    fn should_retain_custom_directive_argument_descriptions() {
+        let source_text = r#"
+            type Query {
+                someQuery(id: ID!, other: Boolean!): OutoutType
+            }
+
+            directive @x(""" the value """ value: String) on FIELD_DEFINITION
+
+            type OutoutType {
+                id: ID!
+                value: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query TestQuery($id: ID, $other: Boolean!) { \
+                someQuery(id: $id, other: $other) { \
+                    id
+                    value @x(value: $other)
+                }
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let description = shaker.arguments_descriptions.get("other");
+
+        assert!(description.is_some());
+        assert_eq!(*description.unwrap(), vec!["the value"]);
     }
 }

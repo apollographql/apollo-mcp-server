@@ -134,8 +134,8 @@ mod tests {
     use std::ops::Deref;
 
     const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
-    
-    fn content_to_snapshot(result: CallToolResult) -> String{
+
+    fn content_to_snapshot(result: CallToolResult) -> String {
         result
             .content
             .into_iter()
@@ -149,7 +149,7 @@ mod tests {
             .collect::<Vec<String>>()
             .join("\n")
     }
-    
+
     #[fixture]
     fn schema() -> Valid<Schema> {
         Schema::parse(TEST_SCHEMA, "schema.graphql")
