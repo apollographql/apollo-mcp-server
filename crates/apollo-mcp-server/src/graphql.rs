@@ -34,7 +34,7 @@ pub trait Executable {
     /// Execute as a GraphQL operation using the endpoint and headers
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let client_metadata = serde_json::json!({
-            "type": "mcp",
+            "name": "mcp",
             "version": std::env!("CARGO_PKG_VERSION")
         });
 
@@ -51,7 +51,7 @@ pub trait Executable {
                         "version": 1,
                         "sha256Hash": id,
                     },
-                    "ApolloClientMetadata": client_metadata,
+                    "clientLibrary": client_metadata,
                 }),
             );
         } else {
