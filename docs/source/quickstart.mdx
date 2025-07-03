@@ -41,7 +41,7 @@ If you learn best with videos and exercises, this [interactive course](https://w
 - Clone the [Apollo MCP Server repo](https://github.com/apollographql/apollo-mcp-server)
 - Install [Apollo Rover CLI](/rover/getting-started) v0.32 or later
 
-## Step 1: Understand the Example
+## Step 1: Understand the example
 
 This guide uses an MCP example from the Apollo MCP Server repo. The example uses APIs from [The Space Devs](https://thespacedevs.com/), and it defines a federated graph and the GraphQL operations of the graph to expose as MCP tools.
 
@@ -54,35 +54,20 @@ The example files located in `graphql/TheSpaceDevs/` include:
   - `GetAstronautsCurrentlyInSpace` - See who's in space right now
   - `SearchUpcomingLaunches` - Find upcoming rocket launches
 
-## Step 2: Run the MCP Server
+## Step 2: Run the MCP server
 
-1. From the root directory of your local repo, run `rover dev` to start a local graph with an MCP Server:
+1. From the root directory of your local Apollo MCP Server repo, run `rover dev` to start a local graph with an MCP Server:
 
     ```sh showLineNumbers=false
     rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
     --mcp \
-    --mcp-operations ./graphql/TheSpaceDevs/operations/ExploreCelestialBodies.graphql ./graphql/TheSpaceDevs/operations/GetAstronautDetails.graphql ./graphql/TheSpaceDevs/operations/GetAstronautsCurrentlyInSpace.graphql ./graphql/TheSpaceDevs/operations/SearchUpcomingLaunches.graphql
+    --mcp-operations ./graphql/TheSpaceDevs/operations
     ```
 
     This command:
     - Starts a local graph using the supergraph configuration
     - Starts an MCP Server with the `--mcp` flag
     - Exposes the specified operations as MCP tools
-
-2. Start MCP Inspector to verify the server is running:
-
-    ```sh
-    npx @modelcontextprotocol/inspector
-    ```
-
-3. Open a browser and go to [`http://127.0.0.1:6274`](http://127.0.0.1:6274)
-
-4. In Inspector:
-    - Select `Streamable HTTP` as the Transport Type
-    - Enter `http://127.0.0.1:5000/mcp` as the URL
-    - Click **Connect**, then **List Tools**
-
-    You should see the tools from your server listed.
 
 ## Step 3: Connect Claude Desktop
 
@@ -117,9 +102,9 @@ You need Node v18 or later installed for `mcp-remote` to work. If you have an ol
 
 </Note>
 
-2. Restart Claude.
+2. Restart Claude Desktop.
 
-## Step 4: Test Your Setup
+## Step 5: Test your setup
 
 Let's verify everything is working:
 
@@ -144,12 +129,6 @@ Let's verify everything is working:
 - **Error**: "Failed to load supergraph configuration"
   - Solution: Verify you're running the command from the repo root directory
   - Solution: Check that the path to `supergraph.yaml` is correct
-
-#### MCP Inspector Connection Issues
-- **Error**: "Failed to connect to server"
-  - Solution: Ensure the MCP server is running (check terminal output)
-  - Solution: Verify you're using the correct URL (`http://127.0.0.1:5000/mcp`)
-  - Solution: Check if your firewall is blocking the connection
 
 #### Claude Desktop Issues
 - **Problem**: Claude doesn't recognize the tools
@@ -210,6 +189,8 @@ You can run the MCP Server using STDIO transport instead of Streamable HTTP. Thi
     --operations operations \
     --endpoint https://thespacedevs-production.up.railway.app/
     ```
+
+For MCP Inspector connection issues check out the [user guide](/apollo-mcp-server/guides/#mcp-inspector-connection-issues).
 
 3. Configure Claude Desktop to use STDIO:
 
