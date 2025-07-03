@@ -11,6 +11,7 @@ use apollo_compiler::schema::InputValueDefinition;
 use apollo_compiler::validation::WithErrors;
 use apollo_compiler::{Name, Node, Schema};
 use std::collections::HashMap;
+use tracing::debug;
 
 struct RootOperationNames {
     query: String,
@@ -475,7 +476,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             })
             .collect();
 
-        tracing::info!("Tree shaking resulted in {} types", type_definitions.len());
+        debug!("Tree shaking resulted in {} types", type_definitions.len());
 
         let mut document = Document::new();
         document.definitions = [

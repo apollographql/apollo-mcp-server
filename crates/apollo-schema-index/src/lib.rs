@@ -19,7 +19,7 @@ use tantivy::{
     Index,
     schema::{STORED, Schema as TantivySchema},
 };
-use tracing::{Level, debug, info};
+use tracing::{Level, debug, info, warn};
 use traverse::SchemaExt;
 
 pub mod error;
@@ -63,8 +63,8 @@ impl From<OperationType> for AstOperationType {
 }
 
 pub struct Options {
-    max_type_matches: usize,
-    max_paths_per_type: usize,
+    pub max_type_matches: usize,
+    pub max_paths_per_type: usize,
 }
 
 impl Default for Options {
@@ -333,20 +333,18 @@ impl SchemaIndex {
                 let current_type_doc: Option<TantivyDocument> = type_search
                     .first()
                     .and_then(|(_, type_doc_address)| searcher.doc(*type_doc_address).ok());
-
                 let referencing_types: Vec<String> = if let Some(type_doc) = current_type_doc {
                     type_doc
                         .get_all(self.referencing_types_field)
                         .filter_map(|v| v.as_str().map(|s| s.to_string()))
                         .collect()
                 } else {
-                    // println!("TYPE NOT FOUND: {current_type}"); // TODO
+                    // This should never happen since the type was found in the schema traversal
+                    warn!(type_name = current_type, "Type not found");
                     Vec::new()
                 };
 
                 // The score of each type in the root path contributes to the total score of the path
-                // TODO: tweak this a bit - longer paths are still getting ranked higher in some cases, and short paths have very small values
-                //  On the other hand, long paths with exact matches also get played down
                 if let Some(score) = scores.get(&current_type) {
                     root_path_score += 0.25f32 * *score;
                 }
@@ -355,9 +353,7 @@ impl SchemaIndex {
                     // This is a root type (no referencing types)
                     let mut root_path = current_path.clone();
                     root_path.types.reverse();
-                    // reduce root path score based on length
-                    // TODO: make this relative to other paths? maybe do this at the end and normalize based on path length distribution?
-                    // TODO: very deep type hierarchies could underflow
+                    // Reduce the score for this path based on its length
                     root_path_score *= 0.8f32.powf((root_path.types.len() - 1) as f32);
                     root_paths.insert(Scored::new(root_path.to_owned(), root_path_score));
                     root_path_count += 1;

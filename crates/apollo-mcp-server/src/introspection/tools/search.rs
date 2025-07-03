@@ -15,6 +15,7 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
@@ -84,13 +85,15 @@ impl Search {
             })?;
 
         root_paths.truncate(10);
-        println!(
-            "\n\n\nRoot paths for search terms: {}",
-            input.terms.join(", ")
+        debug!(
+            "Root paths for search terms: {}\n{}",
+            input.terms.join(", "),
+            root_paths
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<String>>()
+                .join("\n"),
         );
-        for root_path in root_paths.iter() {
-            println!("{root_path}");
-        }
 
         let schema = self.schema.lock().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
@@ -168,7 +171,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search = Search::new(schema.clone(), true).expect("Failed to create search tool");
+        let search = Search::new(schema.clone(), false).expect("Failed to create search tool");
 
         let result = search
             .execute(Input {

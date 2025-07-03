@@ -1,6 +1,6 @@
 ---
 source: crates/apollo-mcp-server/src/introspection/tools/search.rs
-expression: content
+expression: content_to_snapshot(result)
 ---
 enum UserRole {
   ADMIN
@@ -50,15 +50,6 @@ type Comment implements Node {
   reactions: [Reaction!]!
 }
 
-type Media {
-  id: ID!
-  type: MediaType!
-  url: String!
-  thumbnail: String
-  metadata: MediaMetadata!
-  uploader: User!
-}
-
 type Reaction {
   id: ID!
   type: String!
@@ -88,12 +79,4 @@ type Query {
   search(query: String!): SearchResult!
 }
 
-type Mutation {
-  createUser(input: CreateUserInput!): User!
-  createPost(input: CreatePostInput!): Post!
-  updatePost(id: ID!, input: UpdatePostInput!): Post!
-  createComment(input: CreateCommentInput!): Comment!
-  deletePost(id: ID!): Boolean!
-  uploadMedia(file: Upload!): Media!
-  updateUserPreferences(id: ID!, preferences: UserPreferencesInput!): UserPreferences!
-}
+union SearchResult = User | Post | Comment
