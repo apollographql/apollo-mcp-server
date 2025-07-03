@@ -71,6 +71,28 @@ The `--operations` option can also be used to specify a directory. All files wit
 
 Files and directories specified with `--operations` will be hot reloaded. When specifying a file, the MCP tool will be updated when the file contents are modified. When specifying a directory, operations exposed as MCP tools will be updated when files are added, modified, or removed from the directory.
 
+### From Operation Collection
+
+For graphs managed by GraphOS, Apollo MCP Server can get operations from an [Operation Collection](https://www.apollographql.com/docs/graphos/platform/explorer/operation-collections).
+
+To use a GraphOS Operation Collection, you must:
+
+- Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
+
+Each variant will have it's own default MCP Tools Collection, but you can specify any shared collection by using `--collection <collection-id>`.
+Apollo MCP Server will automatically fetch the default collection if no id is specified. 
+
+```sh title="Example command using a GraphOS Operation Collection"
+apollo-mcp-server \
+  --directory <absolute path to this git repo> \
+  --schema graphql/weather/api.graphql \
+  --collection <collection-id> \
+  --apollo-graph-ref <graph-ref> \
+  --apollo-key <graph-key>
+```
+
+The MCP Server supports hot reloading of the GraphOS Operation Collection, so it can automatically pick up changes from GraphOS without restarting.
+
 ### From persisted query manifests
 
 Apollo MCP Server supports reading GraphQL operations from Apollo-formatted [persisted query manifest](/graphos/platform/security/persisted-queries#manifest-format) files.
