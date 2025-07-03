@@ -11,17 +11,31 @@ pub struct RootPath<'a> {
 }
 
 impl<'a> RootPath<'a> {
-    /// Create a new root path from the given types
-    pub fn new(types: Vec<&'a NamedType>) -> Self {
+    /// Create a new root path from the given type references
+    pub fn new(types: impl IntoIterator<Item = &'a NamedType>) -> Self {
         Self {
             types: types.into_iter().map(Cow::Borrowed).collect(),
         }
     }
 
-    /// Extend this path by adding a new type to the end
+    /// Create a new root path from teh given owned types
+    pub fn new_owned(types: impl IntoIterator<Item = NamedType>) -> Self {
+        Self {
+            types: types.into_iter().map(Cow::Owned).collect(),
+        }
+    }
+
+    /// Extend this path by adding a new referenced type to the end
     pub fn extend(&self, next_type: &'a NamedType) -> Self {
         let mut types = self.types.clone();
         types.push(Cow::Borrowed(next_type));
+        Self { types }
+    }
+
+    /// Extend this path by adding a new owned type to the end
+    pub fn extend_owned(&self, next_type: NamedType) -> Self {
+        let mut types = self.types.clone();
+        types.push(Cow::Owned(next_type));
         Self { types }
     }
 

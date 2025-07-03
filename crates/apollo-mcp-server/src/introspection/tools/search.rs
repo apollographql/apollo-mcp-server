@@ -6,7 +6,7 @@ use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType as AstOperationType;
 use apollo_compiler::validation::Valid;
-use apollo_schema_index::{OperationType, SchemaIndex};
+use apollo_schema_index::{OperationType, Options, SchemaIndex};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -18,6 +18,9 @@ use tokio::sync::Mutex;
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
+
+/// The depth of nested types to include for leaf nodes on matching root paths.
+pub const LEAF_DEPTH: DepthLimit = DepthLimit::Limited(1);
 
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]
@@ -69,15 +72,18 @@ impl Search {
     }
 
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
-        let mut root_paths = self.index.search(input.terms.clone()).map_err(|e| {
-            McpError::new(
-                ErrorCode::INTERNAL_ERROR,
-                format!("Failed to search index: {e}"),
-                None,
-            )
-        })?;
+        let mut root_paths = self
+            .index
+            .search(input.terms.clone(), Options::default())
+            .map_err(|e| {
+                McpError::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    format!("Failed to search index: {e}"),
+                    None,
+                )
+            })?;
 
-        root_paths.truncate(20);
+        root_paths.truncate(10);
         println!(
             "\n\n\nRoot paths for search terms: {}",
             input.terms.join(", ")
@@ -94,7 +100,7 @@ impl Search {
             for (i, type_name) in types.into_iter().enumerate() {
                 if let Some(extended_type) = schema.types.get(type_name.as_ref()) {
                     let depth = if i == path_len - 1 {
-                        DepthLimit::Limited(1) // TODO - add more information about leaf type children?
+                        LEAF_DEPTH
                     } else {
                         DepthLimit::Limited(1)
                     };
