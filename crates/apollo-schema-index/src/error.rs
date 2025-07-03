@@ -12,6 +12,4 @@ pub enum IndexingError {
 pub enum SearchError {
     #[error("Search error: {0}")]
     TantivyError(#[from] TantivyError),
-    #[error("Document error: {0}")]
-    DocumentError(String),
 }

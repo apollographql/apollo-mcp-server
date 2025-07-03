@@ -84,7 +84,7 @@ impl Search {
                 )
             })?;
 
-        root_paths.truncate(10);
+        root_paths.truncate(5);
         debug!(
             "Root paths for search terms: {}\n{}",
             input.terms.join(", "),

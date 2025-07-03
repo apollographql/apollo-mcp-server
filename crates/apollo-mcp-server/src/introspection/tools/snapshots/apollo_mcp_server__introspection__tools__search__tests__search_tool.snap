@@ -38,37 +38,6 @@ type Post implements Node & Content {
   analytics: PostAnalytics!
 }
 
-type Comment implements Node {
-  id: ID!
-  createdAt: DateTime!
-  updatedAt: DateTime!
-  content: String!
-  author: User!
-  post: Post!
-  parentComment: Comment
-  replies: [Comment!]!
-  reactions: [Reaction!]!
-}
-
-type Reaction {
-  id: ID!
-  type: String!
-  user: User!
-  comment: Comment!
-  createdAt: DateTime!
-}
-
-type Notification {
-  id: ID!
-  type: String!
-  priority: NotificationPriority!
-  message: String!
-  recipient: User!
-  read: Boolean!
-  createdAt: DateTime!
-  metadata: JSON
-}
-
 type Query {
   node(id: ID!): Node
   user(id: ID!): User
@@ -79,4 +48,4 @@ type Query {
   search(query: String!): SearchResult!
 }
 
-union SearchResult = User | Post | Comment
+union SearchResult = User | Post

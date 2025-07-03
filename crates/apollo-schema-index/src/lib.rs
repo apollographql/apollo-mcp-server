@@ -1,7 +1,27 @@
-//! Library for indexing and searching GraphQL schemas using Tantivy.
+//! Library for indexing and searching GraphQL schemas.
+//!
+//! To build the index, the types in the schema are traversed depth-first, starting with a set of
+//! supplied root types (Query, Mutation, Subscription). Each type encountered in the traversal is
+//! indexed by:
+//!
+//! * The type name
+//! * The type description
+//! * The field names
+//!
+//! Searching for a set of terms returns the top root paths to types matching the search terms.
+//! A root path is a path from a root type (Query, Mutation, or Subscription) to the type. This
+//! provides not only information about the type itself, but also how to construct a query to
+//! retrieve that type.
+//!
+//! Shorter paths are preferred by a customizable boost factor. If parent types in the path also
+//! match the search terms, a customizable portion of their scores are added to the path score.
+//! The total number of matching types considered can be customized, as can the maximum number of
+//! paths to each type (types may be reachable by more than one path - the shortest paths to root
+//! take precedence over longer paths).
 
 use apollo_compiler::Schema;
 use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
+use apollo_compiler::collections::IndexMap;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
 use enumset::{EnumSet, EnumSetType};
@@ -19,7 +39,7 @@ use tantivy::{
     Index,
     schema::{STORED, Schema as TantivySchema},
 };
-use tracing::{Level, debug, info, warn};
+use tracing::{Level, debug, error, info, warn};
 use traverse::SchemaExt;
 
 pub mod error;
@@ -63,8 +83,18 @@ impl From<OperationType> for AstOperationType {
 }
 
 pub struct Options {
+    /// The maximum number of matching schema types to include in the results
     pub max_type_matches: usize,
+
+    /// The maximum number of paths to root to include for each matching schema type
     pub max_paths_per_type: usize,
+
+    /// The boost factor applied to shorter paths to root (0.0 for no boost, 1.0 for 100% boost)
+    pub short_path_boost_factor: f32,
+
+    /// The percentage of the score of each parent type added to the overall score of the path
+    /// to root 0.0 for 0%, 1.0 for 100%)
+    pub parent_match_boost_factor: f32,
 }
 
 impl Default for Options {
@@ -72,6 +102,8 @@ impl Default for Options {
         Self {
             max_type_matches: 10,
             max_paths_per_type: 3,
+            short_path_boost_factor: 0.5,
+            parent_match_boost_factor: 0.2,
         }
     }
 }
@@ -276,8 +308,8 @@ impl SchemaIndex {
         I: IntoIterator<Item = String>,
     {
         let searcher = self.inner.reader()?.searcher();
-        let mut root_paths: HashSet<Scored<RootPath>> = Default::default();
-        let mut scores: HashMap<String, f32> = Default::default();
+        let mut root_paths: Vec<Scored<RootPath>> = Default::default();
+        let mut scores: IndexMap<String, f32> = Default::default();
 
         let query = self.query(terms);
         debug!("Index query: {:?}", query);
@@ -288,15 +320,19 @@ impl SchemaIndex {
         // Map each type name to its score
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
-            let type_name = doc
+            if let Some(type_name) = doc
                 .get_first(self.raw_type_name_field)
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    SearchError::DocumentError(
-                        "Failed to extract type name from document".to_string(),
-                    )
-                })?;
-            scores.insert(type_name.to_string(), score);
+            {
+                debug!(
+                    "Explanation for {type_name}: {:?}",
+                    query.explain(&searcher, doc_address)?
+                );
+                scores.insert(type_name.to_string(), score);
+            } else {
+                // This should never happen, since every document we add has this field defined
+                error!("Doc address {doc_address:?} missing raw type name field");
+            }
         }
 
         // For the top M types, compute the top N root paths to that type
@@ -316,13 +352,11 @@ impl SchemaIndex {
             while let Some(current_path) = queue.pop_front()
                 && root_path_count < options.max_paths_per_type
             {
-                let current_type = match current_path.types.last() {
-                    Some(t) => t.to_string(),
-                    None => {
-                        return Err(SearchError::DocumentError(
-                            "Path has no types; cannot determine current type".to_string(),
-                        ));
-                    }
+                let current_type = if let Some(current_type) = current_path.types.last() {
+                    current_type.to_string()
+                } else {
+                    // This can never really happen - every path is created with at least one type
+                    continue;
                 };
                 visited.insert(current_type.clone());
 
@@ -346,16 +380,14 @@ impl SchemaIndex {
 
                 // The score of each type in the root path contributes to the total score of the path
                 if let Some(score) = scores.get(&current_type) {
-                    root_path_score += 0.25f32 * *score;
+                    root_path_score += options.parent_match_boost_factor * *score;
                 }
 
                 if referencing_types.is_empty() {
                     // This is a root type (no referencing types)
                     let mut root_path = current_path.clone();
                     root_path.types.reverse();
-                    // Reduce the score for this path based on its length
-                    root_path_score *= 0.8f32.powf((root_path.types.len() - 1) as f32);
-                    root_paths.insert(Scored::new(root_path.to_owned(), root_path_score));
+                    root_paths.push(Scored::new(root_path.to_owned(), root_path_score));
                     root_path_count += 1;
                 } else {
                     // Continue traversing up to a root type
@@ -372,10 +404,12 @@ impl SchemaIndex {
             }
         }
 
-        // TODO: add fields to the path so we can include just the relevant fields for non-leaf types?
+        // TODO: Currently, the root paths just include type names. They should also include the
+        //  field traversed to get from parent to child type. This would allow the MCP server to
+        //  return just the fields needed to reach the leaf type, rather than all fields.
 
-        // Sort by score
-        Ok(root_paths
+        Ok(self
+            .boost_shorter_paths(root_paths, options.short_path_boost_factor)
             .into_iter()
             .sorted_by(|a, b| {
                 b.score()
@@ -385,6 +419,46 @@ impl SchemaIndex {
             .collect::<Vec<_>>())
     }
 
+    /// Apply a boost factor to shorter paths
+    fn boost_shorter_paths<'a>(
+        &self,
+        scored_paths: Vec<Scored<RootPath<'a>>>,
+        boost_factor: f32,
+    ) -> Vec<Scored<RootPath<'a>>> {
+        if scored_paths.is_empty() || boost_factor == 0f32 {
+            return scored_paths;
+        }
+
+        // Calculate the range of path lengths
+        let path_lengths: Vec<usize> = scored_paths
+            .iter()
+            .map(|scored| scored.inner.types.len())
+            .collect();
+        let min_length = *path_lengths.iter().min().unwrap_or(&1);
+        let max_length = *path_lengths.iter().max().unwrap_or(&1);
+
+        // Only apply boost if there's a range in path lengths
+        if max_length <= min_length {
+            return scored_paths;
+        }
+
+        let length_range = (max_length - min_length) as f32;
+
+        // Apply normalized boost to each path
+        scored_paths
+            .into_iter()
+            .map(|scored_path| {
+                let path_length = scored_path.inner.types.len();
+                let normalized_length = (path_length - min_length) as f32 / length_range;
+                // Boost shorter paths: 1.0 for shortest, 0.0 for longest
+                let length_boost = 1.0 - normalized_length;
+                let boosted_score = scored_path.score() * (1.0 + boost_factor * length_boost);
+                Scored::new(scored_path.inner, boosted_score)
+            })
+            .collect()
+    }
+
+    /// Create the query used to search for a given set of terms.
     fn query<I>(&self, terms: I) -> impl Query
     where
         I: IntoIterator<Item = String>,
@@ -444,7 +518,7 @@ mod tests {
         assert_snapshot!(
             results
                 .iter()
-                .take(10) // Limit to top 10 results for snapshot
+                .take(10)
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join("\n")

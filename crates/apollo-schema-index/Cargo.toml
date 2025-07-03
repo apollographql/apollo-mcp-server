@@ -18,7 +18,6 @@ tracing.workspace = true
 [dev-dependencies]
 insta.workspace = true
 rstest.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true
