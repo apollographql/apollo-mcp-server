@@ -448,7 +448,18 @@ impl Operation {
             mutation_mode != MutationMode::None,
             raw_operation.source_path.clone(),
         )? {
-            let operation_name = operation_name(&operation, raw_operation.source_path.clone())?;
+            let operation_name = match operation_name(&operation, raw_operation.source_path.clone())
+            {
+                Ok(name) => name,
+                Err(OperationError::MissingName {
+                    source_path: _,
+                    operation,
+                }) => {
+                    warn!("Skipping unnamed operation: {operation}");
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
 
@@ -1957,7 +1968,8 @@ mod tests {
     }
 
     #[test]
-    fn unnamed_operations_should_error() {
+    #[traced_test]
+    fn unnamed_operations_should_be_skipped() {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query { id }".to_string(),
@@ -1972,16 +1984,16 @@ mod tests {
             false,
             false,
         );
-        insta::assert_debug_snapshot!(operation, @r###"
-        Err(
-            MissingName {
-                source_path: Some(
-                    "operation.graphql",
-                ),
-                operation: "{ id }",
-            },
-        )
-        "###);
+        assert!(operation.unwrap().is_none());
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("Skipping unnamed operation: { id }"))
+                .then_some(())
+                .ok_or("Expected warning about unnamed operation in logs".to_string())
+        });
     }
 
     #[test]
