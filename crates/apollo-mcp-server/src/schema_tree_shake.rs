@@ -2,14 +2,16 @@
 
 use apollo_compiler::ast::{
     Argument, Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
-    FieldDefinition, FragmentDefinition, InputObjectTypeDefinition, InputValueDefinition,
-    InterfaceTypeDefinition, NamedType, ObjectTypeDefinition, OperationDefinition, OperationType,
-    ScalarTypeDefinition, SchemaDefinition, Selection, Type, UnionTypeDefinition,
+    FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition, ObjectTypeDefinition,
+    OperationDefinition, OperationType, ScalarTypeDefinition, SchemaDefinition, Selection,
+    UnionTypeDefinition,
 };
 use apollo_compiler::schema::ExtendedType;
+use apollo_compiler::schema::InputValueDefinition;
 use apollo_compiler::validation::WithErrors;
 use apollo_compiler::{Name, Node, Schema};
 use std::collections::HashMap;
+use tracing::debug;
 
 struct RootOperationNames {
     query: String,
@@ -236,7 +238,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             })
             .collect();
 
-        let type_definitions = self
+        let type_definitions: Vec<_> = self
             .schema
             .types
             .iter()
@@ -287,31 +289,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                 .collect(),
                                         },
                                     )))
-                                } else if let Some(root_op_name) =
-                                    self.schema.root_operation(OperationType::Query)
+                                } else if self.schema.root_operation(OperationType::Query).is_some()
                                 {
-                                    if *root_op_name == object_def.name {
-                                        // All schemas need a query root operation to be valid, so we add a stub one here if it's not retained
-                                        Some(Definition::ObjectTypeDefinition(Node::new(
-                                            ObjectTypeDefinition {
-                                                description: None,
-                                                directives: DirectiveList::default(),
-                                                fields: vec![Node::new(FieldDefinition {
-                                                    arguments: Vec::default(),
-                                                    description: None,
-                                                    directives: DirectiveList::default(),
-                                                    name: Name::new_unchecked("stub"),
-                                                    ty: Type::Named(NamedType::new_unchecked(
-                                                        "String",
-                                                    )),
-                                                })],
-                                                implements_interfaces: Vec::default(),
-                                                name: object_def.name.clone(),
-                                            },
-                                        )))
-                                    } else {
-                                        None
-                                    }
+                                    None
                                 } else {
                                     tracing::error!("object type {} not found", object_def.name);
                                     None
@@ -495,6 +475,8 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 }
             })
             .collect();
+
+        debug!("Tree shaking resulted in {} types", type_definitions.len());
 
         let mut document = Document::new();
         document.definitions = [
@@ -1108,8 +1090,7 @@ mod test {
         shaker.retain_type(level2_type, DepthLimit::Limited(1));
         let shaken_schema = shaker.shaken().unwrap();
 
-        // Should retain only Level2 - note that a stub Query is always added so the schema is valid
-        assert!(shaken_schema.types.contains_key("Query"));
+        // Should retain only Level2
         assert!(!shaken_schema.types.contains_key("Level1"));
         assert!(shaken_schema.types.contains_key("Level2"));
         assert!(!shaken_schema.types.contains_key("Level3"));
@@ -1120,8 +1101,7 @@ mod test {
         shaker.retain_type(level2_type, DepthLimit::Limited(2));
         let shaken_schema = shaker.shaken().unwrap();
 
-        // Should retain Level2 and Level3 - note that a stub Query is always added so the schema is valid
-        assert!(shaken_schema.types.contains_key("Query"));
+        // Should retain Level2 and Level3
         assert!(!shaken_schema.types.contains_key("Level1"));
         assert!(shaken_schema.types.contains_key("Level2"));
         assert!(shaken_schema.types.contains_key("Level3"));
@@ -1132,8 +1112,7 @@ mod test {
         shaker.retain_type(level2_type, DepthLimit::Limited(5));
         let shaken_schema = shaker.shaken().unwrap();
 
-        // Should retain Level2 and deeper types - note that a stub Query is always added so the schema is valid
-        assert!(shaken_schema.types.contains_key("Query"));
+        // Should retain Level2 and deeper types
         assert!(!shaken_schema.types.contains_key("Level1"));
         assert!(shaken_schema.types.contains_key("Level2"));
         assert!(shaken_schema.types.contains_key("Level3"));

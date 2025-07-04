@@ -15,7 +15,7 @@ use tracing::{debug, error, info};
 use crate::{
     errors::{OperationError, ServerError},
     explorer::Explorer,
-    introspection::tools::{execute::Execute, introspect::Introspect},
+    introspection::tools::{execute::Execute, introspect::Introspect, search::Search},
     operations::{MutationMode, Operation, RawOperation},
     server::Transport,
 };
@@ -55,11 +55,6 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self
-            .config
-            .introspection
-            .then(|| Execute::new(self.config.mutation_mode));
-
         let root_query_type = self
             .config
             .introspection
@@ -85,10 +80,23 @@ impl Starting {
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
-        let introspect_tool = self
-            .config
-            .introspection
-            .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
+
+        let (execute_tool, introspect_tool, search_tool) = if self.config.introspection {
+            (
+                Some(Execute::new(self.config.mutation_mode)),
+                Some(Introspect::new(
+                    schema.clone(),
+                    root_query_type,
+                    root_mutation_type,
+                )),
+                Some(Search::new(
+                    schema.clone(),
+                    matches!(self.config.mutation_mode, MutationMode::All),
+                )?),
+            )
+        } else {
+            (None, None, None)
+        };
 
         let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);
 
@@ -101,6 +109,7 @@ impl Starting {
             endpoint: self.config.endpoint,
             execute_tool,
             introspect_tool,
+            search_tool,
             explorer_tool,
             custom_scalar_map: self.config.custom_scalar_map,
             peers,

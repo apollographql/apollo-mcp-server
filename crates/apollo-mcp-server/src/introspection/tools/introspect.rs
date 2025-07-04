@@ -3,7 +3,6 @@ use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
-use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
 use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::schemars::JsonSchema;
@@ -87,30 +86,11 @@ impl Introspect {
                 .iter()
                 .filter(|(_name, extended_type)| {
                     !extended_type.is_built_in()
-                        && matches!(
-                            extended_type,
-                            ExtendedType::Object(_)
-                                | ExtendedType::InputObject(_)
-                                | ExtendedType::Scalar(_)
-                                | ExtendedType::Enum(_)
-                                | ExtendedType::Interface(_)
-                                | ExtendedType::Union(_)
-                        )
-                        && schema
-                            .root_operation(OperationType::Query)
-                            .is_none_or(|root_name| {
-                                extended_type.name() != root_name || type_name == root_name.as_str()
-                            })
                         && schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
                                 extended_type.name() != root_name
                                     || (type_name == root_name.as_str() && self.allow_mutations)
-                            })
-                        && schema
-                            .root_operation(OperationType::Subscription)
-                            .is_none_or(|root_name| {
-                                extended_type.name() != root_name || type_name == root_name.as_str()
                             })
                 })
                 .map(|(_, extended_type)| extended_type.serialize())
