@@ -50,9 +50,3 @@ expect_used = "deny"
 indexing_slicing = "deny"
 unwrap_used = "deny"
 panic = "deny"
-
-[patch.crates-io]
-# The Rust MCP SDK has not had a release in a long time, so we need to depend on it through GitHub to pick up things
-# like Streamable HTTP support. This particular commit is pinned because it is before a change to the way shutdown is
-# handled through Axum which broke the ability to shut down the server with Ctrl-C.
-rmcp = { git = 'https://github.com/modelcontextprotocol/rust-sdk.git', rev = '915bc3fb37fe259fba1a853a9dd03566593f3310' }

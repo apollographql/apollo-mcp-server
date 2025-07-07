@@ -1,12 +1,11 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
     ServiceExt as _,
-    transport::{
-        SseServer, StreamableHttpServer, sse_server::SseServerConfig, stdio,
-        streamable_http_server::axum::StreamableHttpServerConfig,
-    },
+    transport::{SseServer, sse_server::SseServerConfig, stdio},
 };
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
@@ -20,7 +19,7 @@ use crate::{
     server::Transport,
 };
 
-use super::{Config, Running};
+use super::{Config, Running, shutdown_signal};
 
 pub(super) struct Starting {
     pub(super) config: Config,
@@ -115,14 +114,19 @@ impl Starting {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
-                StreamableHttpServer::serve_with_config(StreamableHttpServerConfig {
-                    bind: listen_address,
-                    path: "/mcp".to_string(),
-                    ct: cancellation_token,
-                    sse_keep_alive: None,
-                })
-                .await?
-                .with_service(move || running.clone());
+                let service = StreamableHttpService::new(
+                    move || Ok(running.clone()),
+                    LocalSessionManager::default().into(),
+                    StreamableHttpServerConfig {
+                        sse_keep_alive: None,
+                        stateful_mode: true,
+                    },
+                );
+                let router = axum::Router::new().nest_service("/mcp", service);
+                let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
+                axum::serve(tcp_listener, router)
+                    .with_graceful_shutdown(shutdown_signal())
+                    .await?;
             }
             Transport::SSE { address, port } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
