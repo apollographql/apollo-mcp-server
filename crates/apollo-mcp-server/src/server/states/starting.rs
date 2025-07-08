@@ -35,19 +35,16 @@ impl Starting {
             .operations
             .into_iter()
             .filter_map(|operation| {
-                match operation.into_operation(
+                operation.into_operation(
                     &self.schema,
                     self.config.custom_scalar_map.as_ref(),
                     self.config.mutation_mode,
                     self.config.disable_type_description,
                     self.config.disable_schema_description,
-                ) {
-                    Ok(operation) => operation,
-                    Err(error) => {
-                        error!("Invalid operation: {}", error);
-                        None
-                    }
-                }
+                ).unwrap_or_else(|error| {
+                    error!("Invalid operation: {}", error);
+                    None
+                })
             })
             .collect();
 
