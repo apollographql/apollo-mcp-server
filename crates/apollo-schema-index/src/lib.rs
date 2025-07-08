@@ -209,7 +209,7 @@ impl SchemaIndex {
                 extended_type
                     .description()
                     .map(|d| d.to_string())
-                    .unwrap_or(String::from("")),
+                    .unwrap_or_default(),
             );
 
             for ref_type in references {

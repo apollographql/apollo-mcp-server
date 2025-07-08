@@ -200,8 +200,8 @@ mod tests {
 
         assert!(!result.is_error.unwrap_or(false));
         assert!(
-            content_to_snapshot(result).contains("User"),
-            "Expected to find User type in search results"
+            content_to_snapshot(result).contains("createUser"),
+            "Expected to find the createUser mutation in search results"
         );
     }
 }
