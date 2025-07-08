@@ -434,6 +434,74 @@ pub fn operation_defs(
     Ok(Some((document, operation, comments.map(|c| c.to_string()))))
 }
 
+pub fn extract_and_format_comments(comments: Option<String>) -> Option<String> {
+    comments.and_then(|comments| {
+        let content = Regex::new(r"(\n|^)(\s*,*)*#")
+            .ok()?
+            .replace_all(comments.as_str(), "$1");
+        let trimmed = content.trim();
+
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
+pub fn find_opening_parens_offset(
+    source_text: &str,
+    operation_definition: &Node<OperationDefinition>,
+) -> Option<usize> {
+    let regex = match Regex::new(r"(?m)^\s*\(") {
+        Ok(regex) => regex,
+        Err(_) => return None,
+    };
+
+    operation_definition
+        .name
+        .as_ref()
+        .and_then(|n| n.location())
+        .map(|span| {
+            regex
+                .find(source_text[span.end_offset()..].as_ref())
+                .map(|m| m.start() + m.len() + span.end_offset())
+                .unwrap_or(0)
+        })
+}
+
+pub fn variable_description_overrides(
+    source_text: &str,
+    operation_definition: &Node<OperationDefinition>,
+) -> HashMap<String, String> {
+    let mut argument_overrides_map: HashMap<String, String> = HashMap::new();
+    let mut last_offset = find_opening_parens_offset(source_text, operation_definition);
+    operation_definition
+        .variables
+        .iter()
+        .for_each(|v| match v.location() {
+            Some(source_span) => {
+                let comment = last_offset
+                    .map(|start_offset| &source_text[start_offset..source_span.offset()]);
+
+                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#')) {
+                    if let Some(description) =
+                        extract_and_format_comments(Some(description.to_string()))
+                    {
+                        argument_overrides_map.insert(v.name.to_string(), description);
+                    }
+                }
+
+                last_offset = Some(source_span.end_offset());
+            }
+            None => {
+                last_offset = None;
+            }
+        });
+
+    argument_overrides_map
+}
+
 impl Operation {
     pub fn from_document(
         raw_operation: RawOperation,
@@ -448,7 +516,24 @@ impl Operation {
             mutation_mode != MutationMode::None,
             raw_operation.source_path.clone(),
         )? {
-            let operation_name = operation_name(&operation, raw_operation.source_path.clone())?;
+            let operation_name = match operation_name(&operation, raw_operation.source_path.clone())
+            {
+                Ok(name) => name,
+                Err(OperationError::MissingName {
+                    source_path,
+                    operation,
+                }) => {
+                    if let Some(path) = source_path {
+                        warn!("Skipping unnamed operation in {path}: {operation}");
+                    } else {
+                        warn!("Skipping unnamed operation: {operation}");
+                    }
+                    return Ok(None);
+                }
+                Err(e) => return Err(e),
+            };
+            let variable_description_overrides =
+                variable_description_overrides(&raw_operation.source_text, &operation);
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
 
@@ -464,6 +549,7 @@ impl Operation {
             let object = serde_json::to_value(get_json_schema(
                 &operation,
                 tree_shaker.argument_descriptions(),
+                &variable_description_overrides,
                 graphql_schema,
                 custom_scalar_map,
                 raw_operation.variables.as_ref(),
@@ -510,18 +596,7 @@ impl Operation {
         disable_type_description: bool,
         disable_schema_description: bool,
     ) -> String {
-        let comment_description = comments.and_then(|comments| {
-            let content = Regex::new(r"(\n|^)\s*#")
-                .ok()?
-                .replace_all(comments.as_str(), "$1");
-            let trimmed = content.trim();
-
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        });
+        let comment_description = extract_and_format_comments(comments);
 
         match comment_description {
             Some(description) => description,
@@ -667,7 +742,8 @@ fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
 
 fn get_json_schema(
     operation: &Node<OperationDefinition>,
-    argument_descriptions: &HashMap<String, Vec<String>>,
+    schema_argument_descriptions: &HashMap<String, Vec<String>>,
+    argument_descriptions_overrides: &HashMap<String, String>,
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
     variable_overrides: Option<&HashMap<String, Value>>,
@@ -681,13 +757,18 @@ fn get_json_schema(
             .map(|o| o.contains_key(&variable_name))
             .unwrap_or_default()
         {
-            let joined_descriptions = argument_descriptions
-                .get(&variable_name)
-                .filter(|d| !d.is_empty())
-                .map(|d| d.join("#"));
+            // use overridden description if there is one, otherwise use the schema description
+            let description: Option<String> =
+                match argument_descriptions_overrides.get(&variable_name) {
+                    Some(description) => Some(description.clone()),
+                    None => schema_argument_descriptions
+                        .get(&variable_name)
+                        .filter(|d| !d.is_empty())
+                        .map(|d| d.join("#")),
+                };
 
             let schema = type_to_schema(
-                joined_descriptions,
+                description,
                 variable.ty.as_ref(),
                 graphql_schema,
                 custom_scalar_map,
@@ -1957,7 +2038,8 @@ mod tests {
     }
 
     #[test]
-    fn unnamed_operations_should_error() {
+    #[traced_test]
+    fn unnamed_operations_should_be_skipped() {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query { id }".to_string(),
@@ -1972,16 +2054,18 @@ mod tests {
             false,
             false,
         );
-        insta::assert_debug_snapshot!(operation, @r###"
-        Err(
-            MissingName {
-                source_path: Some(
-                    "operation.graphql",
-                ),
-                operation: "{ id }",
-            },
-        )
-        "###);
+        assert!(operation.unwrap().is_none());
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| {
+                    line.contains("Skipping unnamed operation in operation.graphql: { id }")
+                })
+                .then_some(())
+                .ok_or("Expected warning about unnamed operation in logs".to_string())
+        });
     }
 
     #[test]
@@ -2931,5 +3015,205 @@ mod tests {
 
         let op_details = operation.operation(Value::Null).unwrap();
         assert_eq!(op_details.operation_name, Some(String::from("CreateUser")));
+    }
+
+    #[test]
+    fn operation_variable_comments_override_schema_descriptions() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "# operation description\nquery QueryName(# id comment override\n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn operation_variable_comment_override_supports_multiline_comments() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "# operation description\nquery QueryName(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override\n multi-line comment",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn comment_with_parens_has_comments_extracted_correctly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName # a comment (with parens)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "idArg": {
+              "description": "id comment override\n multi-line comment",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn multiline_comment_with_odd_spacing_and_parens_has_comments_extracted_correctly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID\n, \n# a flag\n$flag: Boolean) { customQuery(id: $idArg, skip: $flag) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "flag": {
+              "description": "a flag",
+              "type": "boolean"
+            },
+            "idArg": {
+              "description": "id comment override\n multi-line comment",
+              "type": "string"
+            }
+          }
+        }
+        "###);
+    }
+
+    #[test]
+    fn operation_with_no_variables_is_handled_properly() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName { customQuery(id: \"123\") { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object"
+        }
+        "###);
+    }
+
+    #[test]
+    fn commas_between_variables_are_ignored() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName(# id arg\n $idArg: ID,,\n,,\n # a flag\n $flag: Boolean,  ,,) { customQuery(id: $idArg, flag: $flag) { id } }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+        )
+            .unwrap()
+            .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        {
+          "type": "object",
+          "properties": {
+            "flag": {
+              "description": "a flag",
+              "type": "boolean"
+            },
+            "idArg": {
+              "description": "id arg",
+              "type": "string"
+            }
+          }
+        }
+        "###);
     }
 }

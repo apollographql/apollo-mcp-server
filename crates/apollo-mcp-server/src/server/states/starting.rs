@@ -1,26 +1,25 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
+use rmcp::transport::StreamableHttpService;
+use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::{
     ServiceExt as _,
-    transport::{
-        SseServer, StreamableHttpServer, sse_server::SseServerConfig, stdio,
-        streamable_http_server::axum::StreamableHttpServerConfig,
-    },
+    transport::{SseServer, sse_server::SseServerConfig, stdio},
 };
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::{
-    errors::{OperationError, ServerError},
+    errors::ServerError,
     explorer::Explorer,
     introspection::tools::{execute::Execute, introspect::Introspect, search::Search},
-    operations::{MutationMode, Operation, RawOperation},
+    operations::{MutationMode, RawOperation},
     server::Transport,
 };
 
-use super::{Config, Running};
+use super::{Config, Running, shutdown_signal};
 
 pub(super) struct Starting {
     pub(super) config: Config,
@@ -35,18 +34,20 @@ impl Starting {
         let operations: Vec<_> = self
             .operations
             .into_iter()
-            .map(|operation| {
-                operation.into_operation(
-                    &self.schema,
-                    self.config.custom_scalar_map.as_ref(),
-                    self.config.mutation_mode,
-                    self.config.disable_type_description,
-                    self.config.disable_schema_description,
-                )
+            .filter_map(|operation| {
+                operation
+                    .into_operation(
+                        &self.schema,
+                        self.config.custom_scalar_map.as_ref(),
+                        self.config.mutation_mode,
+                        self.config.disable_type_description,
+                        self.config.disable_schema_description,
+                    )
+                    .unwrap_or_else(|error| {
+                        error!("Invalid operation: {}", error);
+                        None
+                    })
             })
-            .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
-            .into_iter()
-            .flatten()
             .collect();
 
         debug!(
@@ -124,14 +125,22 @@ impl Starting {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
-                StreamableHttpServer::serve_with_config(StreamableHttpServerConfig {
-                    bind: listen_address,
-                    path: "/mcp".to_string(),
-                    ct: cancellation_token,
-                    sse_keep_alive: None,
-                })
-                .await?
-                .with_service(move || running.clone());
+                let service = StreamableHttpService::new(
+                    move || Ok(running.clone()),
+                    LocalSessionManager::default().into(),
+                    Default::default(),
+                );
+                let router = axum::Router::new().nest_service("/mcp", service);
+                let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(tcp_listener, router)
+                        .with_graceful_shutdown(shutdown_signal())
+                        .await
+                    {
+                        // This can never really happen
+                        error!("Failed to start MCP server: {e:?}");
+                    }
+                });
             }
             Transport::SSE { address, port } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");

@@ -32,11 +32,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
-use tantivy::schema::document::Value as TantivyValue;
-use tantivy::schema::*;
+use tantivy::schema::{Field, IndexRecordOption, TextFieldIndexing, TextOptions, Value};
 use tantivy::tokenizer::{Language, LowerCaser, SimpleTokenizer, Stemmer, TextAnalyzer};
 use tantivy::{
-    Index,
+    Index, TantivyDocument, Term,
     schema::{STORED, Schema as TantivySchema},
 };
 use tracing::{Level, debug, error, info, warn};
@@ -249,6 +248,13 @@ impl SchemaIndex {
             };
             doc.add_text(fields_field, &fields);
             let field_descriptions = match extended_type {
+                ExtendedType::Enum(enum_type) => enum_type
+                    .values
+                    .iter()
+                    .flat_map(|(_, value)| value.description.as_ref())
+                    .map(|node| node.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
                 ExtendedType::Object(obj) => obj
                     .fields
                     .iter()
@@ -267,13 +273,6 @@ impl SchemaIndex {
                     .fields
                     .iter()
                     .flat_map(|(_, field)| field.description.as_ref())
-                    .map(|node| node.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-                ExtendedType::Enum(enum_type) => enum_type
-                    .values
-                    .iter()
-                    .flat_map(|(_, value)| value.description.as_ref())
                     .map(|node| node.as_str())
                     .collect::<Vec<_>>()
                     .join("\n"),

@@ -17,7 +17,7 @@ use tracing::{debug, error};
 
 use crate::{
     custom_scalar_map::CustomScalarMap,
-    errors::{McpError, OperationError, ServerError},
+    errors::{McpError, ServerError},
     explorer::{EXPLORER_TOOL_NAME, Explorer},
     graphql::{self, Executable as _},
     introspection::tools::{
@@ -60,18 +60,20 @@ impl Running {
             .iter()
             .cloned()
             .map(|operation| operation.into_inner())
-            .map(|operation| {
-                operation.into_operation(
-                    &schema,
-                    self.custom_scalar_map.as_ref(),
-                    self.mutation_mode,
-                    self.disable_type_description,
-                    self.disable_schema_description,
-                )
+            .filter_map(|operation| {
+                operation
+                    .into_operation(
+                        &schema,
+                        self.custom_scalar_map.as_ref(),
+                        self.mutation_mode,
+                        self.disable_type_description,
+                        self.disable_schema_description,
+                    )
+                    .unwrap_or_else(|error| {
+                        error!("Invalid operation: {}", error);
+                        None
+                    })
             })
-            .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
-            .into_iter()
-            .flatten()
             .collect();
 
         debug!(
@@ -93,23 +95,27 @@ impl Running {
         self,
         operations: Vec<RawOperation>,
     ) -> Result<Running, ServerError> {
+        debug!("Operations updated:\n{:?}", operations);
+
         // Update the operations based on the current schema
         {
             let schema = &*self.schema.lock().await;
             let updated_operations: Vec<Operation> = operations
                 .into_iter()
-                .map(|operation| {
-                    operation.into_operation(
-                        schema,
-                        self.custom_scalar_map.as_ref(),
-                        self.mutation_mode,
-                        self.disable_type_description,
-                        self.disable_schema_description,
-                    )
+                .filter_map(|operation| {
+                    operation
+                        .into_operation(
+                            schema,
+                            self.custom_scalar_map.as_ref(),
+                            self.mutation_mode,
+                            self.disable_type_description,
+                            self.disable_schema_description,
+                        )
+                        .unwrap_or_else(|error| {
+                            error!("Invalid operation: {}", error);
+                            None
+                        })
                 })
-                .collect::<Result<Vec<Option<Operation>>, OperationError>>()?
-                .into_iter()
-                .flatten()
                 .collect();
 
             debug!(
@@ -266,4 +272,55 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 ) -> Result<T, McpError> {
     serde_json::from_value(Value::from(arguments.arguments))
         .map_err(|_| McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn invalid_operations_should_not_crash_server() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let running = Running {
+            schema: Arc::new(Mutex::new(schema)),
+            operations: Arc::new(Mutex::new(vec![])),
+            headers: HeaderMap::new(),
+            endpoint: "http://localhost:4000".to_string(),
+            execute_tool: None,
+            introspect_tool: None,
+            search_tool: None,
+            explorer_tool: None,
+            custom_scalar_map: None,
+            peers: Arc::new(RwLock::new(vec![])),
+            cancellation_token: CancellationToken::new(),
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+        };
+
+        let operations = vec![
+            RawOperation::from((
+                "query Valid { id }".to_string(),
+                Some("valid.graphql".to_string()),
+            )),
+            RawOperation::from((
+                "query Invalid {{ id }".to_string(),
+                Some("invalid.graphql".to_string()),
+            )),
+            RawOperation::from((
+                "query { id }".to_string(),
+                Some("unnamed.graphql".to_string()),
+            )),
+        ];
+
+        let updated_running = running.update_operations(operations).await.unwrap();
+        let updated_operations = updated_running.operations.lock().await;
+
+        assert_eq!(updated_operations.len(), 1);
+        assert_eq!(updated_operations.first().unwrap().as_ref().name, "Valid");
+    }
 }

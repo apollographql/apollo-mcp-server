@@ -26,7 +26,7 @@ To download a **specific version** of Apollo MCP Server (recommended for CI envi
 
 ```bash
 # Note the `v` prefixing the version number
-docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.4.2
+docker image pull ghcr.io/apollographql/apollo-mcp-server:v0.5.1
 ```
 
 To download a specific version of Apollo MCP Server that is a release candidate:
@@ -65,7 +65,7 @@ To install or upgrade to a **specific version** of Apollo MCP Server (recommende
 
 ```bash
 # Note the `v` prefixing the version number
-curl -sSL https://mcp.apollo.dev/download/nix/v0.4.2| sh
+curl -sSL https://mcp.apollo.dev/download/nix/v0.5.1| sh
 ```
 
 If your machine doesn't have the `curl` command, you can get the latest version from the [`curl` downloads page](https://curl.se/download.html).
@@ -82,7 +82,7 @@ To install or upgrade to a **specific version** of Apollo MCP Server (recommende
 
 ```bash
 # Note the `v` prefixing the version number
-iwr 'https://mcp.apollo.dev/download/win/v0.4.2' | iex
+iwr 'https://mcp.apollo.dev/download/win/v0.5.1' | iex
 ```
 
 ## Usage
@@ -105,11 +105,11 @@ apollo-mcp-server [OPTIONS] --directory <DIRECTORY>
 | `--http-port <HTTP_PORT>`                             | Start the server using the Streamable HTTP transport on the given port (default: 5000).                                                                                                                                              |
 | `--http-address <HTTP_ADDRESS>`                       | The IP address to bind the Streamable HTTP server to (default: 127.0.0.1).                                                                                                                                                           |
 | `-i, --introspection`                                 | Expose the schema to the MCP client through `introspect` and `execute` tools. [Learn more](/apollo-mcp-server/guides/#from-schema-introspection).                                                                                    |
-| `--uplink-manifest`                                   | Enable use of uplink to get the persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                        |
+| `--uplink-manifest`                                   | Enable use of uplink to get the persisted queries (requires `APOLLO_KEY` and `APOLLO_GRAPH_REF`). [Learn more](/apollo-mcp-server/guides/#from-graphos-managed-persisted-queries).                                                   |
 | `-x, --explorer`                                      | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires `APOLLO_GRAPH_REF`).                                                                                                                     |
 | `-o, --operations [<OPERATIONS>...]`                  | Operation files to expose as MCP tools. [Learn more](/apollo-mcp-server/guides/#from-operation-files).                                                                                                                               |
 | `--manifest <MANIFEST>`                               | The path to the persisted query manifest containing operations.                                                                                                                                                                      |
-| `--collection <COLLECTION_ID>`                        | The ID of an operation collection to use as the source for operations                                                                                                                                                                |
+| `--collection <COLLECTION_ID>`                        | The ID of an operation collection to use as the source for operations (requires `APOLLO_KEY`). If `default` is used instead of an ID, the MCP Tools for `APOLLO_GRAPH_REF` will be used as the source.                               |
 | `--disable-type-description`                          | Disable operation root field types in tool description.                                                                                                                                                                              |
 | `--disable-schema-description`                        | Disable schema type definitions referenced by all fields returned by the operation in the tool description.                                                                                                                          |
 | `-m, --allow-mutations <ALLOW_MUTATIONS>`             | [default: `none`]<br /><br />Possible values:<ul><li>`none`: Don't allow any mutations</li><li>`explicit`: Allow explicit mutations, but don't allow the LLM to build them</li><li>`all`: Allow the LLM to build mutations</li></ul> |

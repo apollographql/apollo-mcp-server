@@ -1,7 +1,7 @@
 use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
-use futures::{FutureExt as _, Stream, StreamExt as _, future, stream};
+use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
 
 use crate::{
@@ -144,34 +144,36 @@ impl StateMachine {
         }
     }
 
-    #[allow(clippy::expect_used)]
     fn ctrl_c_stream() -> impl Stream<Item = ServerEvent> {
-        #[cfg(not(unix))]
-        {
-            async {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to install CTRL+C signal handler");
-            }
+        shutdown_signal()
             .map(|_| ServerEvent::Shutdown)
             .into_stream()
             .boxed()
-        }
+    }
+}
 
-        #[cfg(unix)]
-        future::select(
-            tokio::signal::ctrl_c().map(|s| s.ok()).boxed(),
-            async {
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-                    .expect("Failed to install SIGTERM signal handler")
-                    .recv()
-                    .await
-            }
-            .boxed(),
-        )
-        .map(|_| ServerEvent::Shutdown)
-        .into_stream()
-        .boxed()
+#[allow(clippy::expect_used)]
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to install CTRL+C signal handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
     }
 }
 

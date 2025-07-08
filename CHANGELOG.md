@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [0.5.1] - 2025-07-08
+
+## 🐛 Fixes
+
+### Fix an issue with rmcp 0.2.x upgrade - @pubmodmatt PR #181
+
+Fix an issue where the server was unresponsive to external events such as changes to operation collections.
+
+
+
+# [0.5.0] - 2025-07-08
+
+## ❗ BREAKING ❗
+
+### Deprecate -u,--uplink argument and use default collection - @Jephuff PR #154
+
+`--uplink` and `-u` are deprecated and will act as an alias for `--uplink-manifest`. If a schema isn't provided, it will get fetched from uplink by default, and `--uplink-manifest` can be used to fetch the persisted queries from uplink.
+The server will now default to the default MCP tools from operation collections.
+
+## 🚀 Features
+
+### Add --version argument - @Jephuff PR #154
+
+`apollo-mcp-server --version` will print the version of apollo-mcp-server currently installed
+
+### Support operation variable comments as description overrides - @alocay PR #164
+
+Operation comments for variables will now act as overrides for variable descriptions
+
+### Include operation name with GraphQL requests - @DaleSeo PR #166
+
+Include the operation name with GraphQL requests if it's available.
+
+```diff
+{
+   "query":"query GetAlerts(: String!) { alerts(state: ) { severity description instruction } }",
+   "variables":{
+      "state":"CO"
+   },
+   "extensions":{
+      "clientLibrary":{
+         "name":"mcp",
+         "version": ...
+      }
+   },
++  "operationName":"GetAlerts"
+}
+```
+
+## 🐛 Fixes
+
+### The execute tool handles invalid operation types - @DaleSeo PR #170
+
+The execute tool returns an invalid parameters error when the operation type does not match the mutation mode.
+
+### Skip unnamed operations and log a warning instead of crashing - @DaleSeo PR #173
+
+Unnamed operations are now skipped with a warning instead of causing the server to crash
+
+### Support retaining argument descriptions from schema for variables - @alocay PR #147
+
+Use descriptions for arguments from schema when building descriptions for operation variables.
+
+### Invalid operation should not crash the MCP Server - @DaleSeo PR #176
+
+Gracefully handle and skip invalid GraphQL operations to prevent MCP server crashes during startup or runtime.
+
 # [0.4.2] - 2025-06-24
 
 ## 🚀 Features
@@ -12,8 +79,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 --collection default will use the configured default collection on the graph variant specified by the --apollo-graph-ref arg
 
-
-
 # [0.4.1] - 2025-06-20
 
 ## 🐛 Fixes
@@ -21,8 +86,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fix tool update on every poll - @Jephuff PR #146
 
 Only update the tool list if an operation was removed, changed, or added.
-
-
 
 # [0.4.0] - 2025-06-17
 
