@@ -1,4 +1,5 @@
 use crate::errors::McpError;
+use crate::introspection::tools::introspect::minify::Minify;
 use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
@@ -12,6 +13,8 @@ use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+mod minify;
 
 /// The name of the tool to get GraphQL schema type information
 pub const INTROSPECT_TOOL_NAME: &str = "introspect";
@@ -37,7 +40,7 @@ pub struct Input {
 impl Introspect {
     pub fn new(
         schema: Arc<Mutex<Valid<Schema>>>,
-        root_query_type: Option<String>,
+        _root_query_type: Option<String>,
         root_mutation_type: Option<String>,
     ) -> Self {
         Self {
@@ -45,15 +48,7 @@ impl Introspect {
             allow_mutations: root_mutation_type.is_some(),
             tool: Tool::new(
                 INTROSPECT_TOOL_NAME,
-                format!(
-                    "Get detailed information about types from the GraphQL schema.{}{}",
-                    root_query_type
-                        .map(|t| format!(" Use the type name `{t}` to get root query fields."))
-                        .unwrap_or_default(),
-                    root_mutation_type
-                        .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
-                        .unwrap_or_default()
-                ),
+                "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list;",
                 schema_from_type!(Input),
             ),
         }
@@ -113,8 +108,8 @@ impl Introspect {
                                 extended_type.name() != root_name || type_name == root_name.as_str()
                             })
                 })
-                .map(|(_, extended_type)| extended_type.serialize())
-                .map(|serialized| serialized.to_string())
+                .map(|(_, extended_type)| extended_type)
+                .map(ExtendedType::minify)
                 .map(Content::text)
                 .collect(),
             is_error: None,
