@@ -5,6 +5,7 @@ use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
+#[cfg(feature = "minify")]
 use minify::MinifyExt as _;
 use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::schemars::JsonSchema;
@@ -14,6 +15,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+#[cfg(feature = "minify")]
 mod minify;
 
 /// The name of the tool to get GraphQL schema type information
@@ -40,7 +42,7 @@ pub struct Input {
 impl Introspect {
     pub fn new(
         schema: Arc<Mutex<Valid<Schema>>>,
-        _root_query_type: Option<String>,
+        root_query_type: Option<String>,
         root_mutation_type: Option<String>,
     ) -> Self {
         Self {
@@ -48,7 +50,7 @@ impl Introspect {
             allow_mutations: root_mutation_type.is_some(),
             tool: Tool::new(
                 INTROSPECT_TOOL_NAME,
-                "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list;",
+                tool_description(root_query_type, root_mutation_type),
                 schema_from_type!(Input),
             ),
         }
@@ -109,12 +111,39 @@ impl Introspect {
                             })
                 })
                 .map(|(_, extended_type)| extended_type)
-                .map(ExtendedType::minify)
+                .map(serialize)
                 .map(Content::text)
                 .collect(),
             is_error: None,
         })
     }
+}
+
+#[cfg_attr(feature = "minify", allow(unused_variables))]
+fn tool_description(root_query_type: Option<String>, root_mutation_type: Option<String>) -> String {
+    #[cfg(feature = "minify")]
+    {
+        "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list;".to_string()
+    }
+    #[cfg(not(feature = "minify"))]
+    format!(
+        "Get detailed information about types from the GraphQL schema.{}{}",
+        root_query_type
+            .map(|t| format!(" Use the type name `{t}` to get root query fields."))
+            .unwrap_or_default(),
+        root_mutation_type
+            .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
+            .unwrap_or_default()
+    )
+}
+
+fn serialize(extended_type: &ExtendedType) -> String {
+    #[cfg(feature = "minify")]
+    {
+        extended_type.minify()
+    }
+    #[cfg(not(feature = "minify"))]
+    extended_type.serialize().to_string()
 }
 
 /// The default depth to recurse the type hierarchy.
