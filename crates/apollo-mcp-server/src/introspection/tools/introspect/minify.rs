@@ -26,7 +26,11 @@ impl MinifyExt for ExtendedType {
                                 .iter()
                                 .map(|arg| {
                                     if let Some(desc) = arg.description.as_ref() {
-                                        format!("\"{desc}\"{}", type_name(&arg.ty))
+                                        format!(
+                                            "\"{desc}\"{}:{}",
+                                            arg.name.as_str(),
+                                            type_name(&arg.ty)
+                                        )
                                     } else {
                                         type_name(&arg.ty)
                                     }
@@ -64,7 +68,11 @@ impl MinifyExt for ExtendedType {
                                 .iter()
                                 .map(|arg| {
                                     if let Some(desc) = arg.description.as_ref() {
-                                        format!("\"{desc}\"{}", type_name(&arg.ty))
+                                        format!(
+                                            "\"{desc}\"{}:{}",
+                                            arg.name.as_str(),
+                                            type_name(&arg.ty)
+                                        )
                                     } else {
                                         type_name(&arg.ty)
                                     }
