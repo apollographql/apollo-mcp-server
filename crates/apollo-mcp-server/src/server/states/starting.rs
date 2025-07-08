@@ -35,16 +35,18 @@ impl Starting {
             .operations
             .into_iter()
             .filter_map(|operation| {
-                operation.into_operation(
-                    &self.schema,
-                    self.config.custom_scalar_map.as_ref(),
-                    self.config.mutation_mode,
-                    self.config.disable_type_description,
-                    self.config.disable_schema_description,
-                ).unwrap_or_else(|error| {
-                    error!("Invalid operation: {}", error);
-                    None
-                })
+                operation
+                    .into_operation(
+                        &self.schema,
+                        self.config.custom_scalar_map.as_ref(),
+                        self.config.mutation_mode,
+                        self.config.disable_type_description,
+                        self.config.disable_schema_description,
+                    )
+                    .unwrap_or_else(|error| {
+                        error!("Invalid operation: {}", error);
+                        None
+                    })
             })
             .collect();
 
@@ -121,15 +123,15 @@ impl Starting {
                 );
                 let router = axum::Router::new().nest_service("/mcp", service);
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
-                tokio::spawn(
-                    async move {
-                        if let Err(e) = axum::serve(tcp_listener, router)
-                            .with_graceful_shutdown(shutdown_signal())
-                            .await {
-                            // This can never really happen
-                            error!("Failed to start MCP server: {e:?}");
-                        }
-                    });
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(tcp_listener, router)
+                        .with_graceful_shutdown(shutdown_signal())
+                        .await
+                    {
+                        // This can never really happen
+                        error!("Failed to start MCP server: {e:?}");
+                    }
+                });
             }
             Transport::SSE { address, port } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
