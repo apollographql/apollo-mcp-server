@@ -1,8 +1,8 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
+use rmcp::transport::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
     ServiceExt as _,
     transport::{SseServer, sse_server::SseServerConfig, stdio},
@@ -117,10 +117,7 @@ impl Starting {
                 let service = StreamableHttpService::new(
                     move || Ok(running.clone()),
                     LocalSessionManager::default().into(),
-                    StreamableHttpServerConfig {
-                        sse_keep_alive: None,
-                        stateful_mode: true,
-                    },
+                    Default::default(),
                 );
                 let router = axum::Router::new().nest_service("/mcp", service);
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
