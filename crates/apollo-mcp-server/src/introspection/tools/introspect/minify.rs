@@ -1,25 +1,22 @@
 use apollo_compiler::schema::{ExtendedType, Type};
 
-pub trait Minify {
+pub trait MinifyExt {
+    /// Serialize in minified form
     fn minify(&self) -> String;
 }
 
-// TODO: descriptions
-impl Minify for ExtendedType {
+impl MinifyExt for ExtendedType {
     fn minify(&self) -> String {
         match self {
-            ExtendedType::Scalar(scalar_type) => match scalar_type.name.as_str() {
-                "String" => "s",
-                "Int" => "i",
-                "Float" => "f",
-                "Boolean" => "b",
-                "ID" => "d",
-                _ => scalar_type.name.as_str(),
+            ExtendedType::Scalar(scalar_type) => {
+                shorten_scalar_names(scalar_type.name.as_str()).to_string()
             }
-            .to_string(),
             ExtendedType::Object(object_type) => {
                 let mut fields = String::new();
                 for (field_name, field) in object_type.fields.iter() {
+                    if let Some(desc) = field.description.as_ref() {
+                        fields.push_str(&format!("\"{desc}\""));
+                    }
                     fields.push_str(field_name.as_str());
                     if !field.arguments.is_empty() {
                         fields.push('(');
@@ -27,7 +24,13 @@ impl Minify for ExtendedType {
                             field
                                 .arguments
                                 .iter()
-                                .map(|arg| type_name(&arg.ty))
+                                .map(|arg| {
+                                    if let Some(desc) = arg.description.as_ref() {
+                                        format!("\"{desc}\"{}", type_name(&arg.ty))
+                                    } else {
+                                        type_name(&arg.ty)
+                                    }
+                                })
                                 .collect::<Vec<String>>()
                                 .join(",")
                                 .as_str(),
@@ -39,11 +42,19 @@ impl Minify for ExtendedType {
                     fields.push(',');
                 }
                 fields.pop();
-                format!("T:{}:{}", object_type.name, fields)
+                let type_name = if let Some(desc) = object_type.description.as_ref() {
+                    format!("\"{desc}\"{}", object_type.name)
+                } else {
+                    object_type.name.to_string()
+                };
+                format!("T:{type_name}:{fields}")
             }
             ExtendedType::Interface(interface_type) => {
                 let mut fields = String::new();
                 for (field_name, field) in interface_type.fields.iter() {
+                    if let Some(desc) = field.description.as_ref() {
+                        fields.push_str(&format!("\"{desc}\""));
+                    }
                     fields.push_str(field_name.as_str());
                     if !field.arguments.is_empty() {
                         fields.push('(');
@@ -51,7 +62,13 @@ impl Minify for ExtendedType {
                             field
                                 .arguments
                                 .iter()
-                                .map(|arg| type_name(&arg.ty))
+                                .map(|arg| {
+                                    if let Some(desc) = arg.description.as_ref() {
+                                        format!("\"{desc}\"{}", type_name(&arg.ty))
+                                    } else {
+                                        type_name(&arg.ty)
+                                    }
+                                })
                                 .collect::<Vec<String>>()
                                 .join(",")
                                 .as_str(),
@@ -63,7 +80,12 @@ impl Minify for ExtendedType {
                     fields.push(',');
                 }
                 fields.pop();
-                format!("F:{}:{}", interface_type.name, fields)
+                let type_name = if let Some(desc) = interface_type.description.as_ref() {
+                    format!("\"{desc}\"{}", interface_type.name)
+                } else {
+                    interface_type.name.to_string()
+                };
+                format!("F:{type_name}:{fields}")
             }
             ExtendedType::Union(union_type) => {
                 let mut types = String::new();
@@ -72,7 +94,12 @@ impl Minify for ExtendedType {
                     types.push(',');
                 }
                 types.pop();
-                format!("U:{}:{}", union_type.name, types)
+                let type_name = if let Some(desc) = union_type.description.as_ref() {
+                    format!("\"{desc}\"{}", union_type.name)
+                } else {
+                    union_type.name.to_string()
+                };
+                format!("U:{type_name}:{types}")
             }
             ExtendedType::Enum(enum_type) => {
                 let mut values = String::new();
@@ -81,30 +108,54 @@ impl Minify for ExtendedType {
                     values.push(',');
                 }
                 values.pop();
-                format!("E:{}:{}", enum_type.name, values)
+                let type_name = if let Some(desc) = enum_type.description.as_ref() {
+                    format!("\"{desc}\"{}", enum_type.name)
+                } else {
+                    enum_type.name.to_string()
+                };
+                format!("E:{type_name}:{values}")
             }
             ExtendedType::InputObject(input_object_type) => {
                 let mut fields = String::new();
                 for (field_name, field) in input_object_type.fields.iter() {
+                    if let Some(desc) = field.description.as_ref() {
+                        fields.push_str(&format!("\"{desc}\""));
+                    }
                     fields.push_str(field_name.as_str());
                     fields.push(':');
                     fields.push_str(&type_name(&field.ty));
                     fields.push(',');
                 }
                 fields.pop();
-                format!("I:{}:{}", input_object_type.name, fields)
+                let type_name = if let Some(desc) = input_object_type.description.as_ref() {
+                    format!("\"{desc}\"{}", input_object_type.name)
+                } else {
+                    input_object_type.name.to_string()
+                };
+                format!("I:{type_name}:{fields}")
             }
         }
     }
 }
 
 fn type_name(ty: &Type) -> String {
-    let name = ty.inner_named_type().as_str();
+    let name = shorten_scalar_names(ty.inner_named_type().as_str());
     if ty.is_list() {
         format!("[{name}]")
     } else if ty.is_non_null() {
         format!("{name}!")
     } else {
         name.to_string()
+    }
+}
+
+fn shorten_scalar_names(name: &str) -> &str {
+    match name {
+        "String" => "s",
+        "Int" => "i",
+        "Float" => "f",
+        "Boolean" => "b",
+        "ID" => "d",
+        _ => name,
     }
 }
