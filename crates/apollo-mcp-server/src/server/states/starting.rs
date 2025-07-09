@@ -82,7 +82,7 @@ impl Starting {
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
 
-        let (execute_tool, introspect_tool, search_tool) = if self.config.introspection {
+        let (execute_tool, introspect_tool) = if self.config.introspection {
             (
                 Some(Execute::new(self.config.mutation_mode)),
                 Some(Introspect::new(
@@ -90,13 +90,17 @@ impl Starting {
                     root_query_type,
                     root_mutation_type,
                 )),
-                Some(Search::new(
-                    schema.clone(),
-                    matches!(self.config.mutation_mode, MutationMode::All),
-                )?),
             )
         } else {
-            (None, None, None)
+            (None, None)
+        };
+        let search_tool = if self.config.search {
+            Some(Search::new(
+                schema.clone(),
+                matches!(self.config.mutation_mode, MutationMode::All),
+            )?)
+        } else {
+            None
         };
 
         let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);

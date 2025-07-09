@@ -73,6 +73,10 @@ struct Args {
     #[arg(long, short = 'i')]
     introspection: bool,
 
+    /// Enable the `search` tool and GraphQL schema indexing
+    #[arg(long)]
+    search: bool,
+
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     #[arg(long, short = 'x', requires = "apollo_graph_ref")]
     explorer: bool,
@@ -298,7 +302,7 @@ async fn main() -> anyhow::Result<()> {
             args.platform_api_config()?,
         ))
     } else {
-        if !args.introspection {
+        if !args.introspection && !args.search {
             bail!(ServerError::NoOperations);
         }
         OperationSource::None
@@ -329,6 +333,7 @@ async fn main() -> anyhow::Result<()> {
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(default_headers)
         .introspection(args.introspection)
+        .search(args.search)
         .mutation_mode(args.allow_mutations)
         .disable_type_description(args.disable_type_description)
         .disable_schema_description(args.disable_schema_description)
