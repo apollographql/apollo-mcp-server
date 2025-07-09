@@ -396,6 +396,8 @@ where
     let res = client
         .post(url)
         .header("x-apollo-mcp-server-version", env!("CARGO_PKG_VERSION"))
+        .header("apollographql-client-name", "apollo-mcp-server")
+        .header("apollographql-client-version", env!("CARGO_PKG_VERSION"))
         .json(request_body)
         .send()
         .await
