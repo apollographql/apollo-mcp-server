@@ -132,7 +132,7 @@ fn tool_description(
     minify: bool,
 ) -> String {
     if minify {
-        "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list;".to_string()
+        "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements;".to_string()
     } else {
         format!(
             "Get detailed information about types from the GraphQL schema.{}{}",

@@ -54,7 +54,17 @@ impl MinifyExt for ExtendedType {
                 } else {
                     object_type.name.to_string()
                 };
-                format!("T:{type_name}:{fields}")
+                let interfaces = object_type
+                    .implements_interfaces
+                    .iter()
+                    .map(|interface| interface.as_str())
+                    .collect::<Vec<&str>>()
+                    .join(",");
+                if interfaces.is_empty() {
+                    format!("T:{type_name}:{fields}")
+                } else {
+                    format!("T:{type_name}<{interfaces}>:{fields}")
+                }
             }
             ExtendedType::Interface(interface_type) => {
                 let mut fields = String::new();
