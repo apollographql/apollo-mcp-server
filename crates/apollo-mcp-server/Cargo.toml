@@ -39,4 +39,3 @@ tracing-test = "0.2.5"
 
 [lints]
 workspace = true
-
