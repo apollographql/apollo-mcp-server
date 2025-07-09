@@ -1,11 +1,11 @@
 use crate::errors::McpError;
+use crate::introspection::minify::MinifyExt as _;
 use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
-use minify::MinifyExt as _;
 use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -13,8 +13,6 @@ use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
-mod minify;
 
 /// The name of the tool to get GraphQL schema type information
 pub const INTROSPECT_TOOL_NAME: &str = "introspect";
