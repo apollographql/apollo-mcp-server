@@ -74,7 +74,7 @@ struct Args {
     introspection: bool,
 
     /// Whether to minify GraphQL SDL in tool results
-    #[arg(long)]
+    #[arg(long, requires = "introspection")]
     minify: bool,
 
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
