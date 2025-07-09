@@ -5,7 +5,6 @@ use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
-#[cfg(feature = "minify")]
 use minify::MinifyExt as _;
 use rmcp::model::{CallToolResult, Content, Tool};
 use rmcp::schemars::JsonSchema;
@@ -15,7 +14,6 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-#[cfg(feature = "minify")]
 mod minify;
 
 /// The name of the tool to get GraphQL schema type information
@@ -26,6 +24,7 @@ pub const INTROSPECT_TOOL_NAME: &str = "introspect";
 pub struct Introspect {
     schema: Arc<Mutex<Valid<Schema>>>,
     allow_mutations: bool,
+    minify: bool,
     pub tool: Tool,
 }
 
@@ -44,13 +43,15 @@ impl Introspect {
         schema: Arc<Mutex<Valid<Schema>>>,
         root_query_type: Option<String>,
         root_mutation_type: Option<String>,
+        minify: bool,
     ) -> Self {
         Self {
             schema,
             allow_mutations: root_mutation_type.is_some(),
+            minify,
             tool: Tool::new(
                 INTROSPECT_TOOL_NAME,
-                tool_description(root_query_type, root_mutation_type),
+                tool_description(root_query_type, root_mutation_type, minify),
                 schema_from_type!(Input),
             ),
         }
@@ -111,39 +112,40 @@ impl Introspect {
                             })
                 })
                 .map(|(_, extended_type)| extended_type)
-                .map(serialize)
+                .map(|extended_type| self.serialize(extended_type))
                 .map(Content::text)
                 .collect(),
             is_error: None,
         })
     }
+
+    fn serialize(&self, extended_type: &ExtendedType) -> String {
+        if self.minify {
+            extended_type.minify()
+        } else {
+            extended_type.serialize().to_string()
+        }
+    }
 }
 
-#[cfg_attr(feature = "minify", allow(unused_variables))]
-fn tool_description(root_query_type: Option<String>, root_mutation_type: Option<String>) -> String {
-    #[cfg(feature = "minify")]
-    {
+fn tool_description(
+    root_query_type: Option<String>,
+    root_mutation_type: Option<String>,
+    minify: bool,
+) -> String {
+    if minify {
         "Get GraphQL type information;T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list;".to_string()
+    } else {
+        format!(
+            "Get detailed information about types from the GraphQL schema.{}{}",
+            root_query_type
+                .map(|t| format!(" Use the type name `{t}` to get root query fields."))
+                .unwrap_or_default(),
+            root_mutation_type
+                .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
+                .unwrap_or_default()
+        )
     }
-    #[cfg(not(feature = "minify"))]
-    format!(
-        "Get detailed information about types from the GraphQL schema.{}{}",
-        root_query_type
-            .map(|t| format!(" Use the type name `{t}` to get root query fields."))
-            .unwrap_or_default(),
-        root_mutation_type
-            .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
-            .unwrap_or_default()
-    )
-}
-
-fn serialize(extended_type: &ExtendedType) -> String {
-    #[cfg(feature = "minify")]
-    {
-        extended_type.minify()
-    }
-    #[cfg(not(feature = "minify"))]
-    extended_type.serialize().to_string()
 }
 
 /// The default depth to recurse the type hierarchy.

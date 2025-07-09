@@ -86,10 +86,14 @@ impl Starting {
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
-        let introspect_tool = self
-            .config
-            .introspection
-            .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
+        let introspect_tool = self.config.introspection.then(|| {
+            Introspect::new(
+                schema.clone(),
+                root_query_type,
+                root_mutation_type,
+                self.config.minify,
+            )
+        });
 
         let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);
 

@@ -73,6 +73,10 @@ struct Args {
     #[arg(long, short = 'i')]
     introspection: bool,
 
+    /// Whether to minify GraphQL SDL in tool results
+    #[arg(long)]
+    minify: bool,
+
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     #[arg(long, short = 'x', requires = "apollo_graph_ref")]
     explorer: bool,
@@ -320,6 +324,7 @@ async fn main() -> anyhow::Result<()> {
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(default_headers)
         .introspection(args.introspection)
+        .minify(args.minify)
         .mutation_mode(args.allow_mutations)
         .disable_type_description(args.disable_type_description)
         .disable_schema_description(args.disable_schema_description)
