@@ -15,7 +15,7 @@ impl MinifyExt for ExtendedType {
                 let mut fields = String::new();
                 for (field_name, field) in object_type.fields.iter() {
                     if let Some(desc) = field.description.as_ref() {
-                        fields.push_str(&format!("\"{desc}\""));
+                        fields.push_str(&format!("\"{}\"", desc.replace("\n", " ")));
                     }
                     fields.push_str(field_name.as_str());
                     if !field.arguments.is_empty() {
@@ -27,7 +27,8 @@ impl MinifyExt for ExtendedType {
                                 .map(|arg| {
                                     if let Some(desc) = arg.description.as_ref() {
                                         format!(
-                                            "\"{desc}\"{}:{}",
+                                            "\"{}\"{}:{}",
+                                            desc.replace("\n", " "),
                                             arg.name.as_str(),
                                             type_name(&arg.ty)
                                         )
@@ -47,7 +48,7 @@ impl MinifyExt for ExtendedType {
                 }
                 fields.pop();
                 let type_name = if let Some(desc) = object_type.description.as_ref() {
-                    format!("\"{desc}\"{}", object_type.name)
+                    format!("\"{}\"{}", desc.replace("\n", " "), object_type.name)
                 } else {
                     object_type.name.to_string()
                 };
@@ -57,7 +58,7 @@ impl MinifyExt for ExtendedType {
                 let mut fields = String::new();
                 for (field_name, field) in interface_type.fields.iter() {
                     if let Some(desc) = field.description.as_ref() {
-                        fields.push_str(&format!("\"{desc}\""));
+                        fields.push_str(&format!("\"{}\"", desc.replace("\n", " ")));
                     }
                     fields.push_str(field_name.as_str());
                     if !field.arguments.is_empty() {
@@ -69,7 +70,8 @@ impl MinifyExt for ExtendedType {
                                 .map(|arg| {
                                     if let Some(desc) = arg.description.as_ref() {
                                         format!(
-                                            "\"{desc}\"{}:{}",
+                                            "\"{}\"{}:{}",
+                                            desc.replace("\n", " "),
                                             arg.name.as_str(),
                                             type_name(&arg.ty)
                                         )
@@ -89,7 +91,7 @@ impl MinifyExt for ExtendedType {
                 }
                 fields.pop();
                 let type_name = if let Some(desc) = interface_type.description.as_ref() {
-                    format!("\"{desc}\"{}", interface_type.name)
+                    format!("\"{}\"{}", desc.replace("\n", " "), interface_type.name)
                 } else {
                     interface_type.name.to_string()
                 };
@@ -103,7 +105,7 @@ impl MinifyExt for ExtendedType {
                 }
                 types.pop();
                 let type_name = if let Some(desc) = union_type.description.as_ref() {
-                    format!("\"{desc}\"{}", union_type.name)
+                    format!("\"{}\"{}", desc.replace("\n", " "), union_type.name)
                 } else {
                     union_type.name.to_string()
                 };
@@ -117,7 +119,7 @@ impl MinifyExt for ExtendedType {
                 }
                 values.pop();
                 let type_name = if let Some(desc) = enum_type.description.as_ref() {
-                    format!("\"{desc}\"{}", enum_type.name)
+                    format!("\"{}\"{}", desc.replace("\n", " "), enum_type.name)
                 } else {
                     enum_type.name.to_string()
                 };
@@ -127,7 +129,7 @@ impl MinifyExt for ExtendedType {
                 let mut fields = String::new();
                 for (field_name, field) in input_object_type.fields.iter() {
                     if let Some(desc) = field.description.as_ref() {
-                        fields.push_str(&format!("\"{desc}\""));
+                        fields.push_str(&format!("\"{}\"", desc.replace("\n", " ")));
                     }
                     fields.push_str(field_name.as_str());
                     fields.push(':');
@@ -136,7 +138,7 @@ impl MinifyExt for ExtendedType {
                 }
                 fields.pop();
                 let type_name = if let Some(desc) = input_object_type.description.as_ref() {
-                    format!("\"{desc}\"{}", input_object_type.name)
+                    format!("\"{}\"{}", desc.replace("\n", " "), input_object_type.name)
                 } else {
                     input_object_type.name.to_string()
                 };
