@@ -296,7 +296,7 @@ mod tests {
             schema: Arc::new(Mutex::new(schema)),
             operations: Arc::new(Mutex::new(vec![])),
             headers: HeaderMap::new(),
-            endpoint: "http://localhost:4000".to_string(),
+            endpoint: "http://localhost:4000".parse().unwrap(),
             execute_tool: None,
             introspect_tool: None,
             explorer_tool: None,

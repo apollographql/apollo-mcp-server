@@ -84,7 +84,8 @@ mod test {
     fn id_parses() {
         let id = "something";
 
-        let actual: IdOrDefault = serde_yaml::from_str(id).unwrap();
+        let actual: IdOrDefault =
+            serde_json::from_value(serde_json::Value::String(id.into())).unwrap();
         let expected = IdOrDefault::Id(id.to_string());
 
         assert_eq!(actual, expected);
@@ -94,7 +95,8 @@ mod test {
     fn default_parses() {
         let id = "dEfAuLt";
 
-        let actual: IdOrDefault = serde_yaml::from_str(id).unwrap();
+        let actual: IdOrDefault =
+            serde_json::from_value(serde_json::Value::String(id.into())).unwrap();
         let expected = IdOrDefault::Default;
 
         assert_eq!(actual, expected);

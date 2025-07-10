@@ -48,3 +48,68 @@ fn apollo_common_env() -> Env {
         })
         .split(":")
 }
+
+#[cfg(test)]
+mod test {
+    use super::read_config;
+
+    #[test]
+    fn it_prioritizes_env_vars() {
+        let config = r#"
+            endpoint: http://from_file:4000
+        "#;
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+            let endpoint = "https://from_env:4000/";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_ENDPOINT", endpoint);
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.endpoint.as_str(), endpoint);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_extracts_nested_env() {
+        let config = r#"
+            overrides:
+                disable_type_description: false
+        "#;
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_OVERRIDES__DISABLE_TYPE_DESCRIPTION", "true");
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.overrides.disable_type_description, true);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_merges_env_and_file() {
+        let config = "
+            endpoint: http://from_file:4000/
+        ";
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_INTROSPECTION__EXECUTE__ENABLED", "true");
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.endpoint.as_str(), "http://from_file:4000/");
+            assert_eq!(config.introspection.execute.enabled, true);
+            Ok(())
+        });
+    }
+}

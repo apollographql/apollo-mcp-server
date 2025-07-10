@@ -167,7 +167,23 @@ mod test {
     use super::Config;
 
     #[test]
-    fn minimal_config_parses() {
-        serde_yaml::from_str::<Config>("").unwrap();
+    fn it_parses_a_minimal_config() {
+        serde_json::from_str::<Config>("{}").unwrap();
+    }
+
+    #[test]
+    fn it_contains_no_keys_with_double_underscore() {
+        // The env functionality of the config expansion uses __ as a split key
+        // when determining nested fields of any of the fields of the Config.
+        // This test ensures that a field name isn't added that can no longer be
+        // configured using the env extractor.
+        //
+        // See [runtime::read_config]
+        //
+        // TODO: This is a quick hack since traversing the nested (untyped) schema
+        // object is probably overkill.
+        let schema = schemars::schema_for!(Config).to_value().to_string();
+
+        assert!(!schema.contains("__"))
     }
 }

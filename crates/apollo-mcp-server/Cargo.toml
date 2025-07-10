@@ -35,6 +35,7 @@ tokio-util = "0.7.15"
 url.workspace = true
 
 [dev-dependencies]
+figment = { version = "0.10.19", features = ["test"] }
 insta = { workspace = true }
 rstest = "0.25.0"
 secrecy.workspace = true
