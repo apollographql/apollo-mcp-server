@@ -3,6 +3,7 @@ use crate::errors::{McpError, OperationError};
 use crate::event::Event;
 use crate::graphql::{self, OperationDetails};
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
+use crate::token_counting;
 use apollo_compiler::ast::{Document, OperationType, Selection};
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
@@ -566,12 +567,13 @@ impl Operation {
             );
             let character_count = tool_character_length(&tool);
             match character_count {
-                Ok(length) => info!(
-                    "Tool {} loaded with a character count of {}. Estimated tokens: {}",
-                    operation_name,
-                    length,
-                    length / 4 // We don't know the tokenization algorithm, so we just use 4 characters per token as a rough estimate. https://docs.anthropic.com/en/docs/resources/glossary#tokens
-                ),
+                Ok(length) => {
+                    let token_estimates = token_counting::count_tokens_from_tool(&tool);
+                    info!(
+                        "Tool {} loaded with a character count of {}. Estimated tokens: {}",
+                        operation_name, length, token_estimates
+                    );
+                }
                 Err(_) => info!(
                     "Tool {} loaded with an unknown character count",
                     operation_name
