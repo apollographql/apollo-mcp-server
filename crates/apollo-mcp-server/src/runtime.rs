@@ -88,7 +88,7 @@ mod test {
 
             let config = read_config(path)?;
 
-            assert_eq!(config.overrides.disable_type_description, true);
+            assert!(config.overrides.disable_type_description);
             Ok(())
         });
     }
@@ -108,7 +108,7 @@ mod test {
             let config = read_config(path)?;
 
             assert_eq!(config.endpoint.as_str(), "http://from_file:4000/");
-            assert_eq!(config.introspection.execute.enabled, true);
+            assert!(config.introspection.execute.enabled);
             Ok(())
         });
     }
