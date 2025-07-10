@@ -13,6 +13,7 @@ apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 axum = "0.8.4"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
+figment = { version = "0.10.19", features = ["env", "yaml"] }
 futures.workspace = true
 lz-str = "0.2.1"
 regex = "1.11.1"
@@ -26,7 +27,6 @@ rmcp = { version = "0.2", features = [
 schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

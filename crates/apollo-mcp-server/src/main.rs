@@ -1,4 +1,3 @@
-use std::fs::File;
 use std::path::PathBuf;
 
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
@@ -42,9 +41,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let config: runtime::Config = {
         let args = Args::parse();
-        let file = File::open(args.config)?;
-
-        serde_yaml::from_reader(&file)?
+        runtime::read_config(args.config)?
     };
 
     // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
