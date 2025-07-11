@@ -179,19 +179,18 @@ The Apollo Runtime container includes all services necessary to serve GraphQL an
 
 To serve both MCP and GraphQL requests, both port `4000` and `5000` will need to be exposed. An example command which retrieves the schema from Uplink is:
 
-```bash title="Docker" {3, 6}
+```bash title="Docker" {3, 6} 
 docker run \
   -p 4000:4000 \
   -p 5000:5000 \
   --env APOLLO_GRAPH_REF="<your-graph-ref>" \
   --env APOLLO_KEY="<your-graph-api-key>" \
   --env MCP_ENABLE=1 \
-  --env MCP_UPLINK=1 \
   --rm \
   ghcr.io/apollographql/apollo-runtime:latest
 ```
 
-To learn more, review the [Apollo Runtime container documentation](/docs/graphos/routing/self-hosted/containerization/docker).
+To learn more, review the [Apollo Runtime container documentation](/graphos/routing/self-hosted/containerization/docker).
 
 ## Debugging with MCP Inspector
 
@@ -208,7 +207,7 @@ npx @modelcontextprotocol/inspector \
   target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   --schema graphql/weather/api.graphql \
-  --operations graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
+  --operations graphql/weather/operations
 ```
 
 <ExpansionPanel title="Example output">
@@ -240,7 +239,7 @@ target/debug/apollo-mcp-server \
   --directory <absolute path to this git repo> \
   --http-port 5000 \
   --schema graphql/weather/api.graphql \
-  --operations graphql/weather/operations/forecast.graphql graphql/weather/operations/alerts.graphql graphql/weather/operations/all.graphql
+  --operations graphql/weather/operations
 ```
 
 1. Start the MCP Inspector:

@@ -1,0 +1,9 @@
+transport:
+  type: streamable_http
+operations:
+ source: local
+ paths:
+   - ./graphql/weather/operations
+schema:
+  source: local
+  path: ./graphql/weather/api.graphql

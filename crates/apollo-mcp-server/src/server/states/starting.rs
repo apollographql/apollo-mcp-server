@@ -14,7 +14,7 @@ use tracing::{debug, error, info};
 use crate::{
     errors::ServerError,
     explorer::Explorer,
-    introspection::tools::{execute::Execute, introspect::Introspect},
+    introspection::tools::{execute::Execute, introspect::Introspect, search::Search},
     operations::{MutationMode, RawOperation},
     server::Transport,
 };
@@ -58,12 +58,12 @@ impl Starting {
 
         let execute_tool = self
             .config
-            .introspection
+            .execute_introspection
             .then(|| Execute::new(self.config.mutation_mode));
 
         let root_query_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 self.schema
                     .root_operation(OperationType::Query)
@@ -73,7 +73,7 @@ impl Starting {
             .flatten();
         let root_mutation_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 matches!(self.config.mutation_mode, MutationMode::All)
                     .then(|| {
@@ -86,14 +86,22 @@ impl Starting {
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
-        let introspect_tool = self.config.introspection.then(|| {
+        let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
                 schema.clone(),
                 root_query_type,
                 root_mutation_type,
-                self.config.minify,
+                self.config.minify_introspection,
             )
         });
+        let search_tool = if self.config.search_introspection {
+            Some(Search::new(
+                schema.clone(),
+                matches!(self.config.mutation_mode, MutationMode::All),
+            )?)
+        } else {
+            None
+        };
 
         let explorer_tool = self.config.explorer_graph_ref.map(Explorer::new);
 
@@ -106,6 +114,7 @@ impl Starting {
             endpoint: self.config.endpoint,
             execute_tool,
             introspect_tool,
+            search_tool,
             explorer_tool,
             custom_scalar_map: self.config.custom_scalar_map,
             peers,

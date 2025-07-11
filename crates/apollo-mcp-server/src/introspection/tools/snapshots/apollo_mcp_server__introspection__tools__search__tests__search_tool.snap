@@ -1,0 +1,51 @@
+---
+source: crates/apollo-mcp-server/src/introspection/tools/search.rs
+expression: content_to_snapshot(result)
+---
+enum UserRole {
+  ADMIN
+  MODERATOR
+  USER
+  GUEST
+}
+
+type User implements Node {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  username: String!
+  email: String!
+  role: UserRole!
+  profile: UserProfile
+  posts: [Post!]!
+  comments: [Comment!]!
+  notifications: [Notification!]!
+  preferences: UserPreferences!
+}
+
+type Post implements Node & Content {
+  id: ID!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  title: String!
+  content: String!
+  status: ContentStatus!
+  author: User!
+  metadata: JSON
+  comments: [Comment!]!
+  media: [Media!]!
+  tags: [Tag!]!
+  analytics: PostAnalytics!
+}
+
+type Query {
+  node(id: ID!): Node
+  user(id: ID!): User
+  post(id: ID!): Post
+  posts(filter: PostFilter): [Post!]!
+  comments(postId: ID!): [Comment!]!
+  notifications(filter: NotificationFilter): [Notification!]!
+  search(query: String!): SearchResult!
+}
+
+union SearchResult = User | Post

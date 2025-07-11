@@ -1,0 +1,10 @@
+---
+source: crates/apollo-schema-index/src/lib.rs
+expression: "results.iter().take(10).map(ToString::to_string).collect::<Vec<_>>().join(\"\\n\")"
+---
+Mutation -> Media -> MediaMetadata (6.1192875)
+Mutation -> Media -> MediaMetadata -> Dimensions (5.984665)
+Query -> Post -> Media -> MediaMetadata (5.0994062)
+Mutation -> Post -> Media -> MediaMetadata (5.0994062)
+Query -> Post -> Media -> MediaMetadata -> Dimensions (4.787732)
+Mutation -> Post -> Media -> MediaMetadata -> Dimensions (4.787732)

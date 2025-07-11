@@ -4,22 +4,14 @@
         {
             "type": "node",
             "request": "launch",
-            "name": "Run apollo-mcp-server [Streamable HTTP]",
+            "name": "Run apollo-mcp-server [Weather][Streamable HTTP]",
             "runtimeExecutable": "cargo",
             "runtimeArgs": [
                 "run",
                 "--bin",
                 "apollo-mcp-server",
                 "--",
-                "-i",
-                "--schema",
-                "graphql/weather/api.graphql",
-                "--manifest",
-                "graphql/weather/persisted_queries/apollo.json",
-                "--http-port",
-                "5000",
-                "--allow-mutations",
-                "all",
+                "graphql/weather/config.yaml",
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
@@ -30,7 +22,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug apollo-mcp-server [Streamable HTTP]",
+            "name": "Debug apollo-mcp-server [Weather][Streamable HTTP]",
             "cargo": {
                 "args": [
                     "build",
@@ -43,17 +35,27 @@
                 }
             },
             "args": [
-                "-i",
-                "--schema",
-                "graphql/weather/api.graphql",
-                "--manifest",
-                "graphql/weather/persisted_queries/apollo.json",
-                "--http-port",
-                "5000",
-                "--allow-mutations",
-                "all",
+                "graphql/weather/config.yaml",
             ],
             "cwd": "${workspaceFolder}",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Run apollo-mcp-server [TheSpaceDevs][Streamable HTTP]",
+            "runtimeExecutable": "cargo",
+            "runtimeArgs": [
+                "run",
+                "--bin",
+                "apollo-mcp-server",
+                "--",
+                "graphql/TheSpaceDevs/config.yaml",
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
             "env": {
                 "RUST_BACKTRACE": "1"
             }

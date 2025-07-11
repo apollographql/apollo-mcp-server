@@ -1,0 +1,23 @@
+[package]
+name = "apollo-schema-index"
+edition = "2024"
+authors.workspace = true
+version.workspace = true
+license-file = "../LICENSE"
+repository = "https://github.com/apollographql/apollo-mcp-server"
+description = "GraphQL schema indexing"
+
+[dependencies]
+apollo-compiler.workspace = true
+enumset = "1.1.6"
+itertools = "0.14.0"
+tantivy = "0.24.1"
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true

@@ -3,6 +3,7 @@ use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
+use url::Url;
 
 use crate::{
     custom_scalar_map::CustomScalarMap,
@@ -29,10 +30,12 @@ pub(super) struct StateMachine {}
 /// Common configuration options for the states
 struct Config {
     transport: Transport,
-    endpoint: String,
+    endpoint: Url,
     headers: HeaderMap,
-    introspection: bool,
-    minify: bool,
+    execute_introspection: bool,
+    introspect_introspection: bool,
+    search_introspection: bool,
+    minify_introspection: bool,
     explorer_graph_ref: Option<String>,
     custom_scalar_map: Option<CustomScalarMap>,
     mutation_mode: MutationMode,
@@ -56,8 +59,10 @@ impl StateMachine {
                 transport: server.transport,
                 endpoint: server.endpoint,
                 headers: server.headers,
-                introspection: server.introspection,
-                minify: server.minify,
+                execute_introspection: server.execute_introspection,
+                introspect_introspection: server.introspect_introspection,
+                search_introspection: server.search_introspection,
+                minify_introspection: server.minify_introspection,
                 explorer_graph_ref: server.explorer_graph_ref,
                 custom_scalar_map: server.custom_scalar_map,
                 mutation_mode: server.mutation_mode,

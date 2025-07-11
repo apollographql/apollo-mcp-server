@@ -83,20 +83,6 @@ impl Introspect {
                 .iter()
                 .filter(|(_name, extended_type)| {
                     !extended_type.is_built_in()
-                        && matches!(
-                            extended_type,
-                            ExtendedType::Object(_)
-                                | ExtendedType::InputObject(_)
-                                | ExtendedType::Scalar(_)
-                                | ExtendedType::Enum(_)
-                                | ExtendedType::Interface(_)
-                                | ExtendedType::Union(_)
-                        )
-                        && schema
-                            .root_operation(OperationType::Query)
-                            .is_none_or(|root_name| {
-                                extended_type.name() != root_name || type_name == root_name.as_str()
-                            })
                         && schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
@@ -105,9 +91,7 @@ impl Introspect {
                             })
                         && schema
                             .root_operation(OperationType::Subscription)
-                            .is_none_or(|root_name| {
-                                extended_type.name() != root_name || type_name == root_name.as_str()
-                            })
+                            .is_none_or(|root_name| extended_type.name() != root_name)
                 })
                 .map(|(_, extended_type)| extended_type)
                 .map(|extended_type| self.serialize(extended_type))

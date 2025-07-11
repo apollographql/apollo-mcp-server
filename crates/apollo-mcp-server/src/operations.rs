@@ -32,7 +32,8 @@ use rmcp::{
     },
     serde_json::{self, Value},
 };
-use serde::Serialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -196,7 +197,8 @@ impl From<Vec<PathBuf>> for OperationSource {
     }
 }
 
-#[derive(clap::ValueEnum, Clone, Default, Debug, Serialize, PartialEq, Copy)]
+#[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Copy, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum MutationMode {
     /// Don't allow any mutations
     #[default]
