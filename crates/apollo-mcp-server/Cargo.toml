@@ -39,7 +39,6 @@ url.workspace = true
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 rstest.workspace = true
-secrecy.workspace = true
 tracing-test = "0.2.5"
 
 [lints]
