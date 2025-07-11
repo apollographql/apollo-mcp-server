@@ -91,7 +91,7 @@ impl Starting {
                 schema.clone(),
                 root_query_type,
                 root_mutation_type,
-                self.config.minify_introspection,
+                self.config.introspect_minify,
             )
         });
         let search_tool = if self.config.search_introspection {

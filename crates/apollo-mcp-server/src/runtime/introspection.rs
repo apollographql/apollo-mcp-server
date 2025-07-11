@@ -13,9 +13,6 @@ pub struct Introspection {
 
     /// Search tool configuration
     pub search: SearchConfig,
-
-    /// Minify introspection results
-    pub minify: bool,
 }
 
 /// Execution-specific introspection configuration
@@ -32,6 +29,9 @@ pub struct ExecuteConfig {
 pub struct IntrospectConfig {
     /// Enable introspection requests
     pub enabled: bool,
+
+    /// Minify introspection results
+    pub minify: bool,
 }
 
 /// Search tool configuration
