@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use reqwest::header::HeaderMap;
+use rmcp::model::Implementation;
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
@@ -250,6 +251,10 @@ impl ServerHandler for Running {
 
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
+            server_info: Implementation {
+                name: "Apollo MCP Server".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()

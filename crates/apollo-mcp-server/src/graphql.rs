@@ -64,7 +64,7 @@ pub trait Executable {
             request_body.insert(
                 String::from("extensions"),
                 serde_json::json!({
-                    "ApolloClientMetadata": client_metadata,
+                    "clientLibrary": client_metadata,
                 }),
             );
 
