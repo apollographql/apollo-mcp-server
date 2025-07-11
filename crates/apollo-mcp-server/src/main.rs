@@ -6,6 +6,7 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_registry::uplink::{Endpoints, SecretString, UplinkConfig};
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
+use apollo_mcp_server::logging;
 use apollo_mcp_server::operations::{MutationMode, OperationSource};
 use apollo_mcp_server::server::Server;
 use apollo_mcp_server::server::Transport;
@@ -19,7 +20,6 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 use tracing::{Level, info};
-use tracing_subscriber::EnvFilter;
 use url::{ParseError, Url};
 
 /// Clap styling
@@ -134,6 +134,9 @@ struct Args {
     #[arg(long = "log", short = 'l', global = true, default_value_t = Level::INFO)]
     log_level: Level,
 
+    #[arg(long = "out", global = true, default_value = "./logs")]
+    log_path: String,
+
     /// The IP address to bind the Streamable HTTP server to
     ///
     /// [default: 127.0.0.1]
@@ -233,20 +236,7 @@ async fn main() -> anyhow::Result<()> {
         Transport::Stdio
     };
 
-    // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
-    match transport {
-        Transport::SSE { .. } | Transport::StreamableHttp { .. } => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
-            .with_ansi(true)
-            .with_target(false)
-            .init(),
-        Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(args.log_level.into()))
-            .with_writer(std::io::stderr)
-            .with_ansi(true)
-            .with_target(false)
-            .init(),
-    };
+    let _log_guard = logging::setup_logging(args.log_path.clone(), args.log_level);
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",

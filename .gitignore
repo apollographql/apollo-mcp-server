@@ -1,5 +1,7 @@
 .idea/*
 
+logs/*
+
 # Let run configurations be unignored so they can be shared if desired
 !.idea/runConfigurations/
 
