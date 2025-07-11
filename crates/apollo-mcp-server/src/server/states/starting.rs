@@ -56,9 +56,14 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
+        let execute_tool = self
+            .config
+            .execute_introspection
+            .then(|| Execute::new(self.config.mutation_mode));
+
         let root_query_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 self.schema
                     .root_operation(OperationType::Query)
@@ -68,7 +73,7 @@ impl Starting {
             .flatten();
         let root_mutation_type = self
             .config
-            .introspection
+            .introspect_introspection
             .then(|| {
                 matches!(self.config.mutation_mode, MutationMode::All)
                     .then(|| {
@@ -81,20 +86,11 @@ impl Starting {
             })
             .flatten();
         let schema = Arc::new(Mutex::new(self.schema));
-
-        let (execute_tool, introspect_tool) = if self.config.introspection {
-            (
-                Some(Execute::new(self.config.mutation_mode)),
-                Some(Introspect::new(
-                    schema.clone(),
-                    root_query_type,
-                    root_mutation_type,
-                )),
-            )
-        } else {
-            (None, None)
-        };
-        let search_tool = if self.config.search {
+        let introspect_tool = self
+            .config
+            .introspect_introspection
+            .then(|| Introspect::new(schema.clone(), root_query_type, root_mutation_type));
+        let search_tool = if self.config.search_introspection {
             Some(Search::new(
                 schema.clone(),
                 matches!(self.config.mutation_mode, MutationMode::All),

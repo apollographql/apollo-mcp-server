@@ -14,6 +14,7 @@ apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
+figment = { version = "0.10.19", features = ["env", "yaml"] }
 futures.workspace = true
 lz-str = "0.2.1"
 regex = "1.11.1"
@@ -24,6 +25,7 @@ rmcp = { version = "0.2", features = [
   "transport-sse-server",
   "transport-streamable-http-server",
 ] }
+schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -34,8 +36,10 @@ tokio-util = "0.7.15"
 url.workspace = true
 
 [dev-dependencies]
+figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 rstest.workspace = true
+secrecy.workspace = true
 tracing-test = "0.2.5"
 
 [lints]

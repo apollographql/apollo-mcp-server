@@ -171,26 +171,30 @@
             chmod a+r data
           '';
 
+          # Image configuration
+          # See: https://github.com/moby/moby/blob/46f7ab808b9504d735d600e259ca0723f76fb164/image/spec/spec.md#container-runconfig-field-descriptions
           config = let
             http-port = 5000;
           in {
-            # Make the entrypoint the server
+            # Provide default options that can be unset / overridden by the end-user
+            Env = [
+              # Use Streamable HTTP transport by default, bound to all addresses
+              "APOLLO_MCP_TRANSPORT__TYPE=streamable_http"
+              "APOLLO_MCP_TRANSPORT__ADDRESS=0.0.0.0"
+              "APOLLO_MCP_TRANSPORT__PORT=${builtins.toString http-port}"
+            ];
+            WorkingDir = "/data";
+
+            # Make the entrypoint the server and have it read the config from /dev/null by default
+            Cmd = ["/dev/null"];
             Entrypoint = [
               "apollo-mcp-server"
-
-              # Always consider /data to be the CWD for the process
-              "-d"
-              "/data"
-
-              # Use Streamable HTTP transport by default, bound to all addresses
-              "--http-address"
-              "0.0.0.0"
-              "--http-port"
-              "${builtins.toString http-port}"
             ];
 
             # Listen on container port for Streamable HTTP requests
-            Expose = "${builtins.toString http-port}/tcp";
+            ExposedPorts = {
+              "${builtins.toString http-port}/tcp" = {};
+            };
 
             # Drop to local user
             User = "1000";

@@ -15,6 +15,7 @@ use serde_json::Value;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
+use url::Url;
 
 use crate::{
     custom_scalar_map::CustomScalarMap,
@@ -34,7 +35,7 @@ pub(super) struct Running {
     pub(super) schema: Arc<Mutex<Valid<Schema>>>,
     pub(super) operations: Arc<Mutex<Vec<Operation>>>,
     pub(super) headers: HeaderMap,
-    pub(super) endpoint: String,
+    pub(super) endpoint: Url,
     pub(super) execute_tool: Option<Execute>,
     pub(super) introspect_tool: Option<Introspect>,
     pub(super) search_tool: Option<Search>,
@@ -294,7 +295,7 @@ mod tests {
             schema: Arc::new(Mutex::new(schema)),
             operations: Arc::new(Mutex::new(vec![])),
             headers: HeaderMap::new(),
-            endpoint: "http://localhost:4000".to_string(),
+            endpoint: "http://localhost:4000".parse().unwrap(),
             execute_tool: None,
             introspect_tool: None,
             search_tool: None,

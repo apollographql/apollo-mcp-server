@@ -3,11 +3,12 @@
 use crate::errors::McpError;
 use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
-use rmcp::serde_json::{self, Map, Value};
+use serde_json::{Map, Value};
+use url::Url;
 
 pub struct Request<'a> {
     pub input: Value,
-    pub endpoint: &'a str,
+    pub endpoint: &'a Url,
     pub headers: HeaderMap,
 }
 
@@ -74,7 +75,7 @@ pub trait Executable {
         }
 
         reqwest::Client::new()
-            .post(request.endpoint)
+            .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())
             .send()
