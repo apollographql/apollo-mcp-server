@@ -1,0 +1,9 @@
+transport:
+  type: streamable_http
+operations:
+ source: local
+ paths:
+   - ./graphql/TheSpaceDevs/operations
+schema:
+  source: local
+  path: ./graphql/TheSpaceDevs/api.graphql
