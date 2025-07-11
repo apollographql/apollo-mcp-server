@@ -4,12 +4,11 @@ use apollo_mcp_server::server::Transport;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use tracing::Level;
 use url::Url;
 
 use super::{
     OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
-    overrides::Overrides,
+    logging::Logging, overrides::Overrides,
 };
 
 /// Configuration for the MCP server
@@ -35,13 +34,9 @@ pub struct Config {
     #[serde(default)]
     pub introspection: Introspection,
 
-    /// The log level to use for tracing
-    #[serde(
-        default = "defaults::log_level",
-        deserialize_with = "parsers::from_str"
-    )]
-    #[schemars(schema_with = "super::schemas::level")]
-    pub log_level: Level,
+    /// Logging configuration
+    #[serde(default)]
+    pub logging: Logging,
 
     /// Operations
     #[serde(default)]
@@ -61,7 +56,6 @@ pub struct Config {
 }
 
 mod defaults {
-    use tracing::Level;
     use url::Url;
 
     pub(super) fn endpoint() -> Url {
@@ -69,10 +63,6 @@ mod defaults {
         // error otherwise. It is also explicitly tested in [test::default_endpoint_parses_correctly]
         #[allow(clippy::unwrap_used)]
         Url::parse("http://127.0.0.1:4000").unwrap()
-    }
-
-    pub(super) const fn log_level() -> Level {
-        Level::INFO
     }
 
     #[cfg(test)]
@@ -87,43 +77,10 @@ mod defaults {
 }
 
 mod parsers {
-    use std::{fmt::Display, marker::PhantomData, str::FromStr};
+    use std::str::FromStr;
 
     use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
     use serde::Deserializer;
-
-    pub(super) fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
-    where
-        D: Deserializer<'de>,
-        T: FromStr,
-        <T as FromStr>::Err: Display,
-    {
-        struct FromStrVisitor<Inner> {
-            _phantom: PhantomData<Inner>,
-        }
-        impl<Inner> serde::de::Visitor<'_> for FromStrVisitor<Inner>
-        where
-            Inner: FromStr,
-            <Inner as FromStr>::Err: Display,
-        {
-            type Value = Inner;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a string")
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                Inner::from_str(v).map_err(|e| serde::de::Error::custom(e.to_string()))
-            }
-        }
-
-        deserializer.deserialize_str(FromStrVisitor {
-            _phantom: PhantomData,
-        })
-    }
 
     pub(super) fn map_from_str<'de, D>(deserializer: D) -> Result<HeaderMap, D::Error>
     where

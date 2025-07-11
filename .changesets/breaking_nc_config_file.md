@@ -5,7 +5,7 @@ options. The Apollo MCP server only accepts a single argument which is a path to
 configuration file. An empty file may be passed, as all options have sane defaults
 that follow the previous argument defaults.
 
-Below is a valid configuration file with all options filled out:
+Below is a valid configuration file with some options filled out:
 
 ```yaml
 custom_scalars: /path/to/custom/scalars
@@ -13,10 +13,6 @@ endpoint: http://127.0.0.1:4000
 graphos:
   apollo_key: some.key
   apollo_graph_ref: example@graph
-  apollo_registry_url: https://some.url
-  apollo_uplink_endpoints:
-    - http://uplink.endpoint.1
-    - http://uplink.endpoint.2
 headers:
   X-Some-Header: example-value
 introspection:
@@ -26,7 +22,7 @@ introspection:
     enabled: false
 log_level: info
 operations:
-  type: local
+  source: local
   paths:
     - /path/to/operation.graphql
     - /path/to/other/operation.graphql
@@ -36,10 +32,10 @@ overrides:
   enable_explorer: false
   mutation_mode: all
 schema:
-  type: local
+  source: local
   path: /path/to/schema.graphql
 transport:
-  type: sse
+  type: streamable_http
   address: 127.0.0.1
   port: 5000
 ```

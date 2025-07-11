@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 /// Source for loaded operations
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "source", rename_all = "snake_case")]
 pub enum OperationSource {
     /// Load operations from a GraphOS collection
     Collection {
@@ -38,7 +38,7 @@ pub enum OperationSource {
 /// Either a custom ID or the default variant
 #[derive(Debug, PartialEq, Eq)]
 pub enum IdOrDefault {
-    /// The ddefault tools for the variant (requires APOLLO_KEY)
+    /// The default tools for the variant (requires APOLLO_KEY)
     Default,
 
     /// The specific collection ID

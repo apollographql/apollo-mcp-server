@@ -47,12 +47,16 @@ async fn main() -> anyhow::Result<()> {
     // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
     match config.transport {
         Transport::SSE { .. } | Transport::StreamableHttp { .. } => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(config.log_level.into()))
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive(config.logging.level.into()),
+            )
             .with_ansi(true)
             .with_target(false)
             .init(),
         Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env().add_directive(config.log_level.into()))
+            .with_env_filter(
+                EnvFilter::from_default_env().add_directive(config.logging.level.into()),
+            )
             .with_writer(std::io::stderr)
             .with_ansi(true)
             .with_target(false)
