@@ -65,6 +65,7 @@ impl Introspect {
         match schema.types.get(type_name) {
             Some(extended_type) => tree_shaker.retain_type(
                 extended_type,
+                None,
                 if input.depth > 0 {
                     DepthLimit::Limited(input.depth)
                 } else {

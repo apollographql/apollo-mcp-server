@@ -169,8 +169,13 @@ impl<'schema> SchemaTreeShaker<'schema> {
     }
 
     /// Retain a specific type, and recursively every type it references, up to a given depth.
-    pub fn retain_type(&mut self, retain: &ExtendedType, depth_limit: DepthLimit) {
-        retain_type(self, retain, None, depth_limit);
+    pub fn retain_type(
+        &mut self,
+        retain: &ExtendedType,
+        selection_set: Option<&Vec<Selection>>,
+        depth_limit: DepthLimit,
+    ) {
+        retain_type(self, retain, selection_set, depth_limit);
     }
 
     pub fn retain_operation(
@@ -1062,7 +1067,7 @@ mod test {
         let query_type = nested_schema.types.get("Query").unwrap();
 
         // Test with depth limit of 1
-        shaker.retain_type(query_type, DepthLimit::Limited(1));
+        shaker.retain_type(query_type, None, DepthLimit::Limited(1));
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain only Query, not Level1, Level2, Level3, or Level4
@@ -1074,7 +1079,7 @@ mod test {
 
         // Test with depth limit of 2
         let mut shaker = SchemaTreeShaker::new(&nested_schema);
-        shaker.retain_type(query_type, DepthLimit::Limited(2));
+        shaker.retain_type(query_type, None, DepthLimit::Limited(2));
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain Query and Level1, but not deeper levels
@@ -1087,7 +1092,7 @@ mod test {
         // Test with depth limit of 1 starting from Level2
         let mut shaker = SchemaTreeShaker::new(&nested_schema);
         let level2_type = nested_schema.types.get("Level2").unwrap();
-        shaker.retain_type(level2_type, DepthLimit::Limited(1));
+        shaker.retain_type(level2_type, None, DepthLimit::Limited(1));
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain only Level2
@@ -1098,7 +1103,7 @@ mod test {
 
         // Test with depth limit of 2 starting from Level2
         let mut shaker = SchemaTreeShaker::new(&nested_schema);
-        shaker.retain_type(level2_type, DepthLimit::Limited(2));
+        shaker.retain_type(level2_type, None, DepthLimit::Limited(2));
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain Level2 and Level3
@@ -1109,7 +1114,7 @@ mod test {
 
         // Test with depth limit of 5 starting from Level2
         let mut shaker = SchemaTreeShaker::new(&nested_schema);
-        shaker.retain_type(level2_type, DepthLimit::Limited(5));
+        shaker.retain_type(level2_type, None, DepthLimit::Limited(5));
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain Level2 and deeper types
@@ -1127,7 +1132,7 @@ mod test {
         let query_type = nested_schema.types.get("Query").unwrap();
 
         // Test with unlimited depth
-        shaker.retain_type(query_type, DepthLimit::Unlimited);
+        shaker.retain_type(query_type, None, DepthLimit::Unlimited);
         let shaken_schema = shaker.shaken().unwrap();
 
         // Should retain all types
