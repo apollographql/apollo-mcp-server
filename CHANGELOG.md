@@ -4,6 +4,69 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [0.6.0] - 2025-07-14
+
+## ❗ BREAKING ❗
+
+### Replace CLI flags with a configuration file - @nicholascioli PR #162
+
+All command line arguments are now removed and replaced with equivalent configuration
+options. The Apollo MCP server only accepts a single argument which is a path to a
+configuration file. An empty file may be passed, as all options have sane defaults
+that follow the previous argument defaults.
+
+All options can be overridden by environment variables. They are of the following
+form:
+
+- Prefixed by `APOLLO_MCP_`
+- Suffixed by the config equivalent path, with `__` marking nested options.
+
+E.g. The environment variable to change the config option `introspection.execute.enabled`
+would be `APOLLO_MCP_INTROSPECTION__EXECUTE__ENABLED`.
+
+Below is a valid configuration file with some options filled out:
+
+```yaml
+custom_scalars: /path/to/custom/scalars
+endpoint: http://127.0.0.1:4000
+graphos:
+  apollo_key: some.key
+  apollo_graph_ref: example@graph
+headers:
+  X-Some-Header: example-value
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: false
+log_level: info
+operations:
+  source: local
+  paths:
+    - /path/to/operation.graphql
+    - /path/to/other/operation.graphql
+overrides:
+  disable_type_description: false
+  disable_schema_description: false
+  enable_explorer: false
+  mutation_mode: all
+schema:
+  source: local
+  path: /path/to/schema.graphql
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 5000
+```
+
+## 🚀 Features
+
+### Add search tool - @pubmodmatt PR #171
+
+A new experimental `search` tool has been added that allows the AI model to specify a set of terms to search for in the GraphQL schema. The top types matching that search are returned, as well as enough information to enable creation of GraphQL operations involving those types.
+
+
+
 # [0.5.2] - 2025-07-10
 
 ## 🐛 Fixes
