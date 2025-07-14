@@ -63,6 +63,14 @@ pub enum Transport {
         /// The port to bind to
         #[serde(default = "Transport::default_port")]
         port: u16,
+
+        /// Flag indicating whether to spin up a proxy server
+        #[serde(default = "Transport::default_proxy")]
+        proxy: bool,
+
+        /// Proxy server endpoint
+        #[serde(default = "Transport::default_proxy_endpoint")]
+        proxy_endpoint: String,
     },
 }
 
@@ -73,6 +81,14 @@ impl Transport {
 
     fn default_port() -> u16 {
         5000
+    }
+
+    fn default_proxy() -> bool {
+        false
+    }
+
+    fn default_proxy_endpoint() -> String {
+        format!("http://{}:{}/mcp", Self::default_address(), Self::default_port())
     }
 }
 

@@ -1,0 +1,21 @@
+[package]
+name = "apollo-mcp-proxy"
+edition = "2024"
+authors.workspace = true
+version.workspace = true
+
+[dependencies]
+axum.workspace = true
+clap = { version = "4.5.40", features = ["derive"] }
+tokio.workspace = true
+rmcp = { workspace = true, features = [
+    "client",
+    "reqwest",
+    "transport-streamable-http-client",
+]}
+tracing.workspace = true
+tracing-appender = "0.2.3"
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true
