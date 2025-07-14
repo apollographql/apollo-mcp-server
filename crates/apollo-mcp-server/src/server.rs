@@ -81,10 +81,12 @@ pub enum Transport {
         port: u16,
 
         /// Flag indicating whether to spin up a proxy server
+        /// [default: false]
         #[serde(default = "Transport::default_proxy")]
         proxy: bool,
 
-        /// Proxy server endpoint
+        /// Proxy server endpoint to connect to if proxy is enabled
+        /// [default: http://<address>:<port>/mcp]
         #[serde(default = "Transport::default_proxy_endpoint")]
         proxy_endpoint: String,
     },
