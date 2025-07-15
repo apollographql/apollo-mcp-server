@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use apollo_mcp_proxy::client::start_proxy_client;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -10,11 +11,11 @@ use apollo_mcp_server::server::Server;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
-use tokio::signal;
 use runtime::IdOrDefault;
 use runtime::logging::Logging;
 use tracing::{info, warn};
-use apollo_mcp_proxy::client::start_proxy_client;
+use tokio::signal;
+use tracing_subscriber::EnvFilter;
 
 mod runtime;
 
@@ -140,7 +141,12 @@ async fn main() -> anyhow::Result<()> {
         .start();
 
     match config.transport {
-        Transport::StreamableHttp { proxy, proxy_url, address, port } => {
+        Transport::StreamableHttp {
+            proxy,
+            proxy_url,
+            address,
+            port,
+        } => {
             if proxy {
                 let url = Transport::proxy_url(&proxy_url, &address, &port);
                 let proxy_client = async {
@@ -157,7 +163,9 @@ async fn main() -> anyhow::Result<()> {
                 mcp_server.await?;
             }
         }
-        _ => { mcp_server.await?; }
+        _ => {
+            mcp_server.await?;
+        }
     }
 
     Ok(())
