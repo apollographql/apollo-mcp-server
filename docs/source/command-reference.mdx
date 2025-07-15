@@ -87,65 +87,64 @@ iwr 'https://mcp.apollo.dev/download/win/v0.6.0' | iex
 
 ## Usage
 
-The Apollo MCP server is configured through a configuration file, the path of which
-is the first and only argument.
+Configure the Apollo MCP server with a configuration file. The path to this file is the only argument.
 
 ```sh showLineNumbers=false
 apollo-mcp-server [OPTIONS] <PATH/TO/CONFIG/FILE>
 ```
 
-### CLI Options
+### CLI options
 
 | Option          | Description                                                |
 | :-------------- | :--------------------------------------------------------- |
 | `-h, --help`    | Print help (see a summary with `-h`).                      |
 | `-V, --version` | Print version                                              |
 
-### Config Options
+### Config options
 
-All fields are optional with sane defaults.
+All fields are optional and have sensible default values.
 
 | Option           | Type                | Default                  | Description                                                   |
 |--:---------------|--:------------------|--:-----------------------|--:------------------------------------------------------------|
 | `custom_scalars` | path                |                          | Path to a custom scalar map                                   |
 | `endpoint`       | url                 | `http://localhost:4000/` | The target GraphQL endpoint                                   |
 | `graphos`        | `GraphOS`           |                          | Apollo-specific credential overrides                          |
-| `headers`        | map<string, string> |                          | List of hard-coded headers to include in all GraphQL requests |
+| `headers`        | map<string, string> | `{}`                     | List of hard-coded headers to include in all GraphQL requests |
 | `introspection`  | `Introspection`     |                          | Introspection configuration                                   |
 | `logging`        | `Logging`           |                          | Logging configuration                                         |
 | `operations`     | `OperationSource`   |                          | Operations configuration                                      |
-| `overrides`      | `Overrides`         |                          | Overrides for server behaviour                                |
+| `overrides`      | `Overrides`         |                          | Overrides for server behavior                                 |
 | `schema`         | `SchemaSource`      |                          | Schema configuration                                          |
 | `transport`      | `Transport`         |                          | The type of server transport to use                           |
 
 
-#### GraphOS Configuration
+#### GraphOS configuration
 
 These fields are under the top-level `graphos` key.
 
-| Option                    | Type   | Default | Description                                                                                       |
-|--:------------------------|--:-----|--:------|--:------------------------------------------------------------------------------------------------|
-| `apollo_key`              | string |         | The Apollo GraphOS key. Can also be from the `APOLLO_KEY` environment variable                    |
-| `apollo_graph_ref`        | string |         | The Apollo GraphOS graph reference. Can also be from the `APOLLO_GRAPH_REF` environment variable  |
-| `apollo_registry_url`     | url    |         | The URL to use for Apollo's registry                                                              |
-| `apollo_uplink_endpoints` | url    |         | List of uplink URL overrides. Can also be from the `APOLLO_UPLINK_ENDPOINTS` environment variable |
+| Option                    | Type   | Default | Description                                                                                                     |
+|--:------------------------|--:-----|--:------|--:--------------------------------------------------------------------------------------------------------------|
+| `apollo_key`              | string |         | The Apollo GraphOS key. You can also provide this with the `APOLLO_KEY` environment variable                    |
+| `apollo_graph_ref`        | string |         | The Apollo GraphOS graph reference. You can also provide this with the `APOLLO_GRAPH_REF` environment variable  |
+| `apollo_registry_url`     | url    |         | The URL to use for Apollo's registry                                                                            |
+| `apollo_uplink_endpoints` | url    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
 
 
-#### Introspection Configuration
+#### Introspection configuration
 
 These fields are under the top-level `introspection` key.
 
-| Option               | Type   | Default | Description                                                         |
-|--:-------------------|--:-----|--:------|--:------------------------------------------------------------------|
-| `execute`            | object |         | Execution configuration for introspection                           |
-| `execute.enabled`    | bool   | `false` | Enable introspection for execution                                  |
-| `introspect`         | object |         | Introspect configuration for allowing clients to run instrospection |
-| `introspect.enabled` | bool   | `false` | Enable introspection requests                                       |
-| `search`             | object |         | Search tool configuration                                           |
-| `search.enabled`     | bool   | `false` | Enable search tool                                                  |
+| Option               | Type   | Default | Description                                                           |
+|--:-------------------|--:-----|--:------|--:--------------------------------------------------------------------|
+| `execute`            | object |         | Execution configuration for introspection                             |
+| `execute.enabled`    | bool   | `false` | Enable introspection for execution                                    |
+| `introspect`         | object |         | Introspection configuration for allowing clients to run introspection |
+| `introspect.enabled` | bool   | `false` | Enable introspection requests                                         |
+| `search`             | object |         | Search tool configuration                                             |
+| `search.enabled`     | bool   | `false` | Enable search tool                                                    |
 
 
-#### Logging Configuration
+#### Logging configuration
 
 These fields are under the top-level `logging` key.
 
@@ -154,61 +153,60 @@ These fields are under the top-level `logging` key.
 | `level` | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"` | The log level to use for tracing |
 
 
-#### Operation Source Configuration
+#### Operation source configuration
 
-These fields are under the top-level `operations` key. There are a few valid choices for this key based on the `source` key
+These fields are under the top-level `operations` key. There are multiple valid choices for this key based on the `source` key
 with the default being `infer`.
 
 | Source             | Option   | Type           | Default | Description                                                                                                                                       |
 |--:-----------------|--:-------|--:-------------|--:------|--:------------------------------------------------------------------------------------------------------------------------------------------------|
 | GraphOS Collection | `source` | `"collection"` |         | Load operations from a GraphOS collection                                                                                                         |
 | GraphOS Collection | `id`     | string         |         | The collection ID to use in GraphOS. Use `default` for the default collection. [Learn more](/apollo-mcp-server/guides/#from-operation-collection) |
-| Introspection      | `source` | `"introspect"` |         | Load operations by introspecting the schema. Note: This requires introspection to be enabled                                                      |
-| Local              | `source` | `"local"`      |         | Load operations from local GraphQL files / folders                                                                                                |
-| Local              | `paths`  | list<path>     |         | Paths to GraphQL files or folders containing them to search                                                                                       |
+| Introspection      | `source` | `"introspect"` |         | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                               |
+| Local              | `source` | `"local"`      |         | Load operations from local GraphQL files or directories                                                                                           |
+| Local              | `paths`  | list<path>     |         | Paths to GraphQL files or directories to search                                                                                                   |
 | Manifest           | `source` | `"manifest"`   |         | Load operations from a persisted queries manifest file                                                                                            |
 | Manifest           | `path`   | path           |         | The path to the persisted query manifest                                                                                                          |
-| Uplink             | `source` | `"uplink"`     |         | Load operations from uplink manifest. Note: requires an Apollo key and graph reference                                                            |
+| Uplink             | `source` | `"uplink"`     |         | Load operations from an uplink manifest. Note: This source requires an Apollo key and graph reference                                             |
 | Infer              | `source` | `"infer"`      | *       | Infer where to load operations based on other configuration options.                                                                              |
 
 
-
-#### Overrides Configuration
+#### Overrides configuration
 
 These fields are under the top-level `overrides` key.
 
-| Option                       | Type                                | Default  | Description                                                                                                                 |
-|--:---------------------------|--:----------------------------------|--:-------|--:--------------------------------------------------------------------------------------------------------------------------|
-| `disable_type_description`   | bool                                | `false`  | Disable type descriptions to save on contect-window space                                                                   |
-| `disable_schema_description` | bool                                | `false`  | Disable schema descriptions to save on contect-window space                                                                 |
-| `enable_explorer`            | bool                                | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: requires a GraphOS graph reference |
-| `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Set the mutation mode access level for the MCP server                                                                       |
+| Option                       | Type                                | Default  | Description                                                                                                                      |
+|--:---------------------------|--:----------------------------------|--:-------|--:-------------------------------------------------------------------------------------------------------------------------------|
+| `disable_type_description`   | bool                                | `false`  | Disable type descriptions to save on context-window space                                                                        |
+| `disable_schema_description` | bool                                | `false`  | Disable schema descriptions to save on context-window space                                                                      |
+| `enable_explorer`            | bool                                | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: This requires a GraphOS graph reference |
+| `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Set the mutation mode access level for the MCP server                                                                            |
 
 
-#### Schema Source Configuration
+#### Schema source configuration
 
-These fields are under the top-level `schema` key. There are a few valid choices for this key based on the `source` key
+These fields are under the top-level `schema` key. There are multiple valid choices for this key based on the `source` key
 with the default being `uplink`.
 
-| Source | Option   | Type       | Default | Description                                                                    |
-|--:-----|--:-------|--:---------|--:------|--:-----------------------------------------------------------------------------|
-| Local  | `source` | `"local"`  |         | Load schema from local file                                                    |
-| Local  | `path`   | path       |         | Path to the GraphQL schema                                                     |
-| Uplink | `source` | `"uplink"` | *       | Fetch the schema from uplink. Note: requires an Apollo key and graph reference |
+| Source | Option   | Type       | Default | Description                                                                         |
+|--:-----|--:-------|--:---------|--:------|--:----------------------------------------------------------------------------------|
+| Local  | `source` | `"local"`  |         | Load schema from local file                                                         |
+| Local  | `path`   | path       |         | Path to the GraphQL schema                                                          |
+| Uplink | `source` | `"uplink"` | *       | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference |
 
 
-#### Transport Configuration
+#### Transport configuration
 
-These fields are under the top-level `transport` key. There are a few valid choices for this key based on the `type` key
+These fields are under the top-level `transport` key. There are multiple valid choices for this key based on the `type` key
 with the default being `stdio`.
 
 | Type           | Option    | Type                | Default     | Description                                                                                                                   |
 |--:-------------|--:--------|--:------------------|--:----------|--:----------------------------------------------------------------------------------------------------------------------------|
-| stdio          | `type`    | `"stdio"`           | *           | Use standard IO for server <> client communication                                                                            |
+| stdio          | `type`    | `"stdio"`           | *           | Use standard IO for communication between the server and client                                                               |
 | SSE            | `type`    | `"sse"`             |             | Host the MCP server on the supplied configuration, using SSE for communication. Note: Deprecated in favor of `StreamableHTTP` |
 | SSE            | `address` | ipaddr              | `127.0.0.1` | The IP address to bind to                                                                                                     |
 | SSE            | `port`    | u16                 | `5000`      | The port to bind to                                                                                                           |
-| StreamableHTTP | `type`    | `"streamable_http"` |             | Host the MCP server on the configuration, using stremable HTTP messages.                                                      |
+| StreamableHTTP | `type`    | `"streamable_http"` |             | Host the MCP server on the configuration, using streamable HTTP messages.                                                     |
 | StreamableHTTP | `address` | ipaddr              | `127.0.0.1` | The IP address to bind to                                                                                                     |
 | StreamableHTTP | `port`    | u16                 | `5000`      | The port to bind to                                                                                                           |
 
