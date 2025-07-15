@@ -8,7 +8,7 @@ use std::fmt;
 use std::fmt::Display;
 use std::hash::Hash;
 
-/// Iterator over PathNode elements
+/// Iterator over references to PathNode elements
 pub struct PathNodeIter<'a> {
     current: Option<&'a PathNode>,
 }
@@ -23,7 +23,7 @@ impl<'a> Iterator for PathNodeIter<'a> {
     }
 }
 
-/// Iterator over PathNode elements with mutable references
+/// Iterator over mutable references to PathNode elements
 pub struct PathNodeIterMut<'a> {
     current: Option<&'a mut PathNode>,
 }
@@ -74,6 +74,7 @@ pub struct PathNode {
 }
 
 impl PathNode {
+    /// Create a new path containing just one type
     pub fn new(node_type: NamedType) -> Self {
         Self {
             node_type,
@@ -83,6 +84,7 @@ impl PathNode {
         }
     }
 
+    /// Add a child to the end of a path. Allows building up a path from the root down.
     pub fn add_child(
         self,
         field_name: Option<Name>,
@@ -108,6 +110,7 @@ impl PathNode {
         }
     }
 
+    /// Add a parent to the beginning of a path. Allows building up a path from the bottom up.
     pub fn add_parent(
         self,
         field_name: Option<Name>,
@@ -122,6 +125,7 @@ impl PathNode {
         }
     }
 
+    /// Gets the penultimate node in a path
     pub fn referencing_type(&self) -> Option<(&NamedType, Option<&Name>, Vec<&NamedType>)> {
         if let Some(child) = &self.child {
             child.referencing_type_inner(self)
@@ -145,6 +149,7 @@ impl PathNode {
         }
     }
 
+    /// Determines if a path contains a cycle
     pub(crate) fn has_cycle(&self) -> bool {
         self.has_cycle_inner(HashSet::new())
     }
@@ -163,6 +168,7 @@ impl PathNode {
         }
     }
 
+    /// Gets the length of the path
     pub fn len(&self) -> usize {
         if let Some(child) = &self.child {
             child.len() + 1
