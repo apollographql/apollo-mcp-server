@@ -30,7 +30,7 @@ pub async fn start_proxy_client(url: &str) -> Result<(), Box<dyn Error>> {
     };
 
     let server_info = client.peer_info();
-    info!("[Proxy] Connected to server");
+    info!("[Proxy] Connected to server at {}", url);
     debug!("{server_info:#?}");
 
     let proxy_server = ProxyServer::new(client.peer().clone(), client.peer_info());
