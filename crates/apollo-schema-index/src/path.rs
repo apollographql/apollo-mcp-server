@@ -310,9 +310,10 @@ impl<T: Eq + Hash + Display> Display for Scored<T> {
 mod test {
     use super::*;
     use apollo_compiler::name;
+    use insta::assert_snapshot;
 
     #[test]
-    fn test_path() {
+    fn test_add_child() {
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
             Some(name!("child")),
@@ -320,6 +321,66 @@ mod test {
             NamedType::new("Child").unwrap(),
         );
         assert_eq!(path.to_string(), "Root -> child -> Child");
+    }
+
+    #[test]
+    fn test_add_parent() {
+        let path = PathNode::new(NamedType::new("Child").unwrap());
+        let path = path.add_parent(
+            Some(name!("child")),
+            vec![],
+            NamedType::new("Root").unwrap(),
+        );
+        assert_eq!(path.to_string(), "Root -> child -> Child");
+    }
+
+    #[test]
+    fn test_len() {
+        // Test path with no children
+        let path = PathNode::new(NamedType::new("Root").unwrap());
+        assert_eq!(path.len(), 1);
+
+        // Test path with one child
+        let path = path.add_child(
+            Some(name!("child")),
+            vec![],
+            NamedType::new("Child").unwrap(),
+        );
+        assert_eq!(path.len(), 2);
+
+        // Test path with two children
+        let path = path.add_child(
+            Some(name!("grandchild")),
+            vec![],
+            NamedType::new("GrandChild").unwrap(),
+        );
+        assert_eq!(path.len(), 3);
+
+        // Test path with a non-field child
+        let path = path.add_child(None, vec![], NamedType::new("GreatGrandChild").unwrap());
+        assert_eq!(path.len(), 4);
+    }
+
+    #[test]
+    fn test_display() {
+        let path = PathNode::new(NamedType::new("Root").unwrap());
+        let path = path.add_child(
+            Some(name!("child")),
+            vec![
+                NamedType::new("Arg1").unwrap(),
+                NamedType::new("Arg2").unwrap(),
+            ],
+            NamedType::new("Child").unwrap(),
+        );
+        let path = path.add_child(
+            Some(name!("grandchild")),
+            vec![],
+            NamedType::new("GrandChild").unwrap(),
+        );
+        assert_snapshot!(
+            path.to_string(),
+            @"Root -> child(Arg1,Arg2) -> Child -> grandchild -> GrandChild"
+        );
     }
 
     #[test]
