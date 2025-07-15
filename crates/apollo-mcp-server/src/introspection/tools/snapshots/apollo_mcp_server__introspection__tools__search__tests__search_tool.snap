@@ -2,11 +2,20 @@
 source: crates/apollo-mcp-server/src/introspection/tools/search.rs
 expression: content_to_snapshot(result)
 ---
+scalar DateTime
+
 enum UserRole {
   ADMIN
   MODERATOR
   USER
   GUEST
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DELETED
 }
 
 type User implements Node {
@@ -28,4 +37,9 @@ input PostFilter {
   authorId: ID
   tags: [String!]
   dateRange: DateRangeInput
+}
+
+input DateRangeInput {
+  start: DateTime!
+  end: DateTime!
 }

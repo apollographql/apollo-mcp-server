@@ -93,19 +93,6 @@ impl SchemaExt for Schema {
                                         )
                                     }));
                                 }
-                                ExtendedType::InputObject(input) => {
-                                    stack.extend(input.fields.values().map(|field| {
-                                        let next_type = field.ty.inner_named_type();
-                                        (
-                                            next_type,
-                                            current_path.clone().add_child(
-                                                Some(field.name.clone()),
-                                                vec![],
-                                                next_type.clone(),
-                                            ),
-                                        )
-                                    }));
-                                }
                                 ExtendedType::Union(union) => {
                                     stack.extend(
                                         union.members.iter().map(|member| &member.name).map(

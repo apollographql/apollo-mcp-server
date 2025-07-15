@@ -120,7 +120,8 @@ impl Search {
                 }
                 for field_arg in path_node.field_args {
                     if let Some(extended_type) = schema.types.get(field_arg.as_str()) {
-                        tree_shaker.retain_type(extended_type, None, DepthLimit::Limited(1));
+                        // Retain input types with unlimited depth because all input must be given
+                        tree_shaker.retain_type(extended_type, None, DepthLimit::Unlimited);
                     }
                 }
             }
