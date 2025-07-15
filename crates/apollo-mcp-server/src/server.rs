@@ -5,7 +5,7 @@ use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use url::Url;
+use url::{Url};
 
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
@@ -66,13 +66,12 @@ pub enum Transport {
 
         /// Flag indicating whether to spin up a proxy server
         /// [default: false]
-        #[serde(default = "Transport::default_proxy")]
+        #[serde(default)]
         proxy: bool,
 
         /// Proxy server endpoint to connect to if proxy is enabled
-        /// [default: http://<address>:<port>/mcp]
-        #[serde(default = "Transport::default_proxy_endpoint")]
-        proxy_endpoint: String,
+        #[serde(default)]
+        proxy_url: Option<Url>,
     },
 }
 
@@ -85,12 +84,16 @@ impl Transport {
         5000
     }
 
-    fn default_proxy() -> bool {
-        false
-    }
+    pub fn proxy_url(proxy_url: &Option<Url>, address: &IpAddr, port: &u16) -> Url {
+        match proxy_url {
+            Some(proxy_url) => { proxy_url.clone() }
+            None => {
+                let address = format!("http://{address}:{port}/mcp");
+                #[allow(clippy::unwrap_used)]
+                Url::parse(address.as_str()).unwrap()
+            }
+        }
 
-    fn default_proxy_endpoint() -> String {
-        format!("http://{}:{}/mcp", Self::default_address(), Self::default_port())
     }
 }
 
