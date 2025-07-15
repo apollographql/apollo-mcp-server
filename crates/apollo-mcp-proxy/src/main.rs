@@ -1,5 +1,5 @@
-use clap::Parser;
 use apollo_mcp_proxy::client::start_proxy_client;
+use clap::Parser;
 use std::error::Error;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::layer::SubscriberExt;
