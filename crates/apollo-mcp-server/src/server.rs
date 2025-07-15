@@ -5,7 +5,7 @@ use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use url::{Url};
+use url::Url;
 
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
@@ -93,14 +93,13 @@ impl Transport {
 
     pub fn proxy_url(proxy_url: &Option<Url>, address: &IpAddr, port: &u16) -> Url {
         match proxy_url {
-            Some(proxy_url) => { proxy_url.clone() }
+            Some(proxy_url) => proxy_url.clone(),
             None => {
                 let address = format!("http://{address}:{port}/mcp");
                 #[allow(clippy::unwrap_used)]
                 Url::parse(address.as_str()).unwrap()
             }
         }
-
     }
 }
 
