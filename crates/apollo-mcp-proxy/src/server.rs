@@ -262,7 +262,9 @@ impl ServerHandler for ProxyServer {
             }
             Err(err) => {
                 error!("[Proxy] Error calling tool: {:?}", err);
-                Ok(CallToolResult::error(vec![Content::text(format!("Error: {err}"))]))
+                Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Error: {err}"
+                ))]))
             }
         }
     }
