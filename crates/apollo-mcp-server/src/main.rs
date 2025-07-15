@@ -17,6 +17,9 @@ use tracing_subscriber::EnvFilter;
 
 mod runtime;
 
+/// The default search leaf depth
+const DEFAULT_SEARCH_LEAF_DEPTH: usize = 1;
+
 /// The default amount of memory to use for GraphQL schema indexing
 const DEFAULT_INDEX_MEMORY_BYTES: usize = 50_000_000;
 
@@ -151,6 +154,13 @@ async fn main() -> anyhow::Result<()> {
                 .custom_scalars
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
                 .transpose()?,
+        )
+        .search_leaf_depth(
+            config
+                .introspection
+                .search
+                .leaf_depth
+                .unwrap_or(DEFAULT_SEARCH_LEAF_DEPTH),
         )
         .index_memory_bytes(
             config

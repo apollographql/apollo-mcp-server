@@ -26,6 +26,7 @@ pub struct Search {
     schema: Arc<Mutex<Valid<Schema>>>,
     index: SchemaIndex,
     allow_mutations: bool,
+    leaf_depth: usize,
     pub tool: Tool,
 }
 
@@ -50,6 +51,7 @@ impl Search {
     pub fn new(
         schema: Arc<Mutex<Valid<Schema>>>,
         allow_mutations: bool,
+        leaf_depth: usize,
         index_memory_bytes: usize,
     ) -> Result<Self, IndexingError> {
         let root_types = if allow_mutations {
@@ -62,6 +64,7 @@ impl Search {
             schema: schema.clone(),
             index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
             allow_mutations,
+            leaf_depth,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
                 "Search a GraphQL schema",
@@ -99,24 +102,23 @@ impl Search {
             let path_len = root_path.inner.len();
             for (i, path_node) in root_path.inner.into_iter().enumerate() {
                 if let Some(extended_type) = schema.types.get(path_node.node_type.as_str()) {
-                    let selection_set = if i == path_len - 1 {
-                        None
+                    let (selection_set, depth) = if i == path_len - 1 {
+                        (None, DepthLimit::Limited(self.leaf_depth))
                     } else {
-                        path_node.field_name.as_ref().map(|field_name| {
-                            vec![Selection::Field(Node::from(Field {
-                                alias: Default::default(),
-                                name: Name::new_unchecked(field_name),
-                                arguments: Default::default(),
-                                selection_set: Default::default(),
-                                directives: Default::default(),
-                            }))]
-                        })
+                        (
+                            path_node.field_name.as_ref().map(|field_name| {
+                                vec![Selection::Field(Node::from(Field {
+                                    alias: Default::default(),
+                                    name: Name::new_unchecked(field_name),
+                                    arguments: Default::default(),
+                                    selection_set: Default::default(),
+                                    directives: Default::default(),
+                                }))]
+                            }),
+                            DepthLimit::Limited(1),
+                        )
                     };
-                    tree_shaker.retain_type(
-                        extended_type,
-                        selection_set.as_ref(),
-                        DepthLimit::Limited(1),
-                    )
+                    tree_shaker.retain_type(extended_type, selection_set.as_ref(), depth)
                 }
                 for field_arg in path_node.field_args {
                     if let Some(extended_type) = schema.types.get(field_arg.as_str()) {
@@ -186,8 +188,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search =
-            Search::new(schema.clone(), false, 15_000_000).expect("Failed to create search tool");
+        let search = Search::new(schema.clone(), false, 1, 15_000_000)
+            .expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
@@ -205,7 +207,7 @@ mod tests {
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
         let search =
-            Search::new(schema.clone(), true, 15_000_000).expect("Failed to create search tool");
+            Search::new(schema.clone(), true, 1, 15_000_000).expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search

@@ -40,6 +40,11 @@ pub struct SearchConfig {
 
     /// The amount of memory used for indexing (in bytes)
     pub index_memory_bytes: Option<usize>,
+
+    /// The depth of subtype information to include from matching types
+    /// (1 is just the matching type, 2 is the matching type plus the types it references, etc.
+    /// Defaults to 1.)
+    pub leaf_depth: Option<usize>,
 }
 
 impl Introspection {

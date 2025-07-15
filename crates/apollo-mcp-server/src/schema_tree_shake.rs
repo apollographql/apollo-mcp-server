@@ -52,7 +52,7 @@ impl RootOperationNames {
 #[derive(Debug, Clone, Copy)]
 pub enum DepthLimit {
     Unlimited,
-    Limited(u32),
+    Limited(usize),
 }
 
 impl DepthLimit {
