@@ -10,6 +10,7 @@ use apollo_mcp_server::server::Server;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
+use tokio::signal;
 use runtime::IdOrDefault;
 use runtime::logging::Logging;
 use tracing::{info, warn};
@@ -139,15 +140,19 @@ async fn main() -> anyhow::Result<()> {
         .start();
 
     match config.transport {
-        Transport::StreamableHttp { proxy, proxy_endpoint, .. } => {
+        Transport::StreamableHttp { proxy, proxy_url, address, port } => {
             if proxy {
-                let mut endpoint = proxy_endpoint;
-                if !endpoint.starts_with("http") {
-                    endpoint = format!("http://{endpoint}");
-                }
-                
-                let proxy_client = start_proxy_client(endpoint.as_str());
-                let (_, _ ) = tokio::join!(mcp_server, proxy_client);
+                let url = Transport::proxy_url(&proxy_url, &address, &port);
+                let proxy_client = async {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    _ = start_proxy_client(url.as_str()).await;
+                };
+
+                tokio::select! {
+                    _ = mcp_server => {},
+                    _ = proxy_client => {},
+                    _ = signal::ctrl_c() => {}
+                };
             } else {
                 mcp_server.await?;
             }
