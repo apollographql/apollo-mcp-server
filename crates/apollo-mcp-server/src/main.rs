@@ -17,6 +17,9 @@ use tracing_subscriber::EnvFilter;
 
 mod runtime;
 
+/// The default amount of memory to use for GraphQL schema indexing
+const DEFAULT_INDEX_MEMORY_BYTES: usize = 50_000_000;
+
 /// Clap styling
 const STYLES: Styles = Styles::styled()
     .header(AnsiColor::Green.on_default().effects(Effects::BOLD))
@@ -148,6 +151,13 @@ async fn main() -> anyhow::Result<()> {
                 .custom_scalars
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
                 .transpose()?,
+        )
+        .index_memory_bytes(
+            config
+                .introspection
+                .search
+                .index_memory_bytes
+                .unwrap_or(DEFAULT_INDEX_MEMORY_BYTES),
         )
         .build()
         .start()

@@ -40,6 +40,7 @@ struct Config {
     mutation_mode: MutationMode,
     disable_type_description: bool,
     disable_schema_description: bool,
+    index_memory_bytes: usize,
 }
 
 impl StateMachine {
@@ -66,6 +67,7 @@ impl StateMachine {
                 mutation_mode: server.mutation_mode,
                 disable_type_description: server.disable_type_description,
                 disable_schema_description: server.disable_schema_description,
+                index_memory_bytes: server.index_memory_bytes,
             },
         });
 

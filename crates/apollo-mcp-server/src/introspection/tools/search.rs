@@ -50,6 +50,7 @@ impl Search {
     pub fn new(
         schema: Arc<Mutex<Valid<Schema>>>,
         allow_mutations: bool,
+        index_memory_bytes: usize,
     ) -> Result<Self, IndexingError> {
         let root_types = if allow_mutations {
             OperationType::Query | OperationType::Mutation
@@ -59,7 +60,7 @@ impl Search {
         let locked = &schema.try_lock()?;
         Ok(Self {
             schema: schema.clone(),
-            index: SchemaIndex::new(locked, root_types)?,
+            index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
             allow_mutations,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
@@ -184,7 +185,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search = Search::new(schema.clone(), false).expect("Failed to create search tool");
+        let search =
+            Search::new(schema.clone(), false, 15_000_000).expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
@@ -201,7 +203,8 @@ mod tests {
     #[tokio::test]
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search = Search::new(schema.clone(), true).expect("Failed to create search tool");
+        let search =
+            Search::new(schema.clone(), true, 15_000_000).expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search

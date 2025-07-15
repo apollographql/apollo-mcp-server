@@ -37,6 +37,9 @@ pub struct IntrospectConfig {
 pub struct SearchConfig {
     /// Enable search tool
     pub enabled: bool,
+
+    /// The amount of memory used for indexing (in bytes)
+    pub index_memory_bytes: Option<usize>,
 }
 
 impl Introspection {

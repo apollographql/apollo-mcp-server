@@ -94,6 +94,7 @@ impl Starting {
             Some(Search::new(
                 schema.clone(),
                 matches!(self.config.mutation_mode, MutationMode::All),
+                self.config.index_memory_bytes,
             )?)
         } else {
             None

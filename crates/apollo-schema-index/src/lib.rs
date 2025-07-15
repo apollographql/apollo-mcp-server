@@ -51,7 +51,6 @@ pub const DESCRIPTION_FIELD: &str = "description";
 pub const FIELDS_FIELD: &str = "fields";
 pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
 pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
-pub const INDEX_MEMORY_BYTES: usize = 50_000_000;
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
 /// be included in an [`EnumSet`](EnumSet).
@@ -123,6 +122,7 @@ impl SchemaIndex {
     pub fn new(
         schema: &Valid<Schema>,
         root_types: EnumSet<OperationType>,
+        index_memory_bytes: usize,
     ) -> Result<Self, IndexingError> {
         let start_time = Instant::now();
 
@@ -171,7 +171,7 @@ impl SchemaIndex {
             .register("en_stem", text_analyzer.clone());
 
         // Map every type in the schema to the types referencing it
-        let mut index_writer = index.writer(INDEX_MEMORY_BYTES)?;
+        let mut index_writer = index.writer(index_memory_bytes)?;
         let mut type_references: HashMap<String, Vec<String>> = HashMap::default();
         for (extended_type, path) in schema.traverse(root_types) {
             let entry = type_references
@@ -530,8 +530,12 @@ mod tests {
 
     #[rstest]
     fn test_search(schema: Valid<Schema>) {
-        let search =
-            SchemaIndex::new(&schema, OperationType::Query | OperationType::Mutation).unwrap();
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
 
         let results = search
             .search(vec!["dimensions".to_string()], Options::default())
