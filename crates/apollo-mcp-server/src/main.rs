@@ -7,14 +7,11 @@ use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
 use apollo_mcp_server::server::Server;
-use apollo_mcp_server::server::Transport;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{Level, info, warn};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
-use tracing_subscriber::EnvFilter;
+use tracing::{info, warn};
 
 mod runtime;
 

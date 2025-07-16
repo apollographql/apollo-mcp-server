@@ -13,11 +13,8 @@ mod overrides;
 mod schema_source;
 mod schemas;
 
-use std::io;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use apollo_mcp_server::server::Transport;
 pub use config::Config;
 use figment::{
     Figment,
@@ -29,7 +26,6 @@ use tracing::Level;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -62,9 +58,12 @@ pub fn setup_logging(config: &Config) -> Result<Option<WorkerGuard>, anyhow::Err
     }
 }
 
-fn setup_file_logging(log_path: &PathBuf, env_filter: EnvFilter) -> Result<Option<WorkerGuard>, anyhow::Error> {
+fn setup_file_logging(
+    log_path: &PathBuf,
+    env_filter: EnvFilter,
+) -> Result<Option<WorkerGuard>, anyhow::Error> {
     match ensure_log_dir_exists(log_path.clone()) {
-        Ok(..) => {},
+        Ok(..) => {}
         Err(_err) => {
             eprintln!("Failed to build log path - falling back to stderr");
             return setup_stderr_logging(env_filter);
