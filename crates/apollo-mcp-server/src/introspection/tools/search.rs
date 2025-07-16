@@ -74,12 +74,14 @@ impl Search {
             minify,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
-                format!("Search a GraphQL schema{}",
+                format!(
+                    "Search a GraphQL schema{}",
                     if minify {
                         " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements"
                     } else {
                         ""
-                    }),
+                    }
+                ),
                 schema_from_type!(Input),
             ),
         })
@@ -223,8 +225,8 @@ mod tests {
     #[tokio::test]
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search =
-            Search::new(schema.clone(), true, 1, 15_000_000, false).expect("Failed to create search tool");
+        let search = Search::new(schema.clone(), true, 1, 15_000_000, false)
+            .expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search
