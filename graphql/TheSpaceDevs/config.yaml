@@ -1,9 +1,19 @@
+endpoint: https://thespacedevs-production.up.railway.app/
 transport:
   type: streamable_http
 operations:
- source: local
- paths:
-   - ./graphql/TheSpaceDevs/operations
+  source: local
+  paths:
+    - ./graphql/TheSpaceDevs/operations
 schema:
   source: local
   path: ./graphql/TheSpaceDevs/api.graphql
+overrides:
+  mutation_mode: all
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+  search:
+    enabled: true
