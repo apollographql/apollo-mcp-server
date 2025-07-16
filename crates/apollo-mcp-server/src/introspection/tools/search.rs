@@ -20,6 +20,9 @@ use tracing::debug;
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
 
+/// The maximum number of search results to consider.
+const MAX_SEARCH_RESULTS: usize = 5;
+
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]
 pub struct Search {
@@ -85,7 +88,7 @@ impl Search {
                 )
             })?;
 
-        root_paths.truncate(5);
+        root_paths.truncate(MAX_SEARCH_RESULTS);
         debug!(
             "Root paths for search terms: {}\n{}",
             input.terms.join(", "),
