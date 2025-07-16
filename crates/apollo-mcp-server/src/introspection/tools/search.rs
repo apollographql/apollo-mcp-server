@@ -74,7 +74,12 @@ impl Search {
             minify,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
-                "Search a GraphQL schema",
+                format!("Search a GraphQL schema{}",
+                    if minify {
+                        " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements"
+                    } else {
+                        ""
+                    }),
                 schema_from_type!(Input),
             ),
         })
