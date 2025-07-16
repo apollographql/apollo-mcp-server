@@ -151,6 +151,8 @@ async fn main() -> anyhow::Result<()> {
                 .map(|custom_scalars_config| CustomScalarMap::try_from(&custom_scalars_config))
                 .transpose()?,
         )
+        .search_leaf_depth(config.introspection.search.leaf_depth)
+        .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .build()
         .start()
         .await?)

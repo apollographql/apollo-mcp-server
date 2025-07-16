@@ -33,6 +33,8 @@ pub struct Server {
     mutation_mode: MutationMode,
     disable_type_description: bool,
     disable_schema_description: bool,
+    search_leaf_depth: usize,
+    index_memory_bytes: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -97,6 +99,8 @@ impl Server {
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
+        search_leaf_depth: usize,
+        index_memory_bytes: usize,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -119,6 +123,8 @@ impl Server {
             mutation_mode,
             disable_type_description,
             disable_schema_description,
+            search_leaf_depth,
+            index_memory_bytes,
         }
     }
 

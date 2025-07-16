@@ -35,14 +35,33 @@ pub struct IntrospectConfig {
 }
 
 /// Search tool configuration
-#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SearchConfig {
     /// Enable search tool
     pub enabled: bool,
 
+    /// The amount of memory used for indexing (in bytes)
+    pub index_memory_bytes: usize,
+
+    /// The depth of subtype information to include from matching types
+    /// (1 is just the matching type, 2 is the matching type plus the types it references, etc.
+    /// Defaults to 1.)
+    pub leaf_depth: usize,
+
     /// Minify search results
     pub minify: bool,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            index_memory_bytes: 50_000_000,
+            leaf_depth: 1,
+            minify: false,
+        }
+    }
 }
 
 impl Introspection {

@@ -19,15 +19,16 @@
 //! paths to each type (types may be reachable by more than one path - the shortest paths to root
 //! take precedence over longer paths).
 
-use apollo_compiler::Schema;
+use crate::path::PathNode;
 use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
 use apollo_compiler::collections::IndexMap;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
+use apollo_compiler::{Name, Schema};
 use enumset::{EnumSet, EnumSetType};
 use error::{IndexingError, SearchError};
 use itertools::Itertools;
-use path::{RootPath, Scored};
+use path::Scored;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tantivy::collector::TopDocs;
@@ -50,7 +51,6 @@ pub const DESCRIPTION_FIELD: &str = "description";
 pub const FIELDS_FIELD: &str = "fields";
 pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
 pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
-pub const INDEX_MEMORY_BYTES: usize = 50_000_000;
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
 /// be included in an [`EnumSet`](EnumSet).
@@ -122,6 +122,7 @@ impl SchemaIndex {
     pub fn new(
         schema: &Valid<Schema>,
         root_types: EnumSet<OperationType>,
+        index_memory_bytes: usize,
     ) -> Result<Self, IndexingError> {
         let start_time = Instant::now();
 
@@ -170,14 +171,27 @@ impl SchemaIndex {
             .register("en_stem", text_analyzer.clone());
 
         // Map every type in the schema to the types referencing it
-        let mut index_writer = index.writer(INDEX_MEMORY_BYTES)?;
+        let mut index_writer = index.writer(index_memory_bytes)?;
         let mut type_references: HashMap<String, Vec<String>> = HashMap::default();
         for (extended_type, path) in schema.traverse(root_types) {
             let entry = type_references
                 .entry(extended_type.name().to_string())
                 .or_default();
-            if let Some(ref_type) = path.referencing_type() {
-                entry.push(ref_type.to_string());
+            if let Some((ref_type, field_name, field_args)) = path.referencing_type() {
+                if let Some(field_name) = field_name {
+                    entry.push(format!(
+                        "{}#{}{}",
+                        ref_type,
+                        field_name.as_str(),
+                        if field_args.is_empty() {
+                            "".to_string()
+                        } else {
+                            format!("#{}", field_args.iter().join(","))
+                        }
+                    ));
+                } else {
+                    entry.push(ref_type.to_string())
+                }
             }
         }
 
@@ -302,12 +316,12 @@ impl SchemaIndex {
         &self,
         terms: I,
         options: Options,
-    ) -> Result<Vec<Scored<RootPath>>, SearchError>
+    ) -> Result<Vec<Scored<PathNode>>, SearchError>
     where
         I: IntoIterator<Item = String>,
     {
         let searcher = self.inner.reader()?.searcher();
-        let mut root_paths: Vec<Scored<RootPath>> = Default::default();
+        let mut root_paths: Vec<Scored<PathNode>> = Default::default();
         let mut scores: IndexMap<String, f32> = Default::default();
 
         let query = self.query(terms);
@@ -344,19 +358,12 @@ impl SchemaIndex {
             let mut root_path_count = 0usize;
 
             // Start with the current type as a Path
-            queue.push_back(RootPath::new_owned(vec![NamedType::new_unchecked(
-                type_name,
-            )]));
+            queue.push_back(PathNode::new(NamedType::new_unchecked(type_name)));
 
             while let Some(current_path) = queue.pop_front()
                 && root_path_count < options.max_paths_per_type
             {
-                let current_type = if let Some(current_type) = current_path.types.last() {
-                    current_type.to_string()
-                } else {
-                    // This can never really happen - every path is created with at least one type
-                    continue;
-                };
+                let current_type = current_path.node_type.to_string();
                 visited.insert(current_type.clone());
 
                 // Create a query to find the document for the current type
@@ -384,28 +391,44 @@ impl SchemaIndex {
 
                 if referencing_types.is_empty() {
                     // This is a root type (no referencing types)
-                    let mut root_path = current_path.clone();
-                    root_path.types.reverse();
-                    root_paths.push(Scored::new(root_path.to_owned(), root_path_score));
+                    let root_path = current_path.clone();
+                    root_paths.push(Scored::new(root_path, root_path_score));
                     root_path_count += 1;
                 } else {
                     // Continue traversing up to a root type
                     for ref_type in referencing_types {
+                        let (type_name, field_name, field_args) =
+                            if let Some((type_name, field_name)) = ref_type.split_once('#') {
+                                if let Some((field_name, field_args)) = field_name.split_once('#') {
+                                    (
+                                        type_name.to_string(),
+                                        Some(Name::new_unchecked(field_name)),
+                                        field_args
+                                            .split(',')
+                                            .map(|arg| Name::new_unchecked(arg.trim()))
+                                            .collect::<Vec<_>>(),
+                                    )
+                                } else {
+                                    (
+                                        type_name.to_string(),
+                                        Some(Name::new_unchecked(field_name)),
+                                        vec![],
+                                    )
+                                }
+                            } else {
+                                (ref_type.clone(), None, vec![])
+                            };
                         if !visited.contains(&ref_type) {
-                            queue.push_back(
-                                current_path
-                                    .clone()
-                                    .extend_owned(NamedType::new_unchecked(&ref_type)),
-                            );
+                            queue.push_back(current_path.clone().add_parent(
+                                field_name,
+                                field_args,
+                                NamedType::new_unchecked(&type_name),
+                            ));
                         }
                     }
                 }
             }
         }
-
-        // TODO: Currently, the root paths just include type names. They should also include the
-        //  field traversed to get from parent to child type. This would allow the MCP server to
-        //  return just the fields needed to reach the leaf type, rather than all fields.
 
         Ok(self
             .boost_shorter_paths(root_paths, options.short_path_boost_factor)
@@ -419,11 +442,11 @@ impl SchemaIndex {
     }
 
     /// Apply a boost factor to shorter paths
-    fn boost_shorter_paths<'a>(
+    fn boost_shorter_paths(
         &self,
-        scored_paths: Vec<Scored<RootPath<'a>>>,
+        scored_paths: Vec<Scored<PathNode>>,
         boost_factor: f32,
-    ) -> Vec<Scored<RootPath<'a>>> {
+    ) -> Vec<Scored<PathNode>> {
         if scored_paths.is_empty() || boost_factor == 0f32 {
             return scored_paths;
         }
@@ -431,7 +454,7 @@ impl SchemaIndex {
         // Calculate the range of path lengths
         let path_lengths: Vec<usize> = scored_paths
             .iter()
-            .map(|scored| scored.inner.types.len())
+            .map(|scored| scored.inner.len())
             .collect();
         let min_length = *path_lengths.iter().min().unwrap_or(&1);
         let max_length = *path_lengths.iter().max().unwrap_or(&1);
@@ -447,7 +470,7 @@ impl SchemaIndex {
         scored_paths
             .into_iter()
             .map(|scored_path| {
-                let path_length = scored_path.inner.types.len();
+                let path_length = scored_path.inner.len();
                 let normalized_length = (path_length - min_length) as f32 / length_range;
                 // Boost shorter paths: 1.0 for shortest, 0.0 for longest
                 let length_boost = 1.0 - normalized_length;
@@ -507,8 +530,12 @@ mod tests {
 
     #[rstest]
     fn test_search(schema: Valid<Schema>) {
-        let search =
-            SchemaIndex::new(&schema, OperationType::Query | OperationType::Mutation).unwrap();
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
 
         let results = search
             .search(vec!["dimensions".to_string()], Options::default())
