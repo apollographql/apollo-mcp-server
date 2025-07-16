@@ -13,6 +13,9 @@ pub struct Introspection {
 
     /// Search tool configuration
     pub search: SearchConfig,
+
+    /// Validate configuration for checking operations before execution
+    pub validate: ValidateConfig,
 }
 
 /// Execution-specific introspection configuration
@@ -62,6 +65,14 @@ impl Default for SearchConfig {
             minify: false,
         }
     }
+}
+
+/// Validation tool configuration
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ValidateConfig {
+    /// Enable validation tool
+    pub enabled: bool,
 }
 
 impl Introspection {

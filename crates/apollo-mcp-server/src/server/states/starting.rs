@@ -14,7 +14,9 @@ use tracing::{debug, error, info};
 use crate::{
     errors::ServerError,
     explorer::Explorer,
-    introspection::tools::{execute::Execute, introspect::Introspect, search::Search},
+    introspection::tools::{
+        execute::Execute, introspect::Introspect, search::Search, validate::Validate,
+    },
     operations::{MutationMode, RawOperation},
     server::Transport,
 };
@@ -94,6 +96,10 @@ impl Starting {
                 self.config.introspect_minify,
             )
         });
+        let validate_tool = self
+            .config
+            .validate_introspection
+            .then(|| Validate::new(schema.clone()));
         let search_tool = if self.config.search_introspection {
             Some(Search::new(
                 schema.clone(),
@@ -119,6 +125,7 @@ impl Starting {
             introspect_tool,
             search_tool,
             explorer_tool,
+            validate_tool,
             custom_scalar_map: self.config.custom_scalar_map,
             peers,
             cancellation_token: cancellation_token.clone(),

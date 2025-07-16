@@ -138,6 +138,7 @@ async fn main() -> anyhow::Result<()> {
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(config.headers)
         .execute_introspection(config.introspection.execute.enabled)
+        .validate_introspection(config.introspection.validate.enabled)
         .introspect_introspection(config.introspection.introspect.enabled)
         .introspect_minify(config.introspection.introspect.minify)
         .search_minify(config.introspection.search.minify)
