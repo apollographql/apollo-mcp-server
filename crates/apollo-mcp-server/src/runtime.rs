@@ -67,7 +67,7 @@ fn setup_file_logging(
     match ensure_log_dir_exists(log_path.clone()) {
         Ok(..) => {}
         Err(_err) => {
-            eprintln!("Failed to build log path - falling back to stderr");
+            eprintln!("Could not build log path - falling back to stderr");
             return setup_stderr_logging(env_filter);
         }
     }
@@ -80,7 +80,7 @@ fn setup_file_logging(
     {
         Ok(appender) => tracing_appender::non_blocking(appender),
         Err(_error) => {
-            eprintln!("Failed to build log file - falling back to stderr");
+            eprintln!("Log file setup failed - falling back to stderr");
             return setup_stderr_logging(env_filter);
         }
     };
