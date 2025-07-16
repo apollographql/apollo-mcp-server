@@ -140,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         .execute_introspection(config.introspection.execute.enabled)
         .introspect_introspection(config.introspection.introspect.enabled)
         .introspect_minify(config.introspection.introspect.minify)
+        .search_minify(config.introspection.search.minify)
         .search_introspection(config.introspection.search.enabled)
         .mutation_mode(config.overrides.mutation_mode)
         .disable_type_description(config.overrides.disable_type_description)

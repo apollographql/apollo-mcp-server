@@ -1,6 +1,7 @@
 //! MCP tool to search a GraphQL schema.
 
 use crate::errors::McpError;
+use crate::introspection::minify::MinifyExt as _;
 use crate::schema_from_type;
 use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::Schema;
@@ -29,6 +30,7 @@ pub struct Search {
     schema: Arc<Mutex<Valid<Schema>>>,
     index: SchemaIndex,
     allow_mutations: bool,
+    minify: bool,
     pub tool: Tool,
 }
 
@@ -53,6 +55,7 @@ impl Search {
     pub fn new(
         schema: Arc<Mutex<Valid<Schema>>>,
         allow_mutations: bool,
+        minify: bool,
     ) -> Result<Self, IndexingError> {
         let root_types = if allow_mutations {
             OperationType::Query | OperationType::Mutation
@@ -64,6 +67,7 @@ impl Search {
             schema: schema.clone(),
             index: SchemaIndex::new(locked, root_types)?,
             allow_mutations,
+            minify,
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
                 "Search a GraphQL schema",
@@ -126,8 +130,13 @@ impl Search {
                                 extended_type.name() != root_name || self.allow_mutations
                             })
                 })
-                .map(|(_, extended_type)| extended_type.serialize())
-                .map(|serialized| serialized.to_string())
+                .map(|(_, extended_type)| {
+                    if self.minify {
+                        extended_type.minify()
+                    } else {
+                        extended_type.serialize().to_string()
+                    }
+                })
                 .map(Content::text)
                 .collect(),
             is_error: None,
@@ -171,7 +180,8 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search = Search::new(schema.clone(), false).expect("Failed to create search tool");
+        let search =
+            Search::new(schema.clone(), false, false).expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
@@ -188,7 +198,8 @@ mod tests {
     #[tokio::test]
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
-        let search = Search::new(schema.clone(), true).expect("Failed to create search tool");
+        let search =
+            Search::new(schema.clone(), true, false).expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search

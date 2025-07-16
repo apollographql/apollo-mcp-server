@@ -98,6 +98,7 @@ impl Starting {
             Some(Search::new(
                 schema.clone(),
                 matches!(self.config.mutation_mode, MutationMode::All),
+                self.config.search_minify,
             )?)
         } else {
             None

@@ -40,6 +40,9 @@ pub struct IntrospectConfig {
 pub struct SearchConfig {
     /// Enable search tool
     pub enabled: bool,
+
+    /// Minify search results
+    pub minify: bool,
 }
 
 impl Introspection {
