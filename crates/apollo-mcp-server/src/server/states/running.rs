@@ -26,6 +26,7 @@ use crate::{
         execute::{EXECUTE_TOOL_NAME, Execute},
         introspect::{INTROSPECT_TOOL_NAME, Introspect},
         search::{SEARCH_TOOL_NAME, Search},
+        validate::{VALIDATE_TOOL_NAME, Validate},
     },
     operations::{MutationMode, Operation, RawOperation},
 };
@@ -40,6 +41,7 @@ pub(super) struct Running {
     pub(super) introspect_tool: Option<Introspect>,
     pub(super) search_tool: Option<Search>,
     pub(super) explorer_tool: Option<Explorer>,
+    pub(super) validate_tool: Option<Validate>,
     pub(super) custom_scalar_map: Option<CustomScalarMap>,
     pub(super) peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
     pub(super) cancellation_token: CancellationToken,
@@ -211,6 +213,13 @@ impl ServerHandler for Running {
                     })
                     .await
             }
+            VALIDATE_TOOL_NAME => {
+                self.validate_tool
+                    .as_ref()
+                    .ok_or(tool_not_found(&request.name))?
+                    .execute(convert_arguments(request)?)
+                    .await
+            }
             _ => {
                 let graphql_request = graphql::Request {
                     input: Value::from(request.arguments.clone()),
@@ -246,6 +255,7 @@ impl ServerHandler for Running {
                 .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .collect(),
         })
     }
@@ -300,6 +310,7 @@ mod tests {
             introspect_tool: None,
             search_tool: None,
             explorer_tool: None,
+            validate_tool: None,
             custom_scalar_map: None,
             peers: Arc::new(RwLock::new(vec![])),
             cancellation_token: CancellationToken::new(),
