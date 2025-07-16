@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::path::PathBuf;
 use tracing::Level;
 
 /// Logging related options
@@ -12,12 +13,17 @@ pub struct Logging {
     )]
     #[schemars(schema_with = "super::schemas::level")]
     pub level: Level,
+
+    /// The output path to use for logging
+    #[serde(default)]
+    pub path: Option<PathBuf>,
 }
 
 impl Default for Logging {
     fn default() -> Self {
         Self {
             level: defaults::log_level(),
+            path: None,
         }
     }
 }
