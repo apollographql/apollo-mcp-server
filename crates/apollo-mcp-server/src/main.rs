@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use apollo_mcp_proxy::client::start_proxy_client;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -12,6 +13,7 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
+use tokio::signal;
 use tracing::{Level, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -130,8 +132,8 @@ async fn main() -> anyhow::Result<()> {
         .then(|| config.graphos.graph_ref())
         .transpose()?;
 
-    Ok(Server::builder()
-        .transport(config.transport)
+    let mcp_server = Server::builder()
+        .transport(config.transport.clone())
         .schema_source(schema_source)
         .operation_source(operation_source)
         .endpoint(config.endpoint)
@@ -152,6 +154,35 @@ async fn main() -> anyhow::Result<()> {
         .search_leaf_depth(config.introspection.search.leaf_depth)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .build()
-        .start()
-        .await?)
+        .start();
+
+    match config.transport {
+        Transport::StreamableHttp {
+            proxy,
+            proxy_url,
+            address,
+            port,
+        } => {
+            if proxy {
+                let url = Transport::proxy_url(&proxy_url, &address, &port);
+                let proxy_client = async {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                    _ = start_proxy_client(url.as_str()).await;
+                };
+
+                tokio::select! {
+                    _ = mcp_server => {},
+                    _ = proxy_client => {},
+                    _ = signal::ctrl_c() => {}
+                };
+            } else {
+                mcp_server.await?;
+            }
+        }
+        _ => {
+            mcp_server.await?;
+        }
+    }
+
+    Ok(())
 }

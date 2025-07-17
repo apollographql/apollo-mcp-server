@@ -4,6 +4,7 @@ members = [
   "crates/apollo-mcp-server",
   "crates/apollo-mcp-registry",
   "crates/apollo-schema-index",
+  "crates/apollo-mcp-proxy",
 ]
 
 [workspace.package]
@@ -13,6 +14,7 @@ version = "0.5.2"
 [workspace.dependencies]
 apollo-compiler = "1.27.0"
 apollo-federation = "2.1.3"
+axum = "0.8.4"
 futures = { version = "0.3.31", features = ["thread-pool"] }
 insta = { version = "1.43.1", features = [
   "json",
@@ -24,6 +26,12 @@ reqwest = { version = "0.12.15", default-features = false, features = [
   "gzip",
   "json",
   "native-tls-vendored",
+] }
+rmcp = { version = "0.2", features = [
+  "server",
+  "transport-io",
+  "transport-sse-server",
+  "transport-streamable-http-server",
 ] }
 rstest = "0.25.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
