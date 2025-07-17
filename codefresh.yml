@@ -1,0 +1,290 @@
+###
+##
+# Version: v1.0
+#
+##
+# Description:
+#   Pipeline for Apollo MCP Server Rust application.
+#   - tests code with cargo
+#   - builds and publishes containers
+#   - packages / publishes helm charts
+#   - integration testing
+#   - triggers promotion pipeline
+#
+##
+# Notes:
+#
+# This pipeline is designed for a Rust workspace with multiple crates
+# - apollo-mcp-server (main application)
+# - apollo-mcp-registry
+# - apollo-schema-index
+#
+# You must provide the variable 'MCP_APP_ID' and it
+# must match the same key in the relevant deployment files
+#
+###
+
+version: "1.0"
+
+mode: parallel
+stages:
+  - prepare
+  - code
+  - container
+  - helm
+  - integration
+  - promote
+
+steps:
+  skip_ci_check:
+    stage: prepare
+    title: Skip CI check
+    description: Check the commit message for 'skip ci'
+    image: alpine:latest
+    commands:
+      - echo "Commit message: ${CF_COMMIT_MESSAGE}"
+      - echo "${CF_COMMIT_MESSAGE}" | grep -Eiqv "(skip\s*ci)"
+
+  clone_repo:
+    stage: prepare
+    title: Clone repository
+    type: git-clone
+    repo: ${{CF_REPO_OWNER}}/${{CF_REPO_NAME}}
+    revision: ${{CF_REVISION}}
+    when:
+      steps:
+        - name: skip_ci_check
+          on: [ success ]
+
+  setup_rust:
+    stage: prepare
+    title: Setup Rust toolchain
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - rustc --version
+      - cargo --version
+      - rustup component add rust-analyzer rust-src
+    when:
+      steps:
+        - name: clone_repo
+          on: [ success ]
+
+  cargo_check:
+    stage: code
+    title: Cargo check
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - cargo check --all
+    when:
+      steps:
+        - name: setup_rust
+          on: [ success ]
+
+  cargo_clippy:
+    stage: code
+    title: Cargo clippy
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - cargo clippy --all -- -D warnings
+    when:
+      steps:
+        - name: setup_rust
+          on: [ success ]
+
+  cargo_test:
+    stage: code
+    title: Cargo test
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - cargo test --all
+    when:
+      steps:
+        - name: setup_rust
+          on: [ success ]
+
+  cargo_test_coverage:
+    stage: code
+    title: Cargo test with coverage
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - apt-get update && apt-get install -y gcc-multilib
+      - cargo install cargo-tarpaulin
+      - cargo tarpaulin --out Xml --output-dir coverage
+      - echo "Coverage report generated"
+    when:
+      steps:
+        - name: setup_rust
+          on: [ success ]
+
+  cargo_build_release:
+    stage: container
+    title: Build release binaries
+    image: rust:1.75-slim
+    working_directory: ${{CF_REPO_NAME}}
+    commands:
+      - cargo build --release --package apollo-mcp-server
+      - ls -la target/release/
+    when:
+      steps:
+        - name: cargo_check
+          on: [ success ]
+        - name: cargo_clippy
+          on: [ success ]
+        - name: cargo_test
+          on: [ success ]
+
+  build_container:
+    stage: container
+    title: Build container image
+    type: build
+    working_directory: ${{CF_REPO_NAME}}
+    dockerfile: Dockerfile # Adjust if your Dockerfile is elsewhere
+    image_name: apollo-mcp-server
+    tag: ${{CF_SHORT_REVISION}}
+    build_arguments:
+      - CF_REVISION=${{CF_REVISION}}
+      - CF_BRANCH=${{CF_BRANCH}}
+    when:
+      steps:
+        - name: cargo_build_release
+          on: [ success ]
+
+
+
+  push_testing:
+    stage: container
+    title: Push to testing registry
+    type: push
+    candidate: ${{build_container}}
+    image_name: apollo-mcp-server
+    registry: ${{CONTAINER_REGISTRY_TESTING}}
+    tags:
+      - ${{CF_SHORT_REVISION}}
+      - ${{CF_BRANCH_TAG_NORMALIZED}}
+    when:
+      branch:
+        ignore: [ main, master ]
+      steps:
+        - name: build_container
+          on: [ success ]
+
+  push_main:
+    stage: container
+    title: Push to main registry
+    type: push
+    candidate: ${{build_container}}
+    image_name: apollo-mcp-server
+    registry: ${{CONTAINER_REGISTRY_MAIN}}
+    tags:
+      - ${{CF_SHORT_REVISION}}
+      - ${{CF_BRANCH_TAG_NORMALIZED}}
+      - latest
+    when:
+      branch:
+        only: [ main, master ]
+      steps:
+        - name: build_container
+          on: [ success ]
+
+  helm_variables:
+    stage: helm
+    title: Prepare Helm variables
+    image: alpine:latest
+    shell: bash
+    environment:
+      - KUBE_CONTEXT=${{KUBE_CONTEXT_TESTING}}
+    commands:
+      - echo "Preparing Helm variables..."
+      # Add any org-specific Helm variable setup here
+    when:
+      steps:
+        - name: build_container
+          on: [ success ]
+
+  helm_build:
+    stage: helm
+    title: Build and push Helm chart
+    image: alpine/helm:3.12.0
+    working_directory: helm/ # Adjust if your chart is elsewhere
+    shell: sh
+    commands:
+      - helm dependency update
+      - helm package .
+      - helm push *.tgz oci://${{HELM_REGISTRY_TESTING}}
+    when:
+      steps:
+        - name: helm_variables
+          on: [ success ]
+        - name: push_testing
+          on: [ success ]
+
+  helm_trigger_dev_deploy:
+    stage: helm
+    title: Trigger dev deploy
+    type: codefresh-run
+    arguments:
+      PIPELINE_ID: ${{DEV_DEPLOY_PIPELINE}}
+      VARIABLE:
+        - MCP_APP_ID=${{MCP_APP_ID}}
+        - HELM_CHART_VERSION=${{CF_SHORT_REVISION}}
+      DETACH: true
+      ENABLE_NOTIFICATIONS: true
+    when:
+      steps:
+        - name: helm_build
+          on: [ success ]
+
+  integration_push:
+    stage: integration
+    title: Push integration container tags
+    type: push
+    candidate: ${{build_container}}
+    image_name: apollo-mcp-server
+    registry: ${{CONTAINER_REGISTRY_INTEGRATION}}
+    tags:
+      - ${{CF_SHORT_REVISION}}
+      - ${{CF_BRANCH_TAG_NORMALIZED}}
+    when:
+      branch:
+        only: [ develop, main, master ]
+      steps:
+        - name: push_testing
+          on: [ success ]
+
+  integration_helm_package:
+    stage: integration
+    title: Publish Helm chart for integration
+    image: alpine/helm:3.12.0
+    working_directory: helm/ # Adjust if your chart is elsewhere
+    shell: sh
+    commands:
+      - helm push *.tgz oci://${{HELM_REGISTRY_INTEGRATION}}
+    when:
+      branch:
+        only: [ develop, main, master ]
+      steps:
+        - name: helm_build
+          on: [ success ]
+
+  trigger_promotion:
+    title: Trigger promotion
+    stage: promote
+    type: codefresh-run
+    arguments:
+      PIPELINE_ID: ${{PROMOTION_PIPELINE}}
+      VARIABLE:
+        - MCP_APP_ID=${{MCP_APP_ID}}
+        - HELM_CHART_VERSION=${{CF_SHORT_REVISION}}
+      DETACH: true
+      ENABLE_NOTIFICATIONS: true
+    when:
+      branch:
+        only: [ develop, main, master ]
+      steps:
+        - name: integration_helm_package
+          on: [ success ] 
