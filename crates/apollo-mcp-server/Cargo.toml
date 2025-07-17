@@ -4,6 +4,7 @@ version.workspace = true
 authors.workspace = true
 edition = "2024"
 license-file = "../LICENSE"
+default-run = "apollo-mcp-server"
 
 [dependencies]
 anyhow = "1.0.98"
@@ -43,3 +44,12 @@ tracing-test = "0.2.5"
 
 [lints]
 workspace = true
+
+[[bin]]
+name = "apollo-mcp-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "config-schema"
+path = "src/config_schema.rs"
+test = false
