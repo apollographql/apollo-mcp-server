@@ -98,6 +98,12 @@ jobs:
           docker manifest annotate $FQDN:latest $FQDN:$VERSION-amd64 --arch amd64
           docker manifest annotate $FQDN:latest $FQDN:$VERSION-arm64 --arch arm64
       - name: Push the multiarch manifests
+        shell: bash
         run: |
           docker manifest push $FQDN:$VERSION
-          docker manifest push $FQDN:latest
+
+          # Only push the latest tag if this isn't a release candidate (ends with
+          # `rc.#`.
+          if [[ ! "$VERSION" =~ -rc\.[0-9]+$ ]]; then
+            docker manifest push $FQDN:latest
+          fi
