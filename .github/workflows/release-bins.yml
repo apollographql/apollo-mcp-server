@@ -184,6 +184,13 @@ jobs:
             tar -C release/$RELEASE -cf - dist/ | gzip -9 > artifacts/apollo-mcp-server-$VERSION-$RENAMED.tar.gz
           done
 
+      # We only need to generate the config schema for a release once, so we do it
+      # on the linux host since it is the cheapest.
+      - name: Generate config schema
+        if: ${{ matrix.bundle == 'linux' }}
+        run: |
+          ./release/cross-x86_64-unknown-linux-musl/dist/config-schema > artifacts/config.schema.json
+
       - name: Upload release artifacts
         uses: softprops/action-gh-release@v2
         with:
