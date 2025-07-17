@@ -187,7 +187,7 @@ jobs:
       # We only need to generate the config schema for a release once, so we do it
       # on the linux host since it is the cheapest.
       - name: Generate config schema
-        if: ${{ matrix.bundle == 'windows' }}
+        if: ${{ matrix.bundle == 'linux' }}
         run: |
           ./release/x86_64-unknown-linux-musl/dist/config-schema > artifacts/config.schema.json
 
