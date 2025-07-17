@@ -7,73 +7,46 @@ use serde::Deserialize;
 use url::Url;
 
 use super::{
-    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
-    logging::Logging, overrides::Overrides,
+    OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
+    introspection::Introspection, logging::Logging, overrides::Overrides,
 };
 
 /// Configuration for the MCP server
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(default)]
 pub struct Config {
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,
 
     /// The target GraphQL endpoint
-    #[serde(default = "defaults::endpoint")]
-    pub endpoint: Url,
+    #[schemars(schema_with = "Url::json_schema")]
+    pub endpoint: Endpoint,
 
     /// Apollo-specific credential overrides
-    #[serde(default)]
     pub graphos: GraphOSConfig,
 
     /// List of hard-coded headers to include in all GraphQL requests
-    #[serde(default, deserialize_with = "parsers::map_from_str")]
+    #[serde(deserialize_with = "parsers::map_from_str")]
     #[schemars(schema_with = "super::schemas::header_map")]
     pub headers: HeaderMap,
 
     /// Introspection configuration
-    #[serde(default)]
     pub introspection: Introspection,
 
     /// Logging configuration
-    #[serde(default)]
     pub logging: Logging,
 
     /// Operations
-    #[serde(default)]
     pub operations: OperationSource,
 
     /// Overrides for server behaviour
-    #[serde(default)]
     pub overrides: Overrides,
 
     /// The schema to load for operations
-    #[serde(default)]
     pub schema: SchemaSource,
 
     /// The type of server transport to use
-    #[serde(default)]
     pub transport: Transport,
-}
-
-mod defaults {
-    use url::Url;
-
-    pub(super) fn endpoint() -> Url {
-        // SAFETY: This should always parse correctly and is considered a breaking
-        // error otherwise. It is also explicitly tested in [test::default_endpoint_parses_correctly]
-        #[allow(clippy::unwrap_used)]
-        Url::parse("http://127.0.0.1:4000").unwrap()
-    }
-
-    #[cfg(test)]
-    mod test {
-        use super::endpoint;
-
-        #[test]
-        fn default_endpoint_parses_correctly() {
-            endpoint();
-        }
-    }
 }
 
 mod parsers {

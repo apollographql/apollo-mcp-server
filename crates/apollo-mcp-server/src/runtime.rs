@@ -4,6 +4,7 @@
 //! related to runtime configuration.
 
 mod config;
+mod endpoint;
 mod graphos;
 mod introspection;
 mod logging;

@@ -33,15 +33,16 @@ const STYLES: Styles = Styles::styled()
 )]
 struct Args {
     /// Path to the config file
-    config: PathBuf,
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config: runtime::Config = {
-        let args = Args::parse();
-        runtime::read_config(args.config)?
-    };
+    let config: runtime::Config = Args::parse()
+        .config
+        .map(runtime::read_config)
+        .transpose()?
+        .unwrap_or_default();
 
     let mut env_filter = EnvFilter::from_default_env().add_directive(config.logging.level.into());
 
@@ -134,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
         .transport(config.transport)
         .schema_source(schema_source)
         .operation_source(operation_source)
-        .endpoint(config.endpoint)
+        .endpoint(config.endpoint.into_inner())
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(config.headers)
         .execute_introspection(config.introspection.execute.enabled)
