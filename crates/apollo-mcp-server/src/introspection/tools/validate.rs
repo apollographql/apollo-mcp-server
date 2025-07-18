@@ -6,13 +6,12 @@ use apollo_compiler::parser::Parser;
 use apollo_compiler::validation::Valid;
 use rmcp::model::CallToolResult;
 use rmcp::model::Content;
-// Import trait for Valid::new
 use rmcp::model::{ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
-use std::default::Default; // Import trait for Schema::default
+use std::default::Default;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -25,7 +24,7 @@ pub struct Validate {
     schema: Arc<Mutex<Valid<Schema>>>,
 }
 
-/// Input for the validate tool.
+/// Input for the validate tool
 #[derive(JsonSchema, Deserialize)]
 pub struct Input {
     /// The GraphQL operation
@@ -38,16 +37,15 @@ impl Validate {
             schema,
             tool: Tool::new(
                 VALIDATE_TOOL_NAME,
-                "Validate a GraphQL operation against the schema. \
-                Use the `introspect` tool to get information about the GraphQL schema. \
-                Always use the schema to create operations - do not try arbitrary operations. \
-                Operations should be validated prior to being executed.",
+                "Validates a GraphQL operation against the schema. \
+                Use the `introspect` tool first to get information about the GraphQL schema. \
+                Operations should be validated prior to calling the `execute` tool.",
                 schema_from_type!(Input),
             ),
         }
     }
 
-    /// Validates the provided GraphQL query. Returns Ok(()) if valid, or an error if not.
+    /// Validates the provided GraphQL query
     pub async fn execute(&self, input: Value) -> Result<CallToolResult, McpError> {
         let input = serde_json::from_value::<Input>(input).map_err(|_| {
             McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)

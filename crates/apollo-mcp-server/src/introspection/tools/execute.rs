@@ -36,7 +36,7 @@ impl Execute {
             mutation_mode,
             tool: Tool::new(
                 EXECUTE_TOOL_NAME,
-                "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. Use the `validate` tool to validate operations. DO NOT try to execute introspection queries.",
+                "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. If available, first use the `validate` tool to validate operations. DO NOT try to execute introspection queries.",
                 schema_from_type!(Input),
             ),
         }
