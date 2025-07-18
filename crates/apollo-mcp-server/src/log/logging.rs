@@ -1,6 +1,15 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::path::PathBuf;
 use tracing::Level;
+
+#[derive(Debug, Deserialize, JsonSchema, Clone)]
+pub enum LogRotationKind {
+    Minutely,
+    Hourly,
+    Daily,
+    Never,
+}
 
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -12,21 +21,37 @@ pub struct Logging {
     )]
     #[schemars(schema_with = "super::schemas::level")]
     pub level: Level,
+
+    /// The output path to use for logging
+    #[serde(default)]
+    pub path: Option<PathBuf>,
+
+    /// Log file rotation period to use when log file path provided
+    /// [default: Minutely]
+    #[serde(default = "defaults::default_rotation")]
+    pub rotation: LogRotationKind,
 }
 
 impl Default for Logging {
     fn default() -> Self {
         Self {
             level: defaults::log_level(),
+            path: None,
+            rotation: defaults::default_rotation(),
         }
     }
 }
 
 mod defaults {
+    use super::LogRotationKind;
     use tracing::Level;
 
-    pub(super) const fn log_level() -> Level {
+    pub(crate) const fn log_level() -> Level {
         Level::INFO
+    }
+
+    pub(crate) const fn default_rotation() -> LogRotationKind {
+        LogRotationKind::Minutely
     }
 }
 
@@ -35,7 +60,7 @@ mod parsers {
 
     use serde::Deserializer;
 
-    pub(super) fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+    pub(crate) fn from_str<'de, D, T>(deserializer: D) -> Result<T, D::Error>
     where
         D: Deserializer<'de>,
         T: FromStr,

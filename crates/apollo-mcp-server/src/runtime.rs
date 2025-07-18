@@ -1,4 +1,4 @@
-//! Runtime utilites
+//! Runtime utilities
 //!
 //! This module is only used by the main binary and provides helper code
 //! related to runtime configuration.
@@ -6,7 +6,6 @@
 mod config;
 mod graphos;
 mod introspection;
-mod logging;
 mod operation_source;
 mod overrides;
 mod schema_source;
