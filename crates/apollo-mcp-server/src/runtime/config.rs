@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use apollo_mcp_server::{health::HealthCheckConfig, server::Transport};
+use crate::log::logging::Logging;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
