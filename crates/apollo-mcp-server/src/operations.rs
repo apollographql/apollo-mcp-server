@@ -370,8 +370,12 @@ pub fn operation_defs(
     allow_mutations: bool,
     source_path: Option<String>,
 ) -> Result<Option<(Document, Node<OperationDefinition>, Option<String>)>, OperationError> {
+    let source_path_clone = source_path.clone();
     let document = Parser::new()
-        .parse_ast(source_text, "operation.graphql")
+        .parse_ast(
+            source_text,
+            source_path_clone.unwrap_or_else(|| "operation.graphql".to_string()),
+        )
         .map_err(|e| OperationError::GraphQLDocument(Box::new(e)))?;
     let mut last_offset: Option<usize> = Some(0);
     let mut operation_defs = document.definitions.clone().into_iter().filter_map(|def| {
