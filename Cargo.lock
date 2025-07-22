@@ -180,9 +180,11 @@ version = "0.7.3"
 dependencies = [
  "axum",
  "clap",
+ "futures",
  "rmcp",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",

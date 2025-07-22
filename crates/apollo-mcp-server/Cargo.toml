@@ -33,10 +33,10 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tokio-util = "0.7.15"
 tower-http = { version = "0.6.6", features = ["cors"] }
 url.workspace = true
 
