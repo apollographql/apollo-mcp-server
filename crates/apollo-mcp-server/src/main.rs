@@ -13,7 +13,9 @@ use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
 use tracing::{info, warn};
 
-mod log;
+use crate::logging::setup_logging;
+
+mod logging;
 mod runtime;
 
 /// Clap styling
@@ -43,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
         .transpose()?
         .unwrap_or_default();
 
-    let _guard = log::setup_logging(&config)?;
+    let _guard = setup_logging(&config)?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
