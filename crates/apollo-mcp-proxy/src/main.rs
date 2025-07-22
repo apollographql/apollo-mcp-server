@@ -1,6 +1,7 @@
 use apollo_mcp_proxy::client::start_proxy_client;
 use clap::Parser;
 use std::error::Error;
+use tokio_util::sync::CancellationToken;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -28,7 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    let _ = start_proxy_client(&args.url, Default::default()).await;
+    let _ = start_proxy_client(&args.url, CancellationToken::new()).await;
 
     Ok(())
 }
