@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use apollo_mcp_proxy::client::start_proxy_client;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
@@ -13,7 +11,9 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
+use std::path::PathBuf;
 use tokio::signal;
+use tokio_util::sync::CancellationToken;
 use tracing::{Level, info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -57,12 +57,14 @@ async fn main() -> anyhow::Result<()> {
 
     // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
     match config.transport {
-        Transport::SSE { .. } | Transport::StreamableHttp { .. } => tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_ansi(true)
-            .with_target(false)
-            .init(),
-        Transport::Stdio => tracing_subscriber::fmt()
+        Transport::SSE { .. } | Transport::StreamableHttp { .. } if !config.proxy.enabled => {
+            tracing_subscriber::fmt()
+                .with_env_filter(env_filter)
+                .with_ansi(true)
+                .with_target(false)
+                .init()
+        }
+        _ => tracing_subscriber::fmt()
             .with_env_filter(env_filter)
             .with_writer(std::io::stderr)
             .with_ansi(true)
@@ -72,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
-        std::env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION")
     );
 
     let schema_source = match config.schema {
@@ -162,24 +164,17 @@ async fn main() -> anyhow::Result<()> {
         .start();
 
     match config.transport {
-        Transport::StreamableHttp {
-            proxy,
-            proxy_url,
-            address,
-            port,
-        } => {
-            if proxy {
-                let url = Transport::proxy_url(&proxy_url, &address, &port);
-                let proxy_client = async {
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                    _ = start_proxy_client(url.as_str()).await;
-                };
+        Transport::StreamableHttp { address, port } => {
+            if config.proxy.enabled {
+                let url = config.proxy.url(&address, &port);
+                let cancellation_token: CancellationToken = CancellationToken::new();
 
                 tokio::select! {
-                    _ = mcp_server => {},
-                    _ = proxy_client => {},
-                    _ = signal::ctrl_c() => {}
-                };
+                    biased;
+                    _ = signal::ctrl_c() => { cancellation_token.cancel(); }
+                    _ = mcp_server => {}
+                    _ = start_proxy_client(url.as_str(), cancellation_token.child_token()) => {}
+                }
             } else {
                 mcp_server.await?;
             }

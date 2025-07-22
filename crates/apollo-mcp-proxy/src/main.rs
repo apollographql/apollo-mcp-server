@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let args = Args::parse();
 
-    let _ = start_proxy_client(&args.url).await;
+    let _ = start_proxy_client(&args.url, Default::default()).await;
 
     Ok(())
 }

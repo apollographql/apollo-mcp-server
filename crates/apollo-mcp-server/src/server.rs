@@ -70,15 +70,6 @@ pub enum Transport {
         /// The port to bind to
         #[serde(default = "Transport::default_port")]
         port: u16,
-
-        /// Flag indicating whether to spin up a proxy server
-        /// [default: false]
-        #[serde(default)]
-        proxy: bool,
-
-        /// Proxy server endpoint to connect to if proxy is enabled
-        #[serde(default)]
-        proxy_url: Option<Url>,
     },
 }
 
@@ -89,17 +80,6 @@ impl Transport {
 
     fn default_port() -> u16 {
         5000
-    }
-
-    pub fn proxy_url(proxy_url: &Option<Url>, address: &IpAddr, port: &u16) -> Url {
-        match proxy_url {
-            Some(proxy_url) => proxy_url.clone(),
-            None => {
-                let address = format!("http://{address}:{port}/mcp");
-                #[allow(clippy::unwrap_used)]
-                Url::parse(address.as_str()).unwrap()
-            }
-        }
     }
 }
 

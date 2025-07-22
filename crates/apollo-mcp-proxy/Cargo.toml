@@ -8,6 +8,7 @@ version.workspace = true
 axum.workspace = true
 clap = { version = "4.5.40", features = ["derive"] }
 tokio.workspace = true
+tokio-util.workspace = true
 rmcp = { workspace = true, features = [
     "client",
     "reqwest",
@@ -17,6 +18,7 @@ tracing.workspace = true
 tracing-appender = "0.2.3"
 tracing-subscriber.workspace = true
 serde_json = "1.0.140"
+futures = "0.3.31"
 
 [lints]
 workspace = true

@@ -7,11 +7,10 @@ use rmcp::model::{
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{Error as McpError, Peer, RoleClient, RoleServer, ServerHandler};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tracing::{debug, error, info};
 
 pub struct ProxyServer {
-    client: Arc<Mutex<Peer<RoleClient>>>,
+    client: Arc<Peer<RoleClient>>,
     server_info: Arc<ServerInfo>,
 }
 
@@ -34,7 +33,7 @@ impl ProxyServer {
         debug!("[Proxy]server info: {:?}", server_info);
 
         Self {
-            client: Arc::new(Mutex::new(client_peer)),
+            client: Arc::new(client_peer),
             server_info: Arc::new(server_info),
         }
     }
@@ -60,10 +59,7 @@ impl ServerHandler for ProxyServer {
         request: rmcp::model::CompleteRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::CompleteResult, McpError> {
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        match guard.complete(request).await {
+        match self.client.complete(request).await {
             Ok(result) => {
                 debug!("[Proxy] Proxying complete response");
                 Ok(result)
@@ -91,10 +87,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        match guard.get_prompt(request).await {
+        match self.client.get_prompt(request).await {
             Ok(result) => {
                 debug!("[Proxy] Proxying get_prompt response");
                 Ok(result)
@@ -122,10 +115,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        match guard.list_prompts(request).await {
+        match self.client.list_prompts(request).await {
             Ok(result) => {
                 debug!("[Proxy] Proxying list_prompts response");
                 Ok(result)
@@ -150,9 +140,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client_guard = self.client.lock().await;
-
-        match client_guard.list_resources(request).await {
+        match self.client.list_resources(request).await {
             Ok(list_resources_result) => {
                 debug!(
                     "Proxying list_resources response: {:?}",
@@ -180,11 +168,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        // TODO: Check if the server has resources capability and forward the request
-        match guard.list_resource_templates(request).await {
+        match self.client.list_resource_templates(request).await {
             Ok(list_resource_templates_result) => {
                 debug!(
                     "Proxying list_resource_templates response: {:?}",
@@ -212,11 +196,8 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        // TODO: Check if the server has resources capability and forward the request
-        match guard
+        match self
+            .client
             .read_resource(ReadResourceRequestParam {
                 uri: request.uri.clone(),
             })
@@ -252,10 +233,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        match guard.call_tool(request.clone()).await {
+        match self.client.call_tool(request.clone()).await {
             Ok(result) => {
                 debug!("[Proxy] Tool call succeeded: {:?}", result);
                 Ok(result)
@@ -282,10 +260,7 @@ impl ServerHandler for ProxyServer {
             ));
         }
 
-        let client = self.client.clone();
-        let guard = client.lock().await;
-
-        match guard.list_tools(request).await {
+        match self.client.list_tools(request).await {
             Ok(result) => {
                 debug!(
                     "Proxying list_tools response with {} tools: {:?}",
@@ -306,9 +281,7 @@ impl ServerHandler for ProxyServer {
         notification: rmcp::model::CancelledNotificationParam,
         _context: NotificationContext<RoleServer>,
     ) {
-        let client = self.client.clone();
-        let guard = client.lock().await;
-        match guard.notify_cancelled(notification).await {
+        match self.client.notify_cancelled(notification).await {
             Ok(_) => {
                 debug!("[Proxy] Proxying cancelled notification");
             }
@@ -323,9 +296,7 @@ impl ServerHandler for ProxyServer {
         notification: rmcp::model::ProgressNotificationParam,
         _context: NotificationContext<RoleServer>,
     ) {
-        let client = self.client.clone();
-        let guard = client.lock().await;
-        match guard.notify_progress(notification).await {
+        match self.client.notify_progress(notification).await {
             Ok(_) => {
                 debug!("[Proxy] Proxying progress notification");
             }

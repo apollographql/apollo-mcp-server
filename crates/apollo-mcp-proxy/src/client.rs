@@ -1,17 +1,22 @@
+use crate::non_blocking_stdio::NonBlockStdIo;
 use crate::server::ProxyServer;
-use rmcp::transport::stdio;
+use rmcp::model::ProtocolVersion;
 use rmcp::{
     ServiceExt,
     model::{ClientCapabilities, ClientInfo, Implementation},
     transport::StreamableHttpClientTransport,
 };
 use std::error::Error;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
-pub async fn start_proxy_client(url: &str) -> Result<(), Box<dyn Error>> {
+pub async fn start_proxy_client(
+    url: &str,
+    cancellation_token: CancellationToken,
+) -> Result<(), Box<dyn Error>> {
     let transport = StreamableHttpClientTransport::from_uri(url);
     let client_info = ClientInfo {
-        protocol_version: Default::default(),
+        protocol_version: ProtocolVersion::LATEST,
         capabilities: ClientCapabilities::default(),
         client_info: Implementation {
             name: "mcp remote rust client".to_string(),
@@ -34,9 +39,11 @@ pub async fn start_proxy_client(url: &str) -> Result<(), Box<dyn Error>> {
     debug!("{server_info:#?}");
 
     let proxy_server = ProxyServer::new(client.peer().clone(), client.peer_info());
-    let stdio_transport = stdio();
-    let server = proxy_server.serve(stdio_transport).await?;
 
+    let stdio_transport = NonBlockStdIo::new(cancellation_token.child_token());
+    let server = proxy_server
+        .serve_with_ct(stdio_transport, cancellation_token)
+        .await?;
     server.waiting().await?;
     Ok(())
 }

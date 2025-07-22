@@ -169,13 +169,15 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-proxy"
-version = "0.5.2"
+version = "0.6.0"
 dependencies = [
  "axum",
  "clap",
+ "futures",
  "rmcp",
  "serde_json",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
