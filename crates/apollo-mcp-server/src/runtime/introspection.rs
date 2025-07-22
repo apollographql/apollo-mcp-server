@@ -78,6 +78,6 @@ pub struct ValidateConfig {
 impl Introspection {
     /// Check if any introspection tools are enabled
     pub fn any_enabled(&self) -> bool {
-        self.execute.enabled | self.introspect.enabled | self.search.enabled
+        self.execute.enabled | self.introspect.enabled | self.search.enabled | self.validate.enabled
     }
 }
