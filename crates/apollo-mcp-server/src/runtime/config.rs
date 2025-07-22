@@ -7,6 +7,7 @@ use super::{
     overrides::Overrides,
 };
 use crate::logging::Logging;
+use crate::runtime::logging::Logging;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;

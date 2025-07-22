@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::runtime::logging::init::setup_logging;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -13,9 +14,6 @@ use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
 use tracing::{info, warn};
 
-use crate::logging::setup_logging;
-
-mod logging;
 mod runtime;
 
 /// Clap styling
