@@ -1,3 +1,8 @@
+//! Logging config and utilities
+//!
+//! This module is only used by the main binary and provides logging config structures and setup
+//! helper functions
+
 use crate::runtime::Config;
 use schemars::JsonSchema;
 use serde::Deserialize;
