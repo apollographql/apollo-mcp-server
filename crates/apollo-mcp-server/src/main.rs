@@ -45,6 +45,8 @@ async fn main() -> anyhow::Result<()> {
         .transpose()?
         .unwrap_or_default();
 
+    // WorkerGuard is not used but needed to be at least defined or else the guard
+    // is cleaned up too early and file appender logging does not work
     let _guard = setup_logging(&config)?;
 
     info!(
