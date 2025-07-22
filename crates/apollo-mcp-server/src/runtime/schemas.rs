@@ -7,7 +7,7 @@ pub(crate) fn header_map(generator: &mut schemars::SchemaGenerator) -> schemars:
     HashMap::<String, String>::json_schema(generator)
 }
 
-pub fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+pub(crate) fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     /// Log level
     #[derive(JsonSchema)]
     #[schemars(rename_all = "lowercase")]
