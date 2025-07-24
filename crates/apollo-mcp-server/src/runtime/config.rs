@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::runtime::logging::Logging;
 use apollo_mcp_server::server::Transport;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
@@ -9,7 +8,7 @@ use url::Url;
 
 use super::{
     OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
-    overrides::Overrides,
+    logging::Logging, overrides::Overrides,
 };
 
 /// Configuration for the MCP server
