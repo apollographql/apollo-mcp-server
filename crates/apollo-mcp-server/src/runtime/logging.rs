@@ -7,7 +7,6 @@ mod defaults;
 mod log_rotation_kind;
 mod parsers;
 
-use crate::runtime::Config;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -19,6 +18,8 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+use super::Config;
 
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
