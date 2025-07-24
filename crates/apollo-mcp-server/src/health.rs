@@ -2,11 +2,7 @@
 //!
 //! Provides liveness and readiness checks for the MCP server, inspired by Apollo Router's health check implementation.
 //!
-//! The health check is exposed via HTTP endpoints and can be used by load balancers,
-//! container orchestrators, and monitoring systems to determine server health.
-//!
-//! **Note**: Health checks are only supported when using the StreamableHttp transport.
-//! SSE and Stdio transports do not support health check endpoints.
+//! The health check is exposed via HTTP endpoints and can be used by load balancers, container orchestrators, and monitoring systems to determine server health.
 
 use std::{
     sync::{
