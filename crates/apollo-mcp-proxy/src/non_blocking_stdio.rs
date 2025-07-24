@@ -109,7 +109,7 @@ impl Transport<RoleServer> for NonBlockStdIo {
     fn receive(&mut self) -> impl Future<Output = Option<RxJsonRpcMessage<RoleServer>>> + Send {
         async move {
             let data = self.rx_in.recv().await;
-            debug!("[NonBlockStdIo receiving] {data:?}");
+            debug!("[NonBlockStdIo] Receiving {data:?}");
             data
         }
     }
