@@ -7,7 +7,7 @@ mod config;
 mod endpoint;
 mod graphos;
 mod introspection;
-pub(crate) mod logging;
+mod logging;
 mod operation_source;
 mod overrides;
 mod schema_source;
