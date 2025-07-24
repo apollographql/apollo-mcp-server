@@ -15,14 +15,17 @@ impl NonBlockStdIo {
         let (tx_in, rx_in) = tokio::sync::mpsc::channel(100);
         let (tx_out, mut rx_out) = tokio::sync::mpsc::channel(100);
 
+        let stdin_cancel_token = cancellation_token.clone();
+        let stdout_cancel_token = cancellation_token.clone();
+
         std::thread::spawn(move || {
             for line_result in std::io::stdin().lines() {
                 let line = match line_result {
                     Ok(line) => line,
                     Err(e) => {
                         error!("[Proxy] Failed to read from stdin: {e:?}");
-                        cancellation_token.cancel();
-                        "".to_string()
+                        stdin_cancel_token.cancel();
+                        break;
                     }
                 };
 
@@ -32,8 +35,8 @@ impl NonBlockStdIo {
                     Ok(data) => data,
                     Err(e) => {
                         error!("[Proxy] Failed to deserialize json: {e:?}");
-                        cancellation_token.cancel();
-                        continue;
+                        stdin_cancel_token.cancel();
+                        break;
                     }
                 };
 
@@ -41,6 +44,8 @@ impl NonBlockStdIo {
                     Ok(_) => {}
                     Err(e) => {
                         error!("[Proxy] Failed to send data: {e:?}");
+                        stdin_cancel_token.cancel();
+                        break;
                     }
                 }
             }
@@ -49,17 +54,18 @@ impl NonBlockStdIo {
         std::thread::spawn(move || {
             loop {
                 if let Some(data) = rx_out.blocking_recv() {
-                    let mut data = serde_json::to_string(&data).unwrap_or_else(|e| {
+                    let data = serde_json::to_string(&data).unwrap_or_else(|e| {
                         error!("[Proxy] Couldn't serialize data: {e:?}");
+                        stdout_cancel_token.cancel();
                         "".to_string()
-                    });
-
-                    data.push('\n');
+                    }) + "\n";
 
                     match std::io::stdout().write_all(data.as_bytes()) {
                         Ok(_) => {}
                         Err(e) => {
                             error!("[Proxy] Failed to write data to stdout: {e:?}");
+                            stdout_cancel_token.cancel();
+                            break;
                         }
                     }
 
@@ -67,6 +73,8 @@ impl NonBlockStdIo {
                         Ok(_) => {}
                         Err(e) => {
                             error!("[Proxy] Failed to flush stdout: {e:?}");
+                            stdout_cancel_token.cancel();
+                            break;
                         }
                     }
                 }
