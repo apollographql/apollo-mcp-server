@@ -135,7 +135,7 @@ impl Starting {
         };
 
         match self.config.transport {
-            Transport::StreamableHttp { address, port } => {
+            Transport::StreamableHttp { address, port, .. } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);

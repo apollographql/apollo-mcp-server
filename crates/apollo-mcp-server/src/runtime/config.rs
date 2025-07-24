@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 
+use super::{
+    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
+    logging::Logging, overrides::Overrides,
+};
+use crate::runtime::proxy::ProxyConfig;
 use apollo_mcp_server::server::Transport;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use url::Url;
-
-use super::{
-    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
-    logging::Logging, overrides::Overrides,
-};
 
 /// Configuration for the MCP server
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -53,6 +53,10 @@ pub struct Config {
     /// The type of server transport to use
     #[serde(default)]
     pub transport: Transport,
+
+    /// The optional proxy client options
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 }
 
 mod defaults {
