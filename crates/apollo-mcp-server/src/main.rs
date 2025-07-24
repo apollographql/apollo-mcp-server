@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::runtime::logging::init::setup_logging;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -44,11 +43,11 @@ async fn main() -> anyhow::Result<()> {
 
     // WorkerGuard is not used but needed to be at least defined or else the guard
     // is cleaned up too early and file appender logging does not work
-    let _guard = setup_logging(&config)?;
+    let _guard = config.logging.setup()?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
-        std::env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION")
     );
 
     let schema_source = match config.schema {

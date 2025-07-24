@@ -4,9 +4,13 @@ use tracing_appender::rolling::Rotation;
 
 #[derive(Debug, Deserialize, JsonSchema, Clone)]
 pub enum LogRotationKind {
+    #[serde(alias = "minutely", alias = "MINUTELY")]
     Minutely,
+    #[serde(alias = "hourly", alias = "HOURLY")]
     Hourly,
+    #[serde(alias = "daily", alias = "DAILY")]
     Daily,
+    #[serde(alias = "never", alias = "NEVER")]
     Never,
 }
 
