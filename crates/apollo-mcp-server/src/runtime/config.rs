@@ -1,15 +1,16 @@
 use std::path::PathBuf;
 
-use super::{
-    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
-    overrides::Overrides,
-};
 use crate::runtime::logging::Logging;
 use apollo_mcp_server::server::Transport;
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use url::Url;
+
+use super::{
+    OperationSource, SchemaSource, graphos::GraphOSConfig, introspection::Introspection,
+    overrides::Overrides,
+};
 
 /// Configuration for the MCP server
 #[derive(Debug, Deserialize, JsonSchema)]
