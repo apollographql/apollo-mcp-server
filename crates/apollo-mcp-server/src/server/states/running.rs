@@ -22,6 +22,7 @@ use crate::{
     errors::{McpError, ServerError},
     explorer::{EXPLORER_TOOL_NAME, Explorer},
     graphql::{self, Executable as _},
+    health::HealthCheck,
     introspection::tools::{
         execute::{EXECUTE_TOOL_NAME, Execute},
         introspect::{INTROSPECT_TOOL_NAME, Introspect},
@@ -48,6 +49,7 @@ pub(super) struct Running {
     pub(super) mutation_mode: MutationMode,
     pub(super) disable_type_description: bool,
     pub(super) disable_schema_description: bool,
+    pub(super) health_check: Option<HealthCheck>,
 }
 
 impl Running {
@@ -180,7 +182,7 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        match request.name.as_ref() {
+        let result = match request.name.as_ref() {
             INTROSPECT_TOOL_NAME => {
                 self.introspect_tool
                     .as_ref()
@@ -235,7 +237,14 @@ impl ServerHandler for Running {
                     .execute(graphql_request)
                     .await
             }
+        };
+
+        // Track errors for health check
+        if let (Err(_), Some(health_check)) = (&result, &self.health_check) {
+            health_check.record_rejection();
         }
+
+        result
     }
 
     async fn list_tools(
@@ -317,6 +326,7 @@ mod tests {
             mutation_mode: MutationMode::None,
             disable_type_description: false,
             disable_schema_description: false,
+            health_check: None,
         };
 
         let operations = vec![

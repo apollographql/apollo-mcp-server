@@ -8,6 +8,7 @@ use url::Url;
 use crate::{
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
+    health::HealthCheckConfig,
     operations::MutationMode,
 };
 
@@ -45,6 +46,7 @@ struct Config {
     disable_schema_description: bool,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
+    health_check: HealthCheckConfig,
 }
 
 impl StateMachine {
@@ -76,6 +78,7 @@ impl StateMachine {
                 disable_schema_description: server.disable_schema_description,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
+                health_check: server.health_check,
             },
         });
 

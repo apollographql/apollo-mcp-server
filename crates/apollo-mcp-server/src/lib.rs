@@ -3,6 +3,7 @@ pub mod errors;
 pub mod event;
 mod explorer;
 mod graphql;
+pub mod health;
 mod introspection;
 pub mod json_schema;
 pub mod operations;

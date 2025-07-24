@@ -17,6 +17,7 @@ bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
 futures.workspace = true
+humantime-serde = "1.1.1"
 lz-str = "0.2.1"
 regex = "1.11.1"
 reqwest.workspace = true
