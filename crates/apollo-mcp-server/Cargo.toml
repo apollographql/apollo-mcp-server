@@ -31,6 +31,7 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+url.workspace = true
 
 [dev-dependencies]
 figment = { version = "0.10.19", features = ["test"] }
