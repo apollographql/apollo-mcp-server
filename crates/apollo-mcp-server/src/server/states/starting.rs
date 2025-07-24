@@ -162,14 +162,12 @@ impl Starting {
                 );
                 let mut router = axum::Router::new().nest_service("/mcp", service);
 
-                // Add health check endpoint if configured (only supported for StreamableHttp transport)
-                if let Some(ref health_check_instance) = health_check {
-                    if health_check_instance.config().enabled {
-                        let health_router = Router::new()
-                            .route(&health_check_instance.config().path, get(health_endpoint))
-                            .with_state(health_check_instance.clone());
-                        router = router.merge(health_router);
-                    }
+                // Add health check endpoint if configured
+                if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
+                    let health_router = Router::new()
+                        .route(&health_check.config().path, get(health_endpoint))
+                        .with_state(health_check.clone());
+                    router = router.merge(health_router);
                 }
 
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
