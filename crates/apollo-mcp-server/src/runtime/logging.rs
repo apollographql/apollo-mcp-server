@@ -7,6 +7,7 @@ mod defaults;
 mod log_rotation_kind;
 mod parsers;
 
+use crate::runtime::Config;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -51,10 +52,11 @@ impl Default for Logging {
 }
 
 impl Logging {
-    pub fn setup(&self) -> Result<Option<WorkerGuard>, anyhow::Error> {
-        let mut env_filter = EnvFilter::from_default_env().add_directive(self.level.into());
+    pub fn setup(config: &Config) -> Result<Option<WorkerGuard>, anyhow::Error> {
+        let mut env_filter =
+            EnvFilter::from_default_env().add_directive(config.logging.level.into());
 
-        if self.level == Level::INFO {
+        if config.logging.level == Level::INFO {
             env_filter = env_filter
                 .add_directive("rmcp=warn".parse()?)
                 .add_directive("tantivy=warn".parse()?);
@@ -62,43 +64,38 @@ impl Logging {
 
         macro_rules! log_error {
             () => {
-                |e| eprintln!("Error: {e:?}")
-            };
-            ($e:expr) => {
-                |e| eprintln!("Error {}: {e:?}", $e)
+                |e| eprintln!("Failed to setup logging: {e:?}")
             };
         }
 
-        let (writer, guard, with_ansi) = self
-            .path
-            .clone()
-            .and_then(|path| {
-                std::fs::create_dir_all(&path)
-                    .map(|_| path)
-                    .inspect_err(log_error!())
-                    .ok()
-            })
-            .and_then(|path| {
-                RollingFileAppender::builder()
-                    .rotation(self.rotation.clone().into())
-                    .filename_prefix("apollo_mcp_server")
-                    .filename_suffix("log")
-                    .build(path)
-                    .inspect_err(log_error!())
-                    .ok()
-            })
-            .map(|appender| {
-                let (non_blocking_appender, guard) = tracing_appender::non_blocking(appender);
-                (
-                    BoxMakeWriter::new(non_blocking_appender),
-                    Some(guard),
-                    false,
-                )
-            })
-            .unwrap_or_else(|| {
-                eprintln!("Log file setup failed - falling back to stderr");
-                (BoxMakeWriter::new(std::io::stderr), None, true)
-            });
+        let (writer, guard, with_ansi) = match config.logging.path.clone() {
+            Some(path) => std::fs::create_dir_all(&path)
+                .map(|_| path)
+                .inspect_err(log_error!())
+                .ok()
+                .and_then(|path| {
+                    RollingFileAppender::builder()
+                        .rotation(config.logging.rotation.clone().into())
+                        .filename_prefix("apollo_mcp_server")
+                        .filename_suffix("log")
+                        .build(path)
+                        .inspect_err(log_error!())
+                        .ok()
+                })
+                .map(|appender| {
+                    let (non_blocking_appender, guard) = tracing_appender::non_blocking(appender);
+                    (
+                        BoxMakeWriter::new(non_blocking_appender),
+                        Some(guard),
+                        false,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    eprintln!("Log file setup failed - falling back to stderr");
+                    (BoxMakeWriter::new(std::io::stderr), None, true)
+                }),
+            None => (BoxMakeWriter::new(std::io::stdout), None, true),
+        };
 
         tracing_subscriber::registry()
             .with(env_filter)
