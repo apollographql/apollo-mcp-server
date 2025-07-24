@@ -10,6 +10,7 @@ use url::Url;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
+use crate::health::HealthCheckConfig;
 use crate::operations::{MutationMode, OperationSource};
 
 mod states;
@@ -36,6 +37,7 @@ pub struct Server {
     disable_schema_description: bool,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
+    health_check: HealthCheckConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -103,6 +105,7 @@ impl Server {
         disable_schema_description: bool,
         search_leaf_depth: usize,
         index_memory_bytes: usize,
+        health_check: HealthCheckConfig,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -128,6 +131,7 @@ impl Server {
             disable_schema_description,
             search_leaf_depth,
             index_memory_bytes,
+            health_check,
         }
     }
 

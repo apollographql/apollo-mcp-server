@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apollo_mcp_server::server::Transport;
+use apollo_mcp_server::{health::HealthCheckConfig, server::Transport};
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -29,6 +29,10 @@ pub struct Config {
     #[serde(default, deserialize_with = "parsers::map_from_str")]
     #[schemars(schema_with = "super::schemas::header_map")]
     pub headers: HeaderMap,
+
+    /// Health check configuration
+    #[serde(default)]
+    pub health_check: HealthCheckConfig,
 
     /// Introspection configuration
     #[serde(default)]
