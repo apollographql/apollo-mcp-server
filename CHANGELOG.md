@@ -62,6 +62,14 @@ transport:
 
 ## 🚀 Features
 
+### Validate tool for verifying graphql queries before executing them - @swcollard PR #203
+
+The introspection options in the mcp server provide introspect, execute, and search tools. The LLM often tries to validate its queries by just executing them. This may not be desired (there might be side effects, for example). This feature adds a `validate` tool so the LLM can validate the operation without actually hitting the GraphQL endpoint. It first validates the syntax of the operation, and then checks it against the introspected schema for validation.
+
+### Minify introspect return value - @pubmodmatt PR #178
+
+The `introspect` and `search` tools now have an option to minify results. Minified GraphQL SDL takes up less space in the context window.
+
 ### Add search tool - @pubmodmatt PR #171
 
 A new experimental `search` tool has been added that allows the AI model to specify a set of terms to search for in the GraphQL schema. The top types matching that search are returned, as well as enough information to enable creation of GraphQL operations involving those types.

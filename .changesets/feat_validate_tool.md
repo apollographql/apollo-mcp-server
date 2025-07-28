@@ -1,3 +1,0 @@
-### feat: Validate tool for verifying graphql queries before executing them - @swcollard PR #203
-
-The introspection options in the mcp server provide introspect, execute, and search tools. The LLM often tries to validate its queries by just executing them. This may not be desired (there might be side effects, for example). This feature adds a `validate` tool so the LLM can validate the operation without actually hitting the GraphQL endpoint. It first validates the syntax of the operation, and then checks it against the introspected schema for validation.
