@@ -18,13 +18,13 @@ Here is the typical workflow for developing with Apollo MCP Server:
 
 ## Set up graph
 
-An Apollo MCP Server must know the schema of GraphQL API it supports. You can use either [the `--schema` option to provide the schema or `--apollo-graph-ref` and `--apollo-key` options to get the schema from uplink](/apollo-mcp-server/command-reference#options). If using `--schema` option, it can be either an API or supergraph schema.
+An Apollo MCP Server must know the schema of GraphQL API it supports. You can use either [the `schema` option to provide the schema or `graphos.apollo-graph-ref` and `graphos.apollo-key` options to get the schema from uplink](/apollo-mcp-server/command-reference#options). If using `schema` option, it can be either an API or supergraph schema.
 
 The schema is required for three main purposes:
 
 1. **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
 1. **Input Validation**: The schema is used to translate GraphQL input types into JSON Schema, ensuring that AI models provide correctly formatted inputs.
-1. **Introspection Support**: If you enable the `--introspection` option, the schema is used to provide information about available types and operations to AI models.
+1. **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
 
 ## Define GraphQL operations for tools
 
@@ -65,11 +65,11 @@ query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) {
 
 </CodeColumns>
 
-The `--operations` option of the MCP Server provides it with a list of operation files. For each operation file you provide, the MCP Server creates an MCP tool that calls the corresponding GraphQL operation.
+The `operations` option of the MCP Server provides it with a list of operation files. For each operation file you provide, the MCP Server creates an MCP tool that calls the corresponding GraphQL operation.
 
-The `--operations` option can also be used to specify a directory. All files with a `.graphql` extension in the directory will be loaded as operations.
+The `operations` option can also be used to specify a directory. All files with a `.graphql` extension in the directory will be loaded as operations.
 
-Files and directories specified with `--operations` will be hot reloaded. When specifying a file, the MCP tool will be updated when the file contents are modified. When specifying a directory, operations exposed as MCP tools will be updated when files are added, modified, or removed from the directory.
+Files and directories specified with `operations` will be hot reloaded. When specifying a file, the MCP tool will be updated when the file contents are modified. When specifying a directory, operations exposed as MCP tools will be updated when files are added, modified, or removed from the directory.
 
 ### From Operation Collection
 
@@ -79,14 +79,13 @@ To use a GraphOS Operation Collection, you must:
 
 - Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
 
-Each variant will have it's own default MCP Tools Collection, but you can specify any shared collection by using `--collection <collection-id>`.
-Apollo MCP Server will automatically fetch the default collection if no id is specified. 
+Each variant will have it's own default MCP Tools Collection, but you can specify any shared collection by using `operations` with `operations.source: collection`.
+Apollo MCP Server will automatically fetch the default collection if no id is specified.
 
-```sh title="Example command using a GraphOS Operation Collection"
-apollo-mcp-server \
-  --directory <absolute path to this git repo> \
-  --schema graphql/weather/api.graphql \
-  --collection <collection-id>
+```yaml title="Example config file for using a GraphOS Operation Collection"
+operations:
+  source: collection
+  id: <collection-id>
 ```
 
 The MCP Server supports hot reloading of the GraphOS Operation Collection, so it can automatically pick up changes from GraphOS without restarting.
@@ -95,7 +94,7 @@ The MCP Server supports hot reloading of the GraphOS Operation Collection, so it
 
 Apollo MCP Server supports reading GraphQL operations from Apollo-formatted [persisted query manifest](/graphos/platform/security/persisted-queries#manifest-format) files.
 
-You can set the persisted query manifest file for the MCP Server by using the `--manifest` option. The MCP Server supports hot reloading of persisted query manifests, so changes to manifests are applied without restarting.
+You can set the persisted query manifest file for the MCP Server by using the `operations` option. The MCP Server supports hot reloading of persisted query manifests, so changes to manifests are applied without restarting.
 
 An example manifest is available in the [GitHub repo](https://github.com/apollographql/apollo-mcp-server/tree/main/graphql/weather/persisted_queries).
 
@@ -103,12 +102,19 @@ An example manifest is available in the [GitHub repo](https://github.com/apollog
 
 From the root of a local MCP Server repo, run the `apollo-mcp-server` binary with the example persisted query manifest, `graphql/weather/persisted_queries/apollo.json`:
 
+```yaml title="Example config for using Persisted Query Manifest"
+headers:
+  'apollographql-client-name': 'my-web-app'
+operations:
+  source: manifest
+  path: <absolute path to this local repo>/graphql/weather/persisted_queries/apollo.json
+schema:
+  source: local
+  path: <absolute path to this local repo>/graphql/weather/api.graphql
+```
+
 ```sh showLineNumbers=false
-apollo-mcp-server \
-  --directory <absolute path to this local repo> \
-  --schema graphql/weather/api.graphql \
-  --header "apollographql-client-name:my-web-app" \
-  --manifest graphql/weather/persisted_queries/apollo.json
+apollo-mcp-server <path to the above config>
 ```
 
 </ExpansionPanel>
@@ -120,7 +126,6 @@ For graphs managed by GraphOS, Apollo MCP Server can get operations by reading p
 To use GraphOS persisted queries, you must:
 
 - Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
-- Run Apollo MCP Server with the `--uplink-manifest` option
 
 <Tip>
 
@@ -128,25 +133,31 @@ Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/
 
 </Tip>
 
+```yaml title="Example config using GraphOS-managed persisted queries"
+headers:
+  'apollographql-client-name': 'my-web-app'
+operations:
+  source: uplink
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+```
+
 ```sh title="Example command using GraphOS-managed persisted queries"
-apollo-mcp-server \
-  --directory <absolute path to this git repo> \
-  --schema graphql/weather/api.graphql \
-  --header "apollographql-client-name:my-web-app" \
-  --uplink-manifest
+apollo-mcp-server <path to the above config>
 ```
 
 The MCP Server supports hot reloading of GraphOS-managed persisted queries, so it can automatically pick up changes from GraphOS without restarting.
 
 If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router.
 
-Use the `--header` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration.
+Use the `headers` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration.
 
 ### From schema introspection
 
 For use cases where not all operations can be pre-defined, Apollo MCP Server supports tool creation based on introspection of the graph schema. This allows AI agents to explore a graph and execute operations dynamically.
 
-To enable these schema-aware tools, run the MCP Server with the `--introspection` option, which exposes two new tools:
+To enable these schema-aware tools, run the MCP Server with the `introspection` option, which exposes two new tools:
 
 - `introspect` - returns information about schema types
 - `execute` - executes an operation on the GraphQL endpoint
@@ -158,6 +169,19 @@ The MCP client can use these tools to provide schema information to the model an
 Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/overview) so you can control the parts of your graph that AI can introspect. [Learn more](/apollo-mcp-server/best-practices#use-contract-variants-to-control-ai-access-to-graphs)
 
 </Tip>
+
+```yaml title="Example config using introspection"
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+```
+
+```sh title="Example command using introspection"
+apollo-mcp-server <path to the above config>
+```
+
 {/*
 ### Documenting tools
 
@@ -166,7 +190,7 @@ TODO
 
 ## Deploying the MCP server
 
-There are two ways to deploy and operate the MCP server. 
+There are two ways to deploy and operate the MCP server.
 
 1. Using the [MCP server container](#deploying-the-mcp-server-container) or binary, which connects to an existing GraphQL API endpoint
 1. Using the [Apollo Runtime container](#deploying-mcp-using-the-apollo-runtime-container), which includes both an MCP server as well as the Apollo router
@@ -181,16 +205,25 @@ and that clients will use the Streamable HTTP transport on container port 5000.
 
 An example `docker run` command that runs the MCP Server for the space dev example:
 
+```yaml title="Example config for using Docker"
+endpoint: https://thespacedevs-production.up.railway.app/
+operations:
+  source: local
+  paths:
+  - /data/operations/
+schema:
+  source: local
+  path: /data/api.graphql
+```
+
 ```sh showLineNumbers=false
 docker run \
   -it --rm \
   --name apollo-mcp-server \
   -p 5000:5000 \
+  -v <path to the above config>:/config.yaml \
   -v $PWD/graphql/TheSpaceDevs:/data \
-  ghcr.io/apollographql/apollo-mcp-server:latest \
-    --schema api.graphql \
-    --operations operations/ \
-    --endpoint https://thespacedevs-production.up.railway.app/
+  ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
 ```
 
 ### Deploying MCP using the Apollo Runtime container
@@ -199,7 +232,7 @@ The Apollo Runtime container includes all services necessary to serve GraphQL an
 
 To serve both MCP and GraphQL requests, both port `4000` and `5000` will need to be exposed. An example command which retrieves the schema from Uplink is:
 
-```bash title="Docker" {3, 6} 
+```bash title="Docker" {3, 6}
 docker run \
   -p 4000:4000 \
   -p 5000:5000 \
@@ -222,12 +255,21 @@ You can inspect a local Apollo MCP Server by running it with MCP Inspector.
 
 1. Run the MCP Server with Inspector:
 
+```yaml title="Example config for debugging over stdio"
+operations:
+  source: local
+  paths:
+  - <absolute path to this git repo>/graphql/weather/operations/
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+transport:
+  type: stdio
+```
+
 ```sh
 npx @modelcontextprotocol/inspector \
-  target/debug/apollo-mcp-server \
-  --directory <absolute path to this git repo> \
-  --schema graphql/weather/api.graphql \
-  --operations graphql/weather/operations
+  target/debug/apollo-mcp-server <path to the above config>
 ```
 
 <ExpansionPanel title="Example output">
@@ -254,12 +296,22 @@ You can also deploy the server as a container using the instructions in [Deployi
 
 </Tip>
 
+```yaml title="Example config for running in Streamable HTTP"
+operations:
+  source: local
+  paths:
+  - <absolute path to this git repo>/graphql/weather/operations/
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 5000
+```
+
 ```sh
-target/debug/apollo-mcp-server \
-  --directory <absolute path to this git repo> \
-  --http-port 5000 \
-  --schema graphql/weather/api.graphql \
-  --operations graphql/weather/operations
+target/debug/apollo-mcp-server <path to the above config>
 ```
 
 1. Start the MCP Inspector:

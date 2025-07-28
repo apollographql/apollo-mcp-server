@@ -25,7 +25,7 @@ In this quickstart, you'll create a working AI integration where Claude Desktop 
 
 Here's what the end result looks like:
 
-> **You**: "Tell me about the astronauts currently in space"  
+> **You**: "Tell me about the astronauts currently in space"
 > **Claude**: *[Uses GetAstronautsCurrentlyInSpace tool]* "There are currently 7 astronauts aboard the International Space Station..."
 
 This example uses a pre-built space API, but the same approach works with any GraphQL API - including your own production services.
@@ -50,7 +50,7 @@ The example files located in `graphql/TheSpaceDevs/` include:
   - `supergraph.yaml` is a [supergraph configuration file](/rover/commands/supergraphs#yaml-configuration-file) used by the Rover CLI
 - **4 pre-built operations** that become your AI tools:
   - `ExploreCelestialBodies` - Search planets, moons, and stars
-  - `GetAstronautDetails` - Get info about specific astronauts  
+  - `GetAstronautDetails` - Get info about specific astronauts
   - `GetAstronautsCurrentlyInSpace` - See who's in space right now
   - `SearchUpcomingLaunches` - Find upcoming rocket launches
 
@@ -58,10 +58,17 @@ The example files located in `graphql/TheSpaceDevs/` include:
 
 1. From the root directory of your local repo, run `rover dev` to start a local graph with an MCP Server:
 
+    ```yaml title="Config file"
+    operations:
+      source: local
+      paths:
+      - ./graphql/TheSpaceDevs/operations
+    ```
+
     ```sh showLineNumbers=false
     rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
     --mcp \
-    --mcp-operations ./graphql/TheSpaceDevs/operations 
+    --mcp-config <path to the above config>
     ```
 
     This command:
@@ -140,7 +147,7 @@ Let's verify everything is working:
 
 #### MCP Server Won't Start
 - **Error**: "Port 5000 is already in use"
-  - Solution: Kill any existing processes using port 5000 or specify a different port with `--mcp-sse-port` flag using Rover Dev or `--sse-port` when running the MCP server directly
+  - Solution: Kill any existing processes using port 5000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
 - **Error**: "Failed to load supergraph configuration"
   - Solution: Verify you're running the command from the repo root directory
   - Solution: Check that the path to `supergraph.yaml` is correct
@@ -205,12 +212,21 @@ You can run the MCP Server using STDIO transport instead of Streamable HTTP. Thi
 1. Download the binary of the latest version of Apollo MCP Server
 2. Use MCP Inspector to run the server:
 
+    ```yaml title="Config for stdio transport"
+    endpoint: https://thespacedevs-production.up.railway.app/
+    operations:
+      source: local
+      paths:
+      - <absolute-path-to-MCP-example-dir>/operations
+    schema:
+      source: local
+      path: <absolute-path-to-MCP-example-dir>/api.graphql
+    transport:
+      type: stdio
+    ```
+
     ```sh
-    npx @modelcontextprotocol/inspector apollo-mcp-server \
-    --directory <absolute-path-to-MCP-example-dir> \
-    --schema api.graphql \
-    --operations operations \
-    --endpoint https://thespacedevs-production.up.railway.app/
+    npx @modelcontextprotocol/inspector apollo-mcp-server <path to the above config>
     ```
 
 3. Configure Claude Desktop to use STDIO:
@@ -221,18 +237,11 @@ You can run the MCP Server using STDIO transport instead of Streamable HTTP. Thi
         "thespacedevs": {
           "command": "<absolute-path-to-MCP-server-binary>",
           "args": [
-            "--directory",
-            "<absolute-path-to-MCP-example-directory>",
-            "--schema",
-            "api.graphql",
-            "--operations",
-            "operations",
-            "--endpoint",
-            "https://thespacedevs-production.up.railway.app/"
+            "<path to the above config>"
           ]
         }
       }
     }
     ```
-  
+
 </details>
