@@ -39,7 +39,8 @@ introspection:
     enabled: true
   introspect:
     enabled: false
-log_level: info
+logging:
+  level: info
 operations:
   source: local
   paths:
