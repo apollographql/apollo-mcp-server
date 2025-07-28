@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
+use http::HeaderValue;
+use http::header::AUTHORIZATION;
 use reqwest::header::HeaderMap;
 use rmcp::model::Implementation;
 use rmcp::{
@@ -18,6 +20,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::{
+    auth::ValidToken,
     custom_scalar_map::CustomScalarMap,
     errors::{McpError, ServerError},
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -180,7 +183,7 @@ impl ServerHandler for Running {
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let result = match request.name.as_ref() {
             INTROSPECT_TOOL_NAME => {
@@ -223,10 +226,27 @@ impl ServerHandler for Running {
                     .await
             }
             _ => {
+                // Optionally extract the validated token and propagate it to upstream servers
+                // if found
+                let mut headers = self.headers.clone();
+                if let Some(token) = context.extensions.get::<ValidToken>() {
+                    headers.insert(
+                        AUTHORIZATION,
+                        HeaderValue::try_from(token.clone().read()).map_err(|e| {
+                            error!("Could not create auth token from validated token: {e}");
+                            McpError::new(
+                                ErrorCode::INTERNAL_ERROR,
+                                "could not extract validated token. This should not happen",
+                                None,
+                            )
+                        })?,
+                    );
+                }
+
                 let graphql_request = graphql::Request {
                     input: Value::from(request.arguments.clone()),
                     endpoint: &self.endpoint,
-                    headers: self.headers.clone(),
+                    headers,
                 };
                 self.operations
                     .lock()

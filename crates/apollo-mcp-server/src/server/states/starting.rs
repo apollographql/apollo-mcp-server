@@ -11,7 +11,7 @@ use rmcp::{
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{Instrument as _, debug, error, info, trace};
 
 use crate::{
     errors::ServerError,
@@ -123,6 +123,7 @@ impl Starting {
         let health_check = match (&self.config.transport, self.config.health_check.enabled) {
             (
                 Transport::StreamableHttp {
+                    auth: _,
                     address: _,
                     port: _,
                 },
@@ -150,8 +151,23 @@ impl Starting {
             health_check: health_check.clone(),
         };
 
+        // Helper to enable auth
+        macro_rules! with_auth {
+            ($router:expr, $auth:ident) => {{
+                let mut router = $router;
+                if !$auth.disable {
+                    router = $auth.enable_middleware(router);
+                }
+
+                router
+            }};
+        }
         match self.config.transport {
-            Transport::StreamableHttp { address, port } => {
+            Transport::StreamableHttp {
+                auth,
+                address,
+                port,
+            } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
@@ -160,7 +176,8 @@ impl Starting {
                     LocalSessionManager::default().into(),
                     Default::default(),
                 );
-                let mut router = axum::Router::new().nest_service("/mcp", service);
+                let mut router =
+                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -182,19 +199,49 @@ impl Starting {
                     }
                 });
             }
-            Transport::SSE { address, port } => {
+            Transport::SSE {
+                auth,
+                address,
+                port,
+            } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
-                SseServer::serve_with_config(SseServerConfig {
+
+                let (server, router) = SseServer::new(SseServerConfig {
                     bind: listen_address,
                     sse_path: "/sse".to_string(),
                     post_path: "/message".to_string(),
                     ct: cancellation_token,
                     sse_keep_alive: None,
-                })
-                .await?
-                .with_service(move || running.clone());
+                });
+
+                // Optionally wrap the router with auth, if enabled
+                let router = with_auth!(router, auth);
+
+                // Start up the SSE server
+                // Note: Until RMCP consolidates SSE with the same tower system as StreamableHTTP,
+                // we need to basically copy the implementation of `SseServer::serve_with_config` here.
+                let listener = tokio::net::TcpListener::bind(server.config.bind).await?;
+                let ct = server.config.ct.child_token();
+                let axum_server =
+                    axum::serve(listener, router).with_graceful_shutdown(async move {
+                        ct.cancelled().await;
+                        tracing::info!("mcp server cancelled");
+                    });
+
+                tokio::spawn(
+                    async move {
+                        if let Err(e) = axum_server.await {
+                            tracing::error!(error = %e, "mcp shutdown with error");
+                        }
+                    }
+                    .instrument(
+                        tracing::info_span!("mcp-server", bind_address = %server.config.bind),
+                    ),
+                );
+
+                server.with_service(move || running.clone());
             }
             Transport::Stdio => {
                 info!("Starting MCP server in stdio mode");

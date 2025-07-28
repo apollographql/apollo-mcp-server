@@ -7,6 +7,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use url::Url;
 
+use crate::auth;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
@@ -52,6 +53,10 @@ pub enum Transport {
     /// Note: This is deprecated in favor of HTTP streams.
     #[serde(rename = "sse")]
     SSE {
+        /// Authentication configuration
+        #[serde(default)]
+        auth: auth::Config,
+
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
         address: IpAddr,
@@ -63,6 +68,10 @@ pub enum Transport {
 
     /// Host the MCP server on the configuration, using streamable HTTP messages.
     StreamableHttp {
+        /// Authentication configuration
+        #[serde(default)]
+        auth: auth::Config,
+
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
         address: IpAddr,
