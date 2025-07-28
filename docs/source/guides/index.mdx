@@ -65,11 +65,11 @@ query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) {
 
 </CodeColumns>
 
-The `operations` option of the MCP Server provides it with a list of operation files. For each operation file you provide, the MCP Server creates an MCP tool that calls the corresponding GraphQL operation.
+Use the `operations` option to provide the MCP Server with a list of operation files. For each operation file you provide, the MCP Server creates an MCP tool that calls the corresponding GraphQL operation.
 
-The `operations` option can also be used to specify a directory. All files with a `.graphql` extension in the directory will be loaded as operations.
+You can also use the `operations` option to specify a directory. The server then loads all files with a `.graphql` extension in that directory as operations.
 
-Files and directories specified with `operations` will be hot reloaded. When specifying a file, the MCP tool will be updated when the file contents are modified. When specifying a directory, operations exposed as MCP tools will be updated when files are added, modified, or removed from the directory.
+Files and directories specified with `operations` are hot reloaded. When you specify a file, the MCP tool is updated when the file contents are modified. When you specify a directory, operations exposed as MCP tools are updated when files are added, modified, or removed from the directory.
 
 ### From Operation Collection
 
@@ -79,8 +79,8 @@ To use a GraphOS Operation Collection, you must:
 
 - Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
 
-Each variant will have it's own default MCP Tools Collection, but you can specify any shared collection by using `operations` with `operations.source: collection`.
-Apollo MCP Server will automatically fetch the default collection if no id is specified.
+Each variant will have its own default MCP Tools Collection, but you can specify any shared collection by using `operations` with `operations.source: collection`.
+Apollo MCP Server automatically fetches the default collection if no ID is specified.
 
 ```yaml title="Example config file for using a GraphOS Operation Collection"
 operations:
@@ -94,7 +94,7 @@ The MCP Server supports hot reloading of the GraphOS Operation Collection, so it
 
 Apollo MCP Server supports reading GraphQL operations from Apollo-formatted [persisted query manifest](/graphos/platform/security/persisted-queries#manifest-format) files.
 
-You can set the persisted query manifest file for the MCP Server by using the `operations` option. The MCP Server supports hot reloading of persisted query manifests, so changes to manifests are applied without restarting.
+Set the persisted query manifest file for the MCP Server with the `operations` option. The MCP Server supports hot reloading of persisted query manifests, so changes to manifests are applied without restarting.
 
 An example manifest is available in the [GitHub repo](https://github.com/apollographql/apollo-mcp-server/tree/main/graphql/weather/persisted_queries).
 
@@ -114,7 +114,7 @@ schema:
 ```
 
 ```sh showLineNumbers=false
-apollo-mcp-server <path to the above config>
+apollo-mcp-server <path to the preceding config>
 ```
 
 </ExpansionPanel>
@@ -144,7 +144,7 @@ schema:
 ```
 
 ```sh title="Example command using GraphOS-managed persisted queries"
-apollo-mcp-server <path to the above config>
+apollo-mcp-server <path to the preceding config>
 ```
 
 The MCP Server supports hot reloading of GraphOS-managed persisted queries, so it can automatically pick up changes from GraphOS without restarting.
@@ -179,7 +179,7 @@ introspection:
 ```
 
 ```sh title="Example command using introspection"
-apollo-mcp-server <path to the above config>
+apollo-mcp-server <path to the preceding config>
 ```
 
 {/*
@@ -221,7 +221,7 @@ docker run \
   -it --rm \
   --name apollo-mcp-server \
   -p 5000:5000 \
-  -v <path to the above config>:/config.yaml \
+  -v <path to the preceding config>:/config.yaml \
   -v $PWD/graphql/TheSpaceDevs:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
 ```
@@ -269,7 +269,7 @@ transport:
 
 ```sh
 npx @modelcontextprotocol/inspector \
-  target/debug/apollo-mcp-server <path to the above config>
+  target/debug/apollo-mcp-server <path to the preceding config>
 ```
 
 <ExpansionPanel title="Example output">
