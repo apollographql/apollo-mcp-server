@@ -3,7 +3,8 @@ use serde::Deserialize;
 use std::net::IpAddr;
 use url::Url;
 
-/// Logging related options
+/// Proxy client related config options
+/// Note: only supported for Streamable HTTP
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 #[serde(default)]
 pub struct ProxyConfig {
@@ -11,6 +12,8 @@ pub struct ProxyConfig {
     #[serde(default)]
     pub enabled: bool,
 
+    /// Proxy url address
+    /// [default: http://<transport.address>:<transport.port>/mcp]
     #[serde(default)]
     pub url: Option<Url>,
 }
