@@ -79,10 +79,10 @@ mod parsers {
 
                 // While there are entries remaining in the input, add them
                 // into our map.
-                while let Some((key, value)) = map.next_entry()? {
-                    let key = HeaderName::from_str(key)
+                while let Some((key, value)) = map.next_entry::<String, String>()? {
+                    let key = HeaderName::from_str(&key)
                         .map_err(|e| serde::de::Error::custom(e.to_string()))?;
-                    let value = HeaderValue::from_str(value)
+                    let value = HeaderValue::from_str(&value)
                         .map_err(|e| serde::de::Error::custom(e.to_string()))?;
 
                     parsed.insert(key, value);
@@ -92,7 +92,7 @@ mod parsers {
             }
         }
 
-        deserializer.deserialize_str(MapFromStrVisitor)
+        deserializer.deserialize_map(MapFromStrVisitor)
     }
 }
 
