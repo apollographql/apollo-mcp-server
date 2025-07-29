@@ -8,9 +8,8 @@ use url::Url;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides,
+    introspection::Introspection, logging::Logging, overrides::Overrides, proxy::ProxyConfig,
 };
-use crate::runtime::proxy::ProxyConfig;
 
 /// Configuration for the MCP server
 #[derive(Debug, Default, Deserialize, JsonSchema)]
