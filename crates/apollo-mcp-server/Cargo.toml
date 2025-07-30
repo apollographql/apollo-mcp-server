@@ -13,7 +13,7 @@ apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
-axum-extra = { version = "0.10.1", features = [ "typed-header"] }
+axum-extra = { version = "0.10.1", features = ["typed-header"] }
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
