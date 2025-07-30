@@ -20,6 +20,7 @@ pub(super) struct ProtectedResource {
     scopes_supported: Vec<String>,
 
     /// Link to documentation about this resource
+    #[serde(skip_serializing_if = "Option::is_none")]
     resource_documentation: Option<Url>,
 }
 
