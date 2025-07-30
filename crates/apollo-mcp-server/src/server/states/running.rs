@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::ops::Deref as _;
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
