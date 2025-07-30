@@ -19,9 +19,11 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use url::Url;
 
+mod protected_resource;
 mod valid_token;
 mod www_authenticate;
 
+use protected_resource::ProtectedResource;
 pub(crate) use valid_token::ValidToken;
 use www_authenticate::WwwAuthenticate;
 
@@ -38,43 +40,26 @@ pub struct Config {
     ///
     /// Note: This is usually the publicly accessible URL of this running MCP server
     pub resource: Url,
+
+    /// Link to documentation related to the protected resource
+    pub resource_documentation: Option<Url>,
+
+    /// Supported OAuth scopes by this resource server
+    pub scopes: Vec<String>,
 }
 
 impl Config {
     pub fn enable_middleware(&self, router: axum::Router) -> axum::Router {
-        #[derive(Serialize)]
-        struct ProtectedResource {
-            resource: Url,
-            authorization_servers: Vec<Url>,
-            bearer_methods_supported: Vec<String>,
-            scopes_supported: Vec<String>,
-            resource_documentation: String,
-        }
-
-        impl From<Config> for ProtectedResource {
-            fn from(value: Config) -> Self {
-                Self {
-                    resource: value.resource,
-                    authorization_servers: value.servers,
-                    bearer_methods_supported: vec!["header".to_string()],
-                    scopes_supported: ["profile", "email", "phone", "mcp-flow"]
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect(),
-                    resource_documentation: "TODO".to_string(),
-                }
-            }
-        }
-
+        /// Simple handler to encode our config into the desired OAuth 2.1 protected
+        /// resource format
         async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
             Json(auth_config.into())
         }
 
-        // Set up auth routes
+        // Set up auth routes. NOTE: CORs needs to allow for get requests to the
+        // metadata information paths.
         let cors = CorsLayer::new()
-            // allow `GET` and `POST` when accessing the resource
             .allow_methods([Method::GET])
-            // allow requests from any origin
             .allow_origin(Any);
         let auth_router = Router::new()
             .route(
