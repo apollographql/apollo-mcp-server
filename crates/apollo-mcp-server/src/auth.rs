@@ -19,7 +19,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 use url::Url;
 
+mod valid_token;
 mod www_authenticate;
+
+pub(crate) use valid_token::ValidToken;
 use www_authenticate::WwwAuthenticate;
 
 /// Auth configuration options
@@ -35,17 +38,6 @@ pub struct Config {
     ///
     /// Note: This is usually the publicly accessible URL of this running MCP server
     pub resource: Url,
-}
-
-/// A validated token string
-#[derive(Clone)]
-pub struct ValidToken(String);
-
-impl ValidToken {
-    /// Read the contents of the token, consuming it.
-    pub fn read(self) -> String {
-        self.0
-    }
 }
 
 impl Config {
