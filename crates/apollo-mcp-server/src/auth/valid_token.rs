@@ -1,10 +1,18 @@
-/// A validated token string
-#[derive(Clone)]
-pub(crate) struct ValidToken(pub(super) String);
+use std::ops::Deref;
 
-impl ValidToken {
-    /// Read the contents of the token, consuming it.
-    pub fn read(self) -> String {
-        self.0
+use headers::{Authorization, authorization::Bearer};
+
+/// A validated authentication token
+///
+/// Note: This is used as a marker to ensure that we have validated this
+/// separately from just reading the header itself.
+#[derive(Clone)]
+pub(crate) struct ValidToken(pub(super) Authorization<Bearer>);
+
+impl Deref for ValidToken {
+    type Target = Authorization<Bearer>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

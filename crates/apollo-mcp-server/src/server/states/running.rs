@@ -1,8 +1,8 @@
+use std::ops::Deref;
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
-use http::HeaderValue;
-use http::header::AUTHORIZATION;
+use headers::HeaderMapExt as _;
 use reqwest::header::HeaderMap;
 use rmcp::model::Implementation;
 use rmcp::{
@@ -230,17 +230,7 @@ impl ServerHandler for Running {
                 // if found
                 let mut headers = self.headers.clone();
                 if let Some(token) = context.extensions.get::<ValidToken>() {
-                    headers.insert(
-                        AUTHORIZATION,
-                        HeaderValue::try_from(token.clone().read()).map_err(|e| {
-                            error!("Could not create auth token from validated token: {e}");
-                            McpError::new(
-                                ErrorCode::INTERNAL_ERROR,
-                                "could not extract validated token. This should not happen",
-                                None,
-                            )
-                        })?,
-                    );
+                    headers.typed_insert(token.deref().clone());
                 }
 
                 let graphql_request = graphql::Request {

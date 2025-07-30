@@ -97,9 +97,7 @@ async fn oauth_validate(
         Some(bearer) if token_is_valid(&auth_config, bearer.token()).await => {
             // Insert new context to ensure that handlers only use our enforced token verification
             // for propagation
-            request
-                .extensions_mut()
-                .insert(ValidToken(bearer.token().to_string()));
+            request.extensions_mut().insert(ValidToken(bearer.0));
 
             let response = next.run(request).await;
             Ok(response)
