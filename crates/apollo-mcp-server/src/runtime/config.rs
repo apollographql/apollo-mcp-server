@@ -8,7 +8,7 @@ use url::Url;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides,
+    introspection::Introspection, logging::Logging, overrides::Overrides, proxy::ProxyConfig,
 };
 
 /// Configuration for the MCP server
@@ -51,6 +51,10 @@ pub struct Config {
 
     /// The type of server transport to use
     pub transport: Transport,
+
+    /// The optional proxy client options
+    #[serde(default)]
+    pub proxy: ProxyConfig,
 }
 
 mod parsers {
