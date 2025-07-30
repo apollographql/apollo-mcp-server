@@ -55,7 +55,7 @@ pub enum Transport {
     SSE {
         /// Authentication configuration
         #[serde(default)]
-        auth: auth::Config,
+        auth: Option<auth::Config>,
 
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
@@ -70,7 +70,7 @@ pub enum Transport {
     StreamableHttp {
         /// Authentication configuration
         #[serde(default)]
-        auth: auth::Config,
+        auth: Option<auth::Config>,
 
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]

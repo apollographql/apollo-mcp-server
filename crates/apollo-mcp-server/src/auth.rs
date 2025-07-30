@@ -6,23 +6,26 @@ use axum::{
     response::Response,
     routing::get,
 };
+use axum_extra::{
+    TypedHeader,
+    headers::{Authorization, authorization::Bearer},
+};
 use http::Method;
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 use jwks::{Jwks, JwksError};
-use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+use reqwest::header::WWW_AUTHENTICATE;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 use url::Url;
 
+mod www_authenticate;
+use www_authenticate::WwwAuthenticate;
+
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct Config {
-    /// Disable authentication
-    #[serde(default)]
-    pub disable: bool,
-
     /// List of upstream OAuth servers to delegate auth
     pub servers: Vec<Url>,
 
@@ -31,8 +34,8 @@ pub struct Config {
 
     /// The resource to protect.
     ///
-    /// Note: This is usually the publically accessible URL of this running MCP server
-    pub resource: String,
+    /// Note: This is usually the publicly accessible URL of this running MCP server
+    pub resource: Url,
 }
 
 /// A validated token string
@@ -46,25 +49,11 @@ impl ValidToken {
     }
 }
 
-// Note: Here we implement default for Config such that it disables auth when not
-// specified. If it is specified, however, the above `#[serde(default)]` ensures that
-// disabled is set to false.
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            disable: true,
-            servers: Vec::new(),
-            audiences: Vec::new(),
-            resource: String::new(),
-        }
-    }
-}
-
 impl Config {
     pub fn enable_middleware(&self, router: axum::Router) -> axum::Router {
         #[derive(Serialize)]
         struct ProtectedResource {
-            resource: String,
+            resource: Url,
             authorization_servers: Vec<Url>,
             bearer_methods_supported: Vec<String>,
             scopes_supported: Vec<String>,
@@ -114,32 +103,27 @@ impl Config {
     }
 }
 
-/// Helper for returning internal server errors
-macro_rules! internal_error {
-    ($msg:literal, $e:ident) => {{
-        error!("INTERNAL ERROR (This should not happen). {}: {}", $msg, $e);
-
-        (StatusCode::INTERNAL_SERVER_ERROR, Default::default())
-    }};
-}
-
+/// Validate that requests made have a corresponding bearer JWT token
 async fn oauth_validate(
     State(auth_config): State<Config>,
-    headers: HeaderMap,
+    token: Option<TypedHeader<Authorization<Bearer>>>,
     mut request: Request,
     next: Next,
-) -> Result<Response, (StatusCode, HeaderMap)> {
-    match get_token(&headers) {
-        Some(token)
-            if token_is_valid(&auth_config, token)
-                .await
-                .map_err(|e| internal_error!("could not validate token", e))? =>
-        {
+) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
+    let resource_url = {
+        let mut resource = auth_config.resource.clone();
+        resource.set_path("/.well-known/oauth-protected-resource");
+
+        resource
+    };
+
+    match token {
+        Some(bearer) if token_is_valid(&auth_config, bearer.token()).await => {
             // Insert new context to ensure that handlers only use our enforced token verification
             // for propagation
             request
                 .extensions_mut()
-                .insert(ValidToken(token.to_string()));
+                .insert(ValidToken(bearer.token().to_string()));
 
             let response = next.run(request).await;
             Ok(response)
@@ -147,53 +131,38 @@ async fn oauth_validate(
 
         _ => Err((
             StatusCode::UNAUTHORIZED,
-            HeaderMap::from_iter([(
-                WWW_AUTHENTICATE,
-                HeaderValue::from_str(&format!(
-                    r#"Bearer resource_metadata="{}/.well-known/oauth-protected-resource""#,
-                    auth_config.resource
-                ))
-                .map_err(|e| internal_error!("could not create resource metadata header", e))?,
-            )]),
+            TypedHeader(WwwAuthenticate::Bearer {
+                resource_metadata: auth_config.resource,
+            }),
         )),
     }
 }
 
-fn get_token(headers: &HeaderMap) -> Option<&str> {
-    headers
-        .get(AUTHORIZATION)
-        .map(HeaderValue::to_str)
-        .transpose()
-        .ok()
-        .flatten()
-}
-
-async fn token_is_valid(auth_config: &Config, token: &str) -> Result<bool, JwksError> {
+/// Ensure that the supplied token is valid for the given config
+async fn token_is_valid(auth_config: &Config, jwt: &str) -> bool {
     #[derive(Clone, Debug, Serialize, Deserialize)]
     pub struct Claims {
         pub aud: String,
         pub sub: String,
     }
 
-    // The token should be in the form 'Bearer ...'
-    let bearer_prefix = "bearer ";
-    let Some((bearer, jwt)) = token.split_at_checked(bearer_prefix.len()) else {
-        return Ok(false);
-    };
-    if bearer.to_lowercase() != bearer_prefix {
-        return Ok(false);
-    }
-
     let Ok(header) = decode_header(jwt) else {
-        return Ok(false);
+        return false;
     };
     let Some(ref key_id) = header.kid else {
-        return Ok(false);
+        return false;
     };
 
     for server in &auth_config.servers {
-        let jwks =
-            Jwks::from_oidc_url(format!("{server}/.well-known/oauth-authorization-server")).await?;
+        let Ok(jwks) =
+            Jwks::from_oidc_url(format!("{server}/.well-known/oauth-authorization-server"))
+                .await
+                .inspect_err(|e| {
+                    warn!("could not fetch OIDC information from {server}: {e}. Skipping...");
+                })
+        else {
+            continue;
+        };
 
         let Some(jwk) = jwks.keys.get(key_id) else {
             continue;
@@ -224,12 +193,12 @@ async fn token_is_valid(auth_config: &Config, token: &str) -> Result<bool, JwksE
         match decode::<Claims>(jwt, &jwk.decoding_key, &validation) {
             Ok(claims) => {
                 info!("Token passed validation with claims: {claims:?}");
-                return Ok(true);
+                return true;
             }
             Err(e) => warn!("Token failed validation with error: {e}"),
         };
     }
 
     info!("Token did not pass validation");
-    Ok(false)
+    false
 }

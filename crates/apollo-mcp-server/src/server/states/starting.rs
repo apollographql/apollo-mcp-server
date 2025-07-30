@@ -155,8 +155,8 @@ impl Starting {
         macro_rules! with_auth {
             ($router:expr, $auth:ident) => {{
                 let mut router = $router;
-                if !$auth.disable {
-                    router = $auth.enable_middleware(router);
+                if let Some(auth) = $auth {
+                    router = auth.enable_middleware(router);
                 }
 
                 router
