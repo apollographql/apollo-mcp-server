@@ -103,9 +103,23 @@ async fn main() -> anyhow::Result<()> {
             OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
         }
 
+        // Handle empty local paths separately from infer logic
+        runtime::OperationSource::Local { .. } => {
+            // This is the case where Local was specified but paths were empty
+            // We should not fall back to GraphOS for explicitly local configurations
+            if config.introspection.any_enabled() {
+                warn!(
+                    "Local operations specified but no valid paths found, falling back to introspection"
+                );
+                OperationSource::None
+            } else {
+                anyhow::bail!(ServerError::NoOperations)
+            }
+        }
+
         // TODO: Inference requires many different combinations and preferences
         // TODO: We should maybe make this more explicit.
-        runtime::OperationSource::Local { .. } | runtime::OperationSource::Infer => {
+        runtime::OperationSource::Infer => {
             if config.introspection.any_enabled() {
                 warn!("No operations specified, falling back to introspection");
                 OperationSource::None
@@ -127,8 +141,8 @@ async fn main() -> anyhow::Result<()> {
     let explorer_graph_ref = config
         .overrides
         .enable_explorer
-        .then(|| config.graphos.graph_ref())
-        .transpose()?;
+        .then(|| config.graphos.graph_ref().ok())
+        .flatten();
 
     Ok(Server::builder()
         .transport(config.transport)
