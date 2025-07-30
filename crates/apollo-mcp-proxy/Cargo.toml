@@ -10,10 +10,10 @@ clap = { version = "4.5.40", features = ["derive"] }
 tokio.workspace = true
 tokio-util.workspace = true
 rmcp = { workspace = true, features = [
-    "client",
-    "reqwest",
-    "transport-streamable-http-client",
-]}
+  "client",
+  "reqwest",
+  "transport-streamable-http-client",
+] }
 tracing.workspace = true
 tracing-appender = "0.2.3"
 tracing-subscriber.workspace = true
