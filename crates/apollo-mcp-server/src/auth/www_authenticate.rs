@@ -16,7 +16,7 @@ impl Header for WwwAuthenticate {
         &WWW_AUTHENTICATE
     }
 
-    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
+    fn decode<'i, I>(_values: &mut I) -> Result<Self, headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i http::HeaderValue>,
