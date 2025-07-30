@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     extract::{Request, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::StatusCode,
     middleware::Next,
     response::Response,
     routing::get,
@@ -12,12 +12,11 @@ use axum_extra::{
 };
 use http::Method;
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
-use jwks::{Jwks, JwksError};
-use reqwest::header::WWW_AUTHENTICATE;
+use jwks::Jwks;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 use url::Url;
 
 mod www_authenticate;
@@ -132,7 +131,7 @@ async fn oauth_validate(
         _ => Err((
             StatusCode::UNAUTHORIZED,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: auth_config.resource,
+                resource_metadata: resource_url,
             }),
         )),
     }
