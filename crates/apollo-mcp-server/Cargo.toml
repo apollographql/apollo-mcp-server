@@ -44,6 +44,7 @@ tower-http = { version = "0.6.6", features = ["cors"] }
 url.workspace = true
 
 [dev-dependencies]
+chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 rstest.workspace = true
