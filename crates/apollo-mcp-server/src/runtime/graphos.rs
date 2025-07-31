@@ -28,7 +28,10 @@ where
         UrlListOrString::List(urls) => Ok(urls),
         UrlListOrString::String(s) => s
             .split(',')
-            .map(|v| Url::parse(v.trim()).map_err(D::Error::custom))
+            .map(|v| {
+                Url::parse(v.trim())
+                    .map_err(D::Error::custom("Could not parse uplink endpoint URL"))
+            })
             .collect(),
     }
 }
