@@ -30,7 +30,14 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
     }
 
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
-        let jwks = Jwks::from_oidc_url(format!("{server}/.well-known/oauth-authorization-server"))
+        let oidc_url = {
+            let mut server_url = server.clone();
+            server_url.set_path("/.well-known/oauth-authorization-server");
+
+            server_url
+        };
+
+        let jwks = Jwks::from_oidc_url(oidc_url)
             .await
             .inspect_err(|e| {
                 warn!("could not fetch OIDC information from {server}: {e}");
