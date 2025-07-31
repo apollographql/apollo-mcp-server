@@ -49,7 +49,7 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn enable_middleware(&self, router: axum::Router) -> axum::Router {
+    pub fn enable_middleware(&self, router: Router) -> Router {
         /// Simple handler to encode our config into the desired OAuth 2.1 protected
         /// resource format
         async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
