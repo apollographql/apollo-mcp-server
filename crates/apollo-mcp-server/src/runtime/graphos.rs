@@ -30,7 +30,7 @@ where
             .split(',')
             .map(|v| {
                 Url::parse(v.trim())
-                    .map_err(D::Error::custom("Could not parse uplink endpoint URL"))
+                    .map_err(|e| D::Error::custom(format!("Could not parse uplink endpoint URL: {e}")))
             })
             .collect(),
     }
