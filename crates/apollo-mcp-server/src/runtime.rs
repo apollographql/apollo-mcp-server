@@ -124,4 +124,35 @@ mod test {
             Ok(())
         });
     }
+
+    #[test]
+    fn it_merges_env_and_file_with_uplink_endpoints() {
+        let config = "
+            endpoint: http://from_file:4000/
+        ";
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env(
+                "APOLLO_UPLINK_ENDPOINTS",
+                "http://from_env:4000/,http://from_env2:4000/",
+            );
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.endpoint.as_str(), "http://from_file:4000/");
+            assert_eq!(config.graphos.apollo_uplink_endpoints.len(), 2);
+            assert_eq!(
+                config.graphos.apollo_uplink_endpoints[0].as_str(),
+                "http://from_env:4000/"
+            );
+            assert_eq!(
+                config.graphos.apollo_uplink_endpoints[1].as_str(),
+                "http://from_env2:4000/"
+            );
+            Ok(())
+        });
+    }
 }
