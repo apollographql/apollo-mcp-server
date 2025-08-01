@@ -7,13 +7,12 @@ use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
 use apollo_mcp_server::server::Server;
-use apollo_mcp_server::server::Transport;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{Level, info, warn};
-use tracing_subscriber::EnvFilter;
+use runtime::logging::Logging;
+use tracing::{info, warn};
 
 mod runtime;
 
@@ -43,33 +42,13 @@ async fn main() -> anyhow::Result<()> {
         None => runtime::read_config_from_env().unwrap_or_default(),
     };
 
-    let mut env_filter = EnvFilter::from_default_env().add_directive(config.logging.level.into());
-
-    // Suppress noisy dependency logging at the INFO level
-    if config.logging.level == Level::INFO {
-        env_filter = env_filter
-            .add_directive("rmcp=warn".parse()?)
-            .add_directive("tantivy=warn".parse()?);
-    }
-
-    // When using the Stdio transport, send output to stderr since stdout is used for MCP messages
-    match config.transport {
-        Transport::SSE { .. } | Transport::StreamableHttp { .. } => tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_ansi(true)
-            .with_target(false)
-            .init(),
-        Transport::Stdio => tracing_subscriber::fmt()
-            .with_env_filter(env_filter)
-            .with_writer(std::io::stderr)
-            .with_ansi(true)
-            .with_target(false)
-            .init(),
-    };
+    // WorkerGuard is not used but needed to be at least defined or else the guard
+    // is cleaned up too early and file appender logging does not work
+    let _guard = Logging::setup(&config)?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
-        std::env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION")
     );
 
     let schema_source = match config.schema {
