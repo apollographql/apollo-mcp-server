@@ -100,6 +100,9 @@ pub enum ServerError {
 
     #[error("Failed to index schema: {0}")]
     Indexing(#[from] IndexingError),
+
+    #[error("Proxy options used with transport auth currently not supported")]
+    ProxyAuthNotSupported,
 }
 
 /// An MCP tool error

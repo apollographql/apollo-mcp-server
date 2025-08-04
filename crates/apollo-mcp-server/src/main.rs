@@ -140,8 +140,12 @@ async fn main() -> anyhow::Result<()> {
         .start();
 
     match config.transport {
-        Transport::StreamableHttp { address, port, .. } => {
+        Transport::StreamableHttp { address, port, auth } => {
             if config.proxy.enabled {
+                if auth.is_some() {
+                    anyhow::bail!(ServerError::ProxyAuthNotSupported)
+                }
+
                 let url = config.proxy.url(&address, &port);
                 let cancellation_token: CancellationToken = CancellationToken::new();
 
