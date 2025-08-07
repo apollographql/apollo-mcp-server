@@ -140,7 +140,11 @@ async fn main() -> anyhow::Result<()> {
         .start();
 
     match config.transport {
-        Transport::StreamableHttp { address, port, auth } => {
+        Transport::StreamableHttp {
+            address,
+            port,
+            auth,
+        } => {
             if config.proxy.enabled {
                 if auth.is_some() {
                     anyhow::bail!(ServerError::ProxyAuthNotSupported)
