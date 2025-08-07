@@ -13,13 +13,6 @@ use url::Url;
 #[derive(Debug)]
 pub struct Endpoint(Url);
 
-impl Endpoint {
-    /// Unwrap the endpoint into its inner URL
-    pub fn into_inner(self) -> Url {
-        self.0
-    }
-}
-
 impl Default for Endpoint {
     fn default() -> Self {
         Self(defaults::endpoint())

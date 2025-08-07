@@ -1,44 +1,31 @@
-use std::net::{IpAddr, Ipv4Addr};
-
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use url::Url;
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 
 use crate::auth;
-use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
-use crate::health::HealthCheckConfig;
-use crate::operations::{MutationMode, OperationSource};
+use crate::operations::OperationSource;
 
-mod states;
+pub mod states;
 
+use crate::server_config::ServerConfig;
+use crate::server_handler::ApolloMcpServerHandler;
 use states::StateMachine;
 
 /// An Apollo MCP Server
 pub struct Server {
-    transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
-    endpoint: Url,
-    headers: HeaderMap,
-    execute_introspection: bool,
-    validate_introspection: bool,
-    introspect_introspection: bool,
-    introspect_minify: bool,
-    search_minify: bool,
-    search_introspection: bool,
-    explorer_graph_ref: Option<String>,
-    custom_scalar_map: Option<CustomScalarMap>,
-    mutation_mode: MutationMode,
-    disable_type_description: bool,
-    disable_schema_description: bool,
-    search_leaf_depth: usize,
-    index_memory_bytes: usize,
-    health_check: HealthCheckConfig,
+    server_handler: Arc<RwLock<ApolloMcpServerHandler>>,
+    cancellation_token: CancellationToken,
+    server_config: ServerConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -96,51 +83,24 @@ impl Transport {
 impl Server {
     #[builder]
     pub fn new(
-        transport: Transport,
+        mut server_config: ServerConfig,
         schema_source: SchemaSource,
         operation_source: OperationSource,
-        endpoint: Url,
-        headers: HeaderMap,
-        execute_introspection: bool,
-        validate_introspection: bool,
-        introspect_introspection: bool,
-        search_introspection: bool,
-        introspect_minify: bool,
-        search_minify: bool,
-        explorer_graph_ref: Option<String>,
-        #[builder(required)] custom_scalar_map: Option<CustomScalarMap>,
-        mutation_mode: MutationMode,
-        disable_type_description: bool,
-        disable_schema_description: bool,
-        search_leaf_depth: usize,
-        index_memory_bytes: usize,
-        health_check: HealthCheckConfig,
+        server_handler: Arc<RwLock<ApolloMcpServerHandler>>,
+        cancellation_token: CancellationToken,
     ) -> Self {
-        let headers = {
-            let mut headers = headers.clone();
+        server_config.headers = {
+            let mut headers = server_config.headers.clone();
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             headers
         };
+
         Self {
-            transport,
             schema_source,
             operation_source,
-            endpoint,
-            headers,
-            execute_introspection,
-            validate_introspection,
-            introspect_introspection,
-            search_introspection,
-            introspect_minify,
-            search_minify,
-            explorer_graph_ref,
-            custom_scalar_map,
-            mutation_mode,
-            disable_type_description,
-            disable_schema_description,
-            search_leaf_depth,
-            index_memory_bytes,
-            health_check,
+            server_handler,
+            cancellation_token,
+            server_config,
         }
     }
 

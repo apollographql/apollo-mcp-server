@@ -12,6 +12,7 @@ mod operation_source;
 mod overrides;
 mod schema_source;
 mod schemas;
+mod serve;
 
 use std::path::Path;
 
@@ -22,6 +23,7 @@ use figment::{
 };
 pub use operation_source::{IdOrDefault, OperationSource};
 pub use schema_source::SchemaSource;
+pub use serve::Serve;
 
 /// Separator to use when drilling down into nested options in the env figment
 const ENV_NESTED_SEPARATOR: &str = "__";

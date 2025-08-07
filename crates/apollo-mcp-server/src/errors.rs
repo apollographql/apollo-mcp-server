@@ -93,7 +93,7 @@ pub enum ServerError {
     StartupError(#[from] JoinError),
 
     #[error("Failed to initialize MCP server")]
-    McpInitializeError(#[from] rmcp::service::ServerInitializeError<std::io::Error>),
+    McpInitializeError(#[from] Box<rmcp::service::ServerInitializeError<std::io::Error>>),
 
     #[error(transparent)]
     UrlParseError(ParseError),

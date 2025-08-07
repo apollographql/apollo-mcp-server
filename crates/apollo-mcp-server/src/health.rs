@@ -7,11 +7,12 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 
+use crate::telemetry::Telemetry;
 use axum::http::StatusCode;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -112,15 +113,13 @@ pub struct HealthCheck {
     config: HealthCheckConfig,
     live: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
-    rejected: Arc<AtomicUsize>,
     ticker: Arc<tokio::task::JoinHandle<()>>,
 }
 
 impl HealthCheck {
-    pub fn new(config: HealthCheckConfig) -> Self {
+    pub fn new(config: HealthCheckConfig, telemetry: Arc<dyn Telemetry>) -> Self {
         let live = Arc::new(AtomicBool::new(true)); // Start as live
-        let ready = Arc::new(AtomicBool::new(true)); // Start as ready
-        let rejected = Arc::new(AtomicUsize::new(0));
+        let ready = Arc::new(AtomicBool::new(true)); // Start as ready;
 
         let allowed = config.readiness.allowed;
         let sampling_interval = config.readiness.interval.sampling;
@@ -130,8 +129,8 @@ impl HealthCheck {
             .unready
             .unwrap_or(2 * sampling_interval);
 
-        let my_rejected = rejected.clone();
         let my_ready = ready.clone();
+        let telemetry_clone = Arc::clone(&telemetry);
 
         let ticker = tokio::spawn(async move {
             loop {
@@ -139,11 +138,11 @@ impl HealthCheck {
                 let mut interval = tokio::time::interval_at(start, sampling_interval);
                 loop {
                     interval.tick().await;
-                    if my_rejected.load(Ordering::Relaxed) > allowed {
+                    if telemetry_clone.errors() > allowed {
                         debug!("Health check readiness threshold exceeded, marking as unready");
                         my_ready.store(false, Ordering::SeqCst);
                         tokio::time::sleep(recovery_interval).await;
-                        my_rejected.store(0, Ordering::Relaxed);
+                        telemetry_clone.set_error_count(0);
                         my_ready.store(true, Ordering::SeqCst);
                         debug!("Health check readiness restored");
                         break;
@@ -156,13 +155,8 @@ impl HealthCheck {
             config,
             live,
             ready,
-            rejected,
             ticker: Arc::new(ticker),
         }
-    }
-
-    pub fn record_rejection(&self) {
-        self.rejected.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn config(&self) -> &HealthCheckConfig {
@@ -215,6 +209,7 @@ impl Drop for HealthCheck {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::telemetry::InMemoryTelemetry;
     use tokio::time::{Duration, sleep};
 
     #[test]
@@ -234,7 +229,9 @@ mod tests {
         config.readiness.interval.sampling = Duration::from_millis(50);
         config.readiness.interval.unready = Some(Duration::from_millis(100));
 
-        let health_check = HealthCheck::new(config);
+        let mock_telemetry: Arc<dyn Telemetry> = Arc::new(InMemoryTelemetry::new());
+
+        let health_check = HealthCheck::new(config, Arc::clone(&mock_telemetry));
 
         // Should be live and ready initially
         assert!(health_check.live.load(Ordering::SeqCst));
@@ -242,7 +239,7 @@ mod tests {
 
         // Record rejections beyond threshold
         for _ in 0..5 {
-            health_check.record_rejection();
+            mock_telemetry.record_error();
         }
 
         // Wait for the ticker to process

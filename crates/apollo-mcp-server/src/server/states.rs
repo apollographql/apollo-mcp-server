@@ -2,17 +2,11 @@ use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
-use reqwest::header::HeaderMap;
-use url::Url;
+use std::sync::Arc;
 
-use crate::{
-    custom_scalar_map::CustomScalarMap,
-    errors::{OperationError, ServerError},
-    health::HealthCheckConfig,
-    operations::MutationMode,
-};
+use crate::errors::{OperationError, ServerError};
 
-use super::{Server, ServerEvent, Transport};
+use super::{Server, ServerEvent};
 
 mod configuring;
 mod operations_configured;
@@ -28,27 +22,6 @@ use starting::Starting;
 
 pub(super) struct StateMachine {}
 
-/// Common configuration options for the states
-struct Config {
-    transport: Transport,
-    endpoint: Url,
-    headers: HeaderMap,
-    execute_introspection: bool,
-    validate_introspection: bool,
-    introspect_introspection: bool,
-    search_introspection: bool,
-    introspect_minify: bool,
-    search_minify: bool,
-    explorer_graph_ref: Option<String>,
-    custom_scalar_map: Option<CustomScalarMap>,
-    mutation_mode: MutationMode,
-    disable_type_description: bool,
-    disable_schema_description: bool,
-    search_leaf_depth: usize,
-    index_memory_bytes: usize,
-    health_check: HealthCheckConfig,
-}
-
 impl StateMachine {
     pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
         let schema_stream = server
@@ -61,25 +34,7 @@ impl StateMachine {
         let mut stream = stream::select_all(vec![schema_stream, operation_stream, ctrl_c_stream]);
 
         let mut state = State::Configuring(Configuring {
-            config: Config {
-                transport: server.transport,
-                endpoint: server.endpoint,
-                headers: server.headers,
-                execute_introspection: server.execute_introspection,
-                validate_introspection: server.validate_introspection,
-                introspect_introspection: server.introspect_introspection,
-                search_introspection: server.search_introspection,
-                introspect_minify: server.introspect_minify,
-                search_minify: server.search_minify,
-                explorer_graph_ref: server.explorer_graph_ref,
-                custom_scalar_map: server.custom_scalar_map,
-                mutation_mode: server.mutation_mode,
-                disable_type_description: server.disable_type_description,
-                disable_schema_description: server.disable_schema_description,
-                search_leaf_depth: server.search_leaf_depth,
-                index_memory_bytes: server.index_memory_bytes,
-                health_check: server.health_check,
-            },
+            config: server.server_config,
         });
 
         while let Some(event) = stream.next().await {
@@ -129,15 +84,23 @@ impl StateMachine {
                     State::Error(ServerError::Operation(OperationError::Collection(e)))
                 }
                 ServerEvent::Shutdown => match state {
-                    State::Running(running) => {
-                        running.cancellation_token.cancel();
+                    State::Running(_running) => {
+                        server.cancellation_token.cancel();
                         State::Stopping
                     }
                     _ => State::Stopping,
                 },
             };
             if let State::Starting(starting) = state {
-                state = starting.start().await.into();
+                server
+                    .server_handler
+                    .write()
+                    .await
+                    .configure(&starting.config, starting.schema.clone())?;
+                state = starting
+                    .start(Arc::clone(&server.server_handler))
+                    .await
+                    .into();
             }
             if matches!(&state, State::Error(_) | State::Stopping) {
                 break;
@@ -171,7 +134,7 @@ impl StateMachine {
 }
 
 #[allow(clippy::expect_used)]
-async fn shutdown_signal() {
+pub async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
