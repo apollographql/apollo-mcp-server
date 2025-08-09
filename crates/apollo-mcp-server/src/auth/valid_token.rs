@@ -105,6 +105,7 @@ mod test {
     use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode, jwk::KeyAlgorithm};
     use jwks::Jwk;
     use serde::Serialize;
+    use tracing_test::traced_test;
     use url::Url;
 
     use super::ValidateToken;
@@ -215,6 +216,7 @@ mod test {
         );
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn it_rejects_different_key() {
         let key_id = "some-example-id".to_string();
@@ -244,8 +246,18 @@ mod test {
         };
 
         assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("InvalidSignature"))
+                .then_some(())
+                .ok_or("Expected warning for validation failure".to_string())
+        });
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn it_rejects_expired() {
         let key_id = "some-example-id".to_string();
@@ -269,8 +281,18 @@ mod test {
         };
 
         assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("ExpiredSignature"))
+                .then_some(())
+                .ok_or("Expected warning for validation failure".to_string())
+        });
     }
 
+    #[traced_test]
     #[tokio::test]
     async fn it_rejects_different_audience() {
         let key_id = "some-example-id".to_string();
@@ -282,8 +304,8 @@ mod test {
 
         let audience = "test-audience".to_string();
         let bad_audience = "not-test-audience".to_string();
-        let in_the_past = chrono::Utc::now().timestamp() - 1000;
-        let jwt = create_jwt(key_id.clone(), encode_key, bad_audience, in_the_past);
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, bad_audience, in_the_future);
 
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
@@ -295,5 +317,14 @@ mod test {
         };
 
         assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("InvalidAudience"))
+                .then_some(())
+                .ok_or("Expected warning for validation failure".to_string())
+        });
     }
 }
