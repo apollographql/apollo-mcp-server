@@ -7,7 +7,7 @@ use apollo_mcp_registry::{
 use apollo_mcp_server::errors::ServerError;
 use schemars::JsonSchema;
 use serde::de::Error;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 use url::Url;
 
 const APOLLO_GRAPH_REF_ENV: &str = "APOLLO_GRAPH_REF";
@@ -39,21 +39,23 @@ where
 
 /// Credentials to use with GraphOS
 #[derive(Debug, Deserialize, Default, JsonSchema)]
+#[cfg_attr(test, derive(Serialize))]
 #[serde(default)]
 pub struct GraphOSConfig {
     /// The apollo key
     #[schemars(with = "Option<String>")]
-    pub apollo_key: Option<SecretString>,
+    #[cfg_attr(test, serde(skip_serializing))]
+    apollo_key: Option<SecretString>,
 
     /// The graph reference
-    pub apollo_graph_ref: Option<String>,
+    apollo_graph_ref: Option<String>,
 
     /// The URL to use for Apollo's registry
-    pub apollo_registry_url: Option<Url>,
+    apollo_registry_url: Option<Url>,
 
     /// List of uplink URL overrides
     #[serde(deserialize_with = "apollo_uplink_endpoints_deserializer")]
-    pub apollo_uplink_endpoints: Vec<Url>,
+    apollo_uplink_endpoints: Vec<Url>,
 }
 
 impl GraphOSConfig {

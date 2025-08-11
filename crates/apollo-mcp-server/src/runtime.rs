@@ -142,16 +142,117 @@ mod test {
 
             let config = read_config(path)?;
 
-            assert_eq!(config.endpoint.as_str(), "http://from_file:4000/");
-            assert_eq!(config.graphos.apollo_uplink_endpoints.len(), 2);
-            assert_eq!(
-                config.graphos.apollo_uplink_endpoints[0].as_str(),
-                "http://from_env:4000/"
-            );
-            assert_eq!(
-                config.graphos.apollo_uplink_endpoints[1].as_str(),
-                "http://from_env2:4000/"
-            );
+            insta::assert_debug_snapshot!(config, @r#"
+            Config {
+                custom_scalars: None,
+                endpoint: Endpoint(
+                    Url {
+                        scheme: "http",
+                        cannot_be_a_base: false,
+                        username: "",
+                        password: None,
+                        host: Some(
+                            Domain(
+                                "from_file",
+                            ),
+                        ),
+                        port: Some(
+                            4000,
+                        ),
+                        path: "/",
+                        query: None,
+                        fragment: None,
+                    },
+                ),
+                graphos: GraphOSConfig {
+                    apollo_key: None,
+                    apollo_graph_ref: None,
+                    apollo_registry_url: None,
+                    apollo_uplink_endpoints: [
+                        Url {
+                            scheme: "http",
+                            cannot_be_a_base: false,
+                            username: "",
+                            password: None,
+                            host: Some(
+                                Domain(
+                                    "from_env",
+                                ),
+                            ),
+                            port: Some(
+                                4000,
+                            ),
+                            path: "/",
+                            query: None,
+                            fragment: None,
+                        },
+                        Url {
+                            scheme: "http",
+                            cannot_be_a_base: false,
+                            username: "",
+                            password: None,
+                            host: Some(
+                                Domain(
+                                    "from_env2",
+                                ),
+                            ),
+                            port: Some(
+                                4000,
+                            ),
+                            path: "/",
+                            query: None,
+                            fragment: None,
+                        },
+                    ],
+                },
+                headers: {},
+                health_check: HealthCheckConfig {
+                    enabled: false,
+                    path: "/health",
+                    readiness: ReadinessConfig {
+                        interval: ReadinessIntervalConfig {
+                            sampling: 5s,
+                            unready: None,
+                        },
+                        allowed: 100,
+                    },
+                },
+                introspection: Introspection {
+                    execute: ExecuteConfig {
+                        enabled: false,
+                    },
+                    introspect: IntrospectConfig {
+                        enabled: false,
+                        minify: false,
+                    },
+                    search: SearchConfig {
+                        enabled: false,
+                        index_memory_bytes: 50000000,
+                        leaf_depth: 1,
+                        minify: false,
+                    },
+                    validate: ValidateConfig {
+                        enabled: false,
+                    },
+                },
+                logging: Logging {
+                    level: Level(
+                        Info,
+                    ),
+                    path: None,
+                    rotation: Hourly,
+                },
+                operations: Infer,
+                overrides: Overrides {
+                    disable_type_description: false,
+                    disable_schema_description: false,
+                    enable_explorer: false,
+                    mutation_mode: None,
+                },
+                schema: Uplink,
+                transport: Stdio,
+            }
+            "#);
             Ok(())
         });
     }
