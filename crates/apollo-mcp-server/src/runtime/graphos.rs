@@ -7,8 +7,11 @@ use apollo_mcp_registry::{
 use apollo_mcp_server::errors::ServerError;
 use schemars::JsonSchema;
 use serde::de::Error;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 use url::Url;
+
+#[cfg(test)]
+use serde::Serialize;
 
 const APOLLO_GRAPH_REF_ENV: &str = "APOLLO_GRAPH_REF";
 const APOLLO_KEY_ENV: &str = "APOLLO_KEY";
