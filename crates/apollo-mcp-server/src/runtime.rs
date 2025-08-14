@@ -10,10 +10,9 @@ mod introspection;
 pub mod logging;
 mod operation_source;
 mod overrides;
+mod proxy;
 mod schema_source;
 mod schemas;
-
-use std::path::Path;
 
 pub use config::Config;
 use figment::{
@@ -22,6 +21,7 @@ use figment::{
 };
 pub use operation_source::{IdOrDefault, OperationSource};
 pub use schema_source::SchemaSource;
+use std::path::Path;
 
 /// Separator to use when drilling down into nested options in the env figment
 const ENV_NESTED_SEPARATOR: &str = "__";
