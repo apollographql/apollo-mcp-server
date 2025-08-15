@@ -21,3 +21,5 @@ items:
     href: "./best-practices"
   - label: "Licensing"
     href: "./licensing"
+  - label: "Limitations"
+    href: "./limitations"
