@@ -19,14 +19,14 @@
 * Refer to the simple branching guide for the project.
 * Open a new GitHub pull request with the patch.
 * Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
-* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to know more about coding conventions, branching strategies, code reviews, etc.
+* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
 #### **Do you intend to add a new feature or change an existing one?**
 
 * Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label.
 * You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
 * Once the feature coded and complete, open a GitHub pull request providing clear description of the feature/change and include any relevant links to discussions.
-* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to know more about coding conventions, branching strategies, code reviews, etc.
+* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
 #### **Do you have questions about the code or about Apollo MCP Server itself?**
 
