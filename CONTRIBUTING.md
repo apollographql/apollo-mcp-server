@@ -33,13 +33,15 @@
 * Ask any question about Apollo MCP Server using either the [issues](https://github.com/apollographql/apollo-mcp-server/issues) page or the [Apollo Community forums](https://community.apollographql.com/latest). 
 * If using the issues page, please use the `question` label.
 
-### Code of Conduct
-
-Please refer to our [code of conduct policy](https://github.com/apollographql/router/blob/dev/CONTRIBUTING.md#code-of-conduct).
-
 Thanks!
 
 Apollo MCP Server team
+
+---
+
+### Code of Conduct
+
+Please refer to our [code of conduct policy](https://github.com/apollographql/router/blob/dev/CONTRIBUTING.md#code-of-conduct).
 
 ---
 
