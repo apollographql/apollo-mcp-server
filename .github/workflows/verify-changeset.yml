@@ -9,6 +9,7 @@ on:
       - 'docs/**'
       - 'Cargo.*'
       - 'crates/**/Cargo.*'
+      - '*.md'
   workflow_dispatch:
 
 jobs:
