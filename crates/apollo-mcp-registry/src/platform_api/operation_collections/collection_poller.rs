@@ -4,6 +4,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use secrecy::ExposeSecret;
 use std::collections::HashMap;
 use std::pin::Pin;
+use std::time::Duration;
 use tokio::sync::mpsc::channel;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -587,6 +588,27 @@ async fn poll_operation_collection_default(
     }
 }
 
+/// Configuration for retry behavior
+const MAX_RETRY_ATTEMPTS: u32 = 3;
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
+/// Determines if an error should be retried
+fn should_retry_error(error: &reqwest::Error) -> bool {
+    // Retry on network/connection errors
+    if error.is_connect() || error.is_timeout() || error.is_request() {
+        return true;
+    }
+
+    // Retry on server errors (5xx) and rate limiting (429)
+    if let Some(status) = error.status() {
+        return status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+    }
+
+    // Don't retry on client errors (4xx) except 429, or other errors
+    false
+}
+
 async fn graphql_request<Query>(
     request_body: &graphql_client::QueryBody<Query::Variables>,
     platform_api_config: &PlatformApiConfig,
@@ -595,32 +617,86 @@ where
     Query: graphql_client::GraphQLQuery,
     <Query as graphql_client::GraphQLQuery>::ResponseData: std::fmt::Debug,
 {
-    let res = reqwest::Client::new()
-        .post(platform_api_config.registry_url.clone())
-        .headers(HeaderMap::from_iter(vec![
-            (
-                HeaderName::from_static("apollographql-client-name"),
-                HeaderValue::from_static("apollo-mcp-server"),
-            ),
-            (
-                HeaderName::from_static("apollographql-client-version"),
-                HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
-            ),
-            (
-                HeaderName::from_static("x-api-key"),
-                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-                    .map_err(CollectionError::HeaderValue)?,
-            ),
-        ]))
-        .timeout(platform_api_config.timeout)
-        .json(request_body)
-        .send()
-        .await
-        .map_err(CollectionError::Request)?;
+    let client = reqwest::Client::new();
+    let headers = HeaderMap::from_iter(vec![
+        (
+            HeaderName::from_static("apollographql-client-name"),
+            HeaderValue::from_static("apollo-mcp-server"),
+        ),
+        (
+            HeaderName::from_static("apollographql-client-version"),
+            HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            HeaderName::from_static("x-api-key"),
+            HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
+                .map_err(CollectionError::HeaderValue)?,
+        ),
+    ]);
 
-    let response_body: graphql_client::Response<Query::ResponseData> =
-        res.json().await.map_err(CollectionError::Request)?;
-    response_body
-        .data
-        .ok_or(CollectionError::Response("missing data".to_string()))
+    let mut attempt = 0;
+    let mut delay = INITIAL_RETRY_DELAY;
+
+    loop {
+        let res = client
+            .post(platform_api_config.registry_url.clone())
+            .headers(headers.clone())
+            .timeout(platform_api_config.timeout)
+            .json(request_body)
+            .send()
+            .await;
+
+        match res {
+            Ok(response) => {
+                match response
+                    .json::<graphql_client::Response<Query::ResponseData>>()
+                    .await
+                {
+                    Ok(response_body) => {
+                        return response_body
+                            .data
+                            .ok_or(CollectionError::Response("missing data".to_string()));
+                    }
+                    Err(json_error) => {
+                        return Err(CollectionError::Request(json_error));
+                    }
+                }
+            }
+            Err(request_error) => {
+                attempt += 1;
+
+                // Check if we should retry this error and haven't exceeded max attempts
+                if should_retry_error(&request_error) && attempt <= MAX_RETRY_ATTEMPTS {
+                    tracing::warn!(
+                        "GraphQL request failed (attempt {}/{}), retrying in {:?}: {}",
+                        attempt,
+                        MAX_RETRY_ATTEMPTS,
+                        delay,
+                        request_error
+                    );
+
+                    // Wait before retrying
+                    tokio::time::sleep(delay).await;
+
+                    // Exponential backoff with jitter and max cap
+                    delay = std::cmp::min(delay * 2, MAX_RETRY_DELAY);
+                } else {
+                    // Either not retryable or exceeded max attempts
+                    if attempt > MAX_RETRY_ATTEMPTS {
+                        tracing::error!(
+                            "GraphQL request failed after {} attempts: {}",
+                            MAX_RETRY_ATTEMPTS,
+                            request_error
+                        );
+                    } else {
+                        tracing::error!(
+                            "GraphQL request failed with non-retryable error: {}",
+                            request_error
+                        );
+                    }
+                    return Err(CollectionError::Request(request_error));
+                }
+            }
+        }
+    }
 }
