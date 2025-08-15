@@ -6,7 +6,7 @@
 
 ## How to contribute to Apollo MCP Server
 
-#### Bug Reporting
+### Bug Reporting
 
 > [!WARNING]  
 > **Do not open up a GitHub issue if the bug is a security vulnerability**, and instead to refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).
@@ -14,24 +14,28 @@
 * If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/apollographql/apollo-mcp-server/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
 * If appropriate, add the most relevant label but leave empty if unsure.
 
-#### **Did you write a patch that fixes a bug?**
+### **Did you write a patch that fixes a bug?**
 
 * Refer to the simple [branching guide](#contributing-to-apollo-mcp-server) for the project.
 * Open a new GitHub pull request with the patch.
 * Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
 * Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
-#### **Do you intend to add a new feature or change an existing one?**
+### **Do you intend to add a new feature or change an existing one?**
 
 * Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label.
 * You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
 * Once the feature coded and complete, open a GitHub pull request providing clear description of the feature/change and include any relevant links to discussions.
 * Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
-#### **Do you have questions about the code or about Apollo MCP Server itself?**
+### **Do you have questions about the code or about Apollo MCP Server itself?**
 
 * Ask any question about Apollo MCP Server using either the [issues](https://github.com/apollographql/apollo-mcp-server/issues) page or the [Apollo Community forums](https://community.apollographql.com/latest). 
 * If using the issues page, please use the `question` label.
+
+### Code of Conduct
+
+Please refer to our [code of conduct policy](https://github.com/apollographql/router/blob/dev/CONTRIBUTING.md#code-of-conduct).
 
 Thanks!
 
