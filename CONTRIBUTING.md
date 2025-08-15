@@ -16,17 +16,17 @@
 
 ### Did you write a patch that fixes a bug?
 
-* Refer to the simple [branching guide](#contributing-to-apollo-mcp-server) for the project.
+* Refer to the simple [branching guide](#branching-strategy) for the project.
 * Open a new GitHub pull request with the patch.
 * Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
-* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
+* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines) to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
 ### Do you intend to add a new feature or change an existing one?
 
 * Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label.
 * You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
 * Once the feature coded and complete, open a GitHub pull request providing clear description of the feature/change and include any relevant links to discussions.
-* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
+* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines) to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
 
 ### Do you have questions about the code or about Apollo MCP Server itself?
 
@@ -45,15 +45,13 @@ Please refer to our [code of conduct policy](https://github.com/apollographql/ro
 
 ---
 
-### Contributing to Apollo MCP Server
-
-#### Branching strategy
+### Branching strategy
 The Apollo MCP Server project follows a pseudo [GitFlow](https://docs.aws.amazon.com/prescriptive-guidance/latest/choosing-git-branch-approach/gitflow-branching-strategy.html) branch strategy.
 
 1. All feature work should branch off the `develop` branch.
 2. Hotfix/patches are branched off main but changes must be cherry-picked back into `develop`.
 
-#### Code review guidelines
+### Code review guidelines
 It’s important that every piece of code in Apollo packages is reviewed by at least one core contributor familiar with that codebase. Here are some things we look for:
 
 1. Required CI checks pass. This is a prerequisite for the review, and it is the PR author's responsibility. As long as the tests don’t pass, the PR won't get reviewed.
