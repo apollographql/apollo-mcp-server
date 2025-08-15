@@ -19,7 +19,7 @@
 * Refer to the simple branching guide for the project.
 * Open a new GitHub pull request with the patch.
 * Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
-* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to know more about coding conventions, branching strategies, etc.
+* Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, etc.
 
 #### **Do you intend to add a new feature or change an existing one?**
 
