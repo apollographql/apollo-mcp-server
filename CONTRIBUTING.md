@@ -42,7 +42,7 @@ Apollo MCP Server team
 The Apollo MCP Server project follows a more pseudo GitFlow branch strategy.
 
 1. All feature work should branch off the `develop` branch.
-2. Hotfix/patches are branched off main but changes should be cherry-picked back into `develop`.
+2. Hotfix/patches are branched off main but changes must be cherry-picked back into `develop`.
 
 #### Code conventions and testing
 1. Run `cargo test`, `cargo clippy`, and `cargo fmt` prior to creating a PR.
