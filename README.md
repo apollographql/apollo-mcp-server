@@ -14,7 +14,7 @@ An [MCP](https://modelcontextprotocol.io/) Server to expose GraphQL operations a
 
 See [the documentation](https://www.apollographql.com/docs/apollo-mcp-server/) for details.
 
-# Want to contribute?
+# Contributions
 
 Checkout the [contributor guidelines](https://github.com/apollographql/apollo-mcp-server/blob/main/CONTRIBUTING.md) for more information.
 
