@@ -12,7 +12,7 @@
 > **Do not open up a GitHub issue if the bug is a security vulnerability**, and instead to refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).
 * **Ensure the bug was not already reported** by searching on GitHub under [Issues](https://github.com/apollographql/apollo-mcp-server/issues) as well as the [Apollo Community forums](https://community.apollographql.com/latest).
 * If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/apollographql/apollo-mcp-server/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
-* If appropriate add the most relevant label but leave empty if unsure.
+* If appropriate, add the most relevant label but leave empty if unsure.
 
 #### **Did you write a patch that fixes a bug?**
 
@@ -23,7 +23,7 @@
 
 #### **Do you intend to add a new feature or change an existing one?**
 
-* Suggest your change as a new [issues](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label and start writing code.
+* Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label and start writing code.
 * You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
 * Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to know more about coding conventions, branching strategies, etc.
 
