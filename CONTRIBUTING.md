@@ -21,7 +21,7 @@
 
 #### **Do you intend to add a new feature or change an existing one?**
 
-* Suggest your change as a new [issues](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label and start writing code.
+* Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label and start writing code.
 * You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
 * Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to know more about coding conventions, branching strategies, etc.
 
