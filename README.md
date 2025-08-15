@@ -21,3 +21,10 @@ Checkout the [contributor guidelines](https://github.com/apollographql/apollo-mc
 # Licensing
 
 This project is licensed under the MIT License. See the [LICENSE](./LICENSE) file for the full license text.
+
+# Security
+
+Refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).
+
+> [!IMPORTANT]  
+> **Do not open up a GitHub issue if a found bug is a security vulnerability**, and instead to refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).

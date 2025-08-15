@@ -8,6 +8,8 @@
 
 #### Bug Reporting
 
+> [!WARNING]  
+> **Do not open up a GitHub issue if the bug is a security vulnerability**, and instead to refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).
 * **Ensure the bug was not already reported** by searching on GitHub under [Issues](https://github.com/apollographql/apollo-mcp-server/issues) as well as the [Apollo Community forums](https://community.apollographql.com/latest).
 * If you're unable to find an open issue addressing the problem, [open a new one](https://github.com/apollographql/apollo-mcp-server/issues/new). Be sure to include a **title and clear description**, as much relevant information as possible, and a **code sample** or an **executable test case** demonstrating the expected behavior that is not occurring.
 * If appropriate add the most relevant label but leave empty if unsure.
@@ -44,6 +46,11 @@ The Apollo MCP Server project follows a more pseudo GitFlow branch strategy.
 1. All feature work should branch off the `develop` branch.
 2. Hotfix/patches are branched off main but changes must be cherry-picked back into `develop`.
 
-#### Code conventions and testing
-1. Run `cargo test`, `cargo clippy`, and `cargo fmt` prior to creating a PR.
-2. Add unit tests for any changed or added functionality.
+#### Code review guidelines
+It’s important that every piece of code in Apollo packages is reviewed by at least one core contributor familiar with that codebase. Here are some things we look for:
+
+1. Required CI checks pass. This is a prerequisite for the review, and it is the PR author's responsibility. As long as the tests don’t pass, the PR won't get reviewed.
+2. Simplicity. Is this the simplest way to achieve the intended goal? If there are too many files, redundant functions, or complex lines of code, suggest a simpler way to do the same thing. In particular, avoid implementing an overly general solution when a simple, small, and pragmatic fix will do.
+3. Testing. Please make sure that the tests ensure that the code won’t break when other stuff change around it. The error messages in the test should help identify what is broken exactly and how. The tests should test every edge case if possible. Please make sure you get as much coverage as possible.
+4. No unnecessary or unrelated changes. PRs shouldn’t come with random formatting changes, especially in unrelated parts of the code. If there is some refactoring that needs to be done, it should be in a separate PR from a bug fix or feature, if possible.
+5. Please run `cargo test`, `cargo clippy`, and `cargo fmt` prior to creating a PR.
