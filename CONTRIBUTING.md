@@ -16,7 +16,7 @@
 
 #### **Did you write a patch that fixes a bug?**
 
-* Refer to the simple branching guide for the project.
+* Refer to the simple [branching guide](#contributing-to-apollo-mcp-server) for the project.
 * Open a new GitHub pull request with the patch.
 * Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
 * Before submitting, please read the [Contributing to Apollo MCP Server](#contributing-to-apollo-mcp-server) guide to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
