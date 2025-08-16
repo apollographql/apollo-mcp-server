@@ -20,7 +20,7 @@ Follow the [quickstart tutorial](https://www.apollographql.com/docs/apollo-mcp-s
 
 ## Usage
 
-Full usage of Apollo MCP Server is documented on the [user guide](https://www.apollographql.com/docs/apollo-mcp-server/guides). There are a few items that are ncessary for this server to function. Specifically, the following things must be configured:
+Full usage of Apollo MCP Server is documented on the [user guide](https://www.apollographql.com/docs/apollo-mcp-server/guides). There are a few items that are necessary for this server to function. Specifically, the following things must be configured:
 
 1. A graph for the MCP server to sit in front of.
 1. Definitions for the GraphQL operations that should be exposed as MCP tools.
