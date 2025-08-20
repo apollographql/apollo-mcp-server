@@ -61,6 +61,10 @@ The example files located in `graphql/TheSpaceDevs/` include:
 
 ## Step 2: Run the MCP Server
 
+There are two methods of running the MCP Server, Rover or Docker. Depending on which you prefer, follow those steps.
+
+### Rover deployment
+
 1. From the root directory of your local repo, run `rover dev` to start a local graph with an MCP Server:
     ```sh showLineNumbers=false
     rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
@@ -73,6 +77,47 @@ The example files located in `graphql/TheSpaceDevs/` include:
     - Provides a configuration file with MCP Server options
 
     See the [command reference](/apollo-mcp-server/command-reference#config-options) for a list of available configuration options. 
+
+### Docker deployment
+
+1. Modify the configuration YAML for the example code to the following:
+    ```yaml graphql/TheSpaceDevs/config.yaml {7, 10}
+    endpoint: https://thespacedevs-production.up.railway.app/
+    transport:
+      type: streamable_http
+    operations:
+      source: local
+      paths:
+        - /data/operations
+    schema:
+      source: local
+      path: /data/api.graphql
+    overrides:
+      mutation_mode: all
+    introspection:
+      execute:
+        enabled: true
+      introspect:
+        enabled: true
+      search:
+        enabled: true
+    ```
+
+Then, from the root directory of your local repo, run this Docker command to start a local graph with an MCP Server:
+    ```sh showLineNumbers=false
+    docker run \
+      -it --rm \
+      --name apollo-mcp-server \
+      -p 5000:5000 \
+      -v $PWD/graphql/TheSpaceDevs/config.yaml:/config.yaml \
+      -v $PWD/graphql/TheSpaceDevs:/data \
+      ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
+    ```
+
+    This command:
+    - Starts an MCP Server in a Docker container
+    - Maps configuration files into the proper place for the Apollo MCP Server container
+    - Forwards port 5000 for accessing the MCP Server
 
 2. Start MCP Inspector to verify the server is running:
 
