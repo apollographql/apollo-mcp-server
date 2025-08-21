@@ -2,11 +2,13 @@
 title: Authorization with Apollo MCP Server
 ---
 
-The Apollo MCP server supports authorizing clients (e.g., LLMs) in accordance with [the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
-
 <Callout type="note">
-  The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs, which violates the MCP specification. See [Limitations](/apollo-mcp-server/limitations#authorization-token-passthrough) for details and security considerations.
+  To use the Authorization feature you'll need to have an Apollo account. We
+  offer Free, Developer, Standard, and Enterprise tiers - [learn
+  more](https://www.apollographql.com/pricing?referrer=docs-content)
 </Callout>
+
+The Apollo MCP server supports authorizing clients (e.g., LLMs) in accordance with [the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
 
 ## Implement authorization with Apollo MCP Server
 
