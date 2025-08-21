@@ -225,6 +225,23 @@ Before continuing, you need to set up the Auth0 client to accept an additional c
 
 </ExpansionPanel>
 
+### Optional: Connecting to Apollo MCP Server from Claude
+
+In order to get the full experience of using and MCP server authorization, you'll want to use an LLM of some sort. Anthropic's Claude provides an accessible method of connecting to an MCP server, through [their Custom Connector feature](https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp).
+
+If you'd like to connect your MCP server with Claude, the first thing you need to do is deploy your server behind HTTPS. This is because Claude requires all custom connectors to have URLs that begin with `https`. Whether you do this by providing a local SSL certificate, or deploying to a staging or production environment, is up to you.
+
+To get your MCP server connected to Claude with a Pro or Max plan, follow these steps:
+
+1. Navigate to **Settings > Connectors**.
+1. Locate the **Connectors** section.
+1. Click **Add custom connector** at the bottom of the section.
+1. Add the URL to which your MCP server is deployed and a name for the MCP server.
+1. Click **Add**.
+1. Find your new custom connector and click the **Connect** button.
+1. You will be taken to your IdP to log in. Once you log in, you will be redirected back to Claude.
+1. Claude will now display the MCP operations available to it under the name you provided and if you give a prompt that would invoke your operations, it should ask permission to access your MCP server.
+
 ## Troubleshooting
 
 ### Common Issues
