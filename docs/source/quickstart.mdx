@@ -82,7 +82,7 @@ You can run the MCP Server using the Rover CLI or Docker.
 
 ### Run with Docker
 
-1. Modify the configuration YAML for the example code to the following:
+1. Modify the MCP server configuration in `graphql/TheSpaceDevs/config.yaml` to the following so it points to the `/data` path you'll map things to as expected by the Dockerfile:
     ```yaml title="graphql/TheSpaceDevs/config.yaml" {7, 10}
     endpoint: https://thespacedevs-production.up.railway.app/
     transport:
