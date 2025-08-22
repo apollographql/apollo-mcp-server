@@ -61,9 +61,11 @@ The example files located in `graphql/TheSpaceDevs/` include:
 
 ## Step 2: Run the MCP Server
 
-There are two methods of running the MCP Server, Rover or Docker. Depending on which you prefer, follow those steps.
+You can run the MCP Server using the Rover CLI or Docker. 
 
-### Rover deployment
+> **Note**: We recommend using Docker if you typically use it in your developer workflow. Otherwise, use Rover.
+
+### Run with Rover
 
 1. From the root directory of your local repo, run `rover dev` to start a local graph with an MCP Server:
     ```sh showLineNumbers=false
@@ -78,10 +80,10 @@ There are two methods of running the MCP Server, Rover or Docker. Depending on w
 
     See the [command reference](/apollo-mcp-server/command-reference#config-options) for a list of available configuration options. 
 
-### Docker deployment
+### Run with Docker
 
 1. Modify the configuration YAML for the example code to the following:
-    ```yaml graphql/TheSpaceDevs/config.yaml {7, 10}
+    ```yaml title="graphql/TheSpaceDevs/config.yaml" {7, 10}
     endpoint: https://thespacedevs-production.up.railway.app/
     transport:
       type: streamable_http
