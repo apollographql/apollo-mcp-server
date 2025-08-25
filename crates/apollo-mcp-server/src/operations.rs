@@ -490,12 +490,11 @@ pub fn variable_description_overrides(
                 let comment = last_offset
                     .map(|start_offset| &source_text[start_offset..source_span.offset()]);
 
-                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#')) {
-                    if let Some(description) =
+                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#'))
+                    && let Some(description) =
                         extract_and_format_comments(Some(description.to_string()))
-                    {
-                        argument_overrides_map.insert(v.name.to_string(), description);
-                    }
+                {
+                    argument_overrides_map.insert(v.name.to_string(), description);
                 }
 
                 last_offset = Some(source_span.end_offset());
@@ -731,16 +730,15 @@ impl Operation {
 }
 
 fn ensure_properties_exists(json_object: &mut Value) {
-    if let Some(obj_type) = json_object.get("type") {
-        if obj_type == "object" {
-            if let Some(obj_map) = json_object.as_object_mut() {
-                let props = obj_map
-                    .entry("properties")
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
-                if !props.is_object() {
-                    *props = Value::Object(serde_json::Map::new());
-                }
-            }
+    if let Some(obj_type) = json_object.get("type")
+        && obj_type == "object"
+        && let Some(obj_map) = json_object.as_object_mut()
+    {
+        let props = obj_map
+            .entry("properties")
+            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+        if !props.is_object() {
+            *props = Value::Object(serde_json::Map::new());
         }
     }
 }
