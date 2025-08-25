@@ -1,5 +1,4 @@
-use std::path::PathBuf;
-
+use crate::runtime::Serve;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -7,11 +6,17 @@ use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
 use apollo_mcp_server::server::Server;
+use apollo_mcp_server::server_config::ServerConfig;
+use apollo_mcp_server::server_handler::ApolloMcpServerHandler;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
 use runtime::logging::Logging;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod runtime;
@@ -109,19 +114,18 @@ async fn main() -> anyhow::Result<()> {
         .then(|| config.graphos.graph_ref())
         .transpose()?;
 
-    Ok(Server::builder()
-        .transport(config.transport)
-        .schema_source(schema_source)
-        .operation_source(operation_source)
-        .endpoint(config.endpoint.into_inner())
+    let server_handler = ApolloMcpServerHandler::new(config.headers.clone(), config.endpoint.clone());
+    let cancellation_token = CancellationToken::new();
+
+    let server_config = ServerConfig::builder()
         .maybe_explorer_graph_ref(explorer_graph_ref)
-        .headers(config.headers)
-        .execute_introspection(config.introspection.execute.enabled)
-        .validate_introspection(config.introspection.validate.enabled)
-        .introspect_introspection(config.introspection.introspect.enabled)
+        .headers(config.headers.clone())
+        .execute_enabled(config.introspection.execute.enabled)
+        .validate_enabled(config.introspection.validate.enabled)
+        .introspect_enabled(config.introspection.introspect.enabled)
         .introspect_minify(config.introspection.introspect.minify)
+        .search_enabled(config.introspection.search.enabled)
         .search_minify(config.introspection.search.minify)
-        .search_introspection(config.introspection.search.enabled)
         .mutation_mode(config.overrides.mutation_mode)
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
@@ -133,8 +137,32 @@ async fn main() -> anyhow::Result<()> {
         )
         .search_leaf_depth(config.introspection.search.leaf_depth)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
-        .health_check(config.health_check)
+        .health_check(config.health_check.clone())
+        .build();
+    let state_machine = Server::builder()
+        .schema_source(schema_source)
+        .operation_source(operation_source)
+        .server_handler(server_handler.clone())
+        .cancellation_token(cancellation_token.child_token())
+        .server_config(server_config)
         .build()
-        .start()
-        .await?)
+        .start();
+
+    let server = Serve::serve(
+        server_handler,
+        config.transport,
+        cancellation_token,
+        config.health_check,
+    );
+
+    let (state_machine_result, server_result) = tokio::join!(state_machine, server);
+
+    match (state_machine_result, server_result) {
+        (Ok(()), Ok(())) => {
+            Ok(())
+        },
+        (Err(state_error), Err(server_error)) => anyhow::bail!("Both state machine and server have errors {} | {}", state_error, server_error),
+        (Err(state_error), _) => Err(state_error.into()),
+        (_, Err(server_error)) => Err(server_error.into()),
+    }
 }
