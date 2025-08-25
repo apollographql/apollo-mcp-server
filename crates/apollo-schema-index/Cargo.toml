@@ -1,10 +1,12 @@
 [package]
 name = "apollo-schema-index"
-edition = "2024"
 authors.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
 version.workspace = true
-license-file = "../LICENSE"
-repository = "https://github.com/apollographql/apollo-mcp-server"
+
 description = "GraphQL schema indexing"
 
 [dependencies]
