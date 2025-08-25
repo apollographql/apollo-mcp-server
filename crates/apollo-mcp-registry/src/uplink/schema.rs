@@ -181,12 +181,6 @@ impl SchemaSource {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-enum FetcherError {
-    #[error("failed to build http client")]
-    InitializationError(#[from] reqwest::Error),
-}
-
 // Encapsulates fetching the schema from the first viable url.
 // It will try each url in order until it finds one that works.
 #[allow(clippy::unwrap_used)] // TODO - existing unwrap from router code
