@@ -8,6 +8,10 @@ members = [
 
 [workspace.package]
 authors = ["Apollo <opensource@apollographql.com>"]
+edition = "2024"
+license-file = "LICENSE"
+repository = "https://github.com/apollographql/apollo-mcp-server"
+rust-version = "1.89.0"
 version = "0.7.5"
 
 [workspace.dependencies]
