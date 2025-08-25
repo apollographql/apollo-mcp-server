@@ -53,67 +53,64 @@ impl SchemaExt for Schema {
                 );
 
                 let cloned = current_path.clone();
-                if let Some(extended_type) = self.types.get(named_type) {
-                    if !extended_type.is_built_in() {
-                        if traverse_children {
-                            match extended_type {
-                                ExtendedType::Object(obj) => {
-                                    stack.extend(obj.fields.values().map(|field| {
-                                        let field_type = field.ty.inner_named_type();
-                                        let field_args = field
-                                            .arguments
-                                            .iter()
-                                            .map(|arg| arg.ty.inner_named_type().clone())
-                                            .collect::<Vec<_>>();
-                                        (
-                                            field_type,
-                                            current_path.clone().add_child(
-                                                Some(field.name.clone()),
-                                                field_args,
-                                                field_type.clone(),
-                                            ),
-                                        )
-                                    }));
-                                }
-                                ExtendedType::Interface(interface) => {
-                                    stack.extend(interface.fields.values().map(|field| {
-                                        let field_type = field.ty.inner_named_type();
-                                        let field_args = field
-                                            .arguments
-                                            .iter()
-                                            .map(|arg| arg.ty.inner_named_type().clone())
-                                            .collect::<Vec<_>>();
-                                        (
-                                            field_type,
-                                            current_path.clone().add_child(
-                                                Some(field.name.clone()),
-                                                field_args,
-                                                field_type.clone(),
-                                            ),
-                                        )
-                                    }));
-                                }
-                                ExtendedType::Union(union) => {
-                                    stack.extend(
-                                        union.members.iter().map(|member| &member.name).map(
-                                            |next_type| {
-                                                (
-                                                    next_type,
-                                                    current_path.clone().add_child(
-                                                        None,
-                                                        vec![],
-                                                        next_type.clone(),
-                                                    ),
-                                                )
-                                            },
-                                        ),
-                                    );
-                                }
-                                _ => {}
-                            }
+                if let Some(extended_type) = self.types.get(named_type)
+                    && !extended_type.is_built_in()
+                    && traverse_children
+                {
+                    match extended_type {
+                        ExtendedType::Object(obj) => {
+                            stack.extend(obj.fields.values().map(|field| {
+                                let field_type = field.ty.inner_named_type();
+                                let field_args = field
+                                    .arguments
+                                    .iter()
+                                    .map(|arg| arg.ty.inner_named_type().clone())
+                                    .collect::<Vec<_>>();
+                                (
+                                    field_type,
+                                    current_path.clone().add_child(
+                                        Some(field.name.clone()),
+                                        field_args,
+                                        field_type.clone(),
+                                    ),
+                                )
+                            }));
                         }
-                        return Some((extended_type, cloned));
+                        ExtendedType::Interface(interface) => {
+                            stack.extend(interface.fields.values().map(|field| {
+                                let field_type = field.ty.inner_named_type();
+                                let field_args = field
+                                    .arguments
+                                    .iter()
+                                    .map(|arg| arg.ty.inner_named_type().clone())
+                                    .collect::<Vec<_>>();
+                                (
+                                    field_type,
+                                    current_path.clone().add_child(
+                                        Some(field.name.clone()),
+                                        field_args,
+                                        field_type.clone(),
+                                    ),
+                                )
+                            }));
+                        }
+                        ExtendedType::Union(union) => {
+                            stack.extend(union.members.iter().map(|member| &member.name).map(
+                                |next_type| {
+                                    (
+                                        next_type,
+                                        current_path.clone().add_child(
+                                            None,
+                                            vec![],
+                                            next_type.clone(),
+                                        ),
+                                    )
+                                },
+                            ));
+                        }
+                        _ => {}
                     }
+                    return Some((extended_type, cloned));
                 }
             }
             None
