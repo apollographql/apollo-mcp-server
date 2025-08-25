@@ -27,7 +27,7 @@ pub struct Introspect {
 }
 
 /// Input for the introspect tool.
-#[derive(JsonSchema, Deserialize)]
+#[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
     /// The name of the type to get information about.
     type_name: String,
@@ -55,6 +55,7 @@ impl Introspect {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
         let schema = self.schema.lock().await;
         let type_name = input.type_name.as_str();
