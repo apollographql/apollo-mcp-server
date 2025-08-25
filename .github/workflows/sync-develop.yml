@@ -54,6 +54,11 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure git author
+        run: |
+          git config --local user.name "github-actions[bot]"
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       # Generate branch name from PR# when available, otherwise use first 7 commit SHA characters
       - name: Compute branch/name metadata
         id: meta
@@ -101,7 +106,7 @@ jobs:
 
       # Comment back on the ORIGINAL merged PR with a link to the sync PR
       - name: Comment on source PR with sync PR link
-        if: github.event_name == 'pull_request' && steps.syncpr.outputs.pull-request-number != ''
+        if: steps.syncpr.outputs.pull-request-url != '' && env.SOURCE_PR != ''
         uses: actions/github-script@v7
         with:
           script: |
