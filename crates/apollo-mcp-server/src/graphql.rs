@@ -2,10 +2,13 @@
 
 use crate::errors::McpError;
 use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest_middleware::{ClientBuilder, Extension};
+use reqwest_tracing::{OtelName, TracingMiddleware};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
 use serde_json::{Map, Value};
 use url::Url;
 
+#[derive(Debug)]
 pub struct Request<'a> {
     pub input: Value,
     pub endpoint: &'a Url,
@@ -33,6 +36,7 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
+    #[tracing::instrument(skip(self))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let client_metadata = serde_json::json!({
             "name": "mcp",
@@ -74,7 +78,12 @@ pub trait Executable {
             }
         }
 
-        reqwest::Client::new()
+        let client = ClientBuilder::new(reqwest::Client::new())
+            .with_init(Extension(OtelName("mcp-graphql-client".into())))
+            .with(TracingMiddleware::default())
+            .build();
+
+        client
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())

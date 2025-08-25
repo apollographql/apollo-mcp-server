@@ -25,7 +25,7 @@ pub struct Validate {
 }
 
 /// Input for the validate tool
-#[derive(JsonSchema, Deserialize)]
+#[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
     /// The GraphQL operation
     operation: String,
@@ -46,6 +46,7 @@ impl Validate {
     }
 
     /// Validates the provided GraphQL query
+    #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Value) -> Result<CallToolResult, McpError> {
         let input = serde_json::from_value::<Input>(input).map_err(|_| {
             McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)

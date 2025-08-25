@@ -14,6 +14,7 @@ apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
 axum-extra = { version = "0.10.1", features = ["typed-header"] }
+axum-tracing-opentelemetry = "0.29.0"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
@@ -24,7 +25,16 @@ humantime-serde = "1.1.1"
 jsonwebtoken = "9"
 jwks = "0.4.0"
 lz-str = "0.2.1"
+opentelemetry = "0.30.0"
+opentelemetry-appender-log = "0.30.0"
+opentelemetry-otlp = "0.30.0"
+opentelemetry-resource-detectors = "0.9.0"
+opentelemetry-semantic-conventions = "0.30.0"
+opentelemetry-stdout = "0.30.0"
+opentelemetry_sdk = "0.30.0"
 regex = "1.11.1"
+reqwest-middleware = "0.4.2"
+reqwest-tracing = "0.5.8"
 reqwest.workspace = true
 rmcp = { version = "0.2", features = [
   "server",
@@ -37,11 +47,13 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-tracing.workspace = true
-tracing-appender = "0.2.3"
-tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tokio-util = "0.7.15"
-tower-http = { version = "0.6.6", features = ["cors"] }
+tower-http = { version = "0.6.6", features = ["cors", "trace"] }
+tracing-appender = "0.2.3"
+tracing-core.workspace = true
+tracing-opentelemetry = "0.31.0"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+tracing.workspace = true
 url.workspace = true
 
 [dev-dependencies]
