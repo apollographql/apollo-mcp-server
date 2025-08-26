@@ -96,8 +96,66 @@ jobs:
           body:  |
             ${{ steps.meta.outputs.body }}
 
+<<<<<<< Updated upstream
             Merge status: ${{ steps.prep.outputs.merge_status == '0' && 'clean ✅' || 'conflicts ❗' }}
           labels: ${{ steps.prep.outputs.merge_status == '0' && 'back-merge,automation' || 'back-merge,automation,conflicts' }}
+=======
+          gh pr create \
+            --base "${BASE_BRANCH}" \
+            --head "${{ steps.meta.outputs.sync_branch }}" \
+            --title "${{ steps.meta.outputs.sync_title }}" \
+            --body  "${{ steps.meta.outputs.sync_body }} (created via gh CLI)" \
+            --label back-merge \
+            --label automation
+
+          # Fetch the newly created PR number, then its URL so that we display in a PR comment
+          num=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.sync_branch }}" --state open --json number --jq '.[0].number')
+          url=$(gh pr view "$num" --json url --jq .url)
+          echo "pr_number=$num" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$url" >> "$GITHUB_OUTPUT"
+
+      # If the merge hit conflicts, open a DIRECT PR: HEAD_BRANCH -> BASE_BRANCH so conflicts can be resolved prior to merge
+      - name: Open conflict PR
+        id: conflict_pr
+        if: ${{ steps.prep.outputs.merge_status != '0' }}
+        run: |
+          set -e
+          git fetch origin "${HEAD_BRANCH}" "${BASE_BRANCH}"
+
+          git switch -c "${{ steps.meta.outputs.conflict_branch }}" "origin/${HEAD_BRANCH}"
+          git push -u origin HEAD
+          
+          # Skip if no diff between conflict branch and base (should be unlikely)
+          right=$(git rev-list --right-only --count "origin/${BASE_BRANCH}...origin/${{ steps.meta.outputs.conflict_branch }}")
+          if [ "$right" -eq 0 ]; then
+            echo "No diff between ${HEAD_BRANCH} and ${BASE_BRANCH}; nothing to open."
+            exit 0
+          fi
+          
+          # Reuse existing open PR if present
+          existing=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.conflict_branch }}" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            echo "pr_number=$existing" >> "$GITHUB_OUTPUT"
+            url=$(gh pr view "$existing" --json url --jq .url)
+            echo "pr_url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          
+          gh pr create \
+            --base "${BASE_BRANCH}" \
+            --head "${{ steps.meta.outputs.conflict_branch }}" \
+            --title "${{ steps.meta.outputs.title_conflict }}" \
+            --body  "${{ steps.meta.outputs.body_conflict }}" \
+            --label back-merge \
+            --label automation \
+            --label conflicts
+          
+          # Fetch the newly created conflict PR number, then its URL so that we display in a PR comment
+          num=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.conflict_branch }}" --state open --json number --jq '.[0].number')
+          url=$(gh pr view "$num" --json url --jq .url)
+          echo "pr_number=$num" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$url" >> "$GITHUB_OUTPUT"
+>>>>>>> Stashed changes
 
       # Comment back on the ORIGINAL merged PR with a link to the sync PR
       - name: Comment on source PR with sync PR link
