@@ -2,17 +2,11 @@ use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
-use reqwest::header::HeaderMap;
-use url::Url;
+use std::sync::Arc;
 
-use crate::{
-    custom_scalar_map::CustomScalarMap,
-    errors::{OperationError, ServerError},
-    health::HealthCheckConfig,
-    operations::MutationMode,
-};
+use crate::errors::{OperationError, ServerError};
 
-use super::{Server, ServerEvent, Transport};
+use super::{Server, ServerEvent};
 
 mod configuring;
 mod operations_configured;
@@ -20,6 +14,7 @@ mod running;
 mod schema_configured;
 mod starting;
 
+use crate::server_handler::McpServerHandler;
 use configuring::Configuring;
 use operations_configured::OperationsConfigured;
 use running::Running;
@@ -28,29 +23,11 @@ use starting::Starting;
 
 pub(super) struct StateMachine {}
 
-/// Common configuration options for the states
-struct Config {
-    transport: Transport,
-    endpoint: Url,
-    headers: HeaderMap,
-    execute_introspection: bool,
-    validate_introspection: bool,
-    introspect_introspection: bool,
-    search_introspection: bool,
-    introspect_minify: bool,
-    search_minify: bool,
-    explorer_graph_ref: Option<String>,
-    custom_scalar_map: Option<CustomScalarMap>,
-    mutation_mode: MutationMode,
-    disable_type_description: bool,
-    disable_schema_description: bool,
-    search_leaf_depth: usize,
-    index_memory_bytes: usize,
-    health_check: HealthCheckConfig,
-}
-
 impl StateMachine {
-    pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
+    pub(crate) async fn start<T: McpServerHandler + Clone>(
+        self,
+        server: Server<T>,
+    ) -> Result<(), ServerError> {
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -61,25 +38,7 @@ impl StateMachine {
         let mut stream = stream::select_all(vec![schema_stream, operation_stream, ctrl_c_stream]);
 
         let mut state = State::Configuring(Configuring {
-            config: Config {
-                transport: server.transport,
-                endpoint: server.endpoint,
-                headers: server.headers,
-                execute_introspection: server.execute_introspection,
-                validate_introspection: server.validate_introspection,
-                introspect_introspection: server.introspect_introspection,
-                search_introspection: server.search_introspection,
-                introspect_minify: server.introspect_minify,
-                search_minify: server.search_minify,
-                explorer_graph_ref: server.explorer_graph_ref,
-                custom_scalar_map: server.custom_scalar_map,
-                mutation_mode: server.mutation_mode,
-                disable_type_description: server.disable_type_description,
-                disable_schema_description: server.disable_schema_description,
-                search_leaf_depth: server.search_leaf_depth,
-                index_memory_bytes: server.index_memory_bytes,
-                health_check: server.health_check,
-            },
+            config: server.server_config,
         });
 
         while let Some(event) = stream.next().await {
@@ -129,15 +88,21 @@ impl StateMachine {
                     State::Error(ServerError::Operation(OperationError::Collection(e)))
                 }
                 ServerEvent::Shutdown => match state {
-                    State::Running(running) => {
-                        running.cancellation_token.cancel();
+                    State::Running(_running) => {
+                        server.cancellation_token.cancel();
                         State::Stopping
                     }
                     _ => State::Stopping,
                 },
             };
             if let State::Starting(starting) = state {
-                state = starting.start().await.into();
+                // server
+                //     .server_handler
+                //     .write()
+                //     .await
+                //     .configure(&starting.config, starting.schema.clone())
+                //     .await?;
+                state = starting.start(server.server_handler.clone()).await.into();
             }
             if matches!(&state, State::Error(_) | State::Stopping) {
                 break;
@@ -171,7 +136,7 @@ impl StateMachine {
 }
 
 #[allow(clippy::expect_used)]
-async fn shutdown_signal() {
+pub async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -196,29 +161,29 @@ async fn shutdown_signal() {
 }
 
 #[allow(clippy::large_enum_variant)]
-enum State {
+enum State<T: McpServerHandler> {
     Configuring(Configuring),
     SchemaConfigured(SchemaConfigured),
     OperationsConfigured(OperationsConfigured),
     Starting(Starting),
-    Running(Running),
+    Running(Running<T>),
     Error(ServerError),
     Stopping,
 }
 
-impl From<Configuring> for State {
+impl<T: McpServerHandler> From<Configuring> for State<T> {
     fn from(starting: Configuring) -> Self {
         State::Configuring(starting)
     }
 }
 
-impl From<SchemaConfigured> for State {
+impl<T: McpServerHandler> From<SchemaConfigured> for State<T> {
     fn from(schema_configured: SchemaConfigured) -> Self {
         State::SchemaConfigured(schema_configured)
     }
 }
 
-impl From<Result<SchemaConfigured, ServerError>> for State {
+impl<T: McpServerHandler> From<Result<SchemaConfigured, ServerError>> for State<T> {
     fn from(result: Result<SchemaConfigured, ServerError>) -> Self {
         match result {
             Ok(schema_configured) => State::SchemaConfigured(schema_configured),
@@ -227,13 +192,13 @@ impl From<Result<SchemaConfigured, ServerError>> for State {
     }
 }
 
-impl From<OperationsConfigured> for State {
+impl<T: McpServerHandler> From<OperationsConfigured> for State<T> {
     fn from(operations_configured: OperationsConfigured) -> Self {
         State::OperationsConfigured(operations_configured)
     }
 }
 
-impl From<Result<OperationsConfigured, ServerError>> for State {
+impl<T: McpServerHandler> From<Result<OperationsConfigured, ServerError>> for State<T> {
     fn from(result: Result<OperationsConfigured, ServerError>) -> Self {
         match result {
             Ok(operations_configured) => State::OperationsConfigured(operations_configured),
@@ -242,13 +207,13 @@ impl From<Result<OperationsConfigured, ServerError>> for State {
     }
 }
 
-impl From<Starting> for State {
+impl<T: McpServerHandler> From<Starting> for State<T> {
     fn from(starting: Starting) -> Self {
         State::Starting(starting)
     }
 }
 
-impl From<Result<Starting, ServerError>> for State {
+impl<T: McpServerHandler> From<Result<Starting, ServerError>> for State<T> {
     fn from(result: Result<Starting, ServerError>) -> Self {
         match result {
             Ok(starting) => State::Starting(starting),
@@ -257,14 +222,14 @@ impl From<Result<Starting, ServerError>> for State {
     }
 }
 
-impl From<Running> for State {
-    fn from(running: Running) -> Self {
+impl<T: McpServerHandler> From<Running<T>> for State<T> {
+    fn from(running: Running<T>) -> Self {
         State::Running(running)
     }
 }
 
-impl From<Result<Running, ServerError>> for State {
-    fn from(result: Result<Running, ServerError>) -> Self {
+impl<T: McpServerHandler> From<Result<Running<T>, ServerError>> for State<T> {
+    fn from(result: Result<Running<T>, ServerError>) -> Self {
         match result {
             Ok(running) => State::Running(running),
             Err(error) => State::Error(error),
@@ -272,7 +237,7 @@ impl From<Result<Running, ServerError>> for State {
     }
 }
 
-impl From<ServerError> for State {
+impl<T: McpServerHandler> From<ServerError> for State<T> {
     fn from(error: ServerError) -> Self {
         State::Error(error)
     }

@@ -1,12 +1,12 @@
 use apollo_compiler::{Schema, validation::Valid};
 use tracing::debug;
 
+use super::Starting;
+use crate::server_config::ServerConfig;
 use crate::{errors::ServerError, operations::RawOperation};
 
-use super::{Config, Starting};
-
 pub(super) struct SchemaConfigured {
-    pub(super) config: Config,
+    pub(super) config: ServerConfig,
     pub(super) schema: Valid<Schema>,
 }
 

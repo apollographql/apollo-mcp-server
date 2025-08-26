@@ -1,12 +1,12 @@
 use apollo_compiler::{Schema, validation::Valid};
 use tracing::debug;
 
+use super::{OperationsConfigured, SchemaConfigured};
+use crate::server_config::ServerConfig;
 use crate::{errors::ServerError, operations::RawOperation};
 
-use super::{Config, OperationsConfigured, SchemaConfigured};
-
 pub(super) struct Configuring {
-    pub(super) config: Config,
+    pub(super) config: ServerConfig,
 }
 
 impl Configuring {
