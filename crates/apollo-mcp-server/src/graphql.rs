@@ -1,6 +1,7 @@
 //! Execute GraphQL operations from an MCP tool
 
 use crate::errors::McpError;
+use opentelemetry::{KeyValue, global};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
@@ -38,6 +39,9 @@ pub trait Executable {
     /// Execute as a GraphQL operation using the endpoint and headers
     #[tracing::instrument(skip(self))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
+        let meter = global::meter("apollo.mcp");
+        let start = std::time::Instant::now();
+        let mut op_id: Option<String> = None;
         let client_metadata = serde_json::json!({
             "name": "mcp",
             "version": std::env!("CARGO_PKG_VERSION")
@@ -59,6 +63,7 @@ pub trait Executable {
                     "clientLibrary": client_metadata,
                 }),
             );
+            op_id = Some(id.to_string());
         } else {
             let OperationDetails {
                 query,
@@ -74,6 +79,7 @@ pub trait Executable {
             );
 
             if let Some(op_name) = operation_name {
+                op_id = Some(op_name.clone());
                 request_body.insert(String::from("operationName"), Value::String(op_name));
             }
         }
@@ -83,7 +89,7 @@ pub trait Executable {
             .with(TracingMiddleware::default())
             .build();
 
-        client
+        let result = client
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())
@@ -116,7 +122,39 @@ pub trait Executable {
                             .filter(|value| !matches!(value, Value::Null))
                             .is_none(),
                 ),
-            })
+            });
+
+        // Record response metrics
+        let attributes = vec![
+            KeyValue::new(
+                "success",
+                result.is_ok()
+                    && result
+                        .as_ref()
+                        .ok()
+                        .map(|r| r.is_error != Some(true))
+                        .unwrap_or(false),
+            ),
+            KeyValue::new("operation.id", op_id.unwrap_or("unknown".to_string())),
+            KeyValue::new(
+                "operation.type",
+                if self.persisted_query_id().is_some() {
+                    "persisted_query"
+                } else {
+                    "operation"
+                },
+            ),
+        ];
+        meter
+            .f64_histogram("apollo.mcp.operation.duration")
+            .build()
+            .record(start.elapsed().as_millis() as f64, &attributes);
+        meter
+            .u64_counter("apollo.mcp.operation.count")
+            .build()
+            .add(1, &attributes);
+
+        result
     }
 }
 
