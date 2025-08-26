@@ -48,34 +48,39 @@ jobs:
       HEAD_BRANCH: ${{ (github.event_name == 'workflow_dispatch' && inputs.head_branch) || 'main' }}
       BASE_BRANCH: ${{ (github.event_name == 'workflow_dispatch' && inputs.base_branch) || 'develop' }}
       SOURCE_PR: ${{ (github.event_name == 'pull_request' && github.event.pull_request.number) || inputs.source_pr_number || '' }}
+      GH_TOKEN: ${{ secrets.GH_PAT }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure git author
+        run: |
+          git config --local user.name "Apollo Bot"
+          git config --local user.email "svc-apollo-bot-2@apollographql.com"
 
       # Generate branch name from PR# when available, otherwise use first 7 commit SHA characters
       - name: Compute branch/name metadata
         id: meta
         run: |
-          if [ -n "${SOURCE_PR}" ]; then
-            echo "branch=sync/${HEAD_BRANCH}-into-${BASE_BRANCH}-pr-${SOURCE_PR}" >> $GITHUB_OUTPUT
-            echo "title=Sync ${HEAD_BRANCH} → ${BASE_BRANCH} (PR #${SOURCE_PR})" >> $GITHUB_OUTPUT
-            echo "body=Auto-opened to merge \`${HEAD_BRANCH}\` into \`${BASE_BRANCH}\`. Source PR: #${SOURCE_PR}." >> $GITHUB_OUTPUT
-          else
-            short_sha=${GITHUB_SHA::7}
-            echo "branch=sync/${HEAD_BRANCH}-into-${BASE_BRANCH}-${short_sha}" >> $GITHUB_OUTPUT
-            echo "title=Sync ${HEAD_BRANCH} → ${BASE_BRANCH} (${short_sha})" >> $GITHUB_OUTPUT
-            echo "body=Auto-opened to merge \`${HEAD_BRANCH}\` into \`${BASE_BRANCH}\` at \`${GITHUB_SHA}\`." >> $GITHUB_OUTPUT
-          fi
+          pr=${{ github.event.pull_request.number }}
+          echo "sync_branch=sync/main-into-develop-pr-${pr}" >> $GITHUB_OUTPUT
+          echo "title_sync=Sync main → develop (PR #${pr})" >> $GITHUB_OUTPUT
+          echo "body_sync=Auto-opened after merging \`${{ github.event.pull_request.head.ref }}\` into \`main\`. Source PR: #${pr}." >> $GITHUB_OUTPUT
+          echo "conflict_branch=conflict/main-into-develop-pr-${pr}" >> $GITHUB_OUTPUT
+          echo "title_conflict=Sync main → develop (resolve conflicts)" >> $GITHUB_OUTPUT
+          echo "body_conflict=Opened from a copy of \`main\` so conflicts can be resolved without pushing to a protected branch." >> $GITHUB_OUTPUT
 
       # Short-lived sync branch from develop and merge main into it (do NOT rebase)
       # use +e to stop errors from short-circuiting the script
       - name: Prepare sync branch
         id: prep
         run: |
+          set -e
           git fetch origin "${BASE_BRANCH}" "${HEAD_BRANCH}"
-          git switch -c "${{ steps.meta.outputs.branch }}" "origin/${BASE_BRANCH}"
+          git switch -c "${{ steps.meta.outputs.sync_branch }}" "origin/${BASE_BRANCH}"
           set +e
           git merge --no-ff "origin/${HEAD_BRANCH}"
           rc=$?
@@ -83,23 +88,27 @@ jobs:
           git add -A || true
           git commit -m "WIP: merge ${HEAD_BRANCH} into ${BASE_BRANCH} via ${{ steps.meta.outputs.branch }}" || true
           git push origin HEAD
+          
+          right=$(git rev-list --count --right-only "origin/${BASE_BRANCH}...HEAD")
+          
           echo "merge_status=$rc" >> "$GITHUB_OUTPUT"
+          echo "sync_right=$right" >> "$GITHUB_OUTPUT"
+          echo "Merge exit=$rc, sync branch ahead-by=$right"
 
-      # Open the PR targeting develop
-      - name: Open PR to develop
-        id: syncpr
-        uses: peter-evans/create-pull-request@v6
-        with:
-          branch: ${{ steps.meta.outputs.branch }}
-          base: ${{ env.BASE_BRANCH }}
-          title: ${{ steps.meta.outputs.title }}
-          body:  |
-            ${{ steps.meta.outputs.body }}
+      # If no merge conflicts and there are changes, open the PR targeting develop
+      - name: Open clean PR to develop
+        id: sync_pr
+        if: ${{ steps.prep.outputs.merge_status == '0' && steps.prep.outputs.sync_right != '0' }}
+        run: |
+          # Avoid duplicate PRs
+          existing=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.sync_branch }}" --state open --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            echo "pr_number=$existing" >> "$GITHUB_OUTPUT"
+            url=$(gh pr view "$existing" --json url --jq .url)
+            echo "pr_url=$url" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
-<<<<<<< Updated upstream
-            Merge status: ${{ steps.prep.outputs.merge_status == '0' && 'clean ✅' || 'conflicts ❗' }}
-          labels: ${{ steps.prep.outputs.merge_status == '0' && 'back-merge,automation' || 'back-merge,automation,conflicts' }}
-=======
           gh pr create \
             --base "${BASE_BRANCH}" \
             --head "${{ steps.meta.outputs.sync_branch }}" \
@@ -157,20 +166,32 @@ jobs:
           url=$(gh pr view "$num" --json url --jq .url)
           echo "pr_number=$num" >> "$GITHUB_OUTPUT"
           echo "pr_url=$url" >> "$GITHUB_OUTPUT"
->>>>>>> Stashed changes
 
       # Comment back on the ORIGINAL merged PR with a link to the sync PR
       - name: Comment on source PR with sync PR link
-        if: github.event_name == 'pull_request' && steps.syncpr.outputs.pull-request-number != ''
+        if: ${{ env.SOURCE_PR != '' && (steps.sync_pr.outputs.pr_number != '' || steps.conflict_pr.outputs.pr_number != '') }}
         uses: actions/github-script@v7
         with:
           script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
             const issue_number = Number(process.env.SOURCE_PR);
-            const syncUrl = `${{ toJson(steps.syncpr.outputs['pull-request-url']) }}`.replace(/^"|"$/g, '');
-            const body = `Opened sync PR **${process.env.HEAD_BRANCH} → ${process.env.BASE_BRANCH}**: ${syncUrl}`;
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number,
-              body,
-            });
+            
+            const hadConflicts = '${{ steps.prep.outputs.merge_status }}' !== '0';
+            const syncUrl = '${{ steps.sync_pr.outputs.pr_url || steps.conflict_pr.outputs.pr_url }}';
+            const head = process.env.HEAD_BRANCH;
+            const base = process.env.BASE_BRANCH;
+            
+            const status = hadConflicts ? 'conflicts ❗' : 'clean ✅';
+            const note = hadConflicts
+              ? 'Opened from a copy of main so conflicts can be resolved safely.'
+              : 'Opened from a sync branch created off develop.';
+            
+            const body = [
+            `Opened sync PR **${head} → ${base}**: ${syncUrl}`,
+            ``,
+            `Merge status: **${status}**`,
+            note
+            ].join('\n');
+            
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
