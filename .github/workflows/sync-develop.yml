@@ -176,17 +176,17 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issue_number = Number(process.env.SOURCE_PR);
-            
+
             const hadConflicts = '${{ steps.prep.outputs.merge_status }}' !== '0';
             const syncUrl = '${{ steps.sync_pr.outputs.pr_url || steps.conflict_pr.outputs.pr_url }}';
             const head = process.env.HEAD_BRANCH;
             const base = process.env.BASE_BRANCH;
-            
+
             const status = hadConflicts ? 'conflicts ❗' : 'clean ✅';
             const note = hadConflicts
               ? 'Opened from a copy of main so conflicts can be resolved safely.'
               : 'Opened from a sync branch created off develop.';
-            
+
             const body = [
             `Opened sync PR **${head} → ${base}**: ${syncUrl}`,
             ``,

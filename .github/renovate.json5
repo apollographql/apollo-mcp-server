@@ -1,11 +1,19 @@
 {
-  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "github>apollographql/renovate-config-apollo-open-source:default.json5",
+    "github>Turbo87/renovate-config//rust/updateToolchain",
+  ],
   packageRules: [
     {
       enabled: false,
       matchPackageNames: ["*"],
     },
   ],
+  // Automating Nix upgrades is currently in beta and opt-in only.
+  // https://docs.renovatebot.com/modules/manager/nix/
+  nix: {
+    enabled: true,
+  },
   vulnerabilityAlerts: {
     enabled: true,
   },

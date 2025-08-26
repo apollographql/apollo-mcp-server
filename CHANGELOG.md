@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [0.7.3] - 2025-08-25
+
+## 🐛 Fixes
+
+### fix: generate openAI-compatible json schemas for list types - @DaleSeo PR #272
+
+The MCP server is generating JSON schemas that don't match OpenAI's function calling specification. It puts `oneOf` at the array level instead of using `items` to define the JSON schemas for the GraphQL list types. While some other LLMs are more flexible about this, it technically violates the [JSON Schema specification](https://json-schema.org/understanding-json-schema/reference/array) that OpenAI strictly follows.
+
+This PR updates the list type handling logic to move `oneOf` inside `items` for GraphQL list types.
+
 # [0.7.2] - 2025-08-19
 
 ## 🚀 Features
