@@ -179,7 +179,7 @@ jobs:
             : 'This was opened from a **sync branch** and is ready for review.';
       
             const body = [
-            `Opened sync PR **${head} → ${base}**: ${url}`,
+            `Opened sync PR **${head} → ${base}**: ${syncUrl}`,
             ``,
             `Merge status: **${status}**`,
             note
