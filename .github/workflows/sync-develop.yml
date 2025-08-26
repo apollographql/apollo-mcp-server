@@ -117,8 +117,9 @@ jobs:
             --base "${BASE_BRANCH}" \
             --head "${{ steps.meta.outputs.branch }}" \
             --title "${{ steps.meta.outputs.title }}" \
-            --body  "${{ steps.meta.outputs.body }} (created via gh CLI)"
-            --label back-merge --label automation
+            --body  "${{ steps.meta.outputs.body }} (created via gh CLI)" \
+            --label back-merge \
+            --label automation
 
           # Emit outputs for later steps
           gh pr view --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.branch }}" \
@@ -149,8 +150,10 @@ jobs:
             --base "${BASE_BRANCH}" \
             --head "${HEAD_BRANCH}" \
             --title "Sync ${HEAD_BRANCH} → ${BASE_BRANCH} (resolve conflicts)" \
-            --body  "Auto-opened via gh CLI because the automatic merge into a sync branch hit conflicts."
-            --label back-merge --label automation --label conflicts
+            --body  "Auto-opened via gh CLI because the automatic merge into a sync branch hit conflicts." \
+            --label back-merge \
+            --label automation \
+            --label conflicts
           
           gh pr view --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" \
             --json number,url | jq -r '"pr_number=\(.number)\npr_url=\(.url)"' >> "$GITHUB_OUTPUT"
