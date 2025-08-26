@@ -98,7 +98,7 @@ jobs:
         if: ${{ steps.prep.outputs.merge_status == '0' }}
         run: |
           # Does sync branch actually differ from base?
-          read left right < <(git rev-list --left-right --count "origin/${BASE_BRANCH}...HEAD")
+          right=$(git rev-list --right-only --count "origin/${BASE_BRANCH}...HEAD")
           if [ "$right" -eq 0 ]; then
             echo "No diff; skipping gh pr create"
             exit 0
@@ -130,7 +130,7 @@ jobs:
         if: ${{ steps.prep.outputs.merge_status != '0' }}
         run: |
           # Skip if no diff between head and base
-          read left right < <(git rev-list --left-right --count "origin/${BASE_BRANCH}...origin/${HEAD_BRANCH}")
+          right=$(git rev-list --right-only --count "origin/${BASE_BRANCH}...origin/${HEAD_BRANCH}")
           if [ "$right" -eq 0 ]; then
             echo "No diff between ${HEAD_BRANCH} and ${BASE_BRANCH}; nothing to open."
             exit 0
