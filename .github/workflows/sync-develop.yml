@@ -106,6 +106,7 @@ jobs:
             --title "${{ steps.meta.outputs.sync_title }}" \
             --body  "${{ steps.meta.outputs.sync_body }} (created via gh CLI)" \
             --label back-merge \
+            --label skip-changeset \
             --label automation
 
           # Fetch the newly created PR number, then its URL so that we display in a PR comment
@@ -148,6 +149,7 @@ jobs:
             --body  "${{ steps.meta.outputs.body_conflict }}" \
             --label back-merge \
             --label automation \
+            --label skip-changeset \
             --label conflicts
           
           # Fetch the newly created conflict PR number, then its URL so that we display in a PR comment
