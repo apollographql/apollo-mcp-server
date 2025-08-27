@@ -67,11 +67,11 @@ jobs:
         run: |
           pr=${{ github.event.pull_request.number }}
           echo "sync_branch=sync/main-into-develop-pr-${pr}" >> $GITHUB_OUTPUT
-          echo "title_sync=Sync main → develop (PR #${pr})" >> $GITHUB_OUTPUT
-          echo "body_sync=Auto-opened after merging \`${{ github.event.pull_request.head.ref }}\` into \`main\`. Source PR: #${pr}." >> $GITHUB_OUTPUT
+          echo "sync_title=Sync main → develop (PR #${pr})" >> $GITHUB_OUTPUT
+          echo "sync_body=Auto-opened after merging \`${{ github.event.pull_request.head.ref }}\` into \`main\`. Source PR: #${pr}." >> $GITHUB_OUTPUT
           echo "conflict_branch=conflict/main-into-develop-pr-${pr}" >> $GITHUB_OUTPUT
-          echo "title_conflict=Sync main → develop (resolve conflicts)" >> $GITHUB_OUTPUT
-          echo "body_conflict=Opened from a copy of \`main\` so conflicts can be resolved without pushing to a protected branch." >> $GITHUB_OUTPUT
+          echo "conflict_title=Sync main → develop (resolve conflicts)" >> $GITHUB_OUTPUT
+          echo "conflict_body=Opened from a copy of \`main\` so conflicts can be resolved without pushing to a protected branch." >> $GITHUB_OUTPUT
 
       # Short-lived sync branch from develop and merge main into it (do NOT rebase)
       # use +e to stop errors from short-circuiting the script
@@ -151,8 +151,8 @@ jobs:
           gh pr create \
             --base "${BASE_BRANCH}" \
             --head "${{ steps.meta.outputs.conflict_branch }}" \
-            --title "${{ steps.meta.outputs.title_conflict }}" \
-            --body  "${{ steps.meta.outputs.body_conflict }}" \
+            --title "${{ steps.meta.outputs.conflict_title }}" \
+            --body  "${{ steps.meta.outputs.conflict_body }}" \
             --label back-merge \
             --label automation \
             --label conflicts
