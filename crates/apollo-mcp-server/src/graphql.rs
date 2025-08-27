@@ -1,7 +1,7 @@
 //! Execute GraphQL operations from an MCP tool
 
-use crate::errors::McpError;
-use opentelemetry::{KeyValue, global};
+use crate::{errors::McpError, meter::get_meter};
+use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
@@ -39,7 +39,7 @@ pub trait Executable {
     /// Execute as a GraphQL operation using the endpoint and headers
     #[tracing::instrument(skip(self))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
-        let meter = global::meter("apollo.mcp");
+        let meter = get_meter();
         let start = std::time::Instant::now();
         let mut op_id: Option<String> = None;
         let client_metadata = serde_json::json!({

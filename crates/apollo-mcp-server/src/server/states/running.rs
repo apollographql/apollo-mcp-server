@@ -4,7 +4,7 @@ use std::sync::Arc;
 use apollo_compiler::{Schema, validation::Valid};
 use headers::HeaderMapExt as _;
 use opentelemetry::trace::FutureExt;
-use opentelemetry::{Context, KeyValue, global};
+use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
 use rmcp::model::Implementation;
 use rmcp::{
@@ -34,6 +34,7 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
+    meter::get_meter,
     operations::{MutationMode, Operation, RawOperation},
 };
 
@@ -177,7 +178,7 @@ impl ServerHandler for Running {
         _request: InitializeRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let meter = global::meter("apollo.mcp");
+        let meter = get_meter();
         meter
             .u64_counter("apollo.mcp.initialize.count")
             .build()
@@ -194,7 +195,7 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let meter = global::meter("apollo.mcp");
+        let meter = get_meter();
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
         let result = match tool_name.as_ref() {
@@ -312,7 +313,7 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let meter = global::meter("apollo.mcp");
+        let meter = get_meter();
         meter
             .u64_counter("apollo.mcp.list_tools.count")
             .build()
@@ -335,7 +336,7 @@ impl ServerHandler for Running {
     }
 
     fn get_info(&self) -> ServerInfo {
-        let meter = global::meter("apollo.mcp");
+        let meter = get_meter();
         meter
             .u64_counter("apollo.mcp.get_info.count")
             .build()

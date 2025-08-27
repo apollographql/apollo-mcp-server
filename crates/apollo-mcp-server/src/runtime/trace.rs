@@ -4,6 +4,7 @@ use opentelemetry_sdk::{
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
+
 use opentelemetry_semantic_conventions::{
     SCHEMA_URL,
     attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
