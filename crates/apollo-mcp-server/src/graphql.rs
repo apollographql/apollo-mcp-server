@@ -128,12 +128,7 @@ pub trait Executable {
         let attributes = vec![
             KeyValue::new(
                 "success",
-                result.is_ok()
-                    && result
-                        .as_ref()
-                        .ok()
-                        .map(|r| r.is_error != Some(true))
-                        .unwrap_or(false),
+                result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
             ),
             KeyValue::new("operation.id", op_id.unwrap_or("unknown".to_string())),
             KeyValue::new(
