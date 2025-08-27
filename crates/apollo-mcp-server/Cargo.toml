@@ -61,8 +61,8 @@ url.workspace = true
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
-opentelemetry_sdk = { version = "0.30.0", features = ["testing"] }
 mockito = "1.7.0"
+opentelemetry_sdk = { version = "0.30.0", features = ["testing"] }
 rstest.workspace = true
 tokio.workspace = true
 tracing-test = "0.2.5"
