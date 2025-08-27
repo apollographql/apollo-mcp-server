@@ -115,11 +115,14 @@ jobs:
             --title "${{ steps.meta.outputs.sync_title }}" \
             --body  "${{ steps.meta.outputs.sync_body }} (created via gh CLI)" \
             --label back-merge \
+            --label skip-changeset \
             --label automation
 
-          # Emit outputs for later steps
-          gh pr view --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.sync_branch }}" \
-            --json number,url | jq -r '"pr_number=\(.number)\npr_url=\(.url)"' >> "$GITHUB_OUTPUT"
+          # Fetch the newly created PR number, then its URL so that we display in a PR comment
+          num=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.sync_branch }}" --state open --json number --jq '.[0].number')
+          url=$(gh pr view "$num" --json url --jq .url)
+          echo "pr_number=$num" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$url" >> "$GITHUB_OUTPUT"
 
       # If the merge hit conflicts, open a DIRECT PR: HEAD_BRANCH -> BASE_BRANCH so conflicts can be resolved prior to merge
       - name: Open conflict PR
@@ -155,10 +158,14 @@ jobs:
             --body  "${{ steps.meta.outputs.body_conflict }}" \
             --label back-merge \
             --label automation \
+            --label skip-changeset \
             --label conflicts
           
-          gh pr view --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.conflict_branch }}" \
-            --json number,url | jq -r '"pr_number=\(.number)\npr_url=\(.url)"' >> "$GITHUB_OUTPUT"
+          # Fetch the newly created conflict PR number, then its URL so that we display in a PR comment
+          num=$(gh pr list --base "${BASE_BRANCH}" --head "${{ steps.meta.outputs.conflict_branch }}" --state open --json number --jq '.[0].number')
+          url=$(gh pr view "$num" --json url --jq .url)
+          echo "pr_number=$num" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$url" >> "$GITHUB_OUTPUT"
 
       # Comment back on the ORIGINAL merged PR with a link to the sync PR
       - name: Comment on source PR with sync PR link
@@ -169,22 +176,22 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const issue_number = Number(process.env.SOURCE_PR);
-      
+
             const hadConflicts = '${{ steps.prep.outputs.merge_status }}' !== '0';
             const syncUrl = '${{ steps.sync_pr.outputs.pr_url || steps.conflict_pr.outputs.pr_url }}';
             const head = process.env.HEAD_BRANCH;
             const base = process.env.BASE_BRANCH;
-      
+
             const status = hadConflicts ? 'conflicts ❗' : 'clean ✅';
             const note = hadConflicts
               ? 'Opened from a copy of main so conflicts can be resolved safely.'
               : 'Opened from a sync branch created off develop.';
-      
+
             const body = [
             `Opened sync PR **${head} → ${base}**: ${syncUrl}`,
             ``,
             `Merge status: **${status}**`,
             note
             ].join('\n');
-      
+            
             await github.rest.issues.createComment({ owner, repo, issue_number, body });
