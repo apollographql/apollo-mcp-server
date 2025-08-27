@@ -165,7 +165,9 @@ mod test {
                     },
                 ),
                 graphos: GraphOSConfig {
-                    apollo_key: None,
+                    apollo_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
                     apollo_graph_ref: None,
                     apollo_registry_url: None,
                     apollo_uplink_endpoints: [
@@ -251,6 +253,10 @@ mod test {
                 },
                 schema: Uplink,
                 transport: Stdio,
+                proxy: ProxyConfig {
+                    enabled: false,
+                    url: None,
+                },
             }
             "#);
             Ok(())
