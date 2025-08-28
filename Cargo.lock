@@ -211,6 +211,7 @@ dependencies = [
  "apollo-schema-index",
  "axum",
  "axum-extra",
+ "axum-otel-metrics",
  "axum-tracing-opentelemetry",
  "bon",
  "chrono",
@@ -426,6 +427,23 @@ dependencies = [
  "tower",
  "tower-layer",
  "tower-service",
+]
+
+[[package]]
+name = "axum-otel-metrics"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d82cf7343b4fc88312e4d7b731152a1a09edcdb6def398d836ef8bccb57f066a"
+dependencies = [
+ "axum",
+ "futures-util",
+ "http",
+ "http-body",
+ "opentelemetry",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "pin-project-lite",
+ "tower",
 ]
 
 [[package]]
@@ -2392,6 +2410,8 @@ dependencies = [
  "rand 0.9.2",
  "serde_json",
  "thiserror 2.0.14",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
