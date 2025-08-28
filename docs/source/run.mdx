@@ -1,0 +1,69 @@
+---
+title: Run the MCP server
+---
+
+## Run the MCP server binary
+
+```sh showLineNumbers=false
+apollo-mcp-server [OPTIONS] <PATH/TO/CONFIG/FILE>
+```
+
+You can configure the Apollo MCP server using a [YAML configuration file](/apollo-mcp-server/config-file).
+
+If the file is not provided, environment variables for your Apollo graph credentials (`APOLLO_GRAPH_REF` and `APOLLO_KEY`) are required for the server to run.
+
+### CLI options
+
+| Option          | Description               |
+| :-------------- | :------------------------ |
+| `-h, --help`    | Print help information    |
+| `-V, --version` | Print version information |
+
+## Run the MCP server with `rover dev`
+
+You can use the [`rover dev`](/rover/commands/dev) command of Rover CLI `v0.35` or later to run an Apollo MCP Server instance for local development alongside your local graph. Use the `--mcp` flag to start an MCP server and provide an optional configuration file.
+
+```sh
+rover dev --mcp <PATH/TO/CONFIG> 
+```
+
+## Run the MCP server with Docker
+
+1. Modify the MCP server configuration in `graphql/TheSpaceDevs/config.yaml`. Update the paths to point to the `/data` directory, as the Docker container expects:
+    ```yaml title="graphql/TheSpaceDevs/config.yaml" {7, 10}
+    endpoint: https://thespacedevs-production.up.railway.app/
+    transport:
+      type: streamable_http
+    operations:
+      source: local
+      paths:
+        - /data/operations
+    schema:
+      source: local
+      path: /data/api.graphql
+    overrides:
+      mutation_mode: all
+    introspection:
+      execute:
+        enabled: true
+      introspect:
+        enabled: true
+      search:
+        enabled: true
+    ```
+
+1. In a new terminal, from the root directory of your local repo, run this Docker command to start the MCP Server:
+    ```sh showLineNumbers=false
+    docker run \
+      -it --rm \
+      --name apollo-mcp-server \
+      -p 5000:5000 \
+      -v $PWD/graphql/TheSpaceDevs/config.yaml:/config.yaml \
+      -v $PWD/graphql/TheSpaceDevs:/data \
+      ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
+    ```
+
+    This command:
+    - Starts an MCP Server in a Docker container
+    - Maps configuration files into the proper place for the Apollo MCP Server container
+    - Forwards port 5000 for accessing the MCP Server

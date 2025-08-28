@@ -9,6 +9,14 @@ This feature is [experimental](/graphos/resources/feature-launch-stages#experime
 
 </ExperimentalFeature>
 
+## Writing your schema for efficient MCP tools
+
+The schema is required for three main purposes:
+
+1. **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
+1. **Input Validation**: The schema is used to translate GraphQL input types into JSON Schema, ensuring that AI models provide correctly formatted inputs.
+1. **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
+
 ## Use contract variants to control AI access to graphs
 
 GraphOS [contract variants](/graphos/platform/schema-management/delivery/contracts/overview) let you deliver different subsets of your graph to different consumers.
