@@ -1,6 +1,7 @@
 //! Execute GraphQL operations from an MCP tool
 
-use crate::errors::McpError;
+use crate::{errors::McpError, meter::get_meter};
+use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
@@ -38,6 +39,9 @@ pub trait Executable {
     /// Execute as a GraphQL operation using the endpoint and headers
     #[tracing::instrument(skip(self))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
+        let meter = get_meter();
+        let start = std::time::Instant::now();
+        let mut op_id: Option<String> = None;
         let client_metadata = serde_json::json!({
             "name": "mcp",
             "version": std::env!("CARGO_PKG_VERSION")
@@ -59,6 +63,7 @@ pub trait Executable {
                     "clientLibrary": client_metadata,
                 }),
             );
+            op_id = Some(id.to_string());
         } else {
             let OperationDetails {
                 query,
@@ -74,6 +79,7 @@ pub trait Executable {
             );
 
             if let Some(op_name) = operation_name {
+                op_id = Some(op_name.clone());
                 request_body.insert(String::from("operationName"), Value::String(op_name));
             }
         }
@@ -83,7 +89,7 @@ pub trait Executable {
             .with(TracingMiddleware::default())
             .build();
 
-        client
+        let result = client
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())
@@ -118,7 +124,34 @@ pub trait Executable {
                 ),
                 meta: None,
                 structured_content: Some(json),
-            })
+            });
+
+        // Record response metrics
+        let attributes = vec![
+            KeyValue::new(
+                "success",
+                result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
+            ),
+            KeyValue::new("operation.id", op_id.unwrap_or("unknown".to_string())),
+            KeyValue::new(
+                "operation.type",
+                if self.persisted_query_id().is_some() {
+                    "persisted_query"
+                } else {
+                    "operation"
+                },
+            ),
+        ];
+        meter
+            .f64_histogram("apollo.mcp.operation.duration")
+            .build()
+            .record(start.elapsed().as_millis() as f64, &attributes);
+        meter
+            .u64_counter("apollo.mcp.operation.count")
+            .build()
+            .add(1, &attributes);
+
+        result
     }
 }
 
@@ -127,6 +160,11 @@ mod test {
     use crate::errors::McpError;
     use crate::graphql::{Executable, OperationDetails, Request};
     use http::{HeaderMap, HeaderValue};
+    use opentelemetry::global;
+    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+    use opentelemetry_sdk::metrics::{
+        InMemoryMetricExporter, MeterProviderBuilder, PeriodicReader,
+    };
     use serde_json::{Map, Value, json};
     use url::Url;
 
@@ -365,5 +403,77 @@ mod test {
         // then
         assert!(result.is_error.is_some());
         assert!(result.is_error.unwrap());
+    }
+
+    #[tokio::test]
+    async fn validate_metric_attributes_success_false() {
+        // given
+        let exporter = InMemoryMetricExporter::default();
+        let meter_provider = MeterProviderBuilder::default()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        global::set_meter_provider(meter_provider.clone());
+
+        let mut server = mockito::Server::new_async().await;
+        let url = Url::parse(server.url().as_str()).unwrap();
+        let mock_request = Request {
+            input: json!({}),
+            endpoint: &url,
+            headers: HeaderMap::new(),
+        };
+
+        server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "data": null, "errors": ["an error"] }).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        // when
+        let test_executable = TestExecutableWithPersistedQueryId {};
+        let result = test_executable.execute(mock_request).await.unwrap();
+
+        // then
+        assert!(result.is_error.is_some());
+        assert!(result.is_error.unwrap());
+
+        // Retrieve the finished metrics from the exporter
+        let finished_metrics = exporter.get_finished_metrics().unwrap();
+
+        // validate the attributes of the apollo.mcp.operation.count counter
+        for resource_metrics in finished_metrics {
+            if let Some(scope_metrics) = resource_metrics
+                .scope_metrics()
+                .find(|scope_metrics| scope_metrics.scope().name() == "apollo.mcp")
+            {
+                for metric in scope_metrics.metrics() {
+                    if metric.name() == "apollo.mcp.operation.count" {
+                        if let AggregatedMetrics::U64(MetricData::Sum(data)) = metric.data() {
+                            for point in data.data_points() {
+                                let attributes = point.attributes();
+                                let mut attr_map = std::collections::HashMap::new();
+                                for kv in attributes {
+                                    attr_map.insert(kv.key.as_str(), kv.value.as_str());
+                                }
+                                assert_eq!(
+                                    attr_map.get("operation.id").map(|s| s.as_ref()),
+                                    Some("mock_operation")
+                                );
+                                assert_eq!(
+                                    attr_map.get("operation.type").map(|s| s.as_ref()),
+                                    Some("persisted_query")
+                                );
+                                assert_eq!(
+                                    attr_map.get("success"),
+                                    Some(&std::borrow::Cow::Borrowed("false"))
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

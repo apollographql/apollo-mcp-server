@@ -2,6 +2,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
+use axum_otel_metrics::HttpMetricsLayerBuilder;
 use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
@@ -208,6 +209,7 @@ impl Starting {
                     with_auth!(axum::Router::new().nest_service("/mcp", service), auth),
                     self.config.cors
                 )
+                .layer(HttpMetricsLayerBuilder::new().build())
                 // include trace context as header into the response
                 .layer(OtelInResponseLayer)
                 //start OpenTelemetry trace on incoming request
