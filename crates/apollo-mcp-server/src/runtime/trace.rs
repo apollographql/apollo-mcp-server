@@ -2,6 +2,7 @@ use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
+    propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
 
@@ -65,6 +66,8 @@ fn init_tracer_provider() -> Result<SdkTracerProvider, anyhow::Error> {
         .with_batch_exporter(exporter)
         .build();
 
+    // Set the global propagator (usually early in main())
+    global::set_text_map_propagator(TraceContextPropagator::new());
     global::set_tracer_provider(trace_provider.clone());
 
     Ok(trace_provider)
