@@ -3104,9 +3104,11 @@ dependencies = [
  "getrandom 0.2.16",
  "http",
  "matchit",
+ "opentelemetry",
  "reqwest",
  "reqwest-middleware",
  "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
