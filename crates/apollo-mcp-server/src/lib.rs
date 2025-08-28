@@ -8,6 +8,7 @@ mod graphql;
 pub mod health;
 mod introspection;
 pub mod json_schema;
+pub(crate) mod meter;
 pub mod operations;
 pub mod sanitize;
 pub(crate) mod schema_tree_shake;
