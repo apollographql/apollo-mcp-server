@@ -187,7 +187,7 @@ mod test {
             "extensions": {
                 "clientLibrary": {
                     "name":"mcp",
-                    "version":"0.7.4"
+                    "version": std::env!("CARGO_PKG_VERSION")
                 }
             },
             "operationName":"mock_operation"
@@ -233,7 +233,7 @@ mod test {
                 },
                 "clientLibrary": {
                     "name":"mcp",
-                    "version":"0.7.4"
+                    "version": std::env!("CARGO_PKG_VERSION")
                 }
             },
         })
