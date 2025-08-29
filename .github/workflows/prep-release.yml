@@ -80,6 +80,9 @@ jobs:
           set -euo pipefail
           
           if [[ -n "${CUSTOM:-}" ]]; then
+            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
+            echo "Custom Bumped: $CURR -> $CUSTOM"
+          else
             # strip any pre-release / build metadata for arithmetic (e.g., -rc.1, +build.5)
             BASE="${CURR%%[-+]*}"
             
@@ -94,10 +97,7 @@ jobs:
             
             NEW_VERSION="$MA.$MI.$PA"
             echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-            echo "Bumped: $CURR -> $NEW_VERSION"
-          else
-            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
-            echo "Custom Bumped: $CURR -> $CUSTOM"
+            echo "Bumped: $CURR -> $NEW_VERSION"            
           fi
 
       - name: Prepare release branch
