@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           
-          if [[ -n "${CUSTOM:-}" ]]; then then
+          if [[ -n "${CUSTOM:-}" ]]; then
             # strip any pre-release / build metadata for arithmetic (e.g., -rc.1, +build.5)
             BASE="${CURR%%[-+]*}"
             
