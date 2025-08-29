@@ -1,0 +1,164 @@
+name: Prep release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        type: choice
+        description: "Type of version bump"
+        default: patch
+        required: true
+        options:
+          - major
+          - minor
+          - patch
+          - custom
+      custom_version:
+        type: string
+        required: false
+        description: "Custom version (ignore for other bump types)"
+      generate_pre_release:
+        type: boolean
+        default: true
+        required: true
+        description: "Generate a RC build"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: pre-release
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce custom_version when bump=custom
+        run: |
+          if [[ "${{ inputs.version_bump }}" == "custom" ]]; then
+            if [[ -z "${{ inputs.custom_version }}" ]]; then
+              echo "::error title=Missing input::Set 'custom_version' when version_bump=custom"; exit 1
+            fi
+            if [[ ! "${{ inputs.custom_version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "::error title=Invalid SemVer::Use x.y.z (can use optional pre-release/build identifiers)"; exit 1
+            fi
+          fi
+  prep-release:
+    runs-on: ubuntu-latest
+
+    env:
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git author
+        run: |
+          git config --local user.name "Apollo Bot"
+          git config --local user.email "svc-apollo-bot-2@apollographql.com"
+
+      - name: Retrieve current version from Cargo.toml
+        id: meta
+        run: |
+          set -eu
+          VERSION=$(cargo metadata --no-deps --format-version=1 | jq -er --arg NAME "apollo-mcp-server" '.packages[] | select(.name == $NAME) | .version')
+          [ -n "$VERSION" ] || { echo "::error::Could not determine version"; exit 1; }
+          echo "current_version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Bump the version
+        id: bump
+        shell: bash
+        env:
+          CURR: ${{ steps.meta.outputs.current_version }}
+          CUSTOM: ${{ inputs.custom_version }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          
+          if [[ -n "${CUSTOM:-}" ]]; then then
+            # strip any pre-release / build metadata for arithmetic (e.g., -rc.1, +build.5)
+            BASE="${CURR%%[-+]*}"
+            
+            IFS=. read -r MA MI PA <<< "$BASE"
+            
+            case "$BUMP" in
+              major) MA=$((MA+1)); MI=0; PA=0 ;;
+              minor) MI=$((MI+1)); PA=0 ;;
+              patch) PA=$((PA+1)) ;;
+              *) echo "::error::Unknown bump '$BUMP'"; exit 1 ;;
+            esac
+            
+            NEW_VERSION="$MA.$MI.$PA"
+            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "Bumped: $CURR -> $NEW_VERSION"
+          else
+            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
+            echo "Bumped: $CURR -> $CUSTOM"
+          fi
+
+      - name: Prepare release branch
+        id: prep_branch
+        run: |
+          set -e
+          git fetch origin develop
+          git switch -c "release/${{ steps.bump.outputs.new_version }}" "origin/develop"
+          echo "release_branch=release/${{ steps.bump.outputs.new_version }}" >> "$GITHUB_OUTPUT"
+
+      - name: Update Cargo version
+        run: |
+          cargo install cargo-edit --locked
+          cargo set-version --workspace "${{ steps.bump.outputs.new_version }}"
+
+      - name: Replace versions in scripts and docs
+        env:
+          CURR_VERSION: ${{ steps.meta.outputs.current_version }}
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          python3 - <<'PY'
+            import os, re, sys, glob, pathlib
+    
+            current_version = os.environ["CURR_VERSION"]
+            new_version = os.environ["NEW_VERSION"]
+    
+            # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
+            # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
+            # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
+            pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
+    
+            def repl(m): # preserve 'v' prefix if it existed
+              return (m.group(1) or '') + new_version
+    
+            # Targets to update
+            targets = [
+              "scripts/nix/install.sh",                # nix shell script
+              "scripts/windows/install.ps1",           # PowerShell
+              *glob.glob("**/*.mdx", recursive=True),  # docs
+            ]
+    
+            changed = 0
+            for path in targets:
+              p = pathlib.Path(path)
+              if not p.exists():
+                continue
+              txt = p.read_text(encoding="utf-8")
+              new_txt, n = pat.subn(repl, txt)
+              if n:
+                p.write_text(new_txt, encoding="utf-8")
+                print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
+                changed += n
+      
+            if changed == 0:
+              sys.exit("::warning::No occurrences of the current version were found.")
+          PY
+
+      - name: Push changes to release branch
+        id: push_changes
+        run: |
+          set -e
+          git add -A || true
+          git commit -m "Bumping to version ${{ steps.bump.outputs.new_version }}" || true
+          git push origin HEAD
