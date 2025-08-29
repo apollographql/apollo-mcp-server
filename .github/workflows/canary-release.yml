@@ -1,0 +1,38 @@
+name: Canary Release
+on:
+  push:
+    # don't run on tags, run on commits
+    # https://github.com/orgs/community/discussions/25615
+    tags-ignore:
+      - "**"
+    branches:
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: canary-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compute_canary_version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.canary_version.outputs.version }}
+    steps:
+      - name: Compute canary version
+        id: canary_version
+        run: |
+          SHORT_SHA=${GITHUB_SHA::7}
+          DATE=$(date -u +%Y%m%dT%H%M%SZ)
+          echo "version=canary-${DATE}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+  release_container:
+    needs: compute_canary_version
+    uses: ./.github/workflows/release-container.yml
+    with:
+      version: ${{ needs.compute_canary_version.outputs.version }}
+    secrets: inherit

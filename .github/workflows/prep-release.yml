@@ -16,12 +16,7 @@ on:
       custom_version:
         type: string
         required: false
-        description: "Custom version (ignore for other bump types)"
-      generate_pre_release:
-        type: boolean
-        default: true
-        required: true
-        description: "Generate a RC build"
+        description: "Custom version (ignored for other bump types)"
 
 permissions:
   contents: write
@@ -75,11 +70,14 @@ jobs:
         env:
           CURR: ${{ steps.meta.outputs.current_version }}
           CUSTOM: ${{ inputs.custom_version }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ inputs.version_bump }}
         run: |
           set -euo pipefail
           
-          if [[ -n "${CUSTOM:-}" ]]; then then
+          if [[ -n "${CUSTOM:-}" ]]; then
+            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
+            echo "Custom Bumped: $CURR -> $CUSTOM"
+          else
             # strip any pre-release / build metadata for arithmetic (e.g., -rc.1, +build.5)
             BASE="${CURR%%[-+]*}"
             
@@ -95,9 +93,6 @@ jobs:
             NEW_VERSION="$MA.$MI.$PA"
             echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
             echo "Bumped: $CURR -> $NEW_VERSION"
-          else
-            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
-            echo "Bumped: $CURR -> $CUSTOM"
           fi
 
       - name: Prepare release branch
@@ -119,26 +114,32 @@ jobs:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
           python3 - <<'PY'
+          try:
             import os, re, sys, glob, pathlib
-    
+            
             current_version = os.environ["CURR_VERSION"]
             new_version = os.environ["NEW_VERSION"]
-    
+            
+            print(f"current={current_version} new={new_version}")
+          
             # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
             # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
             # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
             pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
-    
+  
             def repl(m): # preserve 'v' prefix if it existed
               return (m.group(1) or '') + new_version
-    
+  
             # Targets to update
             targets = [
               "scripts/nix/install.sh",                # nix shell script
               "scripts/windows/install.ps1",           # PowerShell
               *glob.glob("**/*.mdx", recursive=True),  # docs
             ]
-    
+  
+            print(targets)
+            print(f"Scanning {len(targets)} targets…")
+          
             changed = 0
             for path in targets:
               p = pathlib.Path(path)
@@ -150,9 +151,14 @@ jobs:
                 p.write_text(new_txt, encoding="utf-8")
                 print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
                 changed += n
-      
+  
             if changed == 0:
-              sys.exit("::warning::No occurrences of the current version were found.")
+              print("::error::No occurrences of the current version were found.", file=sys.stderr)
+              sys.exit(1)
+          except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
           PY
 
       - name: Push changes to release branch
