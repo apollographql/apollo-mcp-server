@@ -160,7 +160,7 @@ jobs:
               if changed == 0:
                 print("::error::No occurrences of the current version were found.", file=sys.stderr)
                 sys.exit(1)
-            except:
+            except Exception:
               import traceback
               traceback.print_exc()
               sys.exit(1)
