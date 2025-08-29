@@ -97,7 +97,7 @@ jobs:
             echo "Bumped: $CURR -> $NEW_VERSION"
           else
             echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
-            echo "Bumped: $CURR -> $CUSTOM"
+            echo "Custom Bumped: $CURR -> $CUSTOM"
           fi
 
       - name: Prepare release branch
