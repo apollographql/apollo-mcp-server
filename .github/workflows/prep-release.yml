@@ -16,12 +16,7 @@ on:
       custom_version:
         type: string
         required: false
-        description: "Custom version (ignore for other bump types)"
-      generate_pre_release:
-        type: boolean
-        default: true
-        required: true
-        description: "Generate a RC build"
+        description: "Custom version (ignored for other bump types)"
 
 permissions:
   contents: write
