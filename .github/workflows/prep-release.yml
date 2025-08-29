@@ -75,7 +75,7 @@ jobs:
         env:
           CURR: ${{ steps.meta.outputs.current_version }}
           CUSTOM: ${{ inputs.custom_version }}
-          BUMP: ${{ inputs.bump }}
+          BUMP: ${{ inputs.version_bump }}
         run: |
           set -euo pipefail
           
