@@ -119,40 +119,51 @@ jobs:
           NEW_VERSION: ${{ steps.bump.outputs.new_version }}
         run: |
           python3 - <<'PY'
-            import os, re, sys, glob, pathlib
-    
-            current_version = os.environ["CURR_VERSION"]
-            new_version = os.environ["NEW_VERSION"]
-    
-            # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
-            # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
-            # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
-            pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
-    
-            def repl(m): # preserve 'v' prefix if it existed
-              return (m.group(1) or '') + new_version
-    
-            # Targets to update
-            targets = [
-              "scripts/nix/install.sh",                # nix shell script
-              "scripts/windows/install.ps1",           # PowerShell
-              *glob.glob("**/*.mdx", recursive=True),  # docs
-            ]
-    
-            changed = 0
-            for path in targets:
-              p = pathlib.Path(path)
-              if not p.exists():
-                continue
-              txt = p.read_text(encoding="utf-8")
-              new_txt, n = pat.subn(repl, txt)
-              if n:
-                p.write_text(new_txt, encoding="utf-8")
-                print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
-                changed += n
+            try:
+              import os, re, sys, glob, pathlib
+              
+              current_version = os.environ["CURR_VERSION"]
+              new_version = os.environ["NEW_VERSION"]
+              
+              print(f"current={current_version} new={new_version}")
       
-            if changed == 0:
-              sys.exit("::warning::No occurrences of the current version were found.")
+              # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
+              # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
+              # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
+              pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
+      
+              def repl(m): # preserve 'v' prefix if it existed
+                return (m.group(1) or '') + new_version
+      
+              # Targets to update
+              targets = [
+                "scripts/nix/install.sh",                # nix shell script
+                "scripts/windows/install.ps1",           # PowerShell
+                *glob.glob("**/*.mdx", recursive=True),  # docs
+              ]
+          
+              print(targets)
+              print(f"Scanning {len(targets)} targets…")
+      
+              changed = 0
+              for path in targets:
+                p = pathlib.Path(path)
+                if not p.exists():
+                  continue
+                txt = p.read_text(encoding="utf-8")
+                new_txt, n = pat.subn(repl, txt)
+                if n:
+                  p.write_text(new_txt, encoding="utf-8")
+                  print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
+                  changed += n
+        
+              if changed == 0:
+                print("::error::No occurrences of the current version were found.", file=sys.stderr)
+                sys.exit(1)
+            except:
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
           PY
 
       - name: Push changes to release branch
