@@ -8,7 +8,7 @@ members = [
 
 [workspace.package]
 authors = ["Apollo <opensource@apollographql.com>"]
-version = "0.7.4"
+version = "0.7.5"
 
 [workspace.dependencies]
 apollo-compiler = "1.27.0"
