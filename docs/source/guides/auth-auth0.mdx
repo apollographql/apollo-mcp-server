@@ -227,20 +227,31 @@ Before continuing, you need to set up the Auth0 client to accept an additional c
 
 ## Step 5: Make requests with an MCP Client (Claude)
 
-In order to get the full experience of using and MCP server authorization, you'll want to use an LLM of some sort. Anthropic's Claude provides an accessible method of connecting to an MCP server, through [their Custom Connector feature](https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp).
+In order to get the full experience of using and MCP server authorization, you'll want to use an LLM of some sort.
+Anthropic's Claude provides an accessible method of connecting to an MCP server, through [their Custom Connector feature](https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp),
+which is available to paid Claude subscribers. If you don't have a paid subscription, or want to try Claude out without deploying your MCP Server behind HTTPS (a requirement for Custom Connectors),
+follow these steps to get Claude Desktop working locally:
 
-If you'd like to connect your MCP server with Claude, the first thing you need to do is deploy your server behind HTTPS. This is because Claude requires all custom connectors to have URLs that begin with `https`. Whether you do this by providing a local SSL certificate, or deploying to a staging or production environment, is up to you.
-
-To get your MCP server connected to Claude with a Pro or Max plan, follow these steps:
-
-1. Navigate to **Settings > Connectors**.
-1. Locate the **Connectors** section.
-1. Click **Add custom connector** at the bottom of the section.
-1. Add the URL to which your MCP server is deployed and a name for the MCP server.
-1. Click **Add**.
-1. Find your new custom connector and click the **Connect** button.
-1. You will be taken to your IdP to log in. Once you log in, you will be redirected back to Claude.
-1. Claude will now display the MCP operations available to it under the name you provided and if you give a prompt that would invoke your operations, it should ask permission to access your MCP server.
+1. Navigate to **Settings > Developer**.
+1. Click **Edit Config** and open `claude_desktop_config.json` in your text editor.
+1. If there are any JSON keys other than `mcpServers` in the file, leave them alone, but make sure you add your local MCP Server to that key:
+  ```json title="claude_desktop_config.json" {3-11}
+  {
+    "mcpServers": {
+      "theSpaceDevs": {
+        "command": "npx",
+        "args": [
+          "mcp-remote",
+          "http://127.0.0.1:5000/mcp",
+          "--transport",
+          "http-first"
+        ]
+      }
+    }
+  }
+  ```
+  1. Quit Claude Desktop and open it back up. Claude will open a browser window for the OAuth flow and turn on the operations configured for your MCP Server.
+  1. With the `GetAstronautsCurrentlyInSpace` tool enabled, provide a prompt like "What astronauts are currently in space?" and allow Claude to use your tool, when prompted.
 
 ## Troubleshooting
 
