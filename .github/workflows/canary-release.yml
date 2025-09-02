@@ -30,7 +30,7 @@ jobs:
           DATE=$(date -u +%Y%m%dT%H%M%SZ)
           echo "version=canary-${DATE}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
-  release_container:
+  release_canary_container:
     needs: compute_canary_version
     uses: ./.github/workflows/release-container.yml
     with:
