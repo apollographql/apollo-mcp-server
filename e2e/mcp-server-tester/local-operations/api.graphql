@@ -1,0 +1,525 @@
+type Agency {
+  id: ID!
+  name: String
+  abbrev: String
+  type: String
+  featured: Boolean
+  country: [Country]
+  description: String
+  administrator: String
+  foundingYear: Int
+  spacecraft: String
+  image: Image
+  logo: Image
+  socialLogo: Image
+  totalLaunchCount: Int
+  consecutiveSuccessfulLaunches: Int
+  successfulLaunches: Int
+  failedLaunches: Int
+  pendingLaunches: Int
+  consecutiveSuccessfulLandings: Int
+  successfulLandings: Int
+  failedLandings: Int
+  attemptedLandings: Int
+  successfulLandingsSpacecraft: Int
+  failedLandingsSpacecraft: Int
+  attemptedLandingsSpacecraft: Int
+  successfulLandingsPayload: Int
+  failedLandingsPayload: Int
+  attemptedLandingsPayload: Int
+  infoUrl: String
+  wikiUrl: String
+  socialMediaLinks: [SocialMediaLink]
+}
+
+type AgencyConnection {
+  pageInfo: PageInfo
+  results: [Agency]
+}
+
+type ApiThrottle {
+  yourRequestLimit: Int
+  limitFrequencySecs: Int
+  currentUse: Int
+  nextUseSecs: Int
+  ident: String
+}
+
+type Astronaut {
+  id: ID!
+  name: String
+  status: String
+  agency: Agency
+  image: Image
+  type: String
+  inSpace: Boolean
+  timeInSpace: String
+  evaTime: String
+  age: Int
+  dateOfBirth: String
+  dateOfDeath: String
+  nationality: Country
+  bio: String
+  wiki: String
+  lastFlight: String
+  firstFlight: String
+  socialMediaLinks: [SocialMediaLink]
+}
+
+type AstronautConnection {
+  pageInfo: PageInfo
+  results: [Astronaut]
+}
+
+input AstronautFilters {
+  search: String
+  inSpace: Boolean
+}
+
+type CelestialBody {
+  id: ID!
+  name: String
+  type: CelestialType
+  diameter: Float
+  mass: Float
+  gravity: Float
+  lengthOfDay: String
+  atmosphere: Boolean
+  image: Image
+  description: String
+  wikiUrl: String
+}
+
+type CelestialBodyConnection {
+  pageInfo: PageInfo
+  results: [CelestialBody]
+}
+
+type CelestialType {
+  id: ID!
+  name: String
+}
+
+type Country {
+  id: ID!
+  name: String
+  alpha2Code: String
+  alpha3Code: String
+  nationalityName: String
+  nationalityNameComposed: String
+}
+
+type DockingEvent {
+  id: ID!
+  docking: String
+  departure: String
+  dockingLocation: DockingLocation
+  spaceStationTarget: SpaceStationTarget
+  flightVehicleTarget: FlightVehicleTarget
+  payloadFlightTarget: PayloadFlightTarget
+  flightVehicleChaser: FlightVehicleChaser
+  spaceStationChaser: SpaceStationChaser
+  payloadFlightChaser: PayloadFlightChaser
+}
+
+type DockingEventConnection {
+  pageInfo: PageInfo
+  results: [DockingEvent]
+}
+
+type DockingLocation {
+  id: ID!
+  name: String
+  spacestation: SpaceStation
+  spacecraft: Spacecraft
+  payload: Payload
+}
+
+type FlightVehicleChaser {
+  id: ID!
+  destination: String
+  missionEnd: String
+  spacecraft: Spacecraft
+  launch: Launch
+  landing: Landing
+}
+
+type FlightVehicleTarget {
+  id: ID!
+  destination: String
+  missionEnd: String
+  spacecraft: Spacecraft
+}
+
+type Image {
+  id: ID!
+  name: String
+  url: String
+  thumbnail: String
+  credit: String
+  singleUse: Boolean
+  license: ImageLicense
+}
+
+type ImageLicense {
+  name: String
+  link: String
+}
+
+type InfoUrl {
+  priority: Int
+  source: String
+  title: String
+  description: String
+  featureImage: String
+  url: String
+  type: String
+  language: Language
+}
+
+type Landing {
+  id: ID!
+  type: LandingType
+  attempt: Boolean
+  success: Boolean
+  description: String
+  downrangeDistance: String
+  landingLocation: LandingLocation
+}
+
+type LandingLocation {
+  id: ID!
+  name: String
+  active: Boolean
+  abbrev: String
+  description: String
+  location: Location
+  longitude: String
+  latitude: String
+  image: Image
+  landings: SuccessCount
+  celestialBody: CelestialBody
+}
+
+type LandingType {
+  id: ID!
+  name: String
+  abbrev: String
+  description: String
+}
+
+type Language {
+  id: ID!
+  name: String
+  code: String
+}
+
+type Launch {
+  id: ID!
+  name: String
+  launchDesignator: String
+  status: LaunchStatus
+  lastUpdated: String
+  net: String
+  netPrecision: String
+  window: LaunchWindow
+  image: Image
+  infographic: String
+  probability: Float
+  weatherConcerns: String
+  failreason: String
+  hashtag: String
+  provider: Agency
+  rocket: Rocket
+  mission: Mission
+  pad: Pad
+  webcastLive: Boolean
+  program: Program
+  orbitalLaunchAttemps: Int
+  locationLaunchAttemps: Int
+  padLaunchAttemps: Int
+  agencyLaunchAttemps: Int
+  orbitalLaunchAttempsYear: Int
+  locationLaunchAttempsYear: Int
+  padLaunchAttempsYear: Int
+  agencyLaunchAttempsYear: Int
+}
+
+type LaunchConnection {
+  pageInfo: PageInfo
+  results: [Launch]
+}
+
+type LaunchStatus {
+  id: ID!
+  name: String
+  abbrev: String
+  description: String
+}
+
+type LaunchWindow {
+  start: String
+  end: String
+}
+
+type Location {
+  id: ID!
+  name: String
+  active: Boolean
+  country: Country
+  image: Image
+  mapImage: String
+  longitude: String
+  latitude: String
+  totalLaunchCount: Int
+  totalLandingCount: Int
+  description: String
+  timezone: String
+}
+
+type Manufacturer {
+  id: ID!
+  name: String
+  abbrev: String
+  type: String
+  featured: Boolean
+  country: Country
+  description: String
+  administrator: String
+  foundingYear: Int
+  spacecraft: String
+  image: Image
+  logo: Image
+  socialLogo: Image
+}
+
+type Mission {
+  id: ID!
+  name: String
+  type: String
+  description: String
+  image: Image
+  orbit: Orbit
+  agencies: [Agency]
+  infoUrls: [InfoUrl]
+  vidUrls: [VideoUrl]
+}
+
+type MissionPatch {
+  id: ID!
+  name: String
+  priority: Int
+  imageUrl: String
+  agency: Agency
+}
+
+type Orbit {
+  id: ID!
+  name: String
+  abbrev: String
+  celestialBody: CelestialBody
+}
+
+type Pad {
+  id: ID!
+  active: Boolean
+  agencies: [Agency]
+  name: String
+  image: Image
+  description: String
+  infoUrl: String
+  wikiUrl: String
+  mapUrl: String
+  latitude: Float
+  longitude: Float
+  country: Country
+  mapImage: String
+  launchTotalCount: Int
+  orbitalLaunchAttemptCount: Int
+  fastestTurnaround: String
+  location: Location
+}
+
+type PageInfo {
+  count: Int
+  next: String
+  previous: String
+}
+
+type Payload {
+  id: ID!
+  name: String
+  type: String
+  manufacturer: Manufacturer
+  operator: Agency
+  image: Image
+  wikiLink: String
+  infoLink: String
+  program: Program
+  cost: Float
+  mass: Float
+  description: String
+}
+
+type PayloadFlightChaser {
+  id: ID!
+  url: String
+  destination: String
+  amount: String
+  payload: Payload
+  launch: Launch
+  landing: Landing
+}
+
+type PayloadFlightTarget {
+  id: ID!
+  destination: String
+  amount: String
+  payload: Payload
+  launch: Launch
+  landing: Landing
+}
+
+type Program {
+  id: ID!
+  name: String
+  image: Image
+  infoUrl: String
+  wikiUrl: String
+  description: String
+  agencies: [Agency]
+  startDate: String
+  endDate: String
+  missionPatches: [MissionPatch]
+}
+
+type Query {
+  agency(id: ID!): Agency
+  agencies(search: String, offset: Int = 0, limit: Int = 20): AgencyConnection
+  apiThrottle: ApiThrottle
+  astronaut(id: ID!): Astronaut
+  astronauts(filters: AstronautFilters, offset: Int = 0, limit: Int = 20): AstronautConnection
+  celestialBody(id: ID!): CelestialBody
+  celestialBodies(search: String, offset: Int = 0, limit: Int = 20): CelestialBodyConnection
+  dockingEvent(id: ID!): DockingEvent
+  dockingEvents(search: String, offset: Int = 0, limit: Int = 20): DockingEventConnection
+  launch(id: ID!): Launch
+  launches(search: String, limit: Int = 5, offset: Int = 0): LaunchConnection
+  previousLaunces(search: String, limit: Int = 5, offset: Int = 0): LaunchConnection
+  upcomingLaunches(search: String, limit: Int = 5, offset: Int = 0): LaunchConnection
+}
+
+type Rocket {
+  id: ID!
+  configuration: RocketLaunchConfigurations
+}
+
+type RocketFamily {
+  id: ID!
+  name: String
+}
+
+type RocketLaunchConfigurations {
+  id: ID!
+  name: String
+  fullName: String
+  variant: String
+  families: [RocketFamily]
+}
+
+type SocialMedia {
+  id: ID!
+  name: String
+  url: String
+  logo: Image
+}
+
+type SocialMediaLink {
+  id: ID!
+  url: String
+  socialMedia: SocialMedia
+}
+
+type Spacecraft {
+  id: ID!
+  name: String
+  type: String
+  agency: Agency
+  family: SpacecraftFamily
+  inUse: Boolean
+  serialNumber: String
+  isPlaceholder: Boolean
+  image: Image
+  inSpace: Boolean
+  timeInSpace: String
+  timeDocked: String
+  flightsCount: Int
+  missionEndsCount: Int
+  status: String
+  description: String
+  spacecraftConfig: SpacecraftConfig
+  fastestTurnaround: String
+}
+
+type SpacecraftConfig {
+  id: ID!
+  name: String
+  type: String
+  agency: Agency
+  family: SpacecraftFamily
+  inUse: Boolean
+  image: Image
+}
+
+type SpacecraftFamily {
+  id: ID!
+  name: String
+  description: String
+  manufacturer: Manufacturer
+  maidenFlight: String
+}
+
+type SpaceStation {
+  id: ID!
+  name: String
+  image: Image
+}
+
+type SpaceStationChaser {
+  id: ID!
+  name: String
+  image: Image
+  status: String
+  founded: String
+  deorbited: String
+  description: String
+  orbit: String
+  type: String
+}
+
+type SpaceStationTarget {
+  id: ID!
+  name: String
+  image: Image
+}
+
+type SuccessCount {
+  total: Int
+  successful: Int
+  failed: Int
+}
+
+type VideoUrl {
+  priority: Int
+  source: String
+  publisher: String
+  title: String
+  description: String
+  featureImage: String
+  url: String
+  type: String
+  language: Language
+  startTime: String
+  endTime: String
+  live: Boolean
+}

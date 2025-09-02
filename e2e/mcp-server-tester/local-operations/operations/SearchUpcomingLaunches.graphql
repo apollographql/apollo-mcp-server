@@ -1,0 +1,27 @@
+# Fields searched - launch_designator, launch_service_provider__name, mission__name, name, pad__location__name, pad__name, rocket__configuration__manufacturer__abbrev, rocket__configuration__manufacturer__name, rocket__configuration__name, rocket__spacecraftflight__spacecraft__name. Codes are the best search terms to use. Single words are the next best alternative when you cannot use a code to search
+query SearchUpcomingLaunches($query: String!) {
+  upcomingLaunches(limit: 20, search: $query){
+    pageInfo {
+      count
+    }
+    results {
+      id
+      name
+      weatherConcerns
+      rocket {
+        id
+        configuration {
+          fullName
+        }
+      }
+      mission {
+        name
+        description
+      }
+      webcastLive
+      provider {
+        name
+      }
+    }
+  }
+}

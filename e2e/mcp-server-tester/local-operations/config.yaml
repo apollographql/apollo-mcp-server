@@ -1,0 +1,21 @@
+endpoint: https://thespacedevs-production.up.railway.app/
+transport:
+  type: stdio
+operations:
+  source: local
+  paths:
+    - ./local-operations/operations
+schema:
+  source: local
+  path: ./local-operations/api.graphql
+overrides:
+  mutation_mode: all
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+  search:
+    enabled: true
+  validate:
+    enabled: true

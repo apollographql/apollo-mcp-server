@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "mcp-server": {
+      "command": "../../target/release/apollo-mcp-server",
+      "args": ["./<test-dir>/config.yaml"]
+    }
+  }
+}

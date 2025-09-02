@@ -1,0 +1,30 @@
+{
+  "format": "apollo-persisted-query-manifest",
+  "version": 1,
+  "operations": [
+    {
+      "id": "1417c051c5b1ba2fa41975fc02547c9c34c619c8694bf225df74e7b527575d5f",
+      "name": "ExploreCelestialBodies",
+      "type": "query",
+      "body": "query ExploreCelestialBodies($search: String, $limit: Int = 10, $offset: Int = 0) {\n  celestialBodies(search: $search, limit: $limit, offset: $offset) {\n    pageInfo {\n      count\n      next\n      previous\n      __typename\n    }\n    results {\n      id\n      name\n      diameter\n      mass\n      gravity\n      lengthOfDay\n      atmosphere\n      type {\n        id\n        name\n        __typename\n      }\n      image {\n        url\n        thumbnail\n        credit\n        __typename\n      }\n      description\n      wikiUrl\n      __typename\n    }\n    __typename\n  }\n}"
+    },
+    {
+      "id": "5cc5c30ad71bdf7d57e4fa5a8428c2d49ebc3e16a3d17f21efbd1ad22b4ba70b",
+      "name": "GetAstronautDetails",
+      "type": "query",
+      "body": "query GetAstronautDetails($astronautId: ID!) {\n  astronaut(id: $astronautId) {\n    id\n    name\n    status\n    inSpace\n    age\n    dateOfBirth\n    dateOfDeath\n    firstFlight\n    lastFlight\n    timeInSpace\n    evaTime\n    agency {\n      id\n      name\n      abbrev\n      country {\n        name\n        nationalityName\n        __typename\n      }\n      __typename\n    }\n    nationality {\n      name\n      nationalityName\n      alpha2Code\n      __typename\n    }\n    image {\n      url\n      thumbnail\n      credit\n      __typename\n    }\n    bio\n    wiki\n    socialMediaLinks {\n      url\n      socialMedia {\n        name\n        url\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"
+    },
+    {
+      "id": "83af5184f29c1eb5ce9b0d6da11285829f2f155d3815affbe66b56fa249f7603",
+      "name": "GetAstronautsCurrentlyInSpace",
+      "type": "query",
+      "body": "query GetAstronautsCurrentlyInSpace {\n  astronauts(filters: {inSpace: true, search: \"\"}) {\n    results {\n      id\n      name\n      timeInSpace\n      lastFlight\n      agency {\n        name\n        abbrev\n        country {\n          name\n          __typename\n        }\n        __typename\n      }\n      nationality {\n        name\n        nationalityName\n        __typename\n      }\n      image {\n        thumbnail\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"
+    },
+    {
+      "id": "824e3c8a1612c32a315450abbd5c7aedc0c402fdf6068583a54461f5b67d55be",
+      "name": "SearchUpcomingLaunches",
+      "type": "query",
+      "body": "query SearchUpcomingLaunches($query: String!) {\n  upcomingLaunches(limit: 20, search: $query) {\n    pageInfo {\n      count\n      __typename\n    }\n    results {\n      id\n      name\n      weatherConcerns\n      rocket {\n        id\n        configuration {\n          fullName\n          __typename\n        }\n        __typename\n      }\n      mission {\n        name\n        description\n        __typename\n      }\n      webcastLive\n      provider {\n        name\n        __typename\n      }\n      __typename\n    }\n    __typename\n  }\n}"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+query GetAstronautDetails($astronautId: ID!) {
+  astronaut(id: $astronautId) {
+    id
+    name
+    status
+    inSpace
+    age
+
+    # Birth and career dates
+    dateOfBirth
+    dateOfDeath
+    firstFlight
+    lastFlight
+
+    # Space experience metrics
+    timeInSpace
+    evaTime # Extravehicular Activity time
+    
+    # Agency information
+    agency {
+      id
+      name
+      abbrev
+      country {
+        name
+        nationalityName
+      }
+    }
+
+    # Nationality
+    nationality {
+      name
+      nationalityName
+      alpha2Code
+    }
+
+    # Media
+    image {
+      url
+      thumbnail
+      credit
+    }
+
+    # Bio and links
+    bio
+    wiki
+
+    # Social media
+    socialMediaLinks {
+      url
+      socialMedia {
+        name
+        url
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+tools:
+  expected_tool_list: ['introspect', 'execute', 'search', 'validate', 'SearchUpcomingLaunches', 'ExploreCelestialBodies', 'GetAstronautDetails', 'GetAstronautsCurrentlyInSpace']
+
+  tests:
+    - name: 'Introspection of launches query'
+      tool: 'introspect'
+      params: 
+        type_name: launches
+        depth: 1
+      expect: 
+        success: true
+
+    - name: 'Search for launches query'
+      tool: 'search'
+      params:
+        terms: ['launches']
+      expect:
+        success: true
+        result:
+          contains: 'launches(search: String, limit: Int = 5, offset: Int = 0): LaunchConnection'
+
+    - name: 'Validate a valid launches query'
+      tool: 'validate'
+      params:
+        operation: >
+          query GetLaunches {
+            launches {
+              results {
+                id
+                name
+                launchDesignator
+              }
+            }
+          }
+      expect:
+        success: true
+        result:
+          contains: 'Operation is valid'
+
+    - name: 'Validates an invalid query'
+      tool: 'validate'
+      params:
+        operation: >
+          query { invalidField }
+      expect:
+        success: false
+        error:
+          contains: 'Error: type `Query` does not have a field `invalidField`'
+
+    - name: 'Validates a launches query with an invalid field'
+      tool: 'validate'
+      params:
+        operation: >
+          query GetLaunches {
+            launches {
+              results {
+                id
+                invalid
+              }
+            }
+          }
+      expect:
+        success: false
+        error:
+          contains: 'Error: type `Launch` does not have a field `invalid`'

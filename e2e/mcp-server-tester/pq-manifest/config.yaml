@@ -1,0 +1,20 @@
+endpoint: https://thespacedevs-production.up.railway.app/
+transport:
+  type: stdio
+operations:
+  source: manifest
+  path: ./pq-manifest/apollo.json
+schema:
+  source: local
+  path: ./pq-manifest/api.graphql
+overrides:
+  mutation_mode: all
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+  search:
+    enabled: true
+  validate:
+    enabled: true
