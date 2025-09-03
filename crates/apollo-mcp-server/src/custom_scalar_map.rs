@@ -158,9 +158,7 @@ mod tests {
                 "simple".to_string(),
                 json_schema!({
                     "type": "string",
-                })
-                .try_into()
-                .unwrap(),
+                }),
             ),
             (
                 "complex".to_string(),
