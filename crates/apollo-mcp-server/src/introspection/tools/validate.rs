@@ -70,6 +70,10 @@ impl Validate {
         Ok(CallToolResult {
             content: vec![Content::text("Operation is valid")],
             is_error: None,
+
+            // Note: We don't really return any meaningful content to the client here, so we can leave the
+            // structured content as none.
+            structured_content: None,
         })
     }
 }

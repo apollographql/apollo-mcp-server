@@ -1,8 +1,6 @@
 use crate::errors::ServerError;
-use rmcp::{
-    schemars::schema::{Schema, SchemaObject, SingleOrVec},
-    serde_json,
-};
+use rmcp::serde_json;
+use schemars::Schema;
 use std::{collections::HashMap, path::PathBuf, str::FromStr};
 
 impl FromStr for CustomScalarMap {
@@ -14,26 +12,23 @@ impl FromStr for CustomScalarMap {
             serde_json::from_str(string_custom_scalar_file)
                 .map_err(ServerError::CustomScalarConfig)?;
 
-        // Validate each of the values in the map and coerce into schemars::schema::SchemaObject
+        // Try to parse each as a schema
         let custom_scalar_map = parsed_custom_scalar_file
             .into_iter()
             .map(|(key, value)| {
-                let value_string = value.to_string();
-                // The only way I could find to do this was to reparse it.
-                let schema: SchemaObject = serde_json::from_str(value_string.as_str())
-                    .map_err(ServerError::CustomScalarConfig)?;
-
-                if has_invalid_schema(&Schema::Object(schema.clone())) {
-                    Err(ServerError::CustomScalarJsonSchema(value))
-                } else {
-                    Ok((key, schema))
+                // The schemars crate does not enforce schema validation anymore, so we use jsonschema
+                // to ensure that the supplied schema is valid.
+                if let Err(e) = jsonschema::meta::validate(&value) {
+                    return Err(ServerError::CustomScalarJsonSchema(e.to_string()));
                 }
+
+                Schema::try_from(value.clone())
+                    .map(|schema| (key, schema))
+                    .map_err(|e| ServerError::CustomScalarJsonSchema(e.to_string()))
             })
             .collect::<Result<_, _>>()?;
 
-        // panic!("hello2! {:?}", parsed_custom_scalar_file);
-
-        Ok::<_, ServerError>(CustomScalarMap(custom_scalar_map))
+        Ok(CustomScalarMap(custom_scalar_map))
     }
 }
 
@@ -49,44 +44,19 @@ impl TryFrom<&PathBuf> for CustomScalarMap {
 }
 
 #[derive(Debug, Clone)]
-pub struct CustomScalarMap(HashMap<String, SchemaObject>);
+pub struct CustomScalarMap(HashMap<String, Schema>);
 
 impl CustomScalarMap {
-    pub fn get(&self, key: &str) -> Option<&SchemaObject> {
+    pub fn get(&self, key: &str) -> Option<&Schema> {
         self.0.get(key)
-    }
-}
-
-// Unknown keys will be put into "extensions" in the schema object, check for those and consider those invalid
-fn has_invalid_schema(schema: &Schema) -> bool {
-    match schema {
-        Schema::Object(schema_object) => {
-            !schema_object.extensions.is_empty()
-                || schema_object
-                    .object
-                    .as_ref()
-                    .is_some_and(|object| object.properties.values().any(has_invalid_schema))
-                || schema_object.array.as_ref().is_some_and(|object| {
-                    object.items.as_ref().is_some_and(|items| match items {
-                        SingleOrVec::Single(item) => has_invalid_schema(item),
-                        SingleOrVec::Vec(items) => items.iter().any(has_invalid_schema),
-                    })
-                })
-        }
-        Schema::Bool(_) => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::{BTreeMap, HashMap},
-        str::FromStr,
-    };
+    use std::{collections::HashMap, str::FromStr};
 
-    use rmcp::schemars::schema::{
-        InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec,
-    };
+    use schemars::json_schema;
 
     use crate::custom_scalar_map::CustomScalarMap;
 
@@ -103,7 +73,8 @@ mod tests {
 
     #[test]
     fn only_spaces() {
-        let result = CustomScalarMap::from_str("    ").err().unwrap();
+        let result =
+            CustomScalarMap::from_str("    ").expect_err("empty space should be valid schema");
 
         insta::assert_debug_snapshot!(result, @r#"
         CustomScalarConfig(
@@ -128,20 +99,17 @@ mod tests {
         let result = CustomScalarMap::from_str(
             r###"{
                 "custom": {
-                    "test": true
+                    "type": "bool"
                 }
             }"###,
         )
-        .err()
-        .unwrap();
+        .expect_err("schema should have been invalid");
 
-        insta::assert_debug_snapshot!(result, @r#"
+        insta::assert_debug_snapshot!(result, @r###"
         CustomScalarJsonSchema(
-            Object {
-                "test": Bool(true),
-            },
+            "\"bool\" is not valid under any of the schemas listed in the 'anyOf' keyword",
         )
-        "#)
+        "###)
     }
 
     #[test]
@@ -152,25 +120,17 @@ mod tests {
                     "type": "object",
                     "properties": {
                         "test": {
-                            "test": true
+                            "type": "obbbject"
                         }
                     }
                 }
             }"###,
         )
-        .err()
-        .unwrap();
+        .expect_err("schema should have been invalid");
 
         insta::assert_debug_snapshot!(result, @r#"
         CustomScalarJsonSchema(
-            Object {
-                "type": String("object"),
-                "properties": Object {
-                    "test": Object {
-                        "test": Bool(true),
-                    },
-                },
-            },
+            "\"obbbject\" is not valid under any of the schemas listed in the 'anyOf' keyword",
         )
         "#)
     }
@@ -196,31 +156,25 @@ mod tests {
         let expected_data = HashMap::from_iter([
             (
                 "simple".to_string(),
-                SchemaObject {
-                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-                    ..Default::default()
-                },
+                json_schema!({
+                    "type": "string",
+                })
+                .try_into()
+                .unwrap(),
             ),
             (
                 "complex".to_string(),
-                SchemaObject {
-                    instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Object))),
-                    object: Some(Box::new(ObjectValidation {
-                        properties: BTreeMap::from_iter([(
-                            "name".to_string(),
-                            Schema::Object(SchemaObject {
-                                instance_type: Some(SingleOrVec::Single(Box::new(
-                                    InstanceType::String,
-                                ))),
-                                ..Default::default()
-                            }),
-                        )]),
-                        ..Default::default()
-                    })),
-                    ..Default::default()
-                },
+                json_schema!({
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string"
+                        }
+                    }
+                }),
             ),
         ]);
+
         assert_eq!(result, expected_data);
     }
 }
