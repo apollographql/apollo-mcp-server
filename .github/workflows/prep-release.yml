@@ -161,10 +161,97 @@ jobs:
             sys.exit(1)
           PY
 
-      - name: Push changes to release branch
-        id: push_changes
+      - name: Commit version bumps
+        id: commit_version_bumps
         run: |
-          set -e
+          set -euo pipefail
           git add -A || true
-          git commit -m "Bumping to version ${{ steps.bump.outputs.new_version }}" || true
+          git commit -m "chore(release): bumping to version ${{ steps.bump.outputs.new_version }}" || echo "No version bump changes to commit"
+
+      - name: Update changelog via xtask
+        run: cargo xtask changeset changelog ${{ steps.bump.outputs.new_version }}
+
+      - name: Extract changelog section
+        id: changelog
+        shell: bash
+        env:
+          NEW: ${{ steps.bump.outputs.new_version }}
+          OLD: ${{ steps.meta.outputs.current_version }}
+        run: |
+          set -euo pipefail
+          # Write the extracted section to a file and also expose it as a multiline output "body"
+          python3 - <<'PY' > CHANGELOG_SECTION.md
+          try:
+            import os, re, sys, pathlib
+            new = os.environ["NEW"]
+            old = os.environ["OLD"]
+      
+            p = pathlib.Path("CHANGELOG.md")
+            if not p.exists():
+              print("::error::CHANGELOG.md not found at repo root", file=sys.stderr); sys.exit(1)
+            text = p.read_text(encoding="utf-8")
+      
+            # Find header for the new version
+            start = re.search(rf'(?m)^# \[{re.escape(new)}\]', text)
+            if not start:
+              print(f"::error::Could not find changelog entry for {new}", file=sys.stderr)
+              sys.exit(1)
+      
+            # Prefer the *specific* previous version header if present; otherwise, next '# ['; else, EOF
+            segment = text[start.start():]
+            end_old = re.search(rf'(?m)^# \[{re.escape(old)}\]', segment)
+            if end_old:
+              segment = segment[:end_old.start()]
+            else:
+              nxt = re.search(r'(?m)^# \[', segment[len('# [' + new + ']'):])
+              if nxt:
+                # adjust to absolute end
+                segment = segment[: (len('# [' + new + ']') + nxt.start())]
+      
+            segment = segment.rstrip() + "\n"
+            print(segment)
+            PY
+            
+            {
+              echo 'body<<EOF'
+              cat CHANGELOG_SECTION.md
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+          except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+          PY
+
+      - name: Commit and push changelog updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A || true
+          git commit -m "chore(release): changelog for ${{ steps.bump.outputs.new_version }}" || echo "No changelog updates to commit"
           git push origin HEAD
+
+      - name: Open/Update draft PR to main
+        env:
+          HEAD: ${{ github.ref_name }}
+          TITLE: Releasing ${{ steps.bump.outputs.new_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Try to create; if it already exists, update it
+          gh pr create \
+            --base main \
+            --head "$HEAD" \
+            --title "$TITLE" \
+            --draft \
+            --body-file CHANGELOG_SECTION.md \
+            --label release
+          || {
+            num=$(gh pr list --head "$HEAD" --base main --state open --json number -q '.[0].number' || true)
+            if [[ -n "$num" ]]; then
+              gh pr edit "$num" --title "$TITLE" --body-file CHANGELOG_SECTION.md --add-label release
+            else
+              echo "::error::Failed to create or find PR from $HEAD to main"
+              exit 1
+            fi
+          }
