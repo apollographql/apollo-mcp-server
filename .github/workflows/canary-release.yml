@@ -5,6 +5,15 @@ on:
     # https://github.com/orgs/community/discussions/25615
     tags-ignore:
       - "**"
+    paths-ignore:
+      - '.github/**'
+      - '.cargo/**'
+      - '.direnv/**'
+      - '.vscode/**'
+      - 'docs/**'
+      - 'Cargo.*'
+      - 'crates/**/Cargo.*'
+      - '*.md'
     branches:
       - develop
   workflow_dispatch:
