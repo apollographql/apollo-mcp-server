@@ -41,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
         None => runtime::read_config_from_env().unwrap_or_default(),
     };
 
-    let _guard = runtime::trace::init_tracing_subscriber(&config)?;
+    let _guard = runtime::telemetry::init_tracing_subscriber(&config)?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",

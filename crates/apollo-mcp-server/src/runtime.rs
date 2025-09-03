@@ -12,7 +12,7 @@ mod operation_source;
 mod overrides;
 mod schema_source;
 mod schemas;
-pub mod trace;
+pub mod telemetry;
 
 use std::path::Path;
 
@@ -242,6 +242,9 @@ mod test {
                     ),
                     path: None,
                     rotation: Hourly,
+                },
+                telemetry: Telemetry {
+                    exporters: None,
                 },
                 operations: Infer,
                 overrides: Overrides {
