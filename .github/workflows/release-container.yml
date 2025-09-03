@@ -103,9 +103,8 @@ jobs:
         shell: bash
         run: |
           docker manifest push $FQDN:$VERSION
-
-          # Only push the latest tag if this isn't a release candidate (ends with
-          # `rc.#`.
-          if [[ ! "$VERSION" =~ -rc\.[0-9]+$ ]]; then
+          
+          # push :latest only if version DOES NOT start with canary OR end with -rc.<digits>
+          if [[ ! "$VERSION" =~ (^canary|-rc\.[0-9]+$) ]]; then
             docker manifest push $FQDN:latest
           fi
