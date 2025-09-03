@@ -64,6 +64,8 @@ impl Validate {
         let schema_guard = self.schema.lock().await;
         Parser::new()
             .parse_executable(&schema_guard, input.operation.as_str(), "operation.graphql")
+            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?
+            .validate(&schema_guard)
             .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?;
         Ok(CallToolResult {
             content: vec![Content::text("Operation is valid")],
@@ -80,7 +82,11 @@ mod tests {
     static SCHEMA: std::sync::LazyLock<Arc<Mutex<Valid<Schema>>>> =
         std::sync::LazyLock::new(|| {
             Arc::new(Mutex::new(
-                Schema::parse_and_validate("type Query { id: ID! }", "schema.graphql").unwrap(),
+                Schema::parse_and_validate(
+                    "type Query { id: ID! hello(name: String!): String! }",
+                    "schema.graphql",
+                )
+                .unwrap(),
             ))
         });
 
@@ -107,6 +113,15 @@ mod tests {
         let validate = Validate::new(SCHEMA.clone());
         let input = json!({
             "operation": "query { invalidField }"
+        });
+        assert!(validate.execute(input).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn validate_invalid_argument() {
+        let validate = Validate::new(SCHEMA.clone());
+        let input = json!({
+            "operation": "query { hello }"
         });
         assert!(validate.execute(input).await.is_err());
     }

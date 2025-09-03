@@ -26,7 +26,8 @@ pub struct Input {
     /// The GraphQL operation
     query: String,
 
-    /// The variable values
+    /// The variable values represented as JSON
+    #[schemars(schema_with = "String::json_schema", default)]
     variables: Option<Value>,
 }
 
