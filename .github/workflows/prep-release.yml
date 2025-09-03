@@ -188,7 +188,7 @@ jobs:
       
             p = pathlib.Path("CHANGELOG.md")
             if not p.exists():
-              print("::error::CHANGELOG.md not found at repo root", file=sys.stderr); sys.exit(1)
+              raise FileNotFoundError("CHANGELOG.md not found at repo root")
             text = p.read_text(encoding="utf-8")
       
             # Find header for the new version
@@ -210,18 +210,17 @@ jobs:
       
             segment = segment.rstrip() + "\n"
             print(segment)
-            PY
+          except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+          PY
             
             {
               echo 'body<<EOF'
               cat CHANGELOG_SECTION.md
               echo 'EOF'
             } >> "$GITHUB_OUTPUT"
-          except Exception:
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-          PY
 
       - name: Commit and push changelog updates
         shell: bash
