@@ -63,3 +63,17 @@ tools:
         success: false
         error:
           contains: 'Error: type `Launch` does not have a field `invalid`'
+
+    - name: 'Validates a launches query with an missing argument'
+      tool: 'validate'
+      params:
+        operation: >
+          query Agency {
+            agency {
+              id
+            }
+          }
+      expect:
+        success: false
+        error:
+          contains: 'Error: the required argument `Query.agency(id:)` is not provided'
