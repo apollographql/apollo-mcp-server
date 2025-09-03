@@ -238,14 +238,14 @@ jobs:
         run: |
           set -euo pipefail
           # Try to create; if it already exists, update it
-          gh pr create \
+          if ! gh pr create \
             --base main \
             --head "$HEAD" \
             --title "$TITLE" \
             --draft \
             --body-file CHANGELOG_SECTION.md \
             --label release
-          || {
+          then
             num=$(gh pr list --head "$HEAD" --base main --state open --json number -q '.[0].number' || true)
             if [[ -n "$num" ]]; then
               gh pr edit "$num" --title "$TITLE" --body-file CHANGELOG_SECTION.md --add-label release
@@ -253,4 +253,4 @@ jobs:
               echo "::error::Failed to create or find PR from $HEAD to main"
               exit 1
             fi
-          }
+          fi
