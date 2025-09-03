@@ -73,6 +73,7 @@ impl Introspect {
                 return Ok(CallToolResult {
                     content: vec![],
                     is_error: None,
+                    structured_content: None,
                 });
             }
         }
@@ -99,6 +100,8 @@ impl Introspect {
                 .map(Content::text)
                 .collect(),
             is_error: None,
+            // The content being returned is a raw string, so no need to create structured content for it
+            structured_content: None,
         })
     }
 
