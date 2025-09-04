@@ -404,9 +404,10 @@ where
         .inspect_err(|e| {
             if let Some(hyper_err) = e.source() &&
                 let Some(os_err) = hyper_err.source() &&
-                    os_err.to_string().contains("tcp connect error: Cannot assign requested address (os error 99)") {
-                    tracing::warn!("If your MCP server is executing within a kubernetes pod, this failure may be caused by istio-proxy injection. See https://github.com/apollographql/router/issues/3533 for more details about how to solve this");
-                }
+                os_err.to_string().contains("tcp connect error: Cannot assign requested address (os error 99)")
+            {
+                tracing::warn!("If your MCP server is executing within a kubernetes pod, this failure may be caused by istio-proxy injection. See https://github.com/apollographql/router/issues/3533 for more details about how to solve this");
+            }
         })?;
     tracing::debug!("uplink response {:?}", res);
     let response_body: graphql_client::Response<Query::ResponseData> = res.json().await?;
