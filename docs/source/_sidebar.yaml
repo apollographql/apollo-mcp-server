@@ -4,22 +4,39 @@ switcher:
     - label: v0
       latest: true
       href: ./
+defaultOpenDepth: 2
 items:
-  - label: "Welcome"
+  - label: "Overview"
     href: "."
   - label: "Quickstart"
     href: "./quickstart"
-  - label: "Install"
-    href: "./install"
-  - label: "User Guide"
-    href: "./guides"
+  - label: "Define tools"
+    href: "./define-tools"
+  - label: "Configuration"
+    children:
+      - label: "YAML Config Reference"
+        href: "./config-file"
+      - label: "Custom Scalars"
+        href: "./custom-scalars"
+  - label: "Run the MCP Server"
+    href: "./run"
+  - label: "Debugging"
+    href: "./debugging"
+  - label: "Deployment"
+    children:
+      - label: "Overview"
+        href: "./deploy"
+      - label: "Health Checks"
+        href: "./health-checks"
   - label: "Authorization"
-    href: "./guides/auth"
-  - label: "Command Reference"
-    href: "./command-reference"
+    href: "./auth"
   - label: "Best Practices"
     href: "./best-practices"
   - label: "Licensing"
     href: "./licensing"
   - label: "Limitations"
     href: "./limitations"
+  - label: "Guides"
+    children:
+      - label: "Authorization with Auth0"
+        href: "./guides/auth-auth0"

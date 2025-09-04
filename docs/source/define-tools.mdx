@@ -1,0 +1,204 @@
+---
+title: Define MCP Tools
+---
+
+You can manually define the GraphQL operations that are exposed by Apollo MCP Server as MCP tools. You can define these operations using:
+
+- Local operation files
+- Operation collections
+- Persisted query manifests
+- GraphOS-managed persisted queries
+
+Alternatively, you can let an AI model read your graph schema via GraphQL introspection and have it determine the available operations.
+
+## Define GraphQL operations for tools
+
+### From operation files
+
+An operation file is a `.graphql` file containing a single GraphQL operation.
+
+<CodeColumns cols={2}>
+
+```graphql title="Example operation GetForecast"
+query GetForecast($coordinate: InputCoordinate!) {
+  forecast(coordinate: $coordinate) {
+    detailed
+  }
+}
+```
+
+```graphql title="Example operation GetWeatherData"
+query GetAllWeatherData($coordinate: InputCoordinate!, $state: String!) {
+  forecast(coordinate: $coordinate) {
+    detailed
+  }
+  alerts(state: $state) {
+    severity
+    description
+    instruction
+  }
+}
+```
+
+</CodeColumns>
+
+Use the `operations` option to provide the MCP Server with a list of operation files. For each operation file you provide, the MCP Server creates an MCP tool that calls the corresponding GraphQL operation.
+
+You can also use the `operations` option to specify a directory. The server then loads all files with a `.graphql` extension in that directory as operations.
+
+Files and directories specified with `operations` are hot reloaded. When you specify a file, the MCP tool is updated when the file contents are modified. When you specify a directory, operations exposed as MCP tools are updated when files are added, modified, or removed from the directory.
+
+### From Operation Collection
+
+For graphs managed by GraphOS, Apollo MCP Server can get operations from an [Operation Collection](https://www.apollographql.com/docs/graphos/platform/explorer/operation-collections).
+
+To use a GraphOS Operation Collection, you must:
+
+- Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
+
+Each variant will have its own default MCP Tools Collection, but you can specify any shared collection by using `operations` with `operations.source: collection`.
+Apollo MCP Server automatically fetches the default collection if no ID is specified.
+
+```yaml title="Example config file for using a GraphOS Operation Collection"
+operations:
+  source: collection
+  id: <collection-id>
+```
+
+The MCP Server supports hot reloading of the GraphOS Operation Collection, so it can automatically pick up changes from GraphOS without restarting.
+
+### From persisted query manifests
+
+Apollo MCP Server supports reading GraphQL operations from Apollo-formatted [persisted query manifest](/graphos/platform/security/persisted-queries#manifest-format) files.
+
+Set the persisted query manifest file for the MCP Server with the `operations` option. The MCP Server supports hot reloading of persisted query manifests, so changes to manifests are applied without restarting.
+
+An example manifest is available in the [GitHub repo](https://github.com/apollographql/apollo-mcp-server/tree/main/graphql/weather/persisted_queries).
+
+<ExpansionPanel title="Example command using --manifest">
+
+From the root of a local MCP Server repo, run the `apollo-mcp-server` binary with the example persisted query manifest, `graphql/weather/persisted_queries/apollo.json`:
+
+```yaml title="Example config for using Persisted Query Manifest"
+headers:
+  "apollographql-client-name": "my-web-app"
+operations:
+  source: manifest
+  path: <absolute path to this local repo>/graphql/weather/persisted_queries/apollo.json
+schema:
+  source: local
+  path: <absolute path to this local repo>/graphql/weather/api.graphql
+```
+
+```sh showLineNumbers=false
+apollo-mcp-server <path to the preceding config>
+```
+
+</ExpansionPanel>
+
+### From GraphOS-managed persisted queries
+
+For graphs managed by GraphOS, Apollo MCP Server can get operations by reading persisted queries from GraphOS. The MCP Server uses Apollo Uplink to access the persisted queries.
+
+To use GraphOS persisted queries, you must:
+
+- Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
+
+<Tip>
+
+Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/overview) with a persisted query list associated with that variant, so you can control what AI can consume from your graph. [Learn more](/apollo-mcp-server/best-practices#use-contract-variants-to-control-ai-access-to-graphs).
+
+</Tip>
+
+```yaml title="Example config using GraphOS-managed persisted queries"
+headers:
+  "apollographql-client-name": "my-web-app"
+operations:
+  source: uplink
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+```
+
+```sh title="Example command using GraphOS-managed persisted queries"
+apollo-mcp-server <path to the preceding config>
+```
+
+The MCP Server supports hot reloading of GraphOS-managed persisted queries, so it can automatically pick up changes from GraphOS without restarting.
+
+If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router.
+
+Use the `headers` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration.
+
+## Introspection tools
+
+In addition to defining specific tools for pre-defined GraphQL operations, Apollo MCP Server supports introspection tools that enable AI agents to explore the graph schema and execute operations dynamically.
+
+You can enable the following introspection tools:
+
+- `introspect` - allows the AI model to introspect the schema of the GraphQL API by providing a specific type name to get information about, and a depth parameter to determine how deep to traverse the subtype hierarchy. The AI model can start the introspection by looking up the top-level `Query` or `Mutation` type.
+- `search` - allows the AI model to search for type information by providing a set of search terms. This can result in fewer tool calls than `introspect`, especially if the desired type is deep in the type hierarchy of the schema. Search results include all the parent type information needed to construct operations involving the matching type.
+- `validate` - validates a GraphQL operation against the schema without executing it. This allows AI models to verify that their operations are syntactically correct and conform to the schema before execution, preventing unintended side effects. Operations should be validated prior to calling the `execute` tool.
+- `execute` - executes an operation on the GraphQL endpoint
+
+The MCP client can use these tools to provide schema information to the model and its context window, and allow the model to execute GraphQL operations based on that schema.
+
+### Minification
+
+Both the `introspect` and `search` tools support minification of their results through the `minify` option. These options help optimize context window usage for AI models.
+
+- **Reduces context window usage**: Minified GraphQL SDL takes up significantly less space in the AI model's context window, allowing for more complex schemas or additional context
+- **Uses compact notation**: Type definitions use prefixed compact syntax and common scalar types are shortened
+- **Preserves functionality**: All essential type information is retained, just in a more compact format
+- **Includes legend in tool descriptions**: When minify is enabled, the tool descriptions automatically include a legend explaining the notation
+
+**Minification format:**
+
+- **Type prefixes**: `T=type`, `I=input`, `E=enum`, `U=union`, `F=interface`
+- **Scalar abbreviations**: `s=String`, `i=Int`, `f=Float`, `b=Boolean`, `d=ID`
+- **Type modifiers**: `!=required`, `[]=list`, `<>=implements`
+
+Example comparison:
+
+**Regular output:**
+
+```graphql
+type User {
+  id: ID!
+  name: String
+  email: String!
+  posts: [Post]
+}
+```
+
+**Minified output:**
+
+```
+T:User:id:d!,name:s,email:s!,posts:[Post]
+```
+
+<Tip>
+
+Use a [contract variant](/graphos/platform/schema-management/delivery/contracts/overview) so you can control the parts of your graph that AI can introspect. [Learn more](/apollo-mcp-server/best-practices#use-contract-variants-to-control-ai-access-to-graphs)
+
+</Tip>
+
+```yaml title="Example config using introspection"
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+    minify: true
+  search:
+    enabled: true
+    minify: true
+    index_memory_bytes: 50000000
+    leaf_depth: 1
+  validate:
+    enabled: true
+```
+
+```sh title="Example command using introspection"
+apollo-mcp-server <path to the preceding config>
+```

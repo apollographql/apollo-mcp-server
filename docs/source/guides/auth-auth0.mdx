@@ -1,20 +1,6 @@
 ---
-title: Authorization with Apollo MCP Server
+title: Authorization with Auth0
 ---
-
-The Apollo MCP server supports authorizing clients (e.g., LLMs) in accordance with [the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
-
-The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs. You can read more about [security considerations](/apollo-mcp-server/limitations#oauth-token-passthrough) when using this feature.
-
-## Implement authorization with Apollo MCP Server
-
-To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/2.1/) Identity Provider (for example, your own in-house IdP or a third-party IdP such as Auth0, Okta, or Keycloak). You need the following values from your IdP:
-
-- **URL**: The base URL of your Identity Provider, which is used to validate the JSON Web Tokens (JWTs) issued by it.
-- **Audience**: Identifies the intended recipient of the token, typically a resource server or API. Represented by the `aud` claim in the JWT.
-- **Scopes**: The scopes that the client will request. These scopes define the permissions granted to the client when it accesses the API.
-
-Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/command-reference#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
 ## Example: Auth0
 

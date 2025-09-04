@@ -1,0 +1,52 @@
+---
+title: Health Checks
+---
+
+
+## Health checks
+
+Apollo MCP Server provides health check endpoints for monitoring server health and readiness. This feature is useful for load balancers, container orchestrators, and monitoring systems.
+
+### Configuration
+
+Health checks are only available when using the `streamable_http` transport and must be explicitly enabled:
+
+```yaml title="Example health check configuration"
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 5000
+health_check:
+  enabled: true
+  path: /health
+  readiness:
+    allowed: 50
+    interval:
+      sampling: 10s
+      unready: 30s
+```
+
+### Endpoints
+
+The health check provides different responses based on query parameters:
+
+| Endpoint            | Description        | Response                                                         |
+| :------------------ | :----------------- | :--------------------------------------------------------------- |
+| `GET /health`       | Basic health check | Always returns `{"status": "UP"}`                                |
+| `GET /health?live`  | Liveness check     | Returns `{"status": "UP"}` if server is alive                    |
+| `GET /health?ready` | Readiness check    | Returns `{"status": "UP"}` if server is ready to handle requests |
+
+### Probes
+
+The server tracks failed requests and automatically marks itself as unready if too many failures occur within a sampling interval:
+
+- **Sampling interval**: How often the server checks the rejection count (default: 5 seconds)
+- **Allowed rejections**: Maximum failures allowed before becoming unready (default: 100)
+- **Recovery time**: How long to wait before attempting to recover (default: 2x sampling interval)
+
+When the server becomes unready:
+
+- The `/health?ready` endpoint returns HTTP 503 with `{"status": "DOWN"}`
+- After the recovery period, the rejection counter resets and the server becomes ready again
+
+This allows external systems to automatically route traffic away from unhealthy servers and back when they recover.

@@ -1,0 +1,86 @@
+---
+title: Debugging the MCP Server
+---
+
+
+## Debugging with MCP Inspector
+
+[MCP Inspector](https://modelcontextprotocol.io/docs/tools/inspector) is a debugging tool for MCP servers.
+
+### Debug locally over stdio transport
+
+You can inspect a local Apollo MCP Server by running it with MCP Inspector.
+
+1. Run the MCP Server with Inspector:
+
+```yaml title="Example config for debugging over stdio"
+operations:
+  source: local
+  paths:
+    - <absolute path to this git repo>/graphql/weather/operations/
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+transport:
+  type: stdio
+```
+
+```sh
+npx @modelcontextprotocol/inspector \
+  target/debug/apollo-mcp-server <path to the preceding config>
+```
+
+<ExpansionPanel title="Example output">
+
+```sh showLineNumbers=false disableCopy=true
+Starting MCP inspector...
+⚙️ Proxy server listening on port 6277
+🔍 MCP Inspector is up and running at http://127.0.0.1:6274 🚀
+```
+
+</ExpansionPanel>
+
+1. In a browser, go to the URL returned by Inspector, then click **Connect** and **List Tools**. You should see the tools for the operations you provided.
+
+### Debug over the Streamable HTTP transport
+
+When running the MCP Server over the Streamable HTTP transport, you can run MCP Inspector as follows.
+
+1. Start the MCP Server in Streamable HTTP mode:
+
+<Tip>
+
+You can also deploy the server as a container using the instructions in [Deploying a Container](#deploying-a-container).
+
+</Tip>
+
+```yaml title="Example config for running in Streamable HTTP"
+operations:
+  source: local
+  paths:
+    - <absolute path to this git repo>/graphql/weather/operations/
+schema:
+  source: local
+  path: <absolute path to this git repo>/graphql/weather/api.graphql
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 5000
+```
+
+```sh
+target/debug/apollo-mcp-server <path to the above config>
+```
+
+1. Start the MCP Inspector:
+
+```sh
+npx @modelcontextprotocol/inspector
+```
+
+1. In a browser, go to the URL returned by Inspector, then fill in the details:
+
+   - **Transport Type**: Select `Streamable HTTP`
+   - **URL**: Enter `http://127.0.0.1:5000/mcp`, where the port must match the `transport.port` option
+
+1. Click **Connect** and **List Tools**. You should see the tools for the operations you provided.

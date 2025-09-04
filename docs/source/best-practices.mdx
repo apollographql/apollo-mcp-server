@@ -9,6 +9,14 @@ This feature is in [preview](/graphos/resources/feature-launch-stages#preview). 
 
 </PreviewFeature>
 
+## Writing your schema for efficient MCP tools
+
+The schema is required for:
+
+- **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
+- **Input Validation**: The schema is used to translate GraphQL input types into JSON Schema, ensuring that AI models provide correctly formatted inputs.
+- **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
+
 ## Use contract variants to control AI access to graphs
 
 GraphOS [contract variants](/graphos/platform/schema-management/delivery/contracts/overview) let you deliver different subsets of your graph to different consumers.
@@ -17,8 +25,8 @@ When running Apollo MCP Server with GraphOS, use contract variants whenever poss
 
 In particular, we strongly recommend contract variants when using:
 
-- [GraphOS-managed persisted queries](/apollo-mcp-server/guides#from-graphos-managed-persisted-queries)
-- [Introspection](/apollo-mcp-server/guides#introspection-tools)
+- [GraphOS-managed persisted queries](/apollo-mcp-server/define-tools#from-graphos-managed-persisted-queries)
+- [Introspection](/apollo-mcp-server/define-tools#introspection-tools)
 
 ## Send client name header when using persisted queries
 
@@ -38,4 +46,4 @@ According to [MCP security best practices](https://modelcontextprotocol.io/speci
 To maintain clear trust boundaries, MCP servers must only accept tokens explicitly issued for themselves and must act as independent OAuth clients when calling upstream services.
 Forwarding client tokens downstream is not allowed.
 
-Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/guides/auth) for implementation details.
+Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details.

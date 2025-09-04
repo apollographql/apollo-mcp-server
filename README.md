@@ -18,7 +18,7 @@ See [the documentation](https://www.apollographql.com/docs/apollo-mcp-server/) f
 
 ## Installation
 
-You can either build this server from source, if you have Rust installed on your workstation, or you can follow the [installation guide](https://www.apollographql.com/docs/apollo-mcp-server/install). To build from source, run `cargo build` from the root of this repository and the server will be built in the `target/debug` directory.
+You can either build this server from source, if you have Rust installed on your workstation, or you can follow the [installation guide](https://www.apollographql.com/docs/apollo-mcp-server/run). To build from source, run `cargo build` from the root of this repository and the server will be built in the `target/debug` directory.
 
 ## Getting started
 
@@ -26,14 +26,14 @@ Follow the [quickstart tutorial](https://www.apollographql.com/docs/apollo-mcp-s
 
 ## Usage
 
-Full usage of Apollo MCP Server is documented on the [user guide](https://www.apollographql.com/docs/apollo-mcp-server/guides). There are a few items that are necessary for this server to function. Specifically, the following things must be configured:
+Full usage of Apollo MCP Server is documented on the [user guide](https://www.apollographql.com/docs/apollo-mcp-server/run). There are a few items that are necessary for this server to function. Specifically, the following things must be configured:
 
 1. A graph for the MCP server to sit in front of.
 2. Definitions for the GraphQL operations that should be exposed as MCP tools.
 3. A configuration file describing how the MCP server should run.
 4. A connection to an MCP client, such as an LLM or [MCP inspector](https://modelcontextprotocol.io/legacy/tools/inspector).
 
-These are all described on the user guide. Specific configuration options for the configuration file are documented in the [command reference](https://www.apollographql.com/docs/apollo-mcp-server/command-reference).
+These are all described on the user guide. Specific configuration options for the configuration file are documented in the [config file reference](https://www.apollographql.com/docs/apollo-mcp-server/config-file).
 
 ## Contributions
 
