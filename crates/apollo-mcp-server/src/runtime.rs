@@ -245,6 +245,8 @@ mod test {
                 },
                 telemetry: Telemetry {
                     exporters: None,
+                    service_name: None,
+                    version: None,
                 },
                 operations: Infer,
                 overrides: Overrides {

@@ -23,6 +23,8 @@ use crate::runtime::logging::Logging;
 #[derive(Debug, Deserialize, JsonSchema, Default)]
 pub struct Telemetry {
     exporters: Option<Exporters>,
+    service_name: Option<String>,
+    version: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -71,28 +73,40 @@ impl Default for OTLPTracingExporter {
     }
 }
 
-fn resource() -> Resource {
+fn resource(telemetry: &Telemetry) -> Resource {
+    let service_name = telemetry
+        .service_name
+        .clone()
+        .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
+
+    let service_version = telemetry
+        .version
+        .clone()
+        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+
+    let deployment_env = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
+
     Resource::builder()
-        .with_service_name(env!("CARGO_PKG_NAME"))
+        .with_service_name(service_name)
         .with_schema_url(
             [
-                KeyValue::new(SERVICE_VERSION, env!("CARGO_PKG_VERSION")),
-                KeyValue::new(
-                    DEPLOYMENT_ENVIRONMENT_NAME,
-                    std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string()),
-                ),
+                KeyValue::new(SERVICE_VERSION, service_version),
+                KeyValue::new(DEPLOYMENT_ENVIRONMENT_NAME, deployment_env),
             ],
             SCHEMA_URL,
         )
         .build()
 }
 
-fn init_meter_provider(
-    metric_exporters: &MetricsExporters,
-) -> Result<SdkMeterProvider, anyhow::Error> {
-    let otlp = metric_exporters.otlp.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("No metrics exporters configured, at least one is required")
-    })?;
+fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow::Error> {
+    let otlp = telemetry
+        .exporters
+        .as_ref()
+        .and_then(|exporters| exporters.metrics.as_ref())
+        .and_then(|metrics_exporters| metrics_exporters.otlp.as_ref())
+        .ok_or_else(|| {
+            anyhow::anyhow!("No metrics exporters configured, at least one is required")
+        })?;
     let exporter = match otlp.protocol.as_str() {
         "grpc" => opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
@@ -114,7 +128,7 @@ fn init_meter_provider(
         .build();
 
     let meter_provider = MeterProviderBuilder::default()
-        .with_resource(resource())
+        .with_resource(resource(telemetry))
         .with_reader(reader)
         .build();
 
@@ -123,12 +137,15 @@ fn init_meter_provider(
     Ok(meter_provider)
 }
 
-fn init_tracer_provider(
-    tracing_exporters: &TracingExporters,
-) -> Result<SdkTracerProvider, anyhow::Error> {
-    let otlp = tracing_exporters.otlp.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("No tracing exporters configured, at least one is required")
-    })?;
+fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyhow::Error> {
+    let otlp = telemetry
+        .exporters
+        .as_ref()
+        .and_then(|exporters| exporters.tracing.as_ref())
+        .and_then(|tracing_exporters| tracing_exporters.otlp.as_ref())
+        .ok_or_else(|| {
+            anyhow::anyhow!("No tracing exporters configured, at least one is required")
+        })?;
     let exporter = match otlp.protocol.as_str() {
         "grpc" => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -147,7 +164,7 @@ fn init_tracer_provider(
 
     let trace_provider = SdkTracerProvider::builder()
         .with_id_generator(RandomIdGenerator::default())
-        .with_resource(resource())
+        .with_resource(resource(telemetry))
         .with_batch_exporter(exporter)
         .build();
 
@@ -160,8 +177,8 @@ fn init_tracer_provider(
 /// Initialize tracing-subscriber and return TelemetryGuard for logging and opentelemetry-related termination processing
 pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow::Error> {
     let tracer_provider = if let Some(exporters) = &config.telemetry.exporters {
-        if let Some(tracing_exporters) = &exporters.tracing {
-            init_tracer_provider(tracing_exporters)?
+        if let Some(_tracing_exporters) = &exporters.tracing {
+            init_tracer_provider(&config.telemetry)?
         } else {
             SdkTracerProvider::builder().build()
         }
@@ -169,8 +186,8 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
         SdkTracerProvider::builder().build()
     };
     let meter_provider = if let Some(exporters) = &config.telemetry.exporters {
-        if let Some(metrics_exporters) = &exporters.metrics {
-            init_meter_provider(metrics_exporters)?
+        if let Some(_metrics_exporters) = &exporters.metrics {
+            init_meter_provider(&config.telemetry)?
         } else {
             SdkMeterProvider::builder().build()
         }
@@ -180,14 +197,14 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
     let env_filter = Logging::env_filter(&config.logging)?;
     let (logging_layer, logging_guard) = Logging::logging_layer(&config.logging)?;
 
-    let tracer = tracer_provider.tracer("tracing-otel-subscriber");
+    let tracer = tracer_provider.tracer("apollo-mcp-trace");
 
     tracing_subscriber::registry()
         .with(logging_layer)
         .with(env_filter)
         .with(MetricsLayer::new(meter_provider.clone()))
         .with(OpenTelemetryLayer::new(tracer))
-        .init();
+        .try_init()?;
 
     Ok(TelemetryGuard {
         tracer_provider,
@@ -211,5 +228,42 @@ impl Drop for TelemetryGuard {
             tracing::error!("{err:?}");
         }
         drop(self.logging_guard.take());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_config(
+        service_name: Option<&str>,
+        version: Option<&str>,
+        metrics: Option<MetricsExporters>,
+        tracing: Option<TracingExporters>,
+    ) -> Config {
+        Config {
+            telemetry: Telemetry {
+                exporters: Some(Exporters { metrics, tracing }),
+                service_name: service_name.map(|s| s.to_string()),
+                version: version.map(|v| v.to_string()),
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_metrics_only() {
+        let config = test_config(
+            Some("test-config"),
+            Some("1.0.0"),
+            Some(MetricsExporters {
+                otlp: Some(OTLPMetricExporter::default()),
+            }),
+            Some(TracingExporters {
+                otlp: Some(OTLPTracingExporter::default()),
+            }),
+        );
+        let guard = init_tracing_subscriber(&config);
+        assert!(guard.is_ok());
     }
 }
