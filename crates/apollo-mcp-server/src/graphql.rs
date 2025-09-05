@@ -447,27 +447,27 @@ mod test {
                 .find(|scope_metrics| scope_metrics.scope().name() == "apollo.mcp")
             {
                 for metric in scope_metrics.metrics() {
-                    if metric.name() == "apollo.mcp.operation.count" {
-                        if let AggregatedMetrics::U64(MetricData::Sum(data)) = metric.data() {
-                            for point in data.data_points() {
-                                let attributes = point.attributes();
-                                let mut attr_map = std::collections::HashMap::new();
-                                for kv in attributes {
-                                    attr_map.insert(kv.key.as_str(), kv.value.as_str());
-                                }
-                                assert_eq!(
-                                    attr_map.get("operation.id").map(|s| s.as_ref()),
-                                    Some("mock_operation")
-                                );
-                                assert_eq!(
-                                    attr_map.get("operation.type").map(|s| s.as_ref()),
-                                    Some("persisted_query")
-                                );
-                                assert_eq!(
-                                    attr_map.get("success"),
-                                    Some(&std::borrow::Cow::Borrowed("false"))
-                                );
+                    if metric.name() == "apollo.mcp.operation.count"
+                        && let AggregatedMetrics::U64(MetricData::Sum(data)) = metric.data()
+                    {
+                        for point in data.data_points() {
+                            let attributes = point.attributes();
+                            let mut attr_map = std::collections::HashMap::new();
+                            for kv in attributes {
+                                attr_map.insert(kv.key.as_str(), kv.value.as_str());
                             }
+                            assert_eq!(
+                                attr_map.get("operation.id").map(|s| s.as_ref()),
+                                Some("mock_operation")
+                            );
+                            assert_eq!(
+                                attr_map.get("operation.type").map(|s| s.as_ref()),
+                                Some("persisted_query")
+                            );
+                            assert_eq!(
+                                attr_map.get("success"),
+                                Some(&std::borrow::Cow::Borrowed("false"))
+                            );
                         }
                     }
                 }
