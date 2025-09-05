@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use headers::HeaderMapExt as _;
+use opentelemetry::trace::FutureExt;
+use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
 use rmcp::model::Implementation;
 use rmcp::{
@@ -32,6 +34,7 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
+    meter::get_meter,
     operations::{MutationMode, Operation, RawOperation},
 };
 
@@ -169,41 +172,51 @@ impl Running {
 }
 
 impl ServerHandler for Running {
+    #[tracing::instrument(skip(self))]
     async fn initialize(
         &self,
         _request: InitializeRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
+        let meter = get_meter();
+        meter
+            .u64_counter("apollo.mcp.initialize.count")
+            .build()
+            .add(1, &[]);
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
         Ok(self.get_info())
     }
 
+    #[tracing::instrument(skip(self, context), fields(tool_name = request.name.as_ref(), request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let result = match request.name.as_ref() {
+        let meter = get_meter();
+        let start = std::time::Instant::now();
+        let tool_name = request.name.clone();
+        let result = match tool_name.as_ref() {
             INTROSPECT_TOOL_NAME => {
                 self.introspect_tool
                     .as_ref()
-                    .ok_or(tool_not_found(&request.name))?
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(convert_arguments(request)?)
                     .await
             }
             SEARCH_TOOL_NAME => {
                 self.search_tool
                     .as_ref()
-                    .ok_or(tool_not_found(&request.name))?
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(convert_arguments(request)?)
                     .await
             }
             EXPLORER_TOOL_NAME => {
                 self.explorer_tool
                     .as_ref()
-                    .ok_or(tool_not_found(&request.name))?
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(convert_arguments(request)?)
                     .await
             }
@@ -223,7 +236,7 @@ impl ServerHandler for Running {
 
                 self.execute_tool
                     .as_ref()
-                    .ok_or(tool_not_found(&request.name))?
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(graphql::Request {
                         input: Value::from(request.arguments.clone()),
                         endpoint: &self.endpoint,
@@ -234,7 +247,7 @@ impl ServerHandler for Running {
             VALIDATE_TOOL_NAME => {
                 self.validate_tool
                     .as_ref()
-                    .ok_or(tool_not_found(&request.name))?
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(convert_arguments(request)?)
                     .await
             }
@@ -261,9 +274,10 @@ impl ServerHandler for Running {
                     .lock()
                     .await
                     .iter()
-                    .find(|op| op.as_ref().name == request.name)
-                    .ok_or(tool_not_found(&request.name))?
+                    .find(|op| op.as_ref().name == tool_name)
+                    .ok_or(tool_not_found(&tool_name))?
                     .execute(graphql_request)
+                    .with_context(Context::current())
                     .await
             }
         };
@@ -273,14 +287,37 @@ impl ServerHandler for Running {
             health_check.record_rejection();
         }
 
+        let attributes = vec![
+            KeyValue::new(
+                "success",
+                result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
+            ),
+            KeyValue::new("tool_name", tool_name),
+        ];
+        // Record response time and status
+        meter
+            .f64_histogram("apollo.mcp.tool.duration")
+            .build()
+            .record(start.elapsed().as_millis() as f64, &attributes);
+        meter
+            .u64_counter("apollo.mcp.tool.count")
+            .build()
+            .add(1, &attributes);
+
         result
     }
 
+    #[tracing::instrument(skip_all)]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        let meter = get_meter();
+        meter
+            .u64_counter("apollo.mcp.list_tools.count")
+            .build()
+            .add(1, &[]);
         Ok(ListToolsResult {
             next_cursor: None,
             tools: self
@@ -299,6 +336,11 @@ impl ServerHandler for Running {
     }
 
     fn get_info(&self) -> ServerInfo {
+        let meter = get_meter();
+        meter
+            .u64_counter("apollo.mcp.get_info.count")
+            .build()
+            .add(1, &[]);
         ServerInfo {
             server_info: Implementation {
                 name: "Apollo MCP Server".to_string(),

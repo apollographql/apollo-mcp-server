@@ -36,7 +36,7 @@ pub struct Search {
 }
 
 /// Input for the search tool.
-#[derive(JsonSchema, Deserialize)]
+#[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
     /// The search terms
     terms: Vec<String>,
@@ -87,6 +87,7 @@ impl Search {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
         let mut root_paths = self
             .index
