@@ -132,8 +132,6 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
         .with_reader(reader)
         .build();
 
-    global::set_meter_provider(meter_provider.clone());
-
     Ok(meter_provider)
 }
 
@@ -162,16 +160,13 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         }
     };
 
-    let trace_provider = SdkTracerProvider::builder()
+    let tracer_provider = SdkTracerProvider::builder()
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource(telemetry))
         .with_batch_exporter(exporter)
         .build();
 
-    global::set_text_map_propagator(TraceContextPropagator::new());
-    global::set_tracer_provider(trace_provider.clone());
-
-    Ok(trace_provider)
+    Ok(tracer_provider)
 }
 
 /// Initialize tracing-subscriber and return TelemetryGuard for logging and opentelemetry-related termination processing
@@ -198,6 +193,10 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
     let (logging_layer, logging_guard) = Logging::logging_layer(&config.logging)?;
 
     let tracer = tracer_provider.tracer("apollo-mcp-trace");
+
+    global::set_meter_provider(meter_provider.clone());
+    global::set_text_map_propagator(TraceContextPropagator::new());
+    global::set_tracer_provider(tracer_provider.clone());
 
     tracing_subscriber::registry()
         .with(logging_layer)
@@ -252,7 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_metrics_only() {
+    async fn test_full_config() {
         let config = test_config(
             Some("test-config"),
             Some("1.0.0"),
@@ -263,7 +262,53 @@ mod tests {
                 otlp: Some(OTLPTracingExporter::default()),
             }),
         );
+        // init_tracing_subscriber can only be called once in the test suite to avoid
+        // panic when calling global::set_tracer_provider multiple times
         let guard = init_tracing_subscriber(&config);
         assert!(guard.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_meter_provider() {
+        let config = test_config(
+            None,
+            None,
+            Some(MetricsExporters {
+                otlp: Some(OTLPMetricExporter {
+                    protocol: "bogus".to_string(),
+                    endpoint: "http://localhost:4317".to_string(),
+                }),
+            }),
+            None,
+        );
+        let result = init_meter_provider(&config.telemetry);
+        assert!(
+            result
+                .err()
+                .map(|e| e.to_string().contains("Unsupported OTLP protocol"))
+                .unwrap_or(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracer_provider() {
+        let config = test_config(
+            None,
+            None,
+            None,
+            Some(TracingExporters {
+                otlp: Some(OTLPTracingExporter {
+                    protocol: "bogus".to_string(),
+                    endpoint: "http://localhost:4317".to_string(),
+                }),
+            }),
+        );
+        let result = init_tracer_provider(&config.telemetry);
+        assert!(
+            result
+                .err()
+                .map(|e| e.to_string().contains("Unsupported OTLP protocol"))
+                .unwrap_or(false)
+        );
     }
 }
