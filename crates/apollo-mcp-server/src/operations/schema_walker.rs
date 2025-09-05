@@ -9,11 +9,14 @@ use serde_json::{Map, Value};
 
 use crate::custom_scalar_map::CustomScalarMap;
 
-pub(super) mod name;
-pub(super) mod r#type;
+mod name;
+mod r#type;
 
-/// Walk a top-level type and generate a JSON Schema
-pub fn walk(
+/// Convert a GraphQL type into a JSON Schema.
+///
+/// Note: This is recursive, which might cause a stack overflow if the type is
+/// sufficiently nested / complex.
+pub fn type_to_schema(
     r#type: &Type,
     schema: &GraphQLSchema,
     definitions: &mut Map<String, Value>,
