@@ -543,7 +543,7 @@ fn get_json_schema(
                         .map(|d| d.join("#"))
                 });
 
-            let nested = schema_walker::walk(
+            let nested = schema_walker::type_to_schema(
                 variable.ty.as_ref(),
                 graphql_schema,
                 &mut definitions,
@@ -656,7 +656,7 @@ mod tests {
         .expect("schema should be valid")
     });
 
-    /// JSON-ifies the input, sorting the object keys
+    /// Serializes the input to JSON, sorting the object keys
     macro_rules! to_sorted_json {
         ($json:expr) => {{
             let mut j = serde_json::json!($json);
