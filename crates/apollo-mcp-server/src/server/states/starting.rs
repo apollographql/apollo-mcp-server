@@ -148,6 +148,7 @@ impl Starting {
             mutation_mode: self.config.mutation_mode,
             disable_type_description: self.config.disable_type_description,
             disable_schema_description: self.config.disable_schema_description,
+            disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
         };
 

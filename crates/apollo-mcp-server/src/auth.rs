@@ -46,6 +46,9 @@ pub struct Config {
 
     /// Supported OAuth scopes by this resource server
     pub scopes: Vec<String>,
+
+    /// Whether to disable the auth token passthrough to upstream API
+    pub disable_auth_token_passthrough: bool,
 }
 
 impl Config {

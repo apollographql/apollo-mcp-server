@@ -109,6 +109,8 @@ async fn main() -> anyhow::Result<()> {
         .then(|| config.graphos.graph_ref())
         .transpose()?;
 
+    let transport = config.transport.clone();
+
     Ok(Server::builder()
         .transport(config.transport)
         .schema_source(schema_source)
@@ -125,6 +127,23 @@ async fn main() -> anyhow::Result<()> {
         .mutation_mode(config.overrides.mutation_mode)
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
+        .disable_auth_token_passthrough(match transport {
+            apollo_mcp_server::server::Transport::StreamableHttp {
+                auth,
+                address: _,
+                port: _,
+            } => auth
+                .map(|a| a.disable_auth_token_passthrough)
+                .unwrap_or(true),
+            apollo_mcp_server::server::Transport::SSE {
+                auth,
+                address: _,
+                port: _,
+            } => auth
+                .map(|a| a.disable_auth_token_passthrough)
+                .unwrap_or(true),
+            apollo_mcp_server::server::Transport::Stdio => false,
+        })
         .custom_scalar_map(
             config
                 .custom_scalars
