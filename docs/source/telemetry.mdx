@@ -1,14 +1,10 @@
-# OpenTelemetry Integration
+---
+title: OpenTelemetry Integration
+---
 
-
-## Feature Overview
-
-
-This feature integrates the Apollo MCP Server with the OpenTelemetry standard to provide enhanced observability into its operations. It emits detailed traces and metrics, allowing operators to monitor the server's health, performance, and behavior in detail.
-
+The Apollo MCP Server exports telemetry data with the OpenTelemetry Protocol to provide enhanced observability into its operations. It emits detailed traces and metrics, allowing operators to monitor the server's health, performance, and behavior in detail.
 
 The key capabilities include:
-
 
 *   **Distributed Tracing**: Captures the entire lifecycle of a request, from the initial MCP connection to individual tool executions and downstream GraphQL API calls. It propagates trace context to other instrumented services (like a Router or subgraphs), enabling a unified view of a request across multiple systems.
 
@@ -16,14 +12,11 @@ The key capabilities include:
 
 *   **Standardized Egress**: All telemetry data is exported using the standard OpenTelemetry Protocol (OTLP) over HTTP or gRPC, ensuring compatibility with a wide range of observability backends and collectors (e.g., Jaeger, Prometheus, Datadog).
 
+This integration provides visibility that is crucial for diagnosing errors, identifying performance bottlenecks, and understanding how different tools are being used.
 
-This integration provides deep visibility that is crucial for diagnosing errors, identifying performance bottlenecks, and understanding how different tools are being used.
+## Usage Guide
 
-
-## Getting Started / Usage Guide
-
-
-To start receiving telemetry, you need an OpenTelemetry Collector to which the MCP server can export metrics and traces to.
+To start exporting telemetry from the Apollo MCP Server, you need an OpenTelemetry Collector to which the MCP server can export metrics and traces to.
 These are often run as side cars or agents alongside deployed services and need to be accessible over the network to your instance of the Apollo MCP Server.
 
 Update your config.yaml to configure the MCP Server with the telemetry section. This will point the MCP Server at your collector on startup.
@@ -41,9 +34,6 @@ telemetry:
         protocol: "grpc"
 ```
 With this configuration, the server will send traces and metrics to an OpenTelemetry Protocol compatible collector running at http://localhost:4317.
-
----
-
 
 ## Configuration Reference
 
@@ -72,45 +62,28 @@ The OpenTelemetry integration is configured via the `telemetry` section in your 
 | protocol | String | The OTLP protocol to use. Supported values are grpc and http/protobuf. | grpc |
 
 
-### Emitted Metrics
-
+## Emitted Metrics
 
 The server emits the following custom metrics, which are invaluable for monitoring and alerting. All duration metrics are in milliseconds.
 
-
 | Metric Name | Type | Description | Attributes |
-
 |---|---|---|---|
-
 | `apollo.mcp.initialize.count` | Counter | Incremented for each `initialize` request. | (none) |
-
 | `apollo.mcp.list_tools.count` | Counter | Incremented for each `list_tools` request. | (none) |
-
 | `apollo.mcp.get_info.count` | Counter | Incremented for each `get_info` request. | (none) |
-
 | `apollo.mcp.tool.count` | Counter | Incremented for each tool call. | `tool_name`, `success` (bool) |
-
 | `apollo.mcp.tool.duration` | Histogram | Measures the execution duration of each tool call. | `tool_name`, `success` (bool) |
-
 | `apollo.mcp.operation.count`| Counter | Incremented for each downstream GraphQL operation executed by a tool. | `operation.id`, `operation.type` ("persisted_query" or "operation"), `success` (bool) |
-
 | `apollo.mcp.operation.duration`| Histogram | Measures the round-trip duration of each downstream GraphQL operation. | `operation.id`, `operation.type`, `success` (bool) |
-
 
 In addition to these custom metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
 
 
-### Emitted Traces
-
+## Emitted Traces
 
 Spans are generated for the following actions:
 
-
 *   **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
-
 *   **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
-
 *   **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
-
 *   **Downstream GraphQL Calls**: The `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent` and `tracestate` headers are propagated automatically, enabling distributed traces.
-
