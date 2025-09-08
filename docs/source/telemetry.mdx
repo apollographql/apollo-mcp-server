@@ -1,0 +1,168 @@
+---
+title: OpenTelemetry Integration
+---
+
+AI agents create unpredictable usage patterns and complex request flows that are hard to monitor with traditional methods. The Apollo MCP Server's OpenTelemetry integration provides the visibility you need to run a reliable service for AI agents.
+
+## What you can monitor
+
+- **Agent behavior**: Which tools and operations are used most frequently
+- **Performance**: Response times and bottlenecks across tool executions and GraphQL operations  
+- **Reliability**: Error rates, failed operations, and request success patterns
+- **Distributed request flows**: Complete traces from agent request through your Apollo Router and subgraphs, with automatic trace context propagation
+
+## How it works
+
+The server exports metrics, traces, and events using the OpenTelemetry Protocol (OTLP), ensuring compatibility with your existing observability stack and seamless integration with other instrumented Apollo services.
+
+## Usage guide
+
+### Quick start: Local development
+
+The fastest way to see Apollo MCP Server telemetry in action is with a local setup that requires only Docker.
+
+#### 5-minute setup
+1. Start local observability stack: 
+<code>docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm</code>
+1. Add telemetry config to your `config.yaml`:
+   ```yaml
+   telemetry:
+     exporters:
+       metrics:
+         otlp:
+           endpoint: "http://localhost:4318/v1/metrics"
+           protocol: "http/protobuf"
+       tracing:
+         otlp:
+           endpoint: "http://localhost:4318/v1/traces" 
+           protocol: "http/protobuf"
+   ```
+1. Restart your MCP server with the updated config
+1. Open Grafana at `http://localhost:3000` and explore your telemetry data. Default credentials are username `admin` with password `admin`.
+
+For detailed steps and dashboard examples, see the [complete Grafana setup guide](guides/telemetry-grafana.mdx).
+
+### Production deployment
+
+For production environments, configure your MCP server to send telemetry to any OTLP-compatible backend. The Apollo MCP Server uses standard OpenTelemetry protocols, ensuring compatibility with all major observability platforms.
+
+#### Configuration example
+
+```yaml
+telemetry:
+  service_name: "mcp-server-prod"      # Custom service name
+  exporters:
+    metrics:
+      otlp:
+        endpoint: "https://your-metrics-endpoint"
+        protocol: "http/protobuf"       # or "grpc"
+    tracing:
+      otlp:
+        endpoint: "https://your-traces-endpoint" 
+        protocol: "http/protobuf"
+```
+
+#### Observability platform integration
+
+The MCP server works with any OTLP-compatible backend. Consult your provider's documentation for specific endpoint URLs and authentication:
+
+- [Datadog OTLP Integration](https://docs.datadoghq.com/tracing/setup_overview/open_standards/otlp_ingest_in_datadog/) - Native OTLP support
+- [New Relic OpenTelemetry](https://docs.newrelic.com/docs/more-integrations/open-source-telemetry-integrations/opentelemetry/) - Direct OTLP ingestion
+- [AWS Observability](https://aws-otel.github.io/docs/introduction) - Via AWS Distro for OpenTelemetry
+- [Grafana Cloud](https://grafana.com/docs/grafana-cloud/send-data/otlp/) - Hosted Grafana with OTLP
+- [Honeycomb](https://docs.honeycomb.io/getting-data-in/opentelemetry/) - OpenTelemetry-native platform
+- [Jaeger](https://www.jaegertracing.io/docs/1.50/deployment/) - Self-hosted tracing
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/deployment/) - Self-hosted with flexible routing
+
+#### Production configuration best practices
+
+##### Environment and security
+```yaml
+# Set via environment variable
+export ENVIRONMENT=production
+
+telemetry:
+  service_name: "apollo-mcp-server"
+  version: "1.0.0"                     # Version for correlation
+  exporters:
+    metrics:
+      otlp:
+        endpoint: "https://secure-endpoint"  # Always use HTTPS
+        protocol: "http/protobuf"           # Generally more reliable than gRPC
+```
+
+##### Performance considerations
+- **Protocol choice**: `http/protobuf` is often more reliable through firewalls and load balancers than `grpc`
+- **Batch export**: OpenTelemetry automatically batches telemetry data for efficiency
+- **Network timeouts**: Default timeouts are usually appropriate, but monitor for network issues
+
+##### Resource correlation
+- The `ENVIRONMENT` variable automatically tags all telemetry with `deployment.environment.name`
+- Use consistent `service_name` across all your Apollo infrastructure (Router, subgraphs, MCP server)
+- Set `version` to track releases and correlate issues with deployments
+
+#### Troubleshooting
+
+##### Common issues
+- **Connection refused**: Verify endpoint URL and network connectivity
+- **Authentication errors**: Check if your provider requires API keys or special headers
+- **Missing data**: Confirm your observability platform supports OTLP and is configured to receive data
+- **High memory usage**: Monitor telemetry export frequency and consider sampling for high-volume environments
+
+##### Verification
+```bash
+# Check if telemetry is being exported (look for connection attempts)
+curl -v https://your-endpoint/v1/metrics
+
+# Monitor server logs for OpenTelemetry export errors
+./apollo-mcp-server --config config.yaml 2>&1 | grep -i "otel\|telemetry"
+```
+
+## Configuration Reference
+
+The OpenTelemetry integration is configured via the `telemetry` section of the [configuration reference page](/apollo-mcp-server/config-file#telemetry).
+
+## Emitted Metrics
+
+The server emits the following metrics, which are invaluable for monitoring and alerting. All duration metrics are in milliseconds.
+
+| Metric Name | Type | Description | Attributes |
+|---|---|---|---|
+| `apollo.mcp.initialize.count` | Counter | Incremented for each `initialize` request. | (none) |
+| `apollo.mcp.list_tools.count` | Counter | Incremented for each `list_tools` request. | (none) |
+| `apollo.mcp.get_info.count` | Counter | Incremented for each `get_info` request. | (none) |
+| `apollo.mcp.tool.count` | Counter | Incremented for each tool call. | `tool_name`, `success` (bool) |
+| `apollo.mcp.tool.duration` | Histogram | Measures the execution duration of each tool call. | `tool_name`, `success` (bool) |
+| `apollo.mcp.operation.count`| Counter | Incremented for each downstream GraphQL operation executed by a tool. | `operation.id`, `operation.type` ("persisted_query" or "operation"), `success` (bool) |
+| `apollo.mcp.operation.duration`| Histogram | Measures the round-trip duration of each downstream GraphQL operation. | `operation.id`, `operation.type`, `success` (bool) |
+
+In addition to these metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
+
+
+## Emitted Traces
+
+Spans are generated for the following actions:
+
+-   **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
+-   **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
+-   **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
+-   **Downstream GraphQL Calls**: The `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent` and `tracestate` headers are propagated automatically, enabling distributed traces.
+
+### Cardinality Control
+
+High-cardinality metrics can occur in MCP Servers with large number of tools or when clients are allowed to generate freeform operations.
+To prevent performance issues and reduce costs, the Apollo MCP Server provides two mechanisms to control metric cardinality, trace sampling and attribute filtering.
+
+#### Trace Sampling
+
+Configure the Apollo MCP Server to sample traces sent to your OpenTelemetry Collector using the `sampler` field in the `telemetry.tracing` configuration:
+
+- **always_on** - Send every trace
+- **always_off** - Disable trace collection entirely
+- **0.0-1.0** - Send a specified percentage of traces
+
+#### Attribute Filtering
+
+The Apollo MCP Server configuration also allows for omitting attributes such as `tool_name` or `operation_id` that can often lead to high cardinality metrics in systems that treat each collected attribute value as a new metric.
+Both traces and metrics have an `omitted_attributes` option that takes a list of strings. Any attribute name in the list will be filtered out and not sent to the collector.
+For detailed configuration options, see the [telemetry configuration reference](/apollo-mcp-server/config-file#telemetry).
