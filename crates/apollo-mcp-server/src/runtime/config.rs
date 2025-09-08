@@ -8,7 +8,7 @@ use url::Url;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides,
+    introspection::Introspection, logging::Logging, overrides::Overrides, telemetry::Telemetry,
 };
 
 /// Configuration for the MCP server
@@ -42,6 +42,9 @@ pub struct Config {
 
     /// Logging configuration
     pub logging: Logging,
+
+    /// Telemetry configuration
+    pub telemetry: Telemetry,
 
     /// Operations
     pub operations: OperationSource,
