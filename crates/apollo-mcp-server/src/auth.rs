@@ -48,6 +48,7 @@ pub struct Config {
     pub scopes: Vec<String>,
 
     /// Whether to disable the auth token passthrough to upstream API
+    #[serde(default)]
     pub disable_auth_token_passthrough: bool,
 }
 
