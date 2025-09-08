@@ -30,6 +30,8 @@ items:
         href: "./health-checks"
   - label: "Authorization"
     href: "./auth"
+  - label: "Telemetry"
+    href: "./telemetry"
   - label: "Best Practices"
     href: "./best-practices"
   - label: "Licensing"
@@ -40,3 +42,5 @@ items:
     children:
       - label: "Authorization with Auth0"
         href: "./guides/auth-auth0"
+      - label: "Telemetry with Grafana"
+        href: "./guides/telemetry-grafana"
