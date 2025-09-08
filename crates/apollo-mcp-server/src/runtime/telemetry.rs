@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_full_config() {
+    async fn guard_is_provided_when_tracing_configued() {
         let config = test_config(
             Some("test-config"),
             Some("1.0.0"),
@@ -269,7 +269,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_meter_provider() {
+    async fn unknown_protocol_raises_meter_provider_error() {
         let config = test_config(
             None,
             None,
@@ -291,7 +291,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_tracer_provider() {
+    async fn unknown_protocol_raises_tracer_provider_error() {
         let config = test_config(
             None,
             None,
