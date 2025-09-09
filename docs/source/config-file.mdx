@@ -165,13 +165,14 @@ The available fields depend on the value of the nested `type` key:
 
 These fields are under the top-level `transport` key, nested under the `auth` key. Learn more about [authorization and authentication](/apollo-mcp-server/auth).
 
-| Option                   | Type           | Default | Description                                                                                        |
-| :----------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
-| `servers`                | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
-| `audiences`              | `List<string>` |         | List of accepted audiences from upstream signed JWTs                                               |
-| `resource`               | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
-| `resource_documentation` | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
-| `scopes`                 | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
+| Option                            | Type           | Default | Description                                                                                        |
+| :-------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
+| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
+| `audiences`                       | `List<string>` |         | List of accepted audiences from upstream signed JWTs                                               |
+| `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
+| `resource_documentation`          | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
+| `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
+| `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                  |
 
 Below is an example configuration using `StreamableHTTP` transport with authentication:
 
