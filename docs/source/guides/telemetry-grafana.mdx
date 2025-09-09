@@ -1,4 +1,6 @@
-# Server Telemetry with Grafana
+---
+title: Server Telemetry with Grafana
+---
 
 ## Example: Grafana and Open Telemetry Collector
 
@@ -14,7 +16,7 @@ Start up the [Grafana LGTM](https://grafana.com/docs/opentelemetry/docker-lgtm/)
 docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm
 ```
 
-This starts up the OTel Collector for data ingestion on port 4317 for gRPC and 4318 for HTTP.
+This starts up the [Open Telemetry Collector](https://opentelemetry.io/docs/collector/) for data ingestion on port 4317 for gRPC and 4318 for HTTP.
 The Grafana web application is started on port 3000 http://localhost:3000/ where you can log in using the default credentials `admin`/`admin`
 
 ### 2. Configure and Run the MCP Server
@@ -43,7 +45,7 @@ Run your apollo-mcp-server binary or Docker container
 
 ### 3. Observe Telemetry
 
-As you interact with the MCP server, you will see trace and metric data appear in the Grafana UI under Drilldown > Traces and Drilldown > Metrics
+As you interact with the MCP server, you will see trace and metric data appear in the Grafana UI under `Drilldown > Traces` and `Drilldown > Metrics`
 
 
 ### 4. Import sample dashboard

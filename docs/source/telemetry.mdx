@@ -7,9 +7,7 @@ The Apollo MCP Server exports telemetry data with the OpenTelemetry Protocol to 
 The key capabilities include:
 
 *   **Distributed Tracing**: Captures the entire lifecycle of a request, from the initial MCP connection to individual tool executions and downstream GraphQL API calls. It propagates trace context to other instrumented services (like a Router or subgraphs), enabling a unified view of a request across multiple systems.
-
 *   **Performance Metrics**: Collects key performance indicators (KPIs) for server and tool activity. This includes counts and durations for specific MCP operations (e.g., `call_tool`, `list_tools`) and the GraphQL queries they execute.
-
 *   **Standardized Egress**: All telemetry data is exported using the standard OpenTelemetry Protocol (OTLP) over HTTP or gRPC, ensuring compatibility with a wide range of observability backends and collectors (e.g., Jaeger, Prometheus, Datadog).
 
 This integration provides visibility that is crucial for diagnosing errors, identifying performance bottlenecks, and understanding how different tools are being used.
@@ -21,7 +19,7 @@ These are often run as side cars or agents alongside deployed services and need 
 
 Update your config.yaml to configure the MCP Server with the telemetry section. This will point the MCP Server at your collector on startup.
 
-```
+```yaml
 telemetry:
   exporters:
     metrics:
