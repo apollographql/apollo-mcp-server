@@ -413,3 +413,44 @@ where
     let response_body: graphql_client::Response<Query::ResponseData> = res.json().await?;
     Ok(response_body)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use futures::stream::StreamExt;
+    use secrecy::SecretString;
+    use std::str::FromStr;
+    use std::time::Duration;
+    use url::Url;
+
+    #[tokio::test]
+    async fn test_stream_from_uplink() {
+        for url in &[GCP_URL, AWS_URL] {
+            if let (Ok(apollo_key), Ok(apollo_graph_ref)) = (
+                std::env::var("TEST_APOLLO_KEY"),
+                std::env::var("TEST_APOLLO_GRAPH_REF"),
+            ) {
+                let results =
+                    stream_from_uplink::<schema::SupergraphSdlQuery, String>(UplinkConfig {
+                        apollo_key: SecretString::from(apollo_key),
+                        apollo_graph_ref,
+                        endpoints: Some(Endpoints::fallback(vec![
+                            Url::from_str(url).expect("url must be valid"),
+                        ])),
+                        poll_interval: Duration::from_secs(1),
+                        timeout: Duration::from_secs(5),
+                    })
+                    .take(1)
+                    .collect::<Vec<_>>()
+                    .await;
+
+                let schema = results
+                    .first()
+                    .unwrap_or_else(|| panic!("expected one result from {url}"))
+                    .as_ref()
+                    .unwrap_or_else(|_| panic!("schema should be OK from {url}"));
+                assert!(schema.contains("type Product"))
+            }
+        }
+    }
+}
