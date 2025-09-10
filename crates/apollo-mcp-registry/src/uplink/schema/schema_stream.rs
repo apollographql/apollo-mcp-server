@@ -99,47 +99,81 @@ impl From<supergraph_sdl_query::ResponseData> for UplinkResponse<SchemaState> {
 
 #[cfg(test)]
 mod test {
-    use std::str::FromStr;
-    use std::time::Duration;
+    use super::*;
 
-    use futures::stream::StreamExt;
-    use secrecy::SecretString;
-    use url::Url;
+    #[test]
+    fn test_uplink_request_to_graphql_variables() {
+        let request = UplinkRequest {
+            api_key: "test_key".to_string(),
+            graph_ref: "test_ref".to_string(),
+            id: Some("test_id".to_string()),
+        };
 
-    use crate::uplink::AWS_URL;
-    use crate::uplink::Endpoints;
-    use crate::uplink::GCP_URL;
-    use crate::uplink::UplinkConfig;
-    use crate::uplink::schema::schema_stream::SupergraphSdlQuery;
-    use crate::uplink::stream_from_uplink;
+        let variables: supergraph_sdl_query::Variables = request.into();
 
-    #[tokio::test]
-    async fn integration_test() {
-        for url in &[GCP_URL, AWS_URL] {
-            if let (Ok(apollo_key), Ok(apollo_graph_ref)) = (
-                std::env::var("TEST_APOLLO_KEY"),
-                std::env::var("TEST_APOLLO_GRAPH_REF"),
-            ) {
-                let results = stream_from_uplink::<SupergraphSdlQuery, String>(UplinkConfig {
-                    apollo_key: SecretString::from(apollo_key),
-                    apollo_graph_ref,
-                    endpoints: Some(Endpoints::fallback(vec![
-                        Url::from_str(url).expect("url must be valid"),
-                    ])),
-                    poll_interval: Duration::from_secs(1),
-                    timeout: Duration::from_secs(5),
-                })
-                .take(1)
-                .collect::<Vec<_>>()
-                .await;
+        assert_eq!(variables.api_key, "test_key");
+        assert_eq!(variables.graph_ref, "test_ref");
+        assert_eq!(variables.if_after_id, Some("test_id".to_string()));
+    }
 
-                let schema = results
-                    .first()
-                    .unwrap_or_else(|| panic!("expected one result from {url}"))
-                    .as_ref()
-                    .unwrap_or_else(|_| panic!("schema should be OK from {url}"));
-                assert!(schema.contains("type Product"))
-            }
-        }
+    #[test]
+    fn test_graphql_response_to_uplink_response_new() {
+        let response = supergraph_sdl_query::ResponseData {
+            router_config: SupergraphSdlQueryRouterConfig::RouterConfigResult(
+                supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnRouterConfigResult {
+                    supergraph_sdl: "test_sdl".to_string(),
+                    id: "result_id".to_string(),
+                    min_delay_seconds: 42.0,
+                },
+            ),
+        };
+
+        let uplink_response: UplinkResponse<String> = response.into();
+
+        assert!(matches!(
+            uplink_response,
+            UplinkResponse::New { response, id, delay }
+            if response == "test_sdl" && id == "result_id" && delay == 42
+        ));
+    }
+
+    #[test]
+    fn test_graphql_response_to_uplink_response_unchanged() {
+        let response = supergraph_sdl_query::ResponseData {
+            router_config: SupergraphSdlQueryRouterConfig::Unchanged(
+                supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnUnchanged {
+                    id: "unchanged_id".to_string(),
+                    min_delay_seconds: 30.0,
+                },
+            ),
+        };
+
+        let uplink_response: UplinkResponse<String> = response.into();
+
+        assert!(matches!(
+            uplink_response,
+            UplinkResponse::Unchanged { id, delay }
+            if id == Some("unchanged_id".to_string()) && delay == Some(30)
+        ));
+    }
+
+    #[test]
+    fn test_graphql_response_to_uplink_response_error() {
+        let response = supergraph_sdl_query::ResponseData {
+            router_config: SupergraphSdlQueryRouterConfig::FetchError(
+                supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnFetchError {
+                    code: FetchErrorCode::RETRY_LATER,
+                    message: "Try again later".to_string(),
+                },
+            ),
+        };
+
+        let uplink_response: UplinkResponse<String> = response.into();
+
+        assert!(matches!(
+            uplink_response,
+            UplinkResponse::Error { retry_later, code, message }
+            if retry_later && code == "RETRY_LATER" && message == "Try again later"
+        ));
     }
 }
