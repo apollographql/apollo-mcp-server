@@ -125,13 +125,9 @@ fn tool_description(
         "Get GraphQL type information - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements;".to_string()
     } else {
         format!(
-            "Get detailed information about types from the GraphQL schema.{}{}",
-            root_query_type
-                .map(|t| format!(" Use the type name `{t}` to get root query fields."))
-                .unwrap_or_default(),
-            root_mutation_type
-                .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
-                .unwrap_or_default()
+            "Get information about a given GraphQL type defined in the schema. Instructions: Always use this tool first to get the fields for the root query ({} type) or mutation ({} type), then use the search tool with all of the relevant field return type and argument input types (ignore default GraphQL scalars) as search terms, only use this tool once when fulfilling a request.",
+            root_query_type.as_deref().unwrap_or("Query"),
+            root_mutation_type.as_deref().unwrap_or("Mutation")
         )
     }
 }

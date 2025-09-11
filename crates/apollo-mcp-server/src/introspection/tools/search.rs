@@ -75,7 +75,7 @@ impl Search {
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
                 format!(
-                    "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. For best results, use specific type names (which can be discovered using the introspect tool starting from the root Query or Mutation types). Avoid reusing previously searched terms for more efficient exploration.{}",
+                    "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: For best results, use specific type names (which can be discovered using the introspect tool starting from the root Query or Mutation types). Avoid reusing previously searched terms for more efficient exploration.{}",
                     if minify {
                         " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements"
                     } else {
