@@ -246,4 +246,36 @@ mod tests {
             "Expected to find the createUser mutation in search results"
         );
     }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_tool_description_non_minified(schema: Valid<Schema>) {
+        let schema = Arc::new(Mutex::new(schema));
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
+            .expect("Failed to create search tool");
+
+        let description = search.tool.description.unwrap();
+
+        assert!(
+            description
+                .contains("Search a GraphQL schema for types matching the provided search terms")
+        );
+        assert!(description.contains("Instructions: For best results, use specific type names"));
+        // Should not contain minification legend
+        assert!(!description.contains("T=type,I=input"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_tool_description_minified(schema: Valid<Schema>) {
+        let schema = Arc::new(Mutex::new(schema));
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, true)
+            .expect("Failed to create search tool");
+
+        let description = search.tool.description.unwrap();
+
+        // Should contain minification legend
+        assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
+        assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
 }

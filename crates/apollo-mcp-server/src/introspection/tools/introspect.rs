@@ -136,3 +136,51 @@ fn tool_description(
 fn default_depth() -> usize {
     1
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apollo_compiler::Schema;
+    use apollo_compiler::validation::Valid;
+    use rstest::{fixture, rstest};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
+
+    #[fixture]
+    fn schema() -> Valid<Schema> {
+        Schema::parse(TEST_SCHEMA, "schema.graphql")
+            .expect("Failed to parse test schema")
+            .validate()
+            .expect("Failed to validate test schema")
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_tool_description(schema: Valid<Schema>) {
+        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, false);
+
+        let description = introspect.tool.description.unwrap();
+
+        assert!(
+            description
+                .contains("Get information about a given GraphQL type defined in the schema")
+        );
+        assert!(description.contains("Instructions: Always use this tool first"));
+        // Should not contain minification legend
+        assert!(!description.contains("T=type,I=input"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_tool_description_minified(schema: Valid<Schema>) {
+        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, true);
+
+        let description = introspect.tool.description.unwrap();
+
+        // Should contain minification legend
+        assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
+        assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
+}
