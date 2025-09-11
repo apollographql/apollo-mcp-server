@@ -225,33 +225,22 @@ Before continuing, you need to set up the Auth0 client to accept an additional c
 
 </ExpansionPanel>
 
-## Step 5: Make requests with an MCP Client (Claude)
+## Step 5: Make requests with an MCP Client (Goose)
 
 In order to get the full experience of using and MCP server authorization, you'll want to use an LLM of some sort.
-Anthropic's Claude provides an accessible method of connecting to an MCP server, through [their Custom Connector feature](https://support.anthropic.com/en/articles/11175166-getting-started-with-custom-connectors-using-remote-mcp),
-which is available to paid Claude subscribers. If you don't have a paid subscription, or want to try Claude out without deploying your MCP Server behind HTTPS (a requirement for Custom Connectors),
-follow these steps to get Claude Desktop working locally:
+There are many different AI assistants, but a particularly developer-friendly client for interacting with many of them is [Goose](https://block.github.io/goose/).
+Goose allows you to choose between many different LLMs and also provides some built in functionality for connecting to MCP servers, called [Extensions](https://block.github.io/goose/docs/getting-started/using-extensions).
+To connect the LLM of your choice with your MCP server in Goose CLI, follow these steps after [you've installed and configured Goose](https://block.github.io/goose/docs/getting-started/installation):
 
-1. Navigate to **Settings > Developer**.
-1. Click **Edit Config** and open `claude_desktop_config.json` in your text editor.
-1. If there are any JSON keys other than `mcpServers` in the file, leave them alone, but make sure you add your local MCP Server to that key:
-  ```json title="claude_desktop_config.json" {3-11}
-  {
-    "mcpServers": {
-      "theSpaceDevs": {
-        "command": "npx",
-        "args": [
-          "mcp-remote",
-          "http://127.0.0.1:5000/mcp",
-          "--transport",
-          "http-first"
-        ]
-      }
-    }
-  }
-  ```
-  1. Quit Claude Desktop and open it back up. Claude will open a browser window for the OAuth flow and turn on the operations configured for your MCP Server.
-  1. With the `GetAstronautsCurrentlyInSpace` tool enabled, provide a prompt like "What astronauts are currently in space?" and allow Claude to use your tool, when prompted.
+1. In your terminal, run `goose configure`.
+1. At the prompt "What would you like to configure?", select "Add Extension".
+1. In response to "What type of extension would you like to add?", select “Command Line Extension”.
+1. When asked, give your extension a name. Something like `mcp-auth-quickstart` works great here.
+1. The command you should enter to the next prompt ("What command should be run?") is `npx mcp-remote http://127.0.0.1:5000/mcp`.
+1. Use the default values for the rest of the prompts (e.g. timeout, description, environment variables) and configuration will be complete.
+1. To start goose now just type `goose`. As Goose boots, a browser window should open and send you through the auth flow.
+1. Log in to your Auth0 instance and authorize your MCP server. After completing this you should have access to your tools.
+1. Provide a prompt such as "What astronauts are in space right now?" to make certain the MCP Server is functioning properly. Your LLM should notice it has a suitable tool in your MCP server and give an output about the astronauts found in TheSpaceDevs.
 
 ## Troubleshooting
 
