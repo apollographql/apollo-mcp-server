@@ -307,7 +307,12 @@ impl ServerHandler for Running {
         ServerInfo {
             server_info: Implementation {
                 name: "Apollo MCP Server".to_string(),
+                icons: None,
+                title: Some("Apollo MCP Server".to_string()),
                 version: env!("CARGO_PKG_VERSION").to_string(),
+                website_url: Some(
+                    "https://www.apollographql.com/docs/apollo-mcp-server".to_string(),
+                ),
             },
             capabilities: ServerCapabilities::builder()
                 .enable_tools()

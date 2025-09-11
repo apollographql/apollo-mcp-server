@@ -246,9 +246,14 @@ impl Starting {
             }
             Transport::Stdio => {
                 info!("Starting MCP server in stdio mode");
-                let service = running.clone().serve(stdio()).await.inspect_err(|e| {
-                    error!("serving error: {:?}", e);
-                })?;
+                let service = running
+                    .clone()
+                    .serve(stdio())
+                    .await
+                    .inspect_err(|e| {
+                        error!("serving error: {:?}", e);
+                    })
+                    .map_err(Box::new)?;
                 service.waiting().await.map_err(ServerError::StartupError)?;
             }
         }

@@ -689,6 +689,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -712,6 +713,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
 
@@ -751,6 +753,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -777,6 +780,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -817,6 +821,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -853,6 +858,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -903,6 +909,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -932,6 +939,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
@@ -975,6 +983,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1008,6 +1017,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
@@ -1055,6 +1065,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1081,6 +1092,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
@@ -1121,6 +1133,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1164,6 +1177,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
@@ -1221,6 +1235,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1262,6 +1277,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -1289,6 +1305,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1325,6 +1342,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -1474,6 +1492,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1495,6 +1514,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -1533,6 +1553,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1561,6 +1582,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -1603,6 +1625,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1631,6 +1654,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -1661,6 +1685,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -1690,6 +1715,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -2100,6 +2126,7 @@ mod tests {
         insta::assert_debug_snapshot!(operation.tool, @r###"
         Tool {
             name: "Test",
+            title: None,
             description: Some(
                 "",
             ),
@@ -2140,6 +2167,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -2170,6 +2198,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -2193,6 +2222,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
     }
@@ -2605,6 +2635,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -2656,6 +2687,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
 
@@ -2723,6 +2755,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -2770,6 +2803,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
 
@@ -2878,6 +2912,7 @@ mod tests {
         Operation {
             tool: Tool {
                 name: "MutationName",
+                title: None,
                 description: Some(
                     "The returned value is optional and has type `String`",
                 ),
@@ -2897,6 +2932,7 @@ mod tests {
                         open_world_hint: None,
                     },
                 ),
+                icons: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -2933,6 +2969,7 @@ mod tests {
         Operation {
             tool: Tool {
                 name: "MutationName",
+                title: None,
                 description: Some(
                     "The returned value is optional and has type `String`",
                 ),
@@ -2952,6 +2989,7 @@ mod tests {
                         open_world_hint: None,
                     },
                 ),
+                icons: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -2988,6 +3026,7 @@ mod tests {
         insta::assert_debug_snapshot!(tool, @r###"
         Tool {
             name: "QueryName",
+            title: None,
             description: Some(
                 "The returned value is optional and has type `String`",
             ),
@@ -3007,6 +3046,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            icons: None,
         }
         "###);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"

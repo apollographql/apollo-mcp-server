@@ -156,7 +156,7 @@ impl StateMachine {
         match Supergraph::new(&schema_state.sdl) {
             Ok(supergraph) => Ok(supergraph
                 .to_api_schema(ApiSchemaOptions::default())
-                .map_err(ServerError::Federation)?
+                .map_err(|e| ServerError::Federation(Box::new(e)))?
                 .schema()
                 .clone()),
             Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
