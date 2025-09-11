@@ -125,7 +125,7 @@ fn tool_description(
         "Get GraphQL type information - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements;".to_string()
     } else {
         format!(
-            "Get information about a given GraphQL type defined in the schema. Instructions: Always use this tool first to get the fields for the root query ({} type) or mutation ({} type), then use the search tool with all of the relevant field return type and argument input types (ignore default GraphQL scalars) as search terms, only use this tool once when fulfilling a request.",
+            "Get information about a given GraphQL type defined in the schema. Instructions: Use this tool to explore the schema by providing specific type names. Start with the root query ({}) or mutation ({}) types to discover available fields. If the search tool is also available, use this tool first to get the fields, then use the search tool with relevant field return types and argument input types (ignore default GraphQL scalars) as search terms.",
             root_query_type.as_deref().unwrap_or("Query"),
             root_mutation_type.as_deref().unwrap_or("Mutation")
         )
@@ -158,7 +158,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_tool_description(schema: Valid<Schema>) {
+    async fn test_tool_description_non_minified(schema: Valid<Schema>) {
         let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, false);
 
         let description = introspect.tool.description.unwrap();
@@ -167,9 +167,11 @@ mod tests {
             description
                 .contains("Get information about a given GraphQL type defined in the schema")
         );
-        assert!(description.contains("Instructions: Always use this tool first"));
+        assert!(description.contains("Instructions: Use this tool to explore the schema"));
         // Should not contain minification legend
         assert!(!description.contains("T=type,I=input"));
+        // Should mention conditional search tool usage
+        assert!(description.contains("If the search tool is also available"));
     }
 
     #[rstest]
