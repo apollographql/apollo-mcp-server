@@ -453,4 +453,243 @@ mod test {
             }
         }
     }
+
+    #[test]
+    fn test_uplink_config_for_tests() {
+        let endpoints = Endpoints::fallback(vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+        ]);
+
+        let config = UplinkConfig::for_tests(endpoints.clone());
+
+        assert_eq!(config.apollo_key.expose_secret(), "key");
+        assert_eq!(config.apollo_graph_ref, "graph");
+        assert_eq!(config.poll_interval, Duration::from_secs(2));
+        assert_eq!(config.timeout, Duration::from_secs(5));
+
+        // Check endpoints
+        if let Some(Endpoints::Fallback { urls }) = config.endpoints {
+            assert_eq!(urls.len(), 2);
+            assert_eq!(urls[0].as_str(), "http://test1.example.com/");
+            assert_eq!(urls[1].as_str(), "http://test2.example.com/");
+        } else {
+            panic!("Expected fallback endpoints");
+        }
+    }
+
+    #[test]
+    fn test_endpoints_fallback() {
+        let urls = vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+        ];
+        let endpoints = Endpoints::fallback(urls.clone());
+
+        if let Endpoints::Fallback {
+            urls: fallback_urls,
+        } = endpoints
+        {
+            assert_eq!(fallback_urls.len(), 2);
+            assert_eq!(fallback_urls[0], urls[0]);
+            assert_eq!(fallback_urls[1], urls[1]);
+        } else {
+            panic!("Expected fallback endpoints");
+        }
+    }
+
+    #[test]
+    fn test_endpoints_round_robin() {
+        let urls = vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+        ];
+        let endpoints = Endpoints::round_robin(urls.clone());
+
+        if let Endpoints::RoundRobin {
+            urls: rr_urls,
+            current,
+        } = endpoints
+        {
+            assert_eq!(rr_urls.len(), 2);
+            assert_eq!(rr_urls[0], urls[0]);
+            assert_eq!(rr_urls[1], urls[1]);
+            assert_eq!(current, 0);
+        } else {
+            panic!("Expected round robin endpoints");
+        }
+    }
+
+    #[test]
+    fn test_endpoints_url_count() {
+        let urls = vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+            Url::from_str("http://test3.example.com").unwrap(),
+        ];
+
+        let fallback = Endpoints::fallback(urls.clone());
+        assert_eq!(fallback.url_count(), 3);
+
+        let round_robin = Endpoints::round_robin(urls);
+        assert_eq!(round_robin.url_count(), 3);
+    }
+
+    #[test]
+    fn test_endpoints_iter_fallback() {
+        let urls = vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+        ];
+        let mut endpoints = Endpoints::fallback(urls.clone());
+
+        {
+            let iter_urls: Vec<&Url> = endpoints.iter().collect();
+            assert_eq!(iter_urls.len(), 2);
+            assert_eq!(iter_urls[0], &urls[0]);
+            assert_eq!(iter_urls[1], &urls[1]);
+        }
+
+        // Fallback should always return the same order
+        {
+            let iter_urls2: Vec<&Url> = endpoints.iter().collect();
+            assert_eq!(iter_urls2.len(), 2);
+            assert_eq!(iter_urls2[0], &urls[0]);
+            assert_eq!(iter_urls2[1], &urls[1]);
+        }
+    }
+
+    #[test]
+    fn test_endpoints_iter_round_robin() {
+        let urls = vec![
+            Url::from_str("http://test1.example.com").unwrap(),
+            Url::from_str("http://test2.example.com").unwrap(),
+            Url::from_str("http://test3.example.com").unwrap(),
+        ];
+        let mut endpoints = Endpoints::round_robin(urls.clone());
+
+        // First iteration should start at index 0
+        {
+            let iter_urls1: Vec<&Url> = endpoints.iter().collect();
+            assert_eq!(iter_urls1.len(), 3);
+            assert_eq!(iter_urls1[0], &urls[0]);
+            assert_eq!(iter_urls1[1], &urls[1]);
+            assert_eq!(iter_urls1[2], &urls[2]);
+        }
+
+        // Second iteration should start at index 3 (current incremented to 3, then mod 3 = 0)
+        // But since the inspect closure increments current for each item yielded,
+        // the actual behavior is that current advances as the iterator is consumed
+        {
+            let iter_urls2: Vec<&Url> = endpoints.iter().collect();
+            assert_eq!(iter_urls2.len(), 3);
+            // After the first iteration consumed 3 items, current should be 3, then 3 % 3 = 0
+            assert_eq!(iter_urls2[0], &urls[0]);
+            assert_eq!(iter_urls2[1], &urls[1]);
+            assert_eq!(iter_urls2[2], &urls[2]);
+        }
+    }
+
+    #[test]
+    fn test_endpoints_default() {
+        let endpoints = Endpoints::default();
+        assert_eq!(endpoints.url_count(), 2); // GCP_URL and AWS_URL
+
+        if let Endpoints::Fallback { urls } = endpoints {
+            // URLs parsed with trailing slash
+            assert_eq!(urls[0].as_str(), "https://uplink.api.apollographql.com/");
+            assert_eq!(
+                urls[1].as_str(),
+                "https://aws.uplink.api.apollographql.com/"
+            );
+        } else {
+            panic!("Expected fallback endpoints");
+        }
+    }
+
+    #[test]
+    fn test_uplink_config_default() {
+        let config = UplinkConfig::default();
+
+        assert_eq!(config.apollo_key.expose_secret(), "");
+        assert_eq!(config.apollo_graph_ref, "");
+        assert!(config.endpoints.is_none());
+        assert_eq!(config.poll_interval, Duration::from_secs(0));
+        assert_eq!(config.timeout, Duration::from_secs(0));
+    }
+
+    #[test]
+    fn test_error_display() {
+        let error1 = Error::FetchFailedSingle;
+        assert_eq!(
+            error1.to_string(),
+            "fetch failed from uplink endpoint, and there are no fallback endpoints configured"
+        );
+
+        let error2 = Error::FetchFailedMultiple { url_count: 3 };
+        assert_eq!(
+            error2.to_string(),
+            "fetch failed from all 3 uplink endpoints"
+        );
+
+        let error3 = Error::UplinkError {
+            code: "AUTH_FAILED".to_string(),
+            message: "Invalid API key".to_string(),
+        };
+        assert_eq!(
+            error3.to_string(),
+            "uplink error: code=AUTH_FAILED message=Invalid API key"
+        );
+
+        let error4 = Error::UplinkErrorNoRetry {
+            code: "UNKNOWN_REF".to_string(),
+            message: "Graph not found".to_string(),
+        };
+        assert_eq!(
+            error4.to_string(),
+            "uplink error, the request will not be retried: code=UNKNOWN_REF message=Graph not found"
+        );
+    }
+
+    #[test]
+    fn test_uplink_request_debug() {
+        let request = UplinkRequest {
+            api_key: "test_api_key".to_string(),
+            graph_ref: "test@main".to_string(),
+            id: Some("test_id".to_string()),
+        };
+
+        let debug_output = format!("{:?}", request);
+        assert!(debug_output.contains("test_api_key"));
+        assert!(debug_output.contains("test@main"));
+        assert!(debug_output.contains("test_id"));
+    }
+
+    #[test]
+    fn test_uplink_response_debug() {
+        let response_new = UplinkResponse::New {
+            response: "test_response".to_string(),
+            id: "test_id".to_string(),
+            delay: 30,
+        };
+        let debug_new = format!("{:?}", response_new);
+        assert!(debug_new.contains("New"));
+        assert!(debug_new.contains("test_response"));
+
+        let response_unchanged = UplinkResponse::<String>::Unchanged {
+            id: Some("test_id".to_string()),
+            delay: Some(30),
+        };
+        let debug_unchanged = format!("{:?}", response_unchanged);
+        assert!(debug_unchanged.contains("Unchanged"));
+
+        let response_error = UplinkResponse::<String>::Error {
+            retry_later: true,
+            code: "RETRY_LATER".to_string(),
+            message: "Try again".to_string(),
+        };
+        let debug_error = format!("{:?}", response_error);
+        assert!(debug_error.contains("Error"));
+        assert!(debug_error.contains("retry_later: true"));
+    }
 }
