@@ -167,6 +167,10 @@ impl Search {
                 .map(Content::text)
                 .collect(),
             is_error: None,
+            meta: None,
+
+            // Note: The returned content is treated as text, so no need to structure its output
+            structured_content: None,
         })
     }
 }

@@ -54,7 +54,7 @@ pub enum ServerError {
     GraphQLDocumentSchema(Box<WithErrors<Document>>),
 
     #[error("Federation error in GraphQL schema: {0}")]
-    Federation(FederationError),
+    Federation(Box<FederationError>),
 
     #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
@@ -78,7 +78,7 @@ pub enum ServerError {
     CustomScalarConfig(serde_json::Error),
 
     #[error("invalid json schema: {0}")]
-    CustomScalarJsonSchema(serde_json::Value),
+    CustomScalarJsonSchema(String),
 
     #[error("Missing environment variable: {0}")]
     EnvironmentVariable(String),
@@ -93,7 +93,7 @@ pub enum ServerError {
     StartupError(#[from] JoinError),
 
     #[error("Failed to initialize MCP server")]
-    McpInitializeError(#[from] rmcp::service::ServerInitializeError<std::io::Error>),
+    McpInitializeError(#[from] Box<rmcp::service::ServerInitializeError>),
 
     #[error(transparent)]
     UrlParseError(ParseError),

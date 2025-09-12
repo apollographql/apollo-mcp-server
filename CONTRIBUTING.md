@@ -58,3 +58,20 @@ It’s important that every piece of code in Apollo packages is reviewed by at l
 3. Testing. Please make sure that the tests ensure that the code won’t break when other stuff change around it. The error messages in the test should help identify what is broken exactly and how. The tests should test every edge case if possible. Please make sure you get as much coverage as possible.
 4. No unnecessary or unrelated changes. PRs shouldn’t come with random formatting changes, especially in unrelated parts of the code. If there is some refactoring that needs to be done, it should be in a separate PR from a bug fix or feature, if possible.
 5. Please run `cargo test`, `cargo clippy`, and `cargo fmt` prior to creating a PR.
+
+### Code Coverage
+
+Apollo MCP Server uses comprehensive code coverage reporting to ensure code quality and test effectiveness. 
+The project uses [cargo-llvm-cov](https://crates.io/crates/cargo-llvm-cov) for generating code coverage reports and [Codecov](https://www.codecov.io/) for coverage analysis and reporting. Coverage is automatically generated and reported on every pull request through GitHub Actions.
+
+#### Coverage Targets
+
+The project maintains the following coverage targets, configured in `codecov.yml`:
+
+- **Project Coverage**: Automatically maintained - should increase overall coverage on each PR
+- **Patch Coverage**: 80% - requires 80% coverage on all new/modified code
+
+These targets help ensure that:
+
+- The overall codebase coverage doesn't decrease over time
+- New code is well-tested before being merged

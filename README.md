@@ -7,6 +7,7 @@
 ![release binaries workflow status](https://img.shields.io/github/actions/workflow/status/apollographql/apollo-mcp-server/release-bins.yml?label=release%20binaries)
 ![release container workflow status](https://img.shields.io/github/actions/workflow/status/apollographql/apollo-mcp-server/release-container.yml?label=release%20container)
 ![license](https://img.shields.io/github/license/apollographql/apollo-mcp-server)
+[![codecov](https://codecov.io/github/apollographql/apollo-mcp-server/graph/badge.svg?token=6NHuvZQ8ak)](https://codecov.io/github/apollographql/apollo-mcp-server)
 
 # Apollo MCP Server
 

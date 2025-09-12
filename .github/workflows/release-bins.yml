@@ -42,7 +42,7 @@ jobs:
       attestations: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.ref }}
       - uses: nixbuild/nix-quick-install-action@v30

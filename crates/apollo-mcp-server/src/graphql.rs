@@ -107,6 +107,8 @@ pub trait Executable {
                             .filter(|value| !matches!(value, Value::Null))
                             .is_none(),
                 ),
+                meta: None,
+                structured_content: Some(json),
             })
     }
 }
