@@ -126,6 +126,7 @@ impl Starting {
                     auth: _,
                     address: _,
                     port: _,
+                    stateful_mode: _,
                 },
                 true,
             ) => Some(HealthCheck::new(self.config.health_check.clone())),
@@ -168,6 +169,7 @@ impl Starting {
                 auth,
                 address,
                 port,
+                stateful_mode,
             } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
@@ -177,7 +179,7 @@ impl Starting {
                     LocalSessionManager::default().into(),
                     StreamableHttpServerConfig {
                         sse_keep_alive: Some(Duration::from_secs(15)),
-                        stateful_mode: false,
+                        stateful_mode,
                     },
                 );
                 let mut router =
