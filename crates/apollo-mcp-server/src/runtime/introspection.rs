@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::path::Path;
 
 /// Introspection configuration
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -24,6 +25,40 @@ pub struct Introspection {
 pub struct ExecuteConfig {
     /// Enable introspection for execution
     pub enabled: bool,
+    
+    /// Additional hints to append to the execute tool description
+    pub hints: Option<String>,
+    
+    /// Path to a file containing additional hints to append to the execute tool description.
+    /// If both hints and hints_file are provided, hints_file takes precedence.
+    /// Path is relative to the configuration file location.
+    pub hints_file: Option<String>,
+}
+
+impl ExecuteConfig {
+    /// Resolve hints from either inline hints or hints_file
+    /// If hints_file is provided, it takes precedence over inline hints
+    /// The file path is resolved relative to the config_dir if provided
+    pub fn resolve_hints(&self, config_dir: Option<&Path>) -> Result<Option<String>, std::io::Error> {
+        if let Some(hints_file) = &self.hints_file {
+            let hints_path = if let Some(config_dir) = config_dir {
+                config_dir.join(hints_file)
+            } else {
+                hints_file.into()
+            };
+            
+            let hints_content = std::fs::read_to_string(&hints_path)
+                .map_err(|e| {
+                    tracing::warn!("Failed to read hints file '{}': {}", hints_path.display(), e);
+                    e
+                })?;
+            
+            tracing::info!("Loaded hints from file: {}", hints_path.display());
+            Ok(Some(hints_content))
+        } else {
+            Ok(self.hints.clone())
+        }
+    }
 }
 
 /// Introspect-specific introspection configuration
