@@ -12,3 +12,10 @@ pub mod operations;
 pub mod sanitize;
 pub(crate) mod schema_tree_shake;
 pub mod server;
+pub mod telemetry_attributes;
+
+pub mod generated {
+    pub mod telemetry {
+        include!(concat!(env!("OUT_DIR"), "/telemetry_attributes.rs"));
+    }
+}

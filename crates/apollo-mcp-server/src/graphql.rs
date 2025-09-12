@@ -1,5 +1,9 @@
 //! Execute GraphQL operations from an MCP tool
 
+use crate::generated::telemetry::{
+    APOLLO_MCP_ATTRIBUTE_OPERATION_ID, APOLLO_MCP_ATTRIBUTE_OPERATION_TYPE,
+    APOLLO_MCP_ATTRIBUTE_SUCCESS, APOLLO_MCP_METRIC_OPERATION_DURATION,
+};
 use crate::{errors::McpError, meter::get_meter};
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -127,12 +131,15 @@ pub trait Executable {
         // Record response metrics
         let attributes = vec![
             KeyValue::new(
-                "success",
+                APOLLO_MCP_ATTRIBUTE_SUCCESS,
                 result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
             ),
-            KeyValue::new("operation.id", op_id.unwrap_or("unknown".to_string())),
             KeyValue::new(
-                "operation.type",
+                APOLLO_MCP_ATTRIBUTE_OPERATION_ID,
+                op_id.unwrap_or("unknown".to_string()),
+            ),
+            KeyValue::new(
+                APOLLO_MCP_ATTRIBUTE_OPERATION_TYPE,
                 if self.persisted_query_id().is_some() {
                     "persisted_query"
                 } else {
@@ -141,11 +148,11 @@ pub trait Executable {
             ),
         ];
         meter
-            .f64_histogram("apollo.mcp.operation.duration")
+            .f64_histogram(APOLLO_MCP_METRIC_OPERATION_DURATION)
             .build()
             .record(start.elapsed().as_millis() as f64, &attributes);
         meter
-            .u64_counter("apollo.mcp.operation.count")
+            .u64_counter(APOLLO_MCP_METRIC_OPERATION_DURATION)
             .build()
             .add(1, &attributes);
 

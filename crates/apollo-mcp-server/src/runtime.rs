@@ -13,6 +13,7 @@ mod overrides;
 mod schema_source;
 mod schemas;
 pub mod telemetry;
+mod filtering_exporter;
 
 use std::path::Path;
 
@@ -166,7 +167,9 @@ mod test {
                     },
                 ),
                 graphos: GraphOSConfig {
-                    apollo_key: None,
+                    apollo_key: Some(
+                        SecretBox<str>([REDACTED]),
+                    ),
                     apollo_graph_ref: None,
                     apollo_registry_url: None,
                     apollo_uplink_endpoints: [
