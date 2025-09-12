@@ -15,8 +15,9 @@ apollo-compiler.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 apollo-schema-index = { path = "../apollo-schema-index" }
-axum = "0.8.4"
 axum-extra = { version = "0.10.1", features = ["typed-header"] }
+apollo-mcp-proxy = { path = "../apollo-mcp-proxy" }
+axum.workspace = true
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
@@ -30,21 +31,16 @@ jwks = "0.4.0"
 lz-str = "0.2.1"
 regex = "1.11.1"
 reqwest.workspace = true
-rmcp = { version = "0.6", features = [
-  "server",
-  "transport-io",
-  "transport-sse-server",
-  "transport-streamable-http-server",
-] }
+rmcp.workspace = true
 schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tokio-util = "0.7.15"
 tower-http = { version = "0.6.6", features = ["cors"] }
 url.workspace = true
 

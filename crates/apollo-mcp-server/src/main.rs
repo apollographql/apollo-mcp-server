@@ -1,17 +1,19 @@
-use std::path::PathBuf;
-
+use apollo_mcp_proxy::client::start_proxy_client;
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
-use apollo_mcp_server::server::Server;
+use apollo_mcp_server::server::{Server, Transport};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
 use runtime::logging::Logging;
+use std::path::PathBuf;
+use tokio::signal;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 mod runtime;
@@ -111,8 +113,8 @@ async fn main() -> anyhow::Result<()> {
 
     let transport = config.transport.clone();
 
-    Ok(Server::builder()
-        .transport(config.transport)
+    let mcp_server = Server::builder()
+        .transport(config.transport.clone())
         .schema_source(schema_source)
         .operation_source(operation_source)
         .endpoint(config.endpoint.into_inner())
@@ -146,6 +148,36 @@ async fn main() -> anyhow::Result<()> {
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
         .build()
-        .start()
-        .await?)
+        .start();
+
+    match config.transport {
+        Transport::StreamableHttp {
+            address,
+            port,
+            auth,
+        } => {
+            if config.proxy.enabled {
+                if auth.is_some() {
+                    anyhow::bail!(ServerError::ProxyAuthNotSupported)
+                }
+
+                let url = config.proxy.url(&address, &port);
+                let cancellation_token: CancellationToken = CancellationToken::new();
+
+                tokio::select! {
+                    biased;
+                    _ = signal::ctrl_c() => { cancellation_token.cancel(); }
+                    _ = mcp_server => {}
+                    _ = start_proxy_client(url.as_str(), cancellation_token.child_token()) => {}
+                }
+            } else {
+                mcp_server.await?;
+            }
+        }
+        _ => {
+            mcp_server.await?;
+        }
+    }
+
+    Ok(())
 }
