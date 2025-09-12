@@ -67,6 +67,34 @@ operations:
 
 The MCP Server supports hot reloading of the GraphOS Operation Collection, so it can automatically pick up changes from GraphOS without restarting.
 
+#### A note on operation collection variables ####
+Operation collection variables are treated a bit differently than how they are treated from local file operations. In
+short, any variables set to any valid value (even `null`) in the Variables panel when saved will be used as a hardcoded 
+override for that operation’s variable. The LLM cannot modify or pass in these values and therefore are omitted from 
+the resulting input schema. 
+
+For example, let's say the following operation is created for an operation collection:
+```graphql
+query ProductQuery($productId: ID!) {
+    product(id: $productId) {
+        id
+        description
+    }
+}
+```
+The Variables panel has `productid` set to `1234`:
+```json
+{
+  "productId": "1234"
+}
+```
+then every time this operation is called by the LLM, the `productId` variable will always be this value. 
+The same would be true if `productId` was set to `null`.
+
+To get a similar to behavior to what is seen when using the local file operations source one can simply delete 
+`productId` from the Variables panel and then re-save the operation to update the collection. This will keep it from 
+being hard-coded and will be added to the resulting schema.
+
 ### From persisted query manifests
 
 Apollo MCP Server supports reading GraphQL operations from Apollo-formatted [persisted query manifest](/graphos/platform/security/persisted-queries#manifest-format) files.
