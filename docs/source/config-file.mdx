@@ -147,11 +147,13 @@ The available fields depend on the value of the nested `type` key:
 
 ##### Streamable HTTP
 
-| Option    | Value                 | Value Type | Description                                                               |
-| :-------- | :-------------------- | :--------- | :------------------------------------------------------------------------ |
-| `type`    | `"streamable_http"`   |            | Host the MCP server on the configuration, using streamable HTTP messages. |
-| `address` | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                 |
-| `port`    | `5000` (default)      | `u16`      | The port to bind to                                                       |
+| Option          | Value                 | Value Type | Description                                                               |
+| :-------------- | :-------------------- | :--------- | :------------------------------------------------------------------------ |
+| `type`          | `"streamable_http"`   |            | Host the MCP server on the configuration, using streamable HTTP messages. |
+| `address`       | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                 |
+| `port`          | `5000` (default)      | `u16`      | The port to bind to                                                       |
+| `stateful_mode` | `true` (default)      | `bool`     | Flag to enable or disable stateful mode and session management.           |
+
 
 ##### SSE (Deprecated, use StreamableHTTP)
 
