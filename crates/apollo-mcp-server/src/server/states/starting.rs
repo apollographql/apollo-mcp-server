@@ -64,7 +64,7 @@ impl Starting {
         let execute_tool = self
             .config
             .execute_introspection
-            .then(|| Execute::new(self.config.mutation_mode));
+            .then(|| Execute::new(self.config.mutation_mode, self.config.execute_hints.clone()));
 
         let root_query_type = self
             .config

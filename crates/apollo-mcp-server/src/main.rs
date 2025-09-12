@@ -37,7 +37,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config: runtime::Config = match Args::parse().config {
+    let args = Args::parse();
+    let config: runtime::Config = match &args.config {
         Some(config_path) => runtime::read_config(config_path)?,
         None => runtime::read_config_from_env().unwrap_or_default(),
     };
@@ -109,6 +110,10 @@ async fn main() -> anyhow::Result<()> {
         .then(|| config.graphos.graph_ref())
         .transpose()?;
 
+    // Resolve execute hints from either inline hints or hints_file
+    let config_dir = args.config.as_ref().and_then(|p| p.parent());
+    let resolved_execute_hints = config.introspection.execute.resolve_hints(config_dir)?;
+
     let transport = config.transport.clone();
 
     Ok(Server::builder()
@@ -119,6 +124,7 @@ async fn main() -> anyhow::Result<()> {
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(config.headers)
         .execute_introspection(config.introspection.execute.enabled)
+        .maybe_execute_hints(resolved_execute_hints)
         .validate_introspection(config.introspection.validate.enabled)
         .introspect_introspection(config.introspection.introspect.enabled)
         .introspect_minify(config.introspection.introspect.minify)
