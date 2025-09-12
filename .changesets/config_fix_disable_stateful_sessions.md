@@ -1,0 +1,3 @@
+### fix: Disable statefulness to fix initialize race condition - @swcollard PR #351
+
+We've been seeing errors with state and session handling in the MCP Server. Whether that is requests being sent before the initialized notification is processed. Or running a fleet of MCP Server pods behind a round robin load balancer. A new configuration option under the streamable_http transport `stateful_mode`, allows disabling session handling which appears to fix the race condition issue.
