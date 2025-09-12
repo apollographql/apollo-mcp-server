@@ -40,27 +40,45 @@ With this configuration, the server will send traces and metrics to an OpenTelem
 
 The OpenTelemetry integration is configured via the `telemetry` section in your config.yaml file.
 
+### **Basic Configuration**
+
 | Parameter | Type | Description | Default |
 | :--- | :--- | :--- | :--- |
-| service_name | String | The name of the service, which will be included in the telemetry data. | apollo-mcp-server |
-| version | String | The version of the service. | The crate version. |
-| exporters | Object | Configuration for the telemetry exporters. | null |
+| service_name | String | The service name in telemetry data. | `apollo-mcp-server` |
+| version | String | The service version in telemetry data. | Current crate version |
+| exporters | Object | Configuration for telemetry exporters. | `null` (no telemetry) |
 
+### **Environment Variables**
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `ENVIRONMENT` | Sets the deployment environment for telemetry resource attributes. | `development` |
+
+### **Automatic Resource Attributes**
+
+The server automatically sets these OpenTelemetry resource attributes:
+
+| Attribute | Value | Purpose |
+| :--- | :--- | :--- |
+| `service.name` | From `service_name` config | Service identification |
+| `service.version` | From `version` config | Service version tracking |
+| `deployment.environment.name` | From `ENVIRONMENT` variable | Environment correlation (dev, staging, prod) |
+
+### **Exporters Configuration**
 
 `exporters`
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| metrics | Object | Configuration for the metrics exporters. |
-| tracing | Object | Configuration for the tracing exporters. |
-
+| metrics | Object | Configuration for metrics exporters. |
+| tracing | Object | Configuration for tracing exporters. |
 
 `metrics.otlp` / `tracing.otlp`
 
 | Parameter | Type | Description | Default |
 | :--- | :--- | :--- | :--- |
-| endpoint | String | The OTLP endpoint to send data to. | http://localhost:4317 |
-| protocol | String | The OTLP protocol to use. Supported values are grpc and http/protobuf. | grpc |
+| endpoint | String | The OTLP endpoint to send data to. | `http://localhost:4317` |
+| protocol | String | The OTLP protocol to use. Supported values are `grpc` and `http/protobuf`. | `grpc` |
 
 
 ## Emitted Metrics
