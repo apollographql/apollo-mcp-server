@@ -56,3 +56,9 @@ docker run \
 ```
 
 To learn more, review the [Apollo Runtime container documentation](/graphos/routing/self-hosted/containerization/docker).
+
+### Using a load balancer
+
+Because [MCP is a stateful protocol](https://modelcontextprotocol.io/docs/learn/architecture#lifecycle-management), the default configuration of most load balancers is incorrect. When the MCP client initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance. If the load balancer routes subsequent requests to a different instance, Apollo MCP Server will reject the request as unauthorized. 
+
+To run Apollo MCP Server in a high-availability, multi-instance setup, you must configure your load balancer to use session affinity ("sticky sessions") based on the `mcp-session-id` header. Load balancers offered by major cloud vendors do not support header-based affinity, so you will need software like Nginx, HAProxy, or Istio/Envoy Proxy in front of your Apollo MCP instances.
