@@ -17,24 +17,44 @@ The server exports metrics, traces, and events using the OpenTelemetry Protocol 
 
 ## Usage Guide
 
-To start exporting telemetry from the Apollo MCP Server, you need an OpenTelemetry Collector to which the MCP server can export metrics and traces to.
-These are often run as side cars or agents alongside deployed services and need to be accessible over the network to your instance of the Apollo MCP Server.
+### **Quick Start: Local Development**
 
-Update your config.yaml to configure the MCP Server with the telemetry section. This will point the MCP Server at your collector on startup.
+The fastest way to see Apollo MCP Server telemetry in action is with a local setup that requires only Docker.
 
-```yaml
-telemetry:
-  exporters:
-    metrics:
-      otlp:
-        endpoint: "http://localhost:4317"
-        protocol: "grpc"
-    tracing:
-      otlp:
-        endpoint: "http://localhost:4317"
-        protocol: "grpc"
-```
-With this configuration, the server will send traces and metrics to an OpenTelemetry Protocol compatible collector running at http://localhost:4317.
+**🚀 5-minute setup:**
+1. **Start local observability stack**: `docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm`
+2. **Add telemetry config** to your `config.yaml`:
+   ```yaml
+   telemetry:
+     exporters:
+       metrics:
+         otlp:
+           endpoint: "http://localhost:4318/v1/metrics"
+           protocol: "http/protobuf"
+       tracing:
+         otlp:
+           endpoint: "http://localhost:4318/v1/traces" 
+           protocol: "http/protobuf"
+   ```
+3. **Restart your MCP server** with the updated config
+4. **Open Grafana** at http://localhost:3000 (admin/admin) and explore your telemetry data
+
+For detailed steps and dashboard examples, see the [complete Grafana setup guide](guides/telemetry-grafana.mdx).
+
+### **Production Deployment**
+
+For production environments, configure the `endpoint` and `protocol` values to point to your observability infrastructure:
+
+- **OpenTelemetry Collector**: See [OpenTelemetry deployment patterns](https://opentelemetry.io/docs/collector/deployment/)
+- **Vendor-specific setup**: Consult your observability provider's OTLP integration documentation:
+  - [Datadog OTLP](https://docs.datadoghq.com/tracing/setup_overview/open_standards/otlp_ingest_in_datadog/)  
+  - [New Relic OTLP](https://docs.newrelic.com/docs/more-integrations/open-source-telemetry-integrations/opentelemetry/opentelemetry-setup/)
+  - [AWS OTLP](https://aws-otel.github.io/docs/introduction)
+
+**Configuration tips:**
+- Set `ENVIRONMENT=production` for proper resource tagging
+- Use secure HTTPS endpoints for production data
+- Consider sampling for high-traffic environments
 
 ## Configuration Reference
 
