@@ -2,15 +2,18 @@
 title: OpenTelemetry Integration
 ---
 
-The Apollo MCP Server exports telemetry data with the OpenTelemetry Protocol to provide enhanced observability into its operations. It emits detailed traces and metrics, allowing operators to monitor the server's health, performance, and behavior in detail.
+AI agents create unpredictable usage patterns and complex request flows that are hard to monitor with traditional methods. The Apollo MCP Server's OpenTelemetry integration provides the visibility you need to run a reliable service for AI agents.
 
-The key capabilities include:
+## **What You Can Monitor**
 
-*   **Distributed Tracing**: Captures the entire lifecycle of a request, from the initial MCP connection to individual tool executions and downstream GraphQL API calls. It propagates trace context to other instrumented services (like a Router or subgraphs), enabling a unified view of a request across multiple systems.
-*   **Performance Metrics**: Collects key performance indicators (KPIs) for server and tool activity. This includes counts and durations for specific MCP operations (e.g., `call_tool`, `list_tools`) and the GraphQL queries they execute.
-*   **Standardized Egress**: All telemetry data is exported using the standard OpenTelemetry Protocol (OTLP) over HTTP or gRPC, ensuring compatibility with a wide range of observability backends and collectors (e.g., Jaeger, Prometheus, Datadog).
+- **Agent behavior**: Which tools and operations are used most frequently
+- **Performance**: Response times and bottlenecks across tool executions and GraphQL operations  
+- **Reliability**: Error rates, failed operations, and request success patterns
+- **Distributed request flows**: Complete traces from agent request through your Apollo Router and subgraphs, with automatic trace context propagation
 
-This integration provides visibility that is crucial for diagnosing errors, identifying performance bottlenecks, and understanding how different tools are being used.
+## **How It Works**
+
+The server exports metrics, traces, and events using the OpenTelemetry Protocol (OTLP), ensuring compatibility with your existing observability stack and seamless integration with other instrumented Apollo services.
 
 ## Usage Guide
 
