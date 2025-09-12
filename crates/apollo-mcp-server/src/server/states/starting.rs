@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
@@ -178,8 +178,8 @@ impl Starting {
                     move || Ok(running.clone()),
                     LocalSessionManager::default().into(),
                     StreamableHttpServerConfig {
-                        sse_keep_alive: Some(Duration::from_secs(15)),
                         stateful_mode,
+                        ..Default::default()
                     },
                 );
                 let mut router =
