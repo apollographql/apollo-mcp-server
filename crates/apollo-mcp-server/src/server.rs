@@ -80,6 +80,9 @@ pub enum Transport {
         /// The port to bind to
         #[serde(default = "Transport::default_port")]
         port: u16,
+
+        #[serde(default = "Transport::default_stateful_mode")]
+        stateful_mode: bool,
     },
 }
 
@@ -90,6 +93,10 @@ impl Transport {
 
     fn default_port() -> u16 {
         5000
+    }
+
+    fn default_stateful_mode() -> bool {
+        true
     }
 }
 
