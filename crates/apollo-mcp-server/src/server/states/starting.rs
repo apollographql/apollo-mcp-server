@@ -181,8 +181,8 @@ impl Starting {
                 let mut router =
                     with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
 
-                // Add CORS middleware if enabled
-                if cors.enabled {
+                // Add CORS middleware if configured
+                if let Some(cors) = cors {
                     let cors_layer = cors.into_layer()
                         .map_err(|e| ServerError::Header(format!("Invalid CORS configuration: {}", e)))?;
                     router = router.layer(cors_layer);
@@ -229,8 +229,8 @@ impl Starting {
                 // Optionally wrap the router with auth, if enabled
                 let mut router = with_auth!(router, auth);
 
-                // Add CORS middleware if enabled
-                if cors.enabled {
+                // Add CORS middleware if configured
+                if let Some(cors) = cors {
                     let cors_layer = cors.into_layer()
                         .map_err(|e| ServerError::Header(format!("Invalid CORS configuration: {}", e)))?;
                     router = router.layer(cors_layer);

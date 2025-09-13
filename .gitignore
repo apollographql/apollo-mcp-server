@@ -28,3 +28,5 @@ target/
 
 # Symlink created by nix
 result
+
+.claude/
