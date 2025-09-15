@@ -50,7 +50,7 @@ Files and directories specified with `operations` are hot reloaded. When you spe
 
 ### From operation collections
 
-For graphs managed by GraphOS, Apollo MCP Server can retrieve operations from an [operation collection](/graphos/platform/explorer/operation-collections). 
+For graphs managed by GraphOS, Apollo MCP Server can retrieve operations from an [operation collection](/graphos/platform/explorer/operation-collections).
 
 Use GraphOS Studio Explorer to create and manage operation collections.
 
@@ -58,7 +58,7 @@ Use GraphOS Studio Explorer to create and manage operation collections.
 
 To use a GraphOS operation collection, you must set your graph credentials (`APOLLO_GRAPH_REF` and `APOLLO_KEY`) when configuring the MCP Server.
 
-Each graph variant will have its own default MCP Tools Collection, but you can specify any shared collection by using `operations.source: collection`.
+Each graph variant has its own default MCP Tools Collection, but you can specify any shared collection by using `operations.source: collection`.
 
 Apollo MCP Server automatically fetches the default collection if no ID is specified.
 
@@ -68,15 +68,15 @@ operations:
   id: <collection-id>
 ```
 
-The MCP Server supports hot reloading of the GraphOS operation collection, so it can automatically pick up changes from GraphOS without restarting.
+The MCP Server supports hot reloading of the GraphOS operation collection, so it automatically picks up changes from GraphOS without restarting.
 
 #### Setting operation collection variables
 
-When saving operation collections, remove any dynamic variables from the **Variables** panel of Explorer. This will enable the LLM to modify the variables when calling the operation.
+When saving operation collections, remove any dynamic variables from the **Variables** panel of Explorer. This enables the LLM to modify the variables when calling the operation.
 
-Any variables set to any valid value (even `null`) in the Variables panel of a saved operation will be used as a hardcoded override for that operation's variable.
+Any variables set to any valid value (even `null`) in the Variables panel of a saved operation are used as a hardcoded override for that operation's variable.
 
-For example, if the following operation is created for an operation collection:
+For example, if you create the following operation for an operation collection:
 
 ```graphql
 query GetProduct($productId: ID!) {
@@ -95,7 +95,7 @@ And the Variables panel has `productId` set to `1234`:
 }
 ```
 
-Then every time the `GetProduct` operation is called by the LLM, the `productId` variable will always be set to `1234`. The same would be true if `productId` was set to `null`.
+Then, every time the LLM calls the `GetProduct` operation, the `productId` variable is always set to `1234`. The same is true if `productId` is set to `null`.
 
 If you want to use dynamic variables that the LLM can modify, remove any variables from the Variables panel and save that operation to the collection.
 
