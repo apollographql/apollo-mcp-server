@@ -11,8 +11,8 @@ impl TelemetryAttribute {
             TelemetryAttribute::OperationId => {
                 Key::from_static_str(TelemetryAttribute::OperationId.as_str())
             }
-            TelemetryAttribute::OperationType => {
-                Key::from_static_str(TelemetryAttribute::OperationType.as_str())
+            TelemetryAttribute::OperationSource => {
+                Key::from_static_str(TelemetryAttribute::OperationSource.as_str())
             }
             TelemetryAttribute::Success => {
                 Key::from_static_str(TelemetryAttribute::Success.as_str())

@@ -136,7 +136,7 @@ pub trait Executable {
                 op_id.unwrap_or("unknown".to_string()),
             ),
             KeyValue::new(
-                TelemetryAttribute::OperationType.to_key(),
+                TelemetryAttribute::OperationSource.to_key(),
                 if self.persisted_query_id().is_some() {
                     "persisted_query"
                 } else {
