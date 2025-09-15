@@ -1,7 +1,7 @@
 [attributes.apollo.mcp]
 tool_name = "The tool name"
-operation_id = "The operation id"
-operation_type = "The operation type"
+operation_id = "The operation id - either persisted query id, operation name, or unknown"
+operation_type = "The operation source - either operation or persisted query "
 request_id = "The request id"
 success = "Sucess flag indicator"
 
