@@ -158,7 +158,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_tool_description_non_minified(schema: Valid<Schema>) {
+    async fn test_introspect_tool_description_is_not_minified(schema: Valid<Schema>) {
         let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, false);
 
         let description = introspect.tool.description.unwrap();
@@ -176,7 +176,9 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_tool_description_minified(schema: Valid<Schema>) {
+    async fn test_introspect_tool_description_is_minified_with_an_appropriate_legend(
+        schema: Valid<Schema>,
+    ) {
         let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, true);
 
         let description = introspect.tool.description.unwrap();

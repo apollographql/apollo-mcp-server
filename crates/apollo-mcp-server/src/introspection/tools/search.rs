@@ -249,7 +249,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_tool_description_non_minified(schema: Valid<Schema>) {
+    async fn test_search_tool_description_is_not_minified(schema: Valid<Schema>) {
         let schema = Arc::new(Mutex::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
             .expect("Failed to create search tool");
