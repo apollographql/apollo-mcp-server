@@ -147,7 +147,7 @@ mod tests {
         struct TestExporter {}
 
         impl SpanExporter for TestExporter {
-            fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
                     "unexpected call".to_string(),
                 )))
@@ -178,7 +178,7 @@ mod tests {
         struct TestExporter {}
 
         impl SpanExporter for TestExporter {
-            fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
                     "unexpected call".to_string(),
                 )))
@@ -209,7 +209,7 @@ mod tests {
         struct TestExporter {}
 
         impl SpanExporter for TestExporter {
-            fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
                     "unexpected call".to_string(),
                 )))
