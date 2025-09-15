@@ -5,7 +5,6 @@
 //! Build Script for the Apollo MCP Server
 //!
 //! This mostly compiles all the available telemetry attributes
-use cruet;
 use quote::__private::TokenStream;
 use quote::quote;
 use serde::Deserialize;
@@ -54,13 +53,15 @@ fn flatten(table: toml::Table) -> Vec<TelemetryData> {
     telemetry_data
 }
 
-fn generate_enum(telemetry_data: &Vec<TelemetryData>) -> Vec<TokenStream> {
+fn generate_enum(telemetry_data: &[TelemetryData]) -> Vec<TokenStream> {
     telemetry_data
         .iter()
         .map(|t| {
             let enum_value_ident = quote::format_ident!("{}", &t.name);
             let alias = &t.alias;
+            let doc_message = &t.description;
             quote! {
+                #[doc = #doc_message]
                 #[serde(alias = #alias)]
                 #enum_value_ident
             }
@@ -69,7 +70,7 @@ fn generate_enum(telemetry_data: &Vec<TelemetryData>) -> Vec<TokenStream> {
 }
 
 fn generate_enum_as_str_matches(
-    telemetry_data: &Vec<TelemetryData>,
+    telemetry_data: &[TelemetryData],
     enum_ident: Ident,
 ) -> Vec<TokenStream> {
     telemetry_data
@@ -126,14 +127,17 @@ fn main() {
         generate_enum_as_str_matches(&telemetry_metrics_data, metric_enum_name.clone());
 
     let tokens = quote! {
+        /// All TelemetryAttribute values
         pub const ALL_ATTRS: &[TelemetryAttribute; #attribute_keys_len] = &[#(TelemetryAttribute::#all_attribute_enum_values),*];
 
+        /// Supported telemetry attribute (tags) values
         #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
         pub enum #attribute_enum_name {
             #(#attribute_enum_keys),*
         }
 
         impl #attribute_enum_name {
+            /// Converts TelemetryAttribute to &str
             pub const fn as_str(&self) -> &'static str {
                 match self {
                    #(#attribute_enum_as_str_matches),*
@@ -141,12 +145,14 @@ fn main() {
             }
         }
 
+        /// Supported telemetry metrics
         #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
         pub enum #metric_enum_name {
             #(#metric_enum_keys),*
         }
 
         impl #metric_enum_name {
+            /// Converts TelemetryMetric to &str
             pub const fn as_str(&self) -> &'static str {
                 match self {
                    #(#metric_enum_as_str_matches),*
@@ -157,9 +163,6 @@ fn main() {
 
     let file = parse2(tokens).expect("Could not parse TokenStream");
     let code = prettyplease::unparse(&file);
-
-    // println!("{:?}", dest_path);
-    // panic!("{:?}", code);
 
     write!(generated_file, "{}", code).expect("Failed to write generated code");
 
