@@ -48,24 +48,27 @@ You can also use the `operations` option to specify a directory. The server then
 
 Files and directories specified with `operations` are hot reloaded. When you specify a file, the MCP tool is updated when the file contents are modified. When you specify a directory, operations exposed as MCP tools are updated when files are added, modified, or removed from the directory.
 
-### From Operation Collection
+### From operation collections
 
-For graphs managed by GraphOS, Apollo MCP Server can get operations from an [Operation Collection](https://www.apollographql.com/docs/graphos/platform/explorer/operation-collections).
+For graphs managed by GraphOS, Apollo MCP Server can retrieve operations from an [operation collection](/graphos/platform/explorer/operation-collections). 
 
-To use a GraphOS Operation Collection, you must:
+Use GraphOS Studio Explorer to create and manage operation collections.
 
-- Set `APOLLO_GRAPH_REF` and `APOLLO_KEY` environment variables for a GraphOS graph
+#### Configuring the MCP Server to use a GraphOS operation collection
 
-Each variant will have its own default MCP Tools Collection, but you can specify any shared collection by using `operations` with `operations.source: collection`.
+To use a GraphOS operation collection, you must set your graph credentials (`APOLLO_GRAPH_REF` and `APOLLO_KEY`) when configuring the MCP Server.
+
+Each graph variant will have its own default MCP Tools Collection, but you can specify any shared collection by using `operations.source: collection`.
+
 Apollo MCP Server automatically fetches the default collection if no ID is specified.
 
-```yaml title="Example config file for using a GraphOS Operation Collection"
+```yaml title="Example config file for using a GraphOS operation collection"
 operations:
   source: collection
   id: <collection-id>
 ```
 
-The MCP Server supports hot reloading of the GraphOS Operation Collection, so it can automatically pick up changes from GraphOS without restarting.
+The MCP Server supports hot reloading of the GraphOS operation collection, so it can automatically pick up changes from GraphOS without restarting.
 
 #### Setting operation collection variables
 
