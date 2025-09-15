@@ -5,6 +5,7 @@
 
 mod config;
 mod endpoint;
+mod filtering_exporter;
 mod graphos;
 mod introspection;
 pub mod logging;
@@ -13,7 +14,6 @@ mod overrides;
 mod schema_source;
 mod schemas;
 pub mod telemetry;
-mod filtering_exporter;
 
 use std::path::Path;
 

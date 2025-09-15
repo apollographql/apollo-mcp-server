@@ -79,11 +79,12 @@ tokio.workspace = true
 tracing-test = "0.2.5"
 
 [build-dependencies]
-serde.workspace = true
-toml = "0.9.5"
-quote = "1.0.40"
-syn = "2.0.106"
+cruet = "0.15.0"
 prettyplease = "0.2.37"
+quote = "1.0.40"
+serde.workspace = true
+syn = "2.0.106"
+toml = "0.9.5"
 
 [lints]
 workspace = true

@@ -1,15 +1,15 @@
-[apollo.mcp.attribute]
+[attributes.apollo.mcp]
 tool_name = "The tool name"
 operation_id = "The operation id"
 operation_type = "The operation type"
 request_id = "The request id"
 success = "Sucess flag indicator"
 
-[apollo.mcp.metric]
-initialize.count = "Number of times initialize has been called"
-tool.count = "Number of times call_tool has been called"
-tool.duration = "Duration of call_tool"
-list_tools.count = "Number of times list_tools has been called"
-get_info.count = "Number of times get_info has been called"
-operation.duration = "Duration of graphql execute"
-operation.count = "Number of times graphql execute has been called"
+[metrics.apollo.mcp]
+"initialize.count" = "Number of times initialize has been called"
+"tool.count" = "Number of times call_tool has been called"
+"tool.duration" = "Duration of call_tool"
+"list_tools.count" = "Number of times list_tools has been called"
+"get_info.count" = "Number of times get_info has been called"
+"operation.duration" = "Duration of graphql execute"
+"operation.count" = "Number of times graphql execute has been called"

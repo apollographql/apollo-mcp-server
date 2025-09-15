@@ -5,83 +5,42 @@
 //! Build Script for the Apollo MCP Server
 //!
 //! This mostly compiles all the available telemetry attributes
+use cruet;
 use quote::__private::TokenStream;
 use quote::quote;
-use std::collections::hash_map::Keys;
+use serde::Deserialize;
 use std::io::Write;
-use std::iter::Map;
-use std::{
-    collections::{HashMap, VecDeque},
-    io::Read as _,
-};
-use syn::parse2;
+use std::{collections::VecDeque, io::Read as _};
+use syn::{Ident, parse2};
 
-fn snake_to_pascal(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut up = true;
-    for ch in s.chars() {
-        if ch == '_' || ch == '-' || ch == ' ' {
-            up = true;
-        } else {
-            if up {
-                out.extend(ch.to_uppercase());
-            } else {
-                out.push(ch);
-            }
-            up = false;
-        }
-    }
-    out
+#[derive(Deserialize)]
+struct TelemetryTomlData {
+    attributes: toml::Table,
+    metrics: toml::Table,
 }
 
-type TokenStreamBuilder = fn(&Vec<String>) -> TokenStream;
-
-fn generate_const_values_from_keys(
-    keys: Keys<Vec<String>, String>,
-) -> Map<Keys<Vec<String>, String>, TokenStreamBuilder> {
-    keys.map(|key| {
-        let ident = key
-            .iter()
-            .map(|k| k.to_uppercase())
-            .collect::<Vec<_>>()
-            .join("_");
-        let ident = quote::format_ident!("{}", ident);
-        let value = key.join(".");
-
-        quote! {
-            pub const #ident: &str = #value;
-        }
-    })
+#[derive(Eq, PartialEq, Debug, Clone)]
+struct TelemetryData {
+    name: String,
+    alias: String,
+    value: String,
+    description: String,
 }
 
-fn main() {
-    // Parse the telemetry file
-    let telemetry: toml::Table = {
-        let mut raw = String::new();
-        std::fs::File::open("telemetry.toml")
-            .expect("could not open telemetry file")
-            .read_to_string(&mut raw)
-            .expect("could not read telemetry file");
+fn flatten(table: toml::Table) -> Vec<TelemetryData> {
+    let mut to_visit = VecDeque::from_iter(table.into_iter().map(|(key, val)| (vec![key], val)));
+    let mut telemetry_data = Vec::new();
 
-        toml::from_str(&raw).expect("could not parse telemetry file")
-    };
-
-    // Generate the keys
-    let mut attribute_keys = HashMap::new();
-    let mut attribute_enum_values = HashMap::new();
-    let mut metric_keys = HashMap::new();
-    let mut to_visit =
-        VecDeque::from_iter(telemetry.into_iter().map(|(key, val)| (vec![key], val)));
     while let Some((key, value)) = to_visit.pop_front() {
         match value {
             toml::Value::String(val) => {
-                if key.contains(&"attribute".to_string()) {
-                    let last_key = key.last().unwrap().clone();
-                    attribute_enum_values.insert(snake_to_pascal(last_key.as_str()), last_key);
-                    attribute_keys.insert(key, val);
-                } else {
-                    metric_keys.insert(key, val);
-                }
+                let last_key = key.last().unwrap().clone();
+                telemetry_data.push(TelemetryData {
+                    name: cruet::to_pascal_case(last_key.as_str()),
+                    alias: last_key,
+                    value: key.join("."),
+                    description: val,
+                });
             }
             toml::Value::Table(map) => to_visit.extend(
                 map.into_iter()
@@ -92,9 +51,57 @@ fn main() {
         };
     }
 
+    telemetry_data
+}
+
+fn generate_enum(telemetry_data: &Vec<TelemetryData>) -> Vec<TokenStream> {
+    telemetry_data
+        .iter()
+        .map(|t| {
+            let enum_value_ident = quote::format_ident!("{}", &t.name);
+            let alias = &t.alias;
+            quote! {
+                #[serde(alias = #alias)]
+                #enum_value_ident
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+fn generate_enum_as_str_matches(
+    telemetry_data: &Vec<TelemetryData>,
+    enum_ident: Ident,
+) -> Vec<TokenStream> {
+    telemetry_data
+        .iter()
+        .map(|t| {
+            let name_ident = quote::format_ident!("{}", &t.name);
+            let value = &t.value;
+            quote! {
+                #enum_ident::#name_ident => #value
+            }
+        })
+        .collect::<Vec<_>>()
+}
+
+fn main() {
+    // Parse the telemetry file
+    let telemetry: TelemetryTomlData = {
+        let mut raw = String::new();
+        std::fs::File::open("telemetry.toml")
+            .expect("could not open telemetry file")
+            .read_to_string(&mut raw)
+            .expect("could not read telemetry file");
+
+        toml::from_str(&raw).expect("could not parse telemetry file")
+    };
+
+    // Generate the keys
+    let telemetry_attribute_data = flatten(telemetry.attributes);
+    let telemetry_metrics_data = flatten(telemetry.metrics);
     println!(
-        "{:?} | {:?} | {:?}",
-        metric_keys, attribute_keys, attribute_enum_values
+        "a {:?} | m {:?}",
+        telemetry_attribute_data, telemetry_metrics_data
     );
 
     // Write out the generated keys
@@ -102,44 +109,59 @@ fn main() {
     let dest_path = std::path::Path::new(&out_dir).join("telemetry_attributes.rs");
     let mut generated_file =
         std::fs::File::create(&dest_path).expect("could not create generated code file");
-    let attribute_keys_len = attribute_keys.len();
 
-    let attribute_enum_keys = attribute_enum_values
+    let attribute_keys_len = telemetry_attribute_data.len();
+    let attribute_enum_keys = generate_enum(&telemetry_attribute_data);
+    let all_attribute_enum_values = &telemetry_attribute_data
         .iter()
-        .map(|(enum_value, enum_alias)| {
-            let enum_value_ident = quote::format_ident!("{}", enum_value);
-            quote! {
-                #[serde(alias = #enum_alias)]
-                #enum_value_ident
-            }
-        });
+        .map(|t| quote::format_ident!("{}", t.name));
+    let all_attribute_enum_values = (*all_attribute_enum_values).clone();
+    let attribute_enum_name = quote::format_ident!("{}", "TelemetryAttribute");
+    let attribute_enum_as_str_matches =
+        generate_enum_as_str_matches(&telemetry_attribute_data, attribute_enum_name.clone());
 
-    let attribute_enum_values = attribute_enum_values
-        .keys()
-        .map(|k| quote::format_ident!("{}", k));
-    let attribute_const_values = generate_const_values_from_keys(attribute_keys.keys());
-    let metric_const_values = generate_const_values_from_keys(metric_keys.keys());
+    let metric_enum_name = quote::format_ident!("{}", "TelemetryMetric");
+    let metric_enum_keys = generate_enum(&telemetry_metrics_data);
+    let metric_enum_as_str_matches =
+        generate_enum_as_str_matches(&telemetry_metrics_data, metric_enum_name.clone());
 
     let tokens = quote! {
-        use schemars::JsonSchema;
-        use serde::Deserialize;
+        pub const ALL_ATTRS: &[TelemetryAttribute; #attribute_keys_len] = &[#(TelemetryAttribute::#all_attribute_enum_values),*];
 
-        pub const ALL_ATTRS: &[TelemetryAttribute; #attribute_keys_len] = &[#(TelemetryAttribute::#attribute_enum_values),*];
-
-        #[derive(Debug, Deserialize, JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
-        pub enum TelemetryAttribute {
+        #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
+        pub enum #attribute_enum_name {
             #(#attribute_enum_keys),*
         }
 
-        #( #attribute_const_values )*
+        impl #attribute_enum_name {
+            pub const fn as_str(&self) -> &'static str {
+                match self {
+                   #(#attribute_enum_as_str_matches),*
+                }
+            }
+        }
 
-        #( #metric_const_values )*
+        #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
+        pub enum #metric_enum_name {
+            #(#metric_enum_keys),*
+        }
+
+        impl #metric_enum_name {
+            pub const fn as_str(&self) -> &'static str {
+                match self {
+                   #(#metric_enum_as_str_matches),*
+                }
+            }
+        }
     };
 
     let file = parse2(tokens).expect("Could not parse TokenStream");
     let code = prettyplease::unparse(&file);
 
-    write!(generated_file, "{}", code.to_string()).expect("Failed to write generated code");
+    // println!("{:?}", dest_path);
+    // panic!("{:?}", code);
+
+    write!(generated_file, "{}", code).expect("Failed to write generated code");
 
     // Inform cargo that we only want this to run when either this file or the telemetry
     // one changes.

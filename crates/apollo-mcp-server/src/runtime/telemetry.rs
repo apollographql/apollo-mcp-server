@@ -1,6 +1,6 @@
 use crate::runtime::Config;
-use crate::runtime::logging::Logging;
 use crate::runtime::filtering_exporter::FilteringExporter;
+use crate::runtime::logging::Logging;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
