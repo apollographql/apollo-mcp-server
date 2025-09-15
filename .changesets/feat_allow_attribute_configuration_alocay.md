@@ -18,15 +18,18 @@ some.count = "Some metric count info"
 ```
 This would generate a file that looks like the following:
 ```
+/// All TelemetryAttribute values
 pub const ALL_ATTRS: &[TelemetryAttribute; 1usize] = &[
     TelemetryAttribute::MyAttribute
 ];
 #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema,, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum TelemetryAttribute {
+    ///Some attribute info
     #[serde(alias = "my_attribute")]
     MyAttribute,
 }
 impl TelemetryAttribute {
+    /// Supported telemetry attribute (tags) values
     pub const fn as_str(&self) -> &'static str {
         match self {
             TelemetryAttribute::MyAttribute => "apollo.mcp.my_attribute",
@@ -35,10 +38,12 @@ impl TelemetryAttribute {
 }
 #[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema,, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum TelemetryMetric {
+    ///Some metric count info
     #[serde(alias = "some.count")]
     SomeCount,
 }
 impl TelemetryMetric {
+    /// Converts TelemetryMetric to &str
     pub const fn as_str(&self) -> &'static str {
         match self {
             TelemetryMetric::SomeCount => "apollo.mcp.some.count",
