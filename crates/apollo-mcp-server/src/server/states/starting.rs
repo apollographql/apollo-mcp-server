@@ -164,6 +164,26 @@ impl Starting {
                 router
             }};
         }
+
+        // Helper to enable CORS
+        macro_rules! with_cors {
+            ($router:expr, $config:expr) => {{
+                let mut router = $router;
+                if $config.enabled {
+                    match $config.build_cors_layer() {
+                        Ok(cors_layer) => {
+                            router = router.layer(cors_layer);
+                        }
+                        Err(e) => {
+                            error!("Failed to build CORS layer: {}", e);
+                            return Err(e);
+                        }
+                    }
+                }
+                router
+            }};
+        }
+
         match self.config.transport {
             Transport::StreamableHttp {
                 auth,
@@ -182,14 +202,19 @@ impl Starting {
                         ..Default::default()
                     },
                 );
-                let mut router =
-                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
+                let mut router = with_cors!(
+                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth),
+                    self.config.cors
+                );
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
-                    let health_router = Router::new()
-                        .route(&health_check.config().path, get(health_endpoint))
-                        .with_state(health_check.clone());
+                    let health_router = with_cors!(
+                        Router::new()
+                            .route(&health_check.config().path, get(health_endpoint))
+                            .with_state(health_check.clone()),
+                        self.config.cors
+                    );
                     router = router.merge(health_router);
                 }
 
