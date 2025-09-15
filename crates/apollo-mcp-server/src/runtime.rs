@@ -144,6 +144,27 @@ mod test {
 
             insta::assert_debug_snapshot!(config, @r#"
             Config {
+                cors: CorsConfig {
+                    enabled: false,
+                    origins: [],
+                    match_origins: [],
+                    allow_any_origin: false,
+                    allow_credentials: false,
+                    allow_methods: [
+                        "GET",
+                        "POST",
+                        "OPTIONS",
+                    ],
+                    allow_headers: [
+                        "content-type",
+                        "authorization",
+                        "mcp-session-id",
+                    ],
+                    expose_headers: [],
+                    max_age: Some(
+                        7200,
+                    ),
+                },
                 custom_scalars: None,
                 endpoint: Endpoint(
                     Url {
