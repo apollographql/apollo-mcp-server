@@ -173,7 +173,7 @@ impl Running {
 }
 
 impl ServerHandler for Running {
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, _request))]
     async fn initialize(
         &self,
         _request: InitializeRequestParam,
@@ -190,7 +190,7 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip(self, context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
+    #[tracing::instrument(skip(self, context, request), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
