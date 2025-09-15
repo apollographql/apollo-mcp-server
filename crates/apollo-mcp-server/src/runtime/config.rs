@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apollo_mcp_server::{health::HealthCheckConfig, server::Transport};
+use apollo_mcp_server::{cors::CorsConfig, health::HealthCheckConfig, server::Transport};
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -15,6 +15,9 @@ use super::{
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
+    /// CORS configuration
+    pub cors: CorsConfig,
+
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,
 
