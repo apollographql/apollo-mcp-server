@@ -10,28 +10,43 @@ Adding ability to configure which attributes are omitted from telemetry traces a
 
 The `telemetry.toml` file includes attributes (both for metrics and traces) as well as list of metrics gathered. An example would look like the following:
 ```
-[apollo.mcp.attribute]
+[attributes.apollo.mcp]
 my_attribute = "Some attribute info"
 
-[apollo.mcp.metric]
+[metrics.apollo.mcp]
 some.count = "Some metric count info"
 ```
 This would generate a file that looks like the following:
 ```
-use schemars::JsonSchema;
-use serde::Deserialize;
 pub const ALL_ATTRS: &[TelemetryAttribute; 1usize] = &[
     TelemetryAttribute::MyAttribute
 ];
-#[derive(Debug, Deserialize, JsonSchema, Clone, Eq, PartialEq, Hash, Copy)]
+#[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema,, Clone, Eq, PartialEq, Hash, Copy)]
 pub enum TelemetryAttribute {
     #[serde(alias = "my_attribute")]
     MyAttribute,
 }
-pub const APOLLO_MCP_ATTRIBUTE_MY_ATTRIBUTE: &str = "apollo.mcp.attribute.my_attribute";
-pub const APOLLO_MCP_METRIC_SOME_COUNT: &str = "apollo.mcp.metric.some.count";
+impl TelemetryAttribute {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            TelemetryAttribute::MyAttribute => "apollo.mcp.my_attribute",
+        }
+    }
+}
+#[derive(Debug, ::serde::Deserialize, ::schemars::JsonSchema,, Clone, Eq, PartialEq, Hash, Copy)]
+pub enum TelemetryMetric {
+    #[serde(alias = "some.count")]
+    SomeCount,
+}
+impl TelemetryMetric {
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            TelemetryMetric::SomeCount => "apollo.mcp.some.count",
+        }
+    }
+}
 ```
-The configuration for this would look like the following:
+An example configuration that omits `tool_name` attribute for metrics and `request_id` for tracing would look like the following:
 ```
 telemetry:
   exporters:
