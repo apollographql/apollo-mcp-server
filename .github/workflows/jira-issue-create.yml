@@ -1,0 +1,29 @@
+name: Create Jira Ticket on Issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  create-jira-ticket:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create Jira Issue
+        run: |
+          curl -X POST \
+            -H "Authorization: Basic $(echo -n ${{ secrets.JIRA_USER_EMAIL }}:${{ secrets.JIRA_API_TOKEN }} | base64)" \
+            -H "Content-Type: application/json" \
+            -H "Accept: application/json" \
+            -d '{
+              "fields": {
+                "project": {
+                  "key": "MCPS"
+                },
+                "summary": "${{ github.event.issue.title }}",
+                "description": "GitHub Issue: ${{ github.event.issue.html_url }}\n\n${{ github.event.issue.body }}",
+                "issuetype": {
+                  "name": "Task"
+                }
+              }
+            }' \
+            ${{ secrets.JIRA_BASE_URL }}/rest/api/2/issue/
