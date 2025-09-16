@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
 
+use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::{
     auth::ValidToken,
     custom_scalar_map::CustomScalarMap,
@@ -173,7 +174,7 @@ impl Running {
 }
 
 impl ServerHandler for Running {
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, _request))]
     async fn initialize(
         &self,
         _request: InitializeRequestParam,
@@ -181,7 +182,7 @@ impl ServerHandler for Running {
     ) -> Result<InitializeResult, McpError> {
         let meter = get_meter();
         meter
-            .u64_counter("apollo.mcp.initialize.count")
+            .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
             .add(1, &[]);
         // TODO: how to remove these?
@@ -190,7 +191,7 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip(self, context), fields(tool_name = request.name.as_ref(), request_id = %context.id.clone()))]
+    #[tracing::instrument(skip(self, context, request), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
@@ -294,18 +295,18 @@ impl ServerHandler for Running {
 
         let attributes = vec![
             KeyValue::new(
-                "success",
+                TelemetryAttribute::Success.to_key(),
                 result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
             ),
-            KeyValue::new("tool_name", tool_name),
+            KeyValue::new(TelemetryAttribute::ToolName.to_key(), tool_name),
         ];
         // Record response time and status
         meter
-            .f64_histogram("apollo.mcp.tool.duration")
+            .f64_histogram(TelemetryMetric::ToolDuration.as_str())
             .build()
             .record(start.elapsed().as_millis() as f64, &attributes);
         meter
-            .u64_counter("apollo.mcp.tool.count")
+            .u64_counter(TelemetryMetric::ToolCount.as_str())
             .build()
             .add(1, &attributes);
 
@@ -320,7 +321,7 @@ impl ServerHandler for Running {
     ) -> Result<ListToolsResult, McpError> {
         let meter = get_meter();
         meter
-            .u64_counter("apollo.mcp.list_tools.count")
+            .u64_counter(TelemetryMetric::ListToolsCount.as_str())
             .build()
             .add(1, &[]);
         Ok(ListToolsResult {
@@ -343,7 +344,7 @@ impl ServerHandler for Running {
     fn get_info(&self) -> ServerInfo {
         let meter = get_meter();
         meter
-            .u64_counter("apollo.mcp.get_info.count")
+            .u64_counter(TelemetryMetric::GetInfoCount.as_str())
             .build()
             .add(1, &[]);
         ServerInfo {
