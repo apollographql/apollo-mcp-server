@@ -167,9 +167,7 @@ mod test {
                     },
                 ),
                 graphos: GraphOSConfig {
-                    apollo_key: Some(
-                        SecretBox<str>([REDACTED]),
-                    ),
+                    apollo_key: None,
                     apollo_graph_ref: None,
                     apollo_registry_url: None,
                     apollo_uplink_endpoints: [
