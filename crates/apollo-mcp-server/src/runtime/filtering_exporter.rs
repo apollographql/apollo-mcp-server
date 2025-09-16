@@ -138,7 +138,6 @@ mod tests {
             .export(vec![mock_span_data])
             .await
             .expect("Export error");
-        assert!(true);
     }
 
     #[tokio::test]
