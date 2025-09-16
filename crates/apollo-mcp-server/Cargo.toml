@@ -42,7 +42,9 @@ opentelemetry-otlp = { version = "0.30.0", features = [
 opentelemetry-resource-detectors = "0.9.0"
 opentelemetry-semantic-conventions = "0.30.0"
 opentelemetry-stdout = "0.30.0"
-opentelemetry_sdk = { version = "0.30.0", features = ["spec_unstable_metrics_views"] }
+opentelemetry_sdk = { version = "0.30.0", features = [
+  "spec_unstable_metrics_views",
+] }
 regex = "1.11.1"
 reqwest-middleware = "0.4.2"
 reqwest-tracing = { version = "0.5.8", features = ["opentelemetry_0_30"] }
