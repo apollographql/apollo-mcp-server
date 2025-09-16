@@ -17,3 +17,15 @@ introspection:
     enabled: true
   search:
     enabled: true
+telemetry:
+  exporters:
+    metrics:
+      otlp:
+        endpoint: "http://localhost:4317"
+        protocol: "grpc"
+      omitted_attributes:
+        - tool_name
+    tracing:
+      otlp:
+        endpoint: "http://localhost:4317"
+        protocol: "grpc"

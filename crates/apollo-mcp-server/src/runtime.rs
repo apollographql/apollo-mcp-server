@@ -132,8 +132,13 @@ mod test {
         let config = "
             endpoint: http://from_file:4000/
         ";
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        let workspace = env!("CARGO_MANIFEST_DIR");
 
         figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            jail.set_env("PATH", &saved_path);
+            jail.set_env("INSTA_WORKSPACE_ROOT", workspace);
             let path = "config.yaml";
 
             jail.create_file(path, config)?;
