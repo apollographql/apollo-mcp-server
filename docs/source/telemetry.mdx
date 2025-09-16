@@ -4,26 +4,27 @@ title: OpenTelemetry Integration
 
 AI agents create unpredictable usage patterns and complex request flows that are hard to monitor with traditional methods. The Apollo MCP Server's OpenTelemetry integration provides the visibility you need to run a reliable service for AI agents.
 
-## **What You Can Monitor**
+## What you can monitor
 
 - **Agent behavior**: Which tools and operations are used most frequently
 - **Performance**: Response times and bottlenecks across tool executions and GraphQL operations  
 - **Reliability**: Error rates, failed operations, and request success patterns
 - **Distributed request flows**: Complete traces from agent request through your Apollo Router and subgraphs, with automatic trace context propagation
 
-## **How It Works**
+## How it works
 
 The server exports metrics, traces, and events using the OpenTelemetry Protocol (OTLP), ensuring compatibility with your existing observability stack and seamless integration with other instrumented Apollo services.
 
-## Usage Guide
+## Usage guide
 
-### **Quick Start: Local Development**
+### Quick start: Local development
 
 The fastest way to see Apollo MCP Server telemetry in action is with a local setup that requires only Docker.
 
-**🚀 5-minute setup:**
-1. **Start local observability stack**: `docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm`
-2. **Add telemetry config** to your `config.yaml`:
+#### 5-minute setup
+1. Start local observability stack: 
+<code>docker run -p 3000:3000 -p 4317:4317 -p 4318:4318 --rm -ti grafana/otel-lgtm</code>
+1. Add telemetry config to your `config.yaml`:
    ```yaml
    telemetry:
      exporters:
@@ -36,16 +37,16 @@ The fastest way to see Apollo MCP Server telemetry in action is with a local set
            endpoint: "http://localhost:4318/v1/traces" 
            protocol: "http/protobuf"
    ```
-3. **Restart your MCP server** with the updated config
-4. **Open Grafana** at http://localhost:3000 (admin/admin) and explore your telemetry data
+1. Restart your MCP server with the updated config
+1. Open Grafana at `http://localhost:3000` and explore your telemetry data. Default credentials are username `admin` with password `admin`.
 
 For detailed steps and dashboard examples, see the [complete Grafana setup guide](guides/telemetry-grafana.mdx).
 
-### **Production Deployment**
+### Production deployment
 
 For production environments, configure your MCP server to send telemetry to any OTLP-compatible backend. The Apollo MCP Server uses standard OpenTelemetry protocols, ensuring compatibility with all major observability platforms.
 
-#### **Configuration Example**
+#### Configuration example
 
 ```yaml
 telemetry:
@@ -61,21 +62,21 @@ telemetry:
         protocol: "http/protobuf"
 ```
 
-#### **Observability Platform Integration**
+#### Observability platform integration
 
 The MCP server works with any OTLP-compatible backend. Consult your provider's documentation for specific endpoint URLs and authentication:
 
-- **[Datadog OTLP Integration](https://docs.datadoghq.com/tracing/setup_overview/open_standards/otlp_ingest_in_datadog/)** - Native OTLP support
-- **[New Relic OpenTelemetry](https://docs.newrelic.com/docs/more-integrations/open-source-telemetry-integrations/opentelemetry/)** - Direct OTLP ingestion
-- **[AWS Observability](https://aws-otel.github.io/docs/introduction)** - Via AWS Distro for OpenTelemetry
-- **[Grafana Cloud](https://grafana.com/docs/grafana-cloud/send-data/otlp/)** - Hosted Grafana with OTLP
-- **[Honeycomb](https://docs.honeycomb.io/getting-data-in/opentelemetry/)** - OpenTelemetry-native platform
-- **[Jaeger](https://www.jaegertracing.io/docs/1.50/deployment/)** - Self-hosted tracing
-- **[OpenTelemetry Collector](https://opentelemetry.io/docs/collector/deployment/)** - Self-hosted with flexible routing
+- [Datadog OTLP Integration](https://docs.datadoghq.com/tracing/setup_overview/open_standards/otlp_ingest_in_datadog/) - Native OTLP support
+- [New Relic OpenTelemetry](https://docs.newrelic.com/docs/more-integrations/open-source-telemetry-integrations/opentelemetry/) - Direct OTLP ingestion
+- [AWS Observability](https://aws-otel.github.io/docs/introduction) - Via AWS Distro for OpenTelemetry
+- [Grafana Cloud](https://grafana.com/docs/grafana-cloud/send-data/otlp/) - Hosted Grafana with OTLP
+- [Honeycomb](https://docs.honeycomb.io/getting-data-in/opentelemetry/) - OpenTelemetry-native platform
+- [Jaeger](https://www.jaegertracing.io/docs/1.50/deployment/) - Self-hosted tracing
+- [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/deployment/) - Self-hosted with flexible routing
 
-#### **Production Configuration Best Practices**
+#### Production configuration best practices
 
-**Environment and Security:**
+##### Environment and security
 ```yaml
 # Set via environment variable
 export ENVIRONMENT=production
@@ -90,25 +91,25 @@ telemetry:
         protocol: "http/protobuf"           # Generally more reliable than gRPC
 ```
 
-**Performance Considerations:**
+##### Performance considerations
 - **Protocol choice**: `http/protobuf` is often more reliable through firewalls and load balancers than `grpc`
 - **Batch export**: OpenTelemetry automatically batches telemetry data for efficiency
 - **Network timeouts**: Default timeouts are usually appropriate, but monitor for network issues
 
-**Resource Correlation:**
+##### Resource correlation
 - The `ENVIRONMENT` variable automatically tags all telemetry with `deployment.environment.name`
 - Use consistent `service_name` across all your Apollo infrastructure (Router, subgraphs, MCP server)
 - Set `version` to track releases and correlate issues with deployments
 
-#### **Troubleshooting**
+#### Troubleshooting
 
-**Common Issues:**
+##### Common issues
 - **Connection refused**: Verify endpoint URL and network connectivity
 - **Authentication errors**: Check if your provider requires API keys or special headers
 - **Missing data**: Confirm your observability platform supports OTLP and is configured to receive data
 - **High memory usage**: Monitor telemetry export frequency and consider sampling for high-volume environments
 
-**Verification:**
+##### Verification
 ```bash
 # Check if telemetry is being exported (look for connection attempts)
 curl -v https://your-endpoint/v1/metrics
@@ -183,7 +184,7 @@ In addition to these custom metrics, the server also emits standard [HTTP server
 
 Spans are generated for the following actions:
 
-*   **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
-*   **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
-*   **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
-*   **Downstream GraphQL Calls**: The `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent` and `tracestate` headers are propagated automatically, enabling distributed traces.
+-   **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
+-   **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
+-   **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
+-   **Downstream GraphQL Calls**: The `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent` and `tracestate` headers are propagated automatically, enabling distributed traces.
