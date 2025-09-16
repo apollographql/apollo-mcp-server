@@ -1,5 +1,6 @@
 //! Execute GraphQL operations from an MCP tool
 
+use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::{errors::McpError, meter::get_meter};
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -37,7 +38,7 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self, request))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = get_meter();
         let start = std::time::Instant::now();
@@ -129,12 +130,15 @@ pub trait Executable {
         // Record response metrics
         let attributes = vec![
             KeyValue::new(
-                "success",
+                TelemetryAttribute::Success.to_key(),
                 result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
             ),
-            KeyValue::new("operation.id", op_id.unwrap_or("unknown".to_string())),
             KeyValue::new(
-                "operation.type",
+                TelemetryAttribute::OperationId.to_key(),
+                op_id.unwrap_or("unknown".to_string()),
+            ),
+            KeyValue::new(
+                TelemetryAttribute::OperationSource.to_key(),
                 if self.persisted_query_id().is_some() {
                     "persisted_query"
                 } else {
@@ -143,11 +147,11 @@ pub trait Executable {
             ),
         ];
         meter
-            .f64_histogram("apollo.mcp.operation.duration")
+            .f64_histogram(TelemetryMetric::OperationDuration.as_str())
             .build()
             .record(start.elapsed().as_millis() as f64, &attributes);
         meter
-            .u64_counter("apollo.mcp.operation.count")
+            .u64_counter(TelemetryMetric::OperationCount.as_str())
             .build()
             .add(1, &attributes);
 

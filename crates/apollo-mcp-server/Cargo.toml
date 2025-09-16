@@ -6,6 +6,7 @@ license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
+build = "build.rs"
 
 default-run = "apollo-mcp-server"
 
@@ -42,7 +43,9 @@ opentelemetry-otlp = { version = "0.30.0", features = [
 opentelemetry-resource-detectors = "0.9.0"
 opentelemetry-semantic-conventions = "0.30.0"
 opentelemetry-stdout = "0.30.0"
-opentelemetry_sdk = "0.30.0"
+opentelemetry_sdk = { version = "0.30.0", features = [
+  "spec_unstable_metrics_views",
+] }
 regex = "1.11.1"
 reqwest-middleware = "0.4.2"
 reqwest-tracing = { version = "0.5.8", features = ["opentelemetry_0_30"] }
@@ -66,6 +69,7 @@ tracing-opentelemetry = "0.31.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
+async-trait = "0.1.89"
 
 [dev-dependencies]
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
@@ -77,6 +81,14 @@ rstest.workspace = true
 tokio.workspace = true
 tower = "0.5.2"
 tracing-test = "0.2.5"
+
+[build-dependencies]
+cruet = "0.15.0"
+prettyplease = "0.2.37"
+quote = "1.0.40"
+serde.workspace = true
+syn = "2.0.106"
+toml = "0.9.5"
 
 [lints]
 workspace = true

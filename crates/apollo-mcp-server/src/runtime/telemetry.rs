@@ -1,23 +1,25 @@
-use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use crate::runtime::Config;
+use crate::runtime::filtering_exporter::FilteringExporter;
+use crate::runtime::logging::Logging;
+use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
+use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::metrics::{Instrument, Stream};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
-
 use opentelemetry_semantic_conventions::{
     SCHEMA_URL,
     attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::collections::HashSet;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
-use crate::runtime::Config;
-use crate::runtime::logging::Logging;
 
 /// Telemetry related options
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -36,6 +38,7 @@ pub struct Exporters {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MetricsExporters {
     otlp: Option<OTLPMetricExporter>,
+    omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -56,6 +59,7 @@ impl Default for OTLPMetricExporter {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TracingExporters {
     otlp: Option<OTLPTracingExporter>,
+    omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -99,14 +103,17 @@ fn resource(telemetry: &Telemetry) -> Resource {
 }
 
 fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow::Error> {
-    let otlp = telemetry
+    let metrics_exporters = telemetry
         .exporters
         .as_ref()
-        .and_then(|exporters| exporters.metrics.as_ref())
+        .and_then(|exporters| exporters.metrics.as_ref());
+
+    let otlp = metrics_exporters
         .and_then(|metrics_exporters| metrics_exporters.otlp.as_ref())
         .ok_or_else(|| {
             anyhow::anyhow!("No metrics exporters configured, at least one is required")
         })?;
+
     let exporter = match otlp.protocol.as_str() {
         "grpc" => opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
@@ -123,27 +130,50 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
         }
     };
 
+    let omitted_attributes: HashSet<TelemetryAttribute> = metrics_exporters
+        .and_then(|exporters| exporters.omitted_attributes.clone())
+        .unwrap_or_default();
+    let included_attributes: Vec<Key> = TelemetryAttribute::included_attributes(omitted_attributes)
+        .iter()
+        .map(|a| a.to_key())
+        .collect();
+
     let reader = PeriodicReader::builder(exporter)
         .with_interval(std::time::Duration::from_secs(30))
         .build();
 
+    let filtered_view = move |i: &Instrument| {
+        if i.name().starts_with("apollo.") {
+            Stream::builder()
+                .with_allowed_attribute_keys(included_attributes.clone()) // if available in your version
+                .build()
+                .ok()
+        } else {
+            None
+        }
+    };
+
     let meter_provider = MeterProviderBuilder::default()
         .with_resource(resource(telemetry))
         .with_reader(reader)
+        .with_view(filtered_view)
         .build();
 
     Ok(meter_provider)
 }
 
 fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyhow::Error> {
-    let otlp = telemetry
+    let tracer_exporters = telemetry
         .exporters
         .as_ref()
-        .and_then(|exporters| exporters.tracing.as_ref())
+        .and_then(|exporters| exporters.tracing.as_ref());
+
+    let otlp = tracer_exporters
         .and_then(|tracing_exporters| tracing_exporters.otlp.as_ref())
         .ok_or_else(|| {
             anyhow::anyhow!("No tracing exporters configured, at least one is required")
         })?;
+
     let exporter = match otlp.protocol.as_str() {
         "grpc" => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -160,10 +190,17 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         }
     };
 
+    let omitted_attributes: HashSet<Key> = tracer_exporters
+        .and_then(|exporters| exporters.omitted_attributes.clone())
+        .map(|set| set.iter().map(|a| a.to_key()).collect())
+        .unwrap_or_default();
+
+    let filtering_exporter = FilteringExporter::new(exporter, omitted_attributes);
+
     let tracer_provider = SdkTracerProvider::builder()
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource(telemetry))
-        .with_batch_exporter(exporter)
+        .with_batch_exporter(filtering_exporter)
         .build();
 
     Ok(tracer_provider)
@@ -251,15 +288,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn guard_is_provided_when_tracing_configued() {
+    async fn guard_is_provided_when_tracing_configured() {
+        let mut ommitted = HashSet::new();
+        ommitted.insert(TelemetryAttribute::RequestId);
+
         let config = test_config(
             Some("test-config"),
             Some("1.0.0"),
             Some(MetricsExporters {
                 otlp: Some(OTLPMetricExporter::default()),
+                omitted_attributes: None,
             }),
             Some(TracingExporters {
                 otlp: Some(OTLPTracingExporter::default()),
+                omitted_attributes: Some(ommitted),
             }),
         );
         // init_tracing_subscriber can only be called once in the test suite to avoid
@@ -278,6 +320,7 @@ mod tests {
                     protocol: "bogus".to_string(),
                     endpoint: "http://localhost:4317".to_string(),
                 }),
+                omitted_attributes: None,
             }),
             None,
         );
@@ -301,6 +344,7 @@ mod tests {
                     protocol: "bogus".to_string(),
                     endpoint: "http://localhost:4317".to_string(),
                 }),
+                omitted_attributes: None,
             }),
         );
         let result = init_tracer_provider(&config.telemetry);
