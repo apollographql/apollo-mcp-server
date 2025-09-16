@@ -2,8 +2,8 @@ use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
-use rmcp::transport::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
     ServiceExt as _,
     transport::{SseServer, sse_server::SseServerConfig, stdio},
@@ -126,6 +126,7 @@ impl Starting {
                     auth: _,
                     address: _,
                     port: _,
+                    stateful_mode: _,
                 },
                 true,
             ) => Some(HealthCheck::new(self.config.health_check.clone())),
@@ -168,6 +169,7 @@ impl Starting {
                 auth,
                 address,
                 port,
+                stateful_mode,
             } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
@@ -175,7 +177,10 @@ impl Starting {
                 let service = StreamableHttpService::new(
                     move || Ok(running.clone()),
                     LocalSessionManager::default().into(),
-                    Default::default(),
+                    StreamableHttpServerConfig {
+                        stateful_mode,
+                        ..Default::default()
+                    },
                 );
                 let mut router =
                     with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
