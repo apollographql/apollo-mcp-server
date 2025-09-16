@@ -223,7 +223,7 @@ mod tests {
                 Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
             }
 
-            fn set_resource(&mut self, _resource: &Resource) { }
+            fn set_resource(&mut self, _resource: &Resource) {}
         }
 
         let mock_exporter = TestExporter {};
