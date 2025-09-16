@@ -153,7 +153,7 @@ impl StateMachine {
 
     #[allow(clippy::result_large_err)]
     fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
-        match Supergraph::new(&schema_state.sdl) {
+        match Supergraph::new_with_router_specs(&schema_state.sdl) {
             Ok(supergraph) => Ok(supergraph
                 .to_api_schema(ApiSchemaOptions::default())
                 .map_err(|e| ServerError::Federation(Box::new(e)))?
