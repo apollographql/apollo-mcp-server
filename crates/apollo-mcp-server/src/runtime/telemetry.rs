@@ -1,6 +1,9 @@
+mod sampler;
+
 use crate::runtime::Config;
 use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::Logging;
+use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
@@ -59,6 +62,7 @@ impl Default for OTLPMetricExporter {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TracingExporters {
     otlp: Option<OTLPTracingExporter>,
+    sampler: Option<SamplerOption>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
@@ -190,6 +194,12 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         }
     };
 
+    let sampler: opentelemetry_sdk::trace::Sampler = tracer_exporters
+        .as_ref()
+        .and_then(|e| e.sampler.clone())
+        .unwrap_or_default()
+        .into();
+
     let omitted_attributes: HashSet<Key> = tracer_exporters
         .and_then(|exporters| exporters.omitted_attributes.clone())
         .map(|set| set.iter().map(|a| a.to_key()).collect())
@@ -201,6 +211,7 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         .with_id_generator(RandomIdGenerator::default())
         .with_resource(resource(telemetry))
         .with_batch_exporter(filtering_exporter)
+        .with_sampler(sampler)
         .build();
 
     Ok(tracer_provider)
@@ -301,6 +312,7 @@ mod tests {
             }),
             Some(TracingExporters {
                 otlp: Some(OTLPTracingExporter::default()),
+                sampler: Default::default(),
                 omitted_attributes: Some(ommitted),
             }),
         );
@@ -344,6 +356,7 @@ mod tests {
                     protocol: "bogus".to_string(),
                     endpoint: "http://localhost:4317".to_string(),
                 }),
+                sampler: Default::default(),
                 omitted_attributes: None,
             }),
         );
