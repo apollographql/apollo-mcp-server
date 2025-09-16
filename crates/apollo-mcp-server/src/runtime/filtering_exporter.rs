@@ -162,7 +162,7 @@ mod tests {
             }
 
             fn set_resource(&mut self, _resource: &Resource) {
-                assert!(false);
+                unreachable!("should not be called");
             }
         }
 
@@ -193,7 +193,7 @@ mod tests {
             }
 
             fn set_resource(&mut self, _resource: &Resource) {
-                assert!(false);
+                unreachable!("should not be called");
             }
         }
 
@@ -223,9 +223,7 @@ mod tests {
                 Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
             }
 
-            fn set_resource(&mut self, _resource: &Resource) {
-                assert!(true);
-            }
+            fn set_resource(&mut self, _resource: &Resource) { }
         }
 
         let mock_exporter = TestExporter {};
