@@ -165,7 +165,7 @@ The server automatically sets these OpenTelemetry resource attributes:
 
 ## Emitted Metrics
 
-The server emits the following custom metrics, which are invaluable for monitoring and alerting. All duration metrics are in milliseconds.
+The server emits the following metrics, which are invaluable for monitoring and alerting. All duration metrics are in milliseconds.
 
 | Metric Name | Type | Description | Attributes |
 |---|---|---|---|
@@ -177,7 +177,7 @@ The server emits the following custom metrics, which are invaluable for monitori
 | `apollo.mcp.operation.count`| Counter | Incremented for each downstream GraphQL operation executed by a tool. | `operation.id`, `operation.type` ("persisted_query" or "operation"), `success` (bool) |
 | `apollo.mcp.operation.duration`| Histogram | Measures the round-trip duration of each downstream GraphQL operation. | `operation.id`, `operation.type`, `success` (bool) |
 
-In addition to these custom metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
+In addition to these metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
 
 
 ## Emitted Traces
