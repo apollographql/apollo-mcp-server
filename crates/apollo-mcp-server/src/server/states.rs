@@ -44,6 +44,7 @@ struct Config {
     mutation_mode: MutationMode,
     disable_type_description: bool,
     disable_schema_description: bool,
+    disable_auth_token_passthrough: bool,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
@@ -76,6 +77,7 @@ impl StateMachine {
                 mutation_mode: server.mutation_mode,
                 disable_type_description: server.disable_type_description,
                 disable_schema_description: server.disable_schema_description,
+                disable_auth_token_passthrough: server.disable_auth_token_passthrough,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
@@ -154,7 +156,7 @@ impl StateMachine {
         match Supergraph::new(&schema_state.sdl) {
             Ok(supergraph) => Ok(supergraph
                 .to_api_schema(ApiSchemaOptions::default())
-                .map_err(ServerError::Federation)?
+                .map_err(|e| ServerError::Federation(Box::new(e)))?
                 .schema()
                 .clone()),
             Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")

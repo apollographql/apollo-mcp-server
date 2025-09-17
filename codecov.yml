@@ -1,0 +1,10 @@
+coverage:
+  status:
+    project:
+      default:
+        # Should increase overall coverage on each PR
+        target: auto
+    patch:
+      default:
+        # Require 80% coverage on all new/modified code
+        target: 80%

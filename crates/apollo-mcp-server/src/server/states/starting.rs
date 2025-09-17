@@ -149,6 +149,7 @@ impl Starting {
             mutation_mode: self.config.mutation_mode,
             disable_type_description: self.config.disable_type_description,
             disable_schema_description: self.config.disable_schema_description,
+            disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
         };
 
@@ -262,9 +263,14 @@ impl Starting {
             }
             Transport::Stdio => {
                 info!("Starting MCP server in stdio mode");
-                let service = running.clone().serve(stdio()).await.inspect_err(|e| {
-                    error!("serving error: {:?}", e);
-                })?;
+                let service = running
+                    .clone()
+                    .serve(stdio())
+                    .await
+                    .inspect_err(|e| {
+                        error!("serving error: {:?}", e);
+                    })
+                    .map_err(Box::new)?;
                 service.waiting().await.map_err(ServerError::StartupError)?;
             }
         }

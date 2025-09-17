@@ -532,16 +532,15 @@ fn retain_argument_descriptions(
 ) {
     let operation_argument_name = operation_arguments.get(arg.name.as_str());
 
-    if let Some(op_arg_name) = operation_argument_name {
-        if let Some(description) = arg.description.as_deref() {
-            if !description.trim().is_empty() {
-                let descriptions = tree_shaker
-                    .arguments_descriptions
-                    .entry(op_arg_name.to_string())
-                    .or_default();
-                descriptions.push(description.trim().to_string())
-            }
-        }
+    if let Some(op_arg_name) = operation_argument_name
+        && let Some(description) = arg.description.as_deref()
+        && !description.trim().is_empty()
+    {
+        let descriptions = tree_shaker
+            .arguments_descriptions
+            .entry(op_arg_name.to_string())
+            .or_default();
+        descriptions.push(description.trim().to_string())
     }
 }
 

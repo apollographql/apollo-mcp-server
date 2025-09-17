@@ -1,22 +1,49 @@
 {
+  // Allow for intellisense in editors
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+
+  // List of rules to apply
   extends: [
+    // Recommended best practices from renovate itself
+    // See: https://docs.renovatebot.com/upgrade-best-practices/#whats-in-the-configbest-practices-preset
+    "config:best-practices",
+
+    // Apply our own internal best practices
+    // See: https://github.com/apollographql/apollo-mcp-server/commits/main/.github/renovate.json5
     "github>apollographql/renovate-config-apollo-open-source:default.json5",
+
+    // Update to the latest rust stable version as it releases.
+    // See: https://github.com/Turbo87/renovate-config/blob/master/rust/updateToolchain.json
     "github>Turbo87/renovate-config//rust/updateToolchain",
   ],
+
+  // Globally disable all automatic update PRs from renovate
   packageRules: [
     {
       enabled: false,
       matchPackageNames: ["*"],
     },
   ],
+
   // Automating Nix upgrades is currently in beta and opt-in only.
   // https://docs.renovatebot.com/modules/manager/nix/
   nix: {
     enabled: true,
   },
+
+  // Globally enable vulnerability alerts
+  //
+  // Note: This needs extra configuration at the repository level, which is described in the link
+  // below.
+  //
+  // See: https://docs.renovatebot.com/configuration-options/#vulnerabilityalerts
   vulnerabilityAlerts: {
     enabled: true,
   },
+
+  // Disable automatically updating lock files to latest versions once a week.
+  //
+  // See: https://docs.renovatebot.com/configuration-options/#lockfilemaintenance
   lockFileMaintenance: {
     enabled: false,
   },
