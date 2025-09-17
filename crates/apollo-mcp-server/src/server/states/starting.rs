@@ -124,6 +124,7 @@ impl Starting {
             (
                 Transport::StreamableHttp {
                     auth: _,
+                    cors: _,
                     address: _,
                     port: _,
                 },
@@ -166,6 +167,7 @@ impl Starting {
         match self.config.transport {
             Transport::StreamableHttp {
                 auth,
+                cors,
                 address,
                 port,
             } => {
@@ -179,6 +181,13 @@ impl Starting {
                 );
                 let mut router =
                     with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
+
+                // Add CORS middleware if configured
+                if let Some(cors) = cors {
+                    let cors_layer = cors.into_layer()
+                        .map_err(|e| ServerError::Header(format!("Invalid CORS configuration: {}", e)))?;
+                    router = router.layer(cors_layer);
+                }
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -202,6 +211,7 @@ impl Starting {
             }
             Transport::SSE {
                 auth,
+                cors,
                 address,
                 port,
             } => {
@@ -218,7 +228,14 @@ impl Starting {
                 });
 
                 // Optionally wrap the router with auth, if enabled
-                let router = with_auth!(router, auth);
+                let mut router = with_auth!(router, auth);
+
+                // Add CORS middleware if configured
+                if let Some(cors) = cors {
+                    let cors_layer = cors.into_layer()
+                        .map_err(|e| ServerError::Header(format!("Invalid CORS configuration: {}", e)))?;
+                    router = router.layer(cors_layer);
+                }
 
                 // Start up the SSE server
                 // Note: Until RMCP consolidates SSE with the same tower system as StreamableHTTP,
