@@ -87,4 +87,24 @@ mod tests {
         let output = format!("{:?}", event);
         assert_eq!(output, "Shutdown");
     }
+
+    // covered by the below test
+    fn plus(x: i32, y: i32) -> i32 {
+        x + y
+    }
+
+    /// A simple test to cover the plus function
+    #[test]
+    fn test_function_plus() {
+        assert_eq!(plus(1, 2), 3);
+        assert_eq!(plus(3, 4), 7);
+    }
+
+    /// A simple test to ensure that test coverage doesn't account for test code
+    #[test]
+    fn test_manual_plus() {
+        let x = 5;
+        let y = 10;
+        assert_eq!(x + y, 15);
+    }
 }
