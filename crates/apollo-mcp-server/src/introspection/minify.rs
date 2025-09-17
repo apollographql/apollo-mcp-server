@@ -253,3 +253,27 @@ fn normalize_description(desc: &str) -> String {
     let re = WHITESPACE_PATTERN.get_or_init(|| Regex::new(r"\s+").expect("regex pattern compiles"));
     re.replace_all(desc, "").to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_SCHEMA: &str = include_str!("tools/testdata/schema.graphql");
+
+    #[test]
+    fn test_minify_schema() {
+        let schema = apollo_compiler::schema::Schema::parse(TEST_SCHEMA, "schema.graphql")
+            .expect("Failed to parse schema")
+            .validate()
+            .expect("Failed to validate schema");
+
+        let minified = schema
+            .types
+            .iter()
+            .map(|(_, type_)| format!("{}: {}", type_.name().as_str(), type_.minify()))
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        insta::assert_snapshot!(minified);
+    }
+}
