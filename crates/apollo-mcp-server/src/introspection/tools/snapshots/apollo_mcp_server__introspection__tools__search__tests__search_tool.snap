@@ -28,7 +28,7 @@ type Post implements Node & Content {
 
 type Query {
   user(id: ID!): User
-  post(id: ID!): Post
+  postsOld(filter: [ID!]): [Post!]! @deprecated(reason: "Use posts instead")
   posts(filter: PostFilter): [Post!]!
 }
 
