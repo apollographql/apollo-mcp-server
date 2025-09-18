@@ -215,15 +215,27 @@ impl Starting {
                 //start OpenTelemetry trace on incoming request
                 .layer(OtelAxumLayer::default())
                 // Add tower-http tracing layer for additional HTTP-level tracing
-                .layer(TraceLayer::new_for_http().make_span_with(
-                    |request: &axum::http::Request<_>| {
-                        tracing::info_span!(
-                            "http_request",
-                            method = %request.method(),
-                            uri = %request.uri(),
-                        )
-                    },
-                ));
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|request: &axum::http::Request<_>| {
+                            tracing::info_span!(
+                                "mcp_server",
+                                method = %request.method(),
+                                uri = %request.uri(),
+                                status_code = tracing::field::Empty,
+                            )
+                        })
+                        .on_response(
+                            |response: &axum::http::Response<_>,
+                             _latency: std::time::Duration,
+                             span: &tracing::Span| {
+                                span.record(
+                                    "status_code",
+                                    tracing::field::display(response.status()),
+                                );
+                            },
+                        ),
+                );
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
