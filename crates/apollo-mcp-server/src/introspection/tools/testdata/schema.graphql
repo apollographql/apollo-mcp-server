@@ -191,6 +191,7 @@ type DeviceStats {
 
 type UserPreferences {
   theme: String!
+  oldTheme: String @deprecated
   language: String!
   notifications: NotificationPreferences!
   privacy: PrivacySettings!
