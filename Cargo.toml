@@ -54,6 +54,9 @@ url = { version = "2.4", features = ["serde"] }
 [workspace.metadata]
 crane.name = "apollo-mcp"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
+
 [workspace.lints.clippy]
 exit = "deny"
 expect_used = "deny"
