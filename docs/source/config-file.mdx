@@ -28,6 +28,8 @@ All fields are optional.
 | `overrides`      | `Overrides`           |                          | Overrides for server behavior                                    |
 | `schema`         | `SchemaSource`        |                          | Schema configuration                                             |
 | `transport`      | `Transport`           |                          | The type of server transport to use                              |
+| `telemetry`      | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
+
 
 ### GraphOS
 
@@ -207,6 +209,52 @@ transport:
       - mcp
       - profile
 ```
+
+### Telemetry
+
+| Option          | Type        | Default                     | Description                              |
+| :-------------- | :---------- | :-------------------------- | :--------------------------------------- |
+| `service_name`  | `string`    | "apollo-mcp-server"         | The service name in telemetry data.      |
+| `version`       | `string`    | Current crate version       | The service version in telemetry data.   |
+| `exporters`     | `Exporters` | `null` (Telemetry disabled) | Configuration for telemetry exporters.   |
+
+#### Exporters
+
+| Option     | Type        | Default                     | Description                              |
+| :--------- | :---------- | :-------------------------- | :--------------------------------------- |
+| `metrics`  | `Metrics`   | `null` (Metrics disabled)   | Configuration for exporting metrics.     |
+| `tracing`  | `Tracing`   | `null` (Tracing disabled)   | Configuration for exporting traces.      |
+
+
+#### Metrics
+
+| Option                | Type             | Default                     | Description                                    |
+| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
+| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from metrics. |
+
+#### Traces
+
+| Option                | Type             | Default                     | Description                                    |
+| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
+| `sampler`             | `SamplerOption`  | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
+| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from traaces. |
+
+#### OTLP Exporter
+
+| Option      | Type      | Default                     | Description                                                      |
+| :---------  | :-------- | :-------------------------- | :--------------------------------------------------------------- |
+| `endpoint`  | `URL`     | `http://localhost:4137`     | URL to export data to. Requires full path.                       |
+| `protocol`  | `string`  | `grpc`                      | Protocol for export. `grpc` and `http/protobuf` are supported.   |
+
+#### SampleOption
+
+| Option       | Type      | Description                                              |
+| :----------- | :-------- | :------------------------------------------------------- |
+| `always_on`  | `string`  | All traces will be exported.                             |
+| `always_off` | `string`  | Sampling is turned off, no traces will be exported.      |
+| `0.0-1.0`    | `f64`     | Percentage of traces to export.                          |
 
 ## Example config file
 
