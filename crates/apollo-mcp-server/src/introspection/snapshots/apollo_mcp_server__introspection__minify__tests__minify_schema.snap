@@ -42,7 +42,7 @@ Demographics: T:Demographics:ageGroups:[AgeGroup],locations:[LocationStats],devi
 AgeGroup: T:AgeGroup:range:s!,percentage:f!
 LocationStats: T:LocationStats:country:s!,count:i!
 DeviceStats: T:DeviceStats:type:s!,count:i!
-UserPreferences: T:UserPreferences:theme:s!,language:s!,notifications:NotificationPreferences!,privacy:PrivacySettings!
+UserPreferences: T:UserPreferences:theme:s!,oldTheme:s@D,language:s!,notifications:NotificationPreferences!,privacy:PrivacySettings!
 NotificationPreferences: T:NotificationPreferences:email:b!,push:b!,sms:b!,frequency:s!
 PrivacySettings: T:PrivacySettings:profileVisibility:s!,showEmail:b!,showLocation:b!
 CreateUserInput: I:CreateUserInput:username:s!,email:s!,password:s!,role:UserRole,profile:CreateUserProfileInput
