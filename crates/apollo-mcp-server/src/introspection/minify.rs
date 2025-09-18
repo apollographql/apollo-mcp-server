@@ -82,20 +82,19 @@ fn minify_directives(directives: &apollo_compiler::ast::DirectiveList) -> String
 
     for directive in directives.iter() {
         if let Some(minified_name) = directives_to_minify.get(directive.name.as_str()) {
-            if !directive.arguments.is_empty() {
-                // Since we're only handling @deprecated right now we can just add the reason and minify it.
-                // We should handle this more generically in the future.
-                let reason = directive
+            // Since we're only handling @deprecated right now we can just add the reason and minify it.
+            // We should handle this more generically in the future.
+            if !directive.arguments.is_empty()
+                && let Some(reason) = directive
                     .arguments
                     .iter()
                     .find(|a| a.name == "reason")
                     .and_then(|a| a.value.as_str())
-                    .unwrap_or("No longer supported")
-                    .to_string();
+            {
                 result.push_str(&format!(
                     "@{}(\"{}\")",
                     minified_name,
-                    normalize_description(&reason)
+                    normalize_description(reason)
                 ));
             } else {
                 result.push_str(&format!("@{}", minified_name));
