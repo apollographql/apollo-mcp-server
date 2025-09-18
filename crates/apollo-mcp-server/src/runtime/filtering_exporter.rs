@@ -67,6 +67,7 @@ mod tests {
     use std::future::ready;
     use std::time::SystemTime;
 
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn create_mock_span_data() -> SpanData {
         let span_context: SpanContext = SpanContext::new(
             TraceId::from_u128(1),
@@ -102,6 +103,7 @@ mod tests {
         #[derive(Debug)]
         struct TestExporter {}
 
+        #[cfg_attr(coverage_nightly, coverage(off))]
         impl SpanExporter for TestExporter {
             fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 batch.into_iter().for_each(|span| {
@@ -145,6 +147,7 @@ mod tests {
         #[derive(Debug)]
         struct TestExporter {}
 
+        #[cfg_attr(coverage_nightly, coverage(off))]
         impl SpanExporter for TestExporter {
             fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
@@ -176,6 +179,7 @@ mod tests {
         #[derive(Debug)]
         struct TestExporter {}
 
+        #[cfg_attr(coverage_nightly, coverage(off))]
         impl SpanExporter for TestExporter {
             fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
@@ -207,6 +211,7 @@ mod tests {
         #[derive(Debug)]
         struct TestExporter {}
 
+        #[cfg_attr(coverage_nightly, coverage(off))]
         impl SpanExporter for TestExporter {
             fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
                 ready(Err(OTelSdkError::InternalFailure(
