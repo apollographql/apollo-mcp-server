@@ -42,5 +42,3 @@ items:
     children:
       - label: "Authorization with Auth0"
         href: "./guides/auth-auth0"
-      - label: "Telemetry with Grafana"
-        href: "./guides/telemetry-grafana"
