@@ -75,7 +75,7 @@ impl Search {
             tool: Tool::new(
                 SEARCH_TOOL_NAME,
                 format!(
-                    "Search a GraphQL schema{}",
+                    "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
                     if minify {
                         " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements"
                     } else {
@@ -245,5 +245,38 @@ mod tests {
             content_to_snapshot(result).contains("createUser"),
             "Expected to find the createUser mutation in search results"
         );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_search_tool_description_is_not_minified(schema: Valid<Schema>) {
+        let schema = Arc::new(Mutex::new(schema));
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
+            .expect("Failed to create search tool");
+
+        let description = search.tool.description.unwrap();
+
+        assert!(
+            description
+                .contains("Search a GraphQL schema for types matching the provided search terms")
+        );
+        assert!(description.contains("Instructions: If the introspect tool is also available"));
+        assert!(description.contains("Avoid reusing previously searched terms"));
+        // Should not contain minification legend
+        assert!(!description.contains("T=type,I=input"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_tool_description_minified(schema: Valid<Schema>) {
+        let schema = Arc::new(Mutex::new(schema));
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, true)
+            .expect("Failed to create search tool");
+
+        let description = search.tool.description.unwrap();
+
+        // Should contain minification legend
+        assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
+        assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
     }
 }

@@ -125,13 +125,9 @@ fn tool_description(
         "Get GraphQL type information - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements;".to_string()
     } else {
         format!(
-            "Get detailed information about types from the GraphQL schema.{}{}",
-            root_query_type
-                .map(|t| format!(" Use the type name `{t}` to get root query fields."))
-                .unwrap_or_default(),
-            root_mutation_type
-                .map(|t| format!(" Use the type name `{t}` to get root mutation fields."))
-                .unwrap_or_default()
+            "Get information about a given GraphQL type defined in the schema. Instructions: Use this tool to explore the schema by providing specific type names. Start with the root query ({}) or mutation ({}) types to discover available fields. If the search tool is also available, use this tool first to get the fields, then use the search tool with relevant field return types and argument input types (ignore default GraphQL scalars) as search terms.",
+            root_query_type.as_deref().unwrap_or("Query"),
+            root_mutation_type.as_deref().unwrap_or("Mutation")
         )
     }
 }
@@ -139,4 +135,56 @@ fn tool_description(
 /// The default depth to recurse the type hierarchy.
 fn default_depth() -> usize {
     1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use apollo_compiler::Schema;
+    use apollo_compiler::validation::Valid;
+    use rstest::{fixture, rstest};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
+
+    #[fixture]
+    fn schema() -> Valid<Schema> {
+        Schema::parse(TEST_SCHEMA, "schema.graphql")
+            .expect("Failed to parse test schema")
+            .validate()
+            .expect("Failed to validate test schema")
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_introspect_tool_description_is_not_minified(schema: Valid<Schema>) {
+        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, false);
+
+        let description = introspect.tool.description.unwrap();
+
+        assert!(
+            description
+                .contains("Get information about a given GraphQL type defined in the schema")
+        );
+        assert!(description.contains("Instructions: Use this tool to explore the schema"));
+        // Should not contain minification legend
+        assert!(!description.contains("T=type,I=input"));
+        // Should mention conditional search tool usage
+        assert!(description.contains("If the search tool is also available"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_introspect_tool_description_is_minified_with_an_appropriate_legend(
+        schema: Valid<Schema>,
+    ) {
+        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, true);
+
+        let description = introspect.tool.description.unwrap();
+
+        // Should contain minification legend
+        assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
+        assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
 }
