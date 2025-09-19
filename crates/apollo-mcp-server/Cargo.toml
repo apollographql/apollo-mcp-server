@@ -55,6 +55,7 @@ insta.workspace = true
 mockito = "1.7.0"
 rstest.workspace = true
 tokio.workspace = true
+tower = "0.5.2"
 tracing-test = "0.2.5"
 
 [lints]

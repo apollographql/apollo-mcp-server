@@ -47,31 +47,16 @@ impl Default for CorsConfig {
             match_origins: Vec::new(),
             allow_any_origin: false,
             allow_credentials: false,
-            allow_methods: default_methods(),
-            allow_headers: default_headers(),
-            expose_headers: Vec::new(),
-            max_age: Some(default_max_age()),
+            allow_methods: vec!["GET".to_string(), "POST".to_string()],
+            allow_headers: vec![
+                "content-type".to_string(),
+                "mcp-protocol-version".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
+                "mcp-session-id".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
+            ],
+            expose_headers: vec!["mcp-session-id".to_string()], // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
+            max_age: Some(7200),                                // 2 hours
         }
     }
-}
-
-/// Default allowed HTTP methods
-fn default_methods() -> Vec<String> {
-    vec!["GET".to_string(), "POST".to_string(), "OPTIONS".to_string()]
-}
-
-/// Default allowed headers
-fn default_headers() -> Vec<String> {
-    vec![
-        "content-type".to_string(),
-        "authorization".to_string(),
-        "mcp-session-id".to_string(),
-    ]
-}
-
-/// Default max age for preflight cache (2 hours)
-fn default_max_age() -> u64 {
-    7200
 }
 
 impl CorsConfig {
@@ -220,6 +205,9 @@ impl CorsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::{Router, routing::get};
+    use http::{HeaderValue, Method, Request, StatusCode};
+    use tower::util::ServiceExt;
 
     #[test]
     fn test_default_config() {
@@ -227,9 +215,19 @@ mod tests {
         assert!(!config.enabled);
         assert!(!config.allow_any_origin);
         assert!(!config.allow_credentials);
-        assert_eq!(config.allow_methods, default_methods());
-        assert_eq!(config.allow_headers, default_headers());
-        assert_eq!(config.max_age, Some(default_max_age()));
+        assert_eq!(
+            config.allow_methods,
+            vec!["GET".to_string(), "POST".to_string()]
+        );
+        assert_eq!(
+            config.allow_headers,
+            vec![
+                "content-type".to_string(),
+                "mcp-protocol-version".to_string(),
+                "mcp-session-id".to_string(),
+            ]
+        );
+        assert_eq!(config.max_age, Some(7200));
     }
 
     #[test]
@@ -253,7 +251,7 @@ mod tests {
         let config = CorsConfig {
             enabled: true,
             origins: vec![
-                "https://localhost:3000".to_string(),
+                "http://localhost:3000".to_string(),
                 "https://studio.apollographql.com".to_string(),
             ],
             ..Default::default()
@@ -265,7 +263,7 @@ mod tests {
     fn test_regex_origins_build() {
         let config = CorsConfig {
             enabled: true,
-            match_origins: vec!["^https://localhost:[0-9]+$".to_string()],
+            match_origins: vec!["^http://localhost:[0-9]+$".to_string()],
             ..Default::default()
         };
         assert!(config.build_cors_layer().is_ok());
@@ -318,10 +316,502 @@ mod tests {
     fn test_invalid_method_fails() {
         let config = CorsConfig {
             enabled: true,
-            origins: vec!["https://localhost:3000".to_string()],
+            origins: vec!["http://localhost:3000".to_string()],
             allow_methods: vec!["invalid method with spaces".to_string()],
             ..Default::default()
         };
         assert!(config.build_cors_layer().is_err());
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_with_exact_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["http://localhost:3000".to_string()],
+            max_age: Some(3600),
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "http://localhost:3000")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("http://localhost:3000"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_with_exact_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["http://localhost:3000".to_string()],
+            ..Default::default()
+        };
+
+        let app = Router::new()
+            .route("/health", get(|| async { "test response" }))
+            .layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header("Origin", "http://localhost:3000")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("http://localhost:3000"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_with_regex_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            match_origins: vec!["^http://localhost:[0-9]+$".to_string()],
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        // Test matching port
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "http://localhost:4321")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("http://localhost:4321"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_with_regex_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            match_origins: vec!["^https://.*\\.apollographql\\.com$".to_string()],
+            ..Default::default()
+        };
+
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://www.apollographql.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("https://www.apollographql.com"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mixed_exact_and_regex_origins() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["http://localhost:3000".to_string()],
+            match_origins: vec!["^https://.*\\.apollographql\\.com$".to_string()],
+            ..Default::default()
+        };
+
+        let cors_layer = config.build_cors_layer().unwrap();
+
+        // Test exact origin
+        let app1 = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(cors_layer.clone());
+
+        let request1 = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "http://localhost:3000")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response1 = app1.oneshot(request1).await.unwrap();
+        assert_eq!(
+            response1.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("http://localhost:3000"))
+        );
+
+        // Test regex origin
+        let app2 = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(cors_layer);
+
+        let request2 = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://studio.apollographql.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response2 = app2.oneshot(request2).await.unwrap();
+        assert_eq!(
+            response2.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static(
+                "https://studio.apollographql.com"
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_rejected_origin_exact() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "https://blocked.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_rejected_origin_exact() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            ..Default::default()
+        };
+
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://blocked.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_rejected_origin_regex() {
+        let config = CorsConfig {
+            enabled: true,
+            match_origins: vec!["^https://.*\\.allowed\\.com$".to_string()],
+            ..Default::default()
+        };
+
+        let cors_layer = config.build_cors_layer().unwrap();
+        let app = Router::new().layer(cors_layer);
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "https://malicious.blocked.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_rejected_origin_regex() {
+        let config = CorsConfig {
+            enabled: true,
+            match_origins: vec!["^https://.*\\.allowed\\.com$".to_string()],
+            ..Default::default()
+        };
+
+        let cors_layer = config.build_cors_layer().unwrap();
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(cors_layer);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://malicious.blocked.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_any_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            allow_any_origin: true,
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "https://any-domain.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_any_origin() {
+        let config = CorsConfig {
+            enabled: true,
+            allow_any_origin: true,
+            ..Default::default()
+        };
+
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://any-domain.com")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-origin"),
+            Some(&HeaderValue::from_static("*"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_non_cors_request() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            ..Default::default()
+        };
+
+        let cors_layer = config.build_cors_layer().unwrap();
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(cors_layer);
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            // No Origin header
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Request should succeed but without CORS headers
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get("access-control-allow-origin")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multiple_request_headers() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            allow_headers: vec![
+                "content-type".to_string(),
+                "authorization".to_string(),
+                "x-api-key".to_string(),
+                "x-requested-with".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "https://allowed.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization,x-api-key,disallowed-header",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let allow_headers = response
+            .headers()
+            .get("access-control-allow-headers")
+            .unwrap();
+        let headers_str = allow_headers.to_str().unwrap();
+        assert!(headers_str.contains("content-type"));
+        assert!(headers_str.contains("authorization"));
+        assert!(headers_str.contains("x-api-key"));
+        assert!(!headers_str.contains("disallowed-header"));
+    }
+
+    #[tokio::test]
+    async fn test_preflight_request_with_credentials() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            allow_credentials: true,
+            ..Default::default()
+        };
+
+        let app = Router::new().layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/test")
+            .header("Origin", "https://allowed.com")
+            .header("Access-Control-Request-Method", "POST")
+            .header(
+                "Access-Control-Request-Headers",
+                "content-type,authorization",
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-credentials"),
+            Some(&HeaderValue::from_static("true"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_simple_request_with_credentials() {
+        let config = CorsConfig {
+            enabled: true,
+            origins: vec!["https://allowed.com".to_string()],
+            allow_credentials: true,
+            ..Default::default()
+        };
+
+        let app = Router::new()
+            .route("/test", get(|| async { "test response" }))
+            .layer(config.build_cors_layer().unwrap());
+
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("/test")
+            .header("Origin", "https://allowed.com")
+            .header("Cookie", "sessionid=abc123")
+            .body(axum::body::Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("access-control-allow-credentials"),
+            Some(&HeaderValue::from_static("true"))
+        );
     }
 }

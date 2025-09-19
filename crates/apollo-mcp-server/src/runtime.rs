@@ -153,14 +153,15 @@ mod test {
                     allow_methods: [
                         "GET",
                         "POST",
-                        "OPTIONS",
                     ],
                     allow_headers: [
                         "content-type",
-                        "authorization",
+                        "mcp-protocol-version",
                         "mcp-session-id",
                     ],
-                    expose_headers: [],
+                    expose_headers: [
+                        "mcp-session-id",
+                    ],
                     max_age: Some(
                         7200,
                     ),
