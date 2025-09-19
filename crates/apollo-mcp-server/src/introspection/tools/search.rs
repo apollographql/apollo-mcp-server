@@ -77,7 +77,7 @@ impl Search {
                 format!(
                     "Search a GraphQL schema{}",
                     if minify {
-                        " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;!=required,[]=list,<>=implements"
+                        " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements"
                     } else {
                         ""
                     }

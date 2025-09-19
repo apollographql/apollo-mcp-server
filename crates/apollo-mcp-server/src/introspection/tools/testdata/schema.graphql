@@ -191,6 +191,7 @@ type DeviceStats {
 
 type UserPreferences {
   theme: String!
+  oldTheme: String @deprecated
   language: String!
   notifications: NotificationPreferences!
   privacy: PrivacySettings!
@@ -268,6 +269,7 @@ type Query {
   node(id: ID!): Node
   user(id: ID!): User
   post(id: ID!): Post
+  postsOld(filter: [ID!]) : [Post!]! @deprecated(reason: "Use posts instead")
   posts(filter: PostFilter): [Post!]!
   comments(postId: ID!): [Comment!]!
   notifications(filter: NotificationFilter): [Notification!]!
