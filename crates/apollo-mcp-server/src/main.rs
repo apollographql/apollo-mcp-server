@@ -145,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
         .search_leaf_depth(config.introspection.search.leaf_depth)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
+        .cors(config.cors)
         .build()
         .start()
         .await?)
