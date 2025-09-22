@@ -309,3 +309,49 @@ async fn health_endpoint(
 
     Ok((status_code, Json(json!(health))))
 }
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderMap;
+    use url::Url;
+
+    use crate::health::HealthCheckConfig;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn start_basic_server() {
+        let starting = Starting {
+            config: Config {
+                transport: Transport::StreamableHttp {
+                    auth: None,
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: 7799,
+                    stateful_mode: false,
+                },
+                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+                mutation_mode: MutationMode::All,
+                execute_introspection: true,
+                headers: HeaderMap::new(),
+                validate_introspection: true,
+                introspect_introspection: true,
+                search_introspection: true,
+                introspect_minify: false,
+                search_minify: false,
+                explorer_graph_ref: None,
+                custom_scalar_map: None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                disable_auth_token_passthrough: false,
+                search_leaf_depth: 5,
+                index_memory_bytes: 1024 * 1024 * 1024,
+                health_check: HealthCheckConfig::default(),
+            },
+            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
+                .expect("Valid schema"),
+            operations: vec![],
+        };
+        let running = starting.start();
+        assert!(running.await.is_ok());
+    }
+}
