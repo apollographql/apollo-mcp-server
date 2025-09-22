@@ -20,6 +20,9 @@ impl TelemetryAttribute {
             TelemetryAttribute::RequestId => {
                 Key::from_static_str(TelemetryAttribute::RequestId.as_str())
             }
+            TelemetryAttribute::RawOperation => {
+                Key::from_static_str(TelemetryAttribute::RawOperation.as_str())
+            }
         }
     }
 

@@ -38,7 +38,7 @@ pub enum OperationSource {
 }
 
 impl OperationSource {
-    #[tracing::instrument]
+    #[tracing::instrument(skip_all, fields(operation_source = ?self))]
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
             OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
