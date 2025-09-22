@@ -147,3 +147,22 @@ Spans are generated for the following actions:
 -   **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
 -   **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
 -   **Downstream GraphQL Calls**: The `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent` and `tracestate` headers are propagated automatically, enabling distributed traces.
+
+### Cardinality Control
+
+High-cardinality metrics can occur in MCP Servers with large number of tools or when clients are allowed to generate freeform operations.
+To prevent performance issues and reduce costs, the Apollo MCP Server provides two mechanisms to control metric cardinality, trace sampling and attribute filtering.
+
+#### Trace Sampling
+
+Configure the Apollo MCP Server to sample traces sent to your OpenTelemetry Collector using the `sampler` field in the `telemetry.tracing` configuration:
+
+- **always_on** - Send every trace
+- **always_off** - Disable trace collection entirely
+- **0.0-1.0** - Send a specified percentage of traces
+
+#### Attribute Filtering
+
+The Apollo MCP Server configuration also allows for omitting attributes such as `tool_name` or `operation_id` that can often lead to high cardinality metrics in systems that treat each collected attribute value as a new metric.
+Both traces and metrics have an `omitted_attributes` option that takes a list of strings. Any attribute name in the list will be filtered out and not sent to the collector.
+For detailed configuration options, see the [telemetry configuration reference](/apollo-mcp-server/config-file#telemetry).
