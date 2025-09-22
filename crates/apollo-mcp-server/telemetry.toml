@@ -4,6 +4,7 @@ operation_id = "The operation id - either persisted query id, operation name, or
 operation_source = "The operation source - either operation (local file/op collection), persisted query, or LLM generated"
 request_id = "The request id"
 success = "Sucess flag indicator"
+raw_operation = "Graphql operation text and metadata used for Tool generation"
 
 [metrics.apollo.mcp]
 "initialize.count" = "Number of times initialize has been called"
