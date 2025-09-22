@@ -84,6 +84,7 @@ impl Config {
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
+#[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
     State(auth_config): State<Config>,
     token: Option<TypedHeader<Authorization<Bearer>>>,
@@ -104,17 +105,23 @@ async fn oauth_validate(
     };
 
     let validator = NetworkedTokenValidator::new(&auth_config.audiences, &auth_config.servers);
-    let token = token.ok_or_else(unauthorized_error)?;
+    let token = token.ok_or_else(|| {
+        tracing::Span::current().record("reason", "missing_token");
+        tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+        unauthorized_error()
+    })?;
 
-    let valid_token = validator
-        .validate(token.0)
-        .await
-        .ok_or_else(unauthorized_error)?;
+    let valid_token = validator.validate(token.0).await.ok_or_else(|| {
+        tracing::Span::current().record("reason", "invalid_token");
+        tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+        unauthorized_error()
+    })?;
 
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
     request.extensions_mut().insert(valid_token);
 
     let response = next.run(request).await;
+    tracing::Span::current().record("status_code", response.status().as_u16());
     Ok(response)
 }

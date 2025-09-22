@@ -200,7 +200,7 @@ impl Starting {
                                         "mcp_server",
                                         method = %request.method(),
                                         uri = %request.uri(),
-                                        status_code = tracing::field::Empty,
+                                        status = tracing::field::Empty,
                                     )
                                 })
                                 .on_response(
@@ -208,7 +208,7 @@ impl Starting {
                                      _latency: std::time::Duration,
                                      span: &tracing::Span| {
                                         span.record(
-                                            "status_code",
+                                            "status",
                                             tracing::field::display(response.status()),
                                         );
                                     },

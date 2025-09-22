@@ -105,6 +105,7 @@ impl Running {
         Ok(self)
     }
 
+    #[tracing::instrument(skip_all)]
     pub(super) async fn update_operations(
         self,
         operations: Vec<RawOperation>,
@@ -146,6 +147,7 @@ impl Running {
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
+    #[tracing::instrument(skip_all)]
     async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
         let mut peers = peers.write().await;
         if !peers.is_empty() {
