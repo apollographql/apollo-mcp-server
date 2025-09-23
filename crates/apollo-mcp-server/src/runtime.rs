@@ -158,9 +158,13 @@ mod test {
                         "content-type",
                         "mcp-protocol-version",
                         "mcp-session-id",
+                        "traceparent",
+                        "tracestate",
                     ],
                     expose_headers: [
                         "mcp-session-id",
+                        "traceparent",
+                        "tracestate",
                     ],
                     max_age: Some(
                         7200,

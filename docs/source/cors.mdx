@@ -113,18 +113,23 @@ cors:
     - POST
 
   # The headers to allow.
-  # These are the default headers required for MCP protocol
+  # These are the default headers required for MCP protocol and trace context
   allow_headers:
     - accept
     - content-type
     - mcp-protocol-version
     - mcp-session-id
+    - traceparent # W3C Trace Context
+    - tracestate # W3C Trace Context
 
   # Which response headers are available to scripts running in the
   # browser in response to a cross-origin request.
   # The mcp-session-id header should be exposed for MCP session management.
+  # Trace context headers are exposed for distributed tracing.
   expose_headers:
     - mcp-session-id
+    - traceparent # W3C Trace Context
+    - tracestate # W3C Trace Context
 
   # Adds the Access-Control-Max-Age header
   # Maximum age (in seconds) for preflight cache

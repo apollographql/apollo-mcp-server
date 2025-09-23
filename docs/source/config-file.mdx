@@ -45,17 +45,17 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 
 These fields are under the top-level `cors` key and configure Cross-Origin Resource Sharing (CORS) for browser-based MCP clients.
 
-| Option              | Type           | Default                             | Description                                                                                              |
-| :------------------ | :------------- | :---------------------------------- | :------------------------------------------------------------------------------------------------------- |
-| `enabled`           | `bool`         | `false`                             | Enable CORS support                                                                                      |
-| `origins`           | `List<string>` | `[]`                                | List of allowed origins (exact matches). Use `["*"]` to allow any origin (not recommended in production) |
-| `match_origins`     | `List<string>` | `[]`                                | List of regex patterns to match allowed origins (e.g., `"^https://localhost:[0-9]+$"`)                   |
-| `allow_any_origin`  | `bool`         | `false`                             | Allow requests from any origin. Cannot be used with `allow_credentials: true`                            |
-| `allow_credentials` | `bool`         | `false`                             | Allow credentials (cookies, authorization headers) in CORS requests                                      |
-| `allow_methods`     | `List<string>` | `["GET", "POST", "OPTIONS"]`        | List of allowed HTTP methods                                                                             |
-| `allow_headers`     | `List<string>` | `["content-type", "authorization"]` | List of allowed request headers                                                                          |
-| `expose_headers`    | `List<string>` | `[]`                                | List of response headers exposed to the browser (e.g., `["mcp-session-id"]`)                             |
-| `max_age`           | `number`       | `86400`                             | Maximum age (in seconds) for preflight cache                                                             |
+| Option              | Type           | Default                                                                                   | Description                                                                                              |
+| :------------------ | :------------- | :---------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------- |
+| `enabled`           | `bool`         | `false`                                                                                   | Enable CORS support                                                                                      |
+| `origins`           | `List<string>` | `[]`                                                                                      | List of allowed origins (exact matches). Use `["*"]` to allow any origin (not recommended in production) |
+| `match_origins`     | `List<string>` | `[]`                                                                                      | List of regex patterns to match allowed origins (e.g., `"^https://localhost:[0-9]+$"`)                   |
+| `allow_any_origin`  | `bool`         | `false`                                                                                   | Allow requests from any origin. Cannot be used with `allow_credentials: true`                            |
+| `allow_credentials` | `bool`         | `false`                                                                                   | Allow credentials (cookies, authorization headers) in CORS requests                                      |
+| `allow_methods`     | `List<string>` | `["GET", "POST", "OPTIONS"]`                                                              | List of allowed HTTP methods                                                                             |
+| `allow_headers`     | `List<string>` | `["content-type", "mcp-protocol-version", "mcp-session-id", "traceparent", "tracestate"]` | List of allowed request headers                                                                          |
+| `expose_headers`    | `List<string>` | `["mcp-session-id", "traceparent", "tracestate"]`                                         | List of response headers exposed to the browser (includes MCP and W3C Trace Context headers)             |
+| `max_age`           | `number`       | `86400`                                                                                   | Maximum age (in seconds) for preflight cache                                                             |
 
 ### Health checks
 
