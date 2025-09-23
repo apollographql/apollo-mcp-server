@@ -234,3 +234,18 @@ introspection:
 ```sh title="Example command using introspection"
 apollo-mcp-server <path to the preceding config>
 ```
+
+## Adding SDL Docstrings
+
+Apollo MCP Server also supports adding [SDL docstrings](apollo-server/schema/schema#descriptions-docstrings) to tool defintions. This form of documentation can make it easier for LLMs to determine which tool is best for any given prompt. Apollo recommends adding docstrings to any tool you define so you can be sure your MCP tools are used appropriately.
+
+Docstrings are a great way to provide more specific information about what your operations do than the default description provided by your GraphQL operation. Use this feature to describe the options available from the tool or explain why the operation is useful and your MCP client will be able to make better choices of which tool to use.
+
+```graphql
+# Get the detailed weather forecast for a given location
+query GetForecast($coordinate: InputCoordinate!) {
+  forecast(coordinate: $coordinate) {
+    detailed
+  }
+}
+```
