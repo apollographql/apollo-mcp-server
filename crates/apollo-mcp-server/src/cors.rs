@@ -47,7 +47,11 @@ impl Default for CorsConfig {
             match_origins: Vec::new(),
             allow_any_origin: false,
             allow_credentials: false,
-            allow_methods: vec!["GET".to_string(), "POST".to_string()],
+            allow_methods: vec![
+                "GET".to_string(),
+                "POST".to_string(),
+                "DELETE".to_string(), // Clients that no longer need a particular session SHOULD send an HTTP DELETE to explicitly terminate the session
+            ],
             allow_headers: vec![
                 "content-type".to_string(),
                 "mcp-protocol-version".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
@@ -223,7 +227,7 @@ mod tests {
         assert!(!config.allow_credentials);
         assert_eq!(
             config.allow_methods,
-            vec!["GET".to_string(), "POST".to_string()]
+            vec!["GET".to_string(), "POST".to_string(), "DELETE".to_string()]
         );
         assert_eq!(
             config.allow_headers,

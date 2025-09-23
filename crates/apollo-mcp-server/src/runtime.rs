@@ -153,6 +153,7 @@ mod test {
                     allow_methods: [
                         "GET",
                         "POST",
+                        "DELETE",
                     ],
                     allow_headers: [
                         "content-type",
