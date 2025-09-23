@@ -52,9 +52,15 @@ impl Default for CorsConfig {
                 "content-type".to_string(),
                 "mcp-protocol-version".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#protocol-version-header
                 "mcp-session-id".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
+                "traceparent".to_string(), // https://www.w3.org/TR/trace-context/#traceparent-header
+                "tracestate".to_string(),  // https://www.w3.org/TR/trace-context/#tracestate-header
             ],
-            expose_headers: vec!["mcp-session-id".to_string()], // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
-            max_age: Some(7200),                                // 2 hours
+            expose_headers: vec![
+                "mcp-session-id".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
+                "traceparent".to_string(), // https://www.w3.org/TR/trace-context/#traceparent-header
+                "tracestate".to_string(),  // https://www.w3.org/TR/trace-context/#tracestate-header
+            ],
+            max_age: Some(7200), // 2 hours
         }
     }
 }
@@ -225,6 +231,16 @@ mod tests {
                 "content-type".to_string(),
                 "mcp-protocol-version".to_string(),
                 "mcp-session-id".to_string(),
+                "traceparent".to_string(),
+                "tracestate".to_string(),
+            ]
+        );
+        assert_eq!(
+            config.expose_headers,
+            vec![
+                "mcp-session-id".to_string(),
+                "traceparent".to_string(),
+                "tracestate".to_string(),
             ]
         );
         assert_eq!(config.max_age, Some(7200));

@@ -28,7 +28,7 @@ items:
         href: "./deploy"
       - label: "Health Checks"
         href: "./health-checks"
-      - label: "CORS Support"
+      - label: "CORS"
         href: "./cors"
   - label: "Authorization"
     href: "./auth"
