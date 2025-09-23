@@ -17,6 +17,7 @@ pub(crate) mod schema_tree_shake;
 pub mod server;
 pub mod telemetry_attributes;
 
+/// These values are generated at build time by build.rs using telemetry.toml as input.
 pub mod generated {
     pub mod telemetry {
         include!(concat!(env!("OUT_DIR"), "/telemetry_attributes.rs"));

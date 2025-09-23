@@ -54,6 +54,9 @@ url = { version = "2.4", features = ["serde"] }
 [workspace.metadata]
 crane.name = "apollo-mcp"
 
+# This allows usage of coverage(off) attribute without causing a linting error.
+# This attribute doesn't work in stable Rust yet and can be removed whenever it does.
+# See https://github.com/apollographql/apollo-mcp-server/pull/372
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
 

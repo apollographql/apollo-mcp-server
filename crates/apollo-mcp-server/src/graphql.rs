@@ -1,7 +1,8 @@
 //! Execute GraphQL operations from an MCP tool
 
+use crate::errors::McpError;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
-use crate::{errors::McpError, meter::get_meter};
+use crate::meter;
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, Extension};
@@ -40,7 +41,7 @@ pub trait Executable {
     /// Execute as a GraphQL operation using the endpoint and headers
     #[tracing::instrument(skip(self, request))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
-        let meter = get_meter();
+        let meter = &meter::METER;
         let start = std::time::Instant::now();
         let mut op_id: Option<String> = None;
         let client_metadata = serde_json::json!({
@@ -135,14 +136,13 @@ pub trait Executable {
             ),
             KeyValue::new(
                 TelemetryAttribute::OperationId.to_key(),
-                op_id.unwrap_or("unknown".to_string()),
+                op_id.unwrap_or("".to_string()),
             ),
             KeyValue::new(
                 TelemetryAttribute::OperationSource.to_key(),
-                if self.persisted_query_id().is_some() {
-                    "persisted_query"
-                } else {
-                    "operation"
+                match self.persisted_query_id() {
+                    Some(_) => "persisted_query",
+                    None => "operation",
                 },
             ),
         ];
@@ -162,6 +162,7 @@ pub trait Executable {
 #[cfg(test)]
 mod test {
     use crate::errors::McpError;
+    use crate::generated::telemetry::TelemetryMetric;
     use crate::graphql::{Executable, OperationDetails, Request};
     use http::{HeaderMap, HeaderValue};
     use opentelemetry::global;
@@ -453,7 +454,7 @@ mod test {
                 .find(|scope_metrics| scope_metrics.scope().name() == "apollo.mcp")
             {
                 for metric in scope_metrics.metrics() {
-                    if metric.name() == "apollo.mcp.operation.count"
+                    if metric.name() == TelemetryMetric::OperationCount.as_str()
                         && let AggregatedMetrics::U64(MetricData::Sum(data)) = metric.data()
                     {
                         for point in data.data_points() {

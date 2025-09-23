@@ -367,7 +367,11 @@ mod tests {
                 disable_auth_token_passthrough: false,
                 search_leaf_depth: 5,
                 index_memory_bytes: 1024 * 1024 * 1024,
-                health_check: HealthCheckConfig::default(),
+                health_check: HealthCheckConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+                cors: Default::default(),
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
