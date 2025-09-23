@@ -43,7 +43,6 @@ cors:
   # It does not have any path section, so no trailing slash.
   origins:
     - https://www.your-app.example.com
-    - https://studio.apollographql.com # Keep this so GraphOS Studio can run queries against your server
 
   # List of origin patterns (regex matching)
   match_origins:
@@ -72,7 +71,6 @@ cors:
   enabled: true
   origins:
     - https://www.your-app.example.com
-    - https://studio.apollographql.com
   allow_credentials: true
 ```
 
@@ -150,7 +148,6 @@ cors:
   origins:
     - http://localhost:3000
     - https://myapp.example.com
-    - https://studio.apollographql.com
 ```
 
 ### Pattern matching
@@ -189,7 +186,6 @@ cors:
   enabled: true
   origins:
     - https://myapp.example.com
-    - https://studio.apollographql.com
   allow_credentials: true
   max_age: 86400 # 24 hours
 ```
