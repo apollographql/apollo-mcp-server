@@ -28,12 +28,6 @@ where
         for span in &mut batch {
             span.attributes
                 .retain(|kv| filter_omitted_apollo_attributes(kv, &self.omitted));
-
-            // TODO: while not strictly necessary for dealing with high-cardinality, do we want to
-            //  filter out from span.events.events as well?
-            // for ev in &mut span.events.events {
-            //     ev.attributes.retain(|kv| filter_omitted_apollo_attributes(kv, &self.allow));
-            // }
         }
 
         self.inner.export(batch)

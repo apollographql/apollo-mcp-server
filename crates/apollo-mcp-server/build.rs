@@ -100,10 +100,6 @@ fn main() {
     // Generate the keys
     let telemetry_attribute_data = flatten(telemetry.attributes);
     let telemetry_metrics_data = flatten(telemetry.metrics);
-    println!(
-        "a {:?} | m {:?}",
-        telemetry_attribute_data, telemetry_metrics_data
-    );
 
     // Write out the generated keys
     let out_dir = std::env::var_os("OUT_DIR").expect("could not retrieve output directory");

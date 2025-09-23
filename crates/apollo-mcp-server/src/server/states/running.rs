@@ -22,6 +22,7 @@ use tracing::{debug, error};
 use url::Url;
 
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
+use crate::meter;
 use crate::{
     auth::ValidToken,
     custom_scalar_map::CustomScalarMap,
@@ -35,7 +36,6 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    meter::get_meter,
     operations::{MutationMode, Operation, RawOperation},
 };
 
@@ -182,7 +182,7 @@ impl ServerHandler for Running {
         _request: InitializeRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let meter = get_meter();
+        let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
@@ -199,7 +199,7 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let meter = get_meter();
+        let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
         let result = match tool_name.as_ref() {
@@ -321,7 +321,7 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParam>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let meter = get_meter();
+        let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
             .build()
@@ -344,7 +344,7 @@ impl ServerHandler for Running {
     }
 
     fn get_info(&self) -> ServerInfo {
-        let meter = get_meter();
+        let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::GetInfoCount.as_str())
             .build()

@@ -346,6 +346,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_protocol_returns_valid_meter_provider() {
+        let config = test_config(
+            None,
+            None,
+            Some(MetricsExporters {
+                otlp: Some(OTLPMetricExporter {
+                    protocol: "http/protobuf".to_string(),
+                    endpoint: "http://localhost:4318/v1/metrics".to_string(),
+                }),
+                omitted_attributes: None,
+            }),
+            None,
+        );
+        let result = init_meter_provider(&config.telemetry);
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn unknown_protocol_raises_tracer_provider_error() {
         let config = test_config(
             None,
@@ -367,5 +385,24 @@ mod tests {
                 .map(|e| e.to_string().contains("Unsupported OTLP protocol"))
                 .unwrap_or(false)
         );
+    }
+
+    #[tokio::test]
+    async fn http_protocol_returns_valid_tracer_provider() {
+        let config = test_config(
+            None,
+            None,
+            None,
+            Some(TracingExporters {
+                otlp: Some(OTLPTracingExporter {
+                    protocol: "http/protobuf".to_string(),
+                    endpoint: "http://localhost:4318/v1/traces".to_string(),
+                }),
+                sampler: Default::default(),
+                omitted_attributes: None,
+            }),
+        );
+        let result = init_tracer_provider(&config.telemetry);
+        assert!(result.is_ok());
     }
 }
