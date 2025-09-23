@@ -181,7 +181,7 @@ impl CorsConfig {
         // Cannot use credentials with any origin
         if self.allow_credentials && self.allow_any_origin {
             return Err(ServerError::Cors(
-                "Cannot use allow_credentials with allow_any_origin for security reasons"
+                "Cannot use allow_credentials with allow_any_origin for security reasons. See: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS#requests_with_credentials"
                     .to_string(),
             ));
         }

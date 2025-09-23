@@ -2,7 +2,7 @@
 title: Configuring CORS
 ---
 
-# Configuring CORS
+## Configuring CORS
 
 Control browser access to your MCP server
 
@@ -58,7 +58,7 @@ cors:
 
 If your MCP server serves exclusively _non_-browser-based clients, you probably don't need to enable CORS configuration.
 
-## Passing credentials
+### Passing credentials
 
 If your MCP server requires requests to include a user's credentials (e.g., via cookies), you need to modify your CORS configuration to tell the browser those credentials are allowed.
 
@@ -76,7 +76,7 @@ cors:
 
 **To support credentialed requests, your server's config file must specify individual `origins` or `match_origins`**. If your server enables `allow_any_origin`, your browser will refuse to send credentials.
 
-## All `cors` options
+### All `cors` options
 
 The following snippet shows all CORS configuration defaults for Apollo MCP Server:
 
@@ -134,11 +134,11 @@ cors:
   max_age: 7200 # 2 hours
 ```
 
-## Origin matching
+### Origin matching
 
 Apollo MCP Server supports two types of origin matching:
 
-### Exact origins
+#### Exact origins
 
 Use the `origins` array for exact origin matches:
 
@@ -150,7 +150,7 @@ cors:
     - https://myapp.example.com
 ```
 
-### Pattern matching
+#### Pattern matching
 
 Use the `match_origins` array for regex pattern matching:
 
@@ -163,9 +163,9 @@ cors:
     - "^https://.*\\.example\\.com$" # Any subdomain of example.com
 ```
 
-## Common configurations
+### Common configurations
 
-### Development setup
+#### Development setup
 
 For local development with hot reloading and various ports:
 
@@ -177,7 +177,7 @@ cors:
   allow_credentials: true
 ```
 
-### Production setup
+#### Production setup
 
 For production with specific known origins:
 
@@ -190,7 +190,7 @@ cors:
   max_age: 86400 # 24 hours
 ```
 
-### Public API setup
+#### Public API setup
 
 For public APIs that don't require credentials:
 
@@ -201,7 +201,7 @@ cors:
   allow_credentials: false # Cannot use credentials with any origin
 ```
 
-## Browser integration example
+### Browser integration example
 
 Here's a simple example of connecting to Apollo MCP Server from a browser:
 
