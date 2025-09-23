@@ -229,7 +229,9 @@ Before continuing, you need to set up the Auth0 client to accept an additional c
 
 We'll use [Goose](https://block.github.io/goose/) as our MCP Client. Goose allows you to choose between many different LLMs and provides some built-in functionality for connecting to MCP servers, called [Extensions](https://block.github.io/goose/docs/getting-started/using-extensions).
 
-You need to [install and configure Goose](https://block.github.io/goose/docs/getting-started/installation). Then, continue with the following steps:
+[Install the Goose CLI](https://block.github.io/goose/docs/getting-started/installation), following the instructions for your operating system. Set up the LLM provider of your choice with `goose configure` --> **Configure Providers**. Each provider has its own set of instructions, rate limiting and pricing.
+
+Then, continue with the following steps:
 
 1. In your terminal, run `goose configure`.
 1. Select or enter the following answers at the prompts:
