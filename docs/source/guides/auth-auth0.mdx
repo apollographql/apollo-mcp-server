@@ -232,11 +232,16 @@ We'll use [Goose](https://block.github.io/goose/) as our MCP Client. Goose allow
 You need to [install and configure Goose](https://block.github.io/goose/docs/getting-started/installation). Then, continue with the following steps:
 
 1. In your terminal, run `goose configure`.
-1. At the prompt "What would you like to configure?", select "Add Extension".
-1. In response to "What type of extension would you like to add?", select “Command Line Extension”.
-1. When asked, give your extension a name. Something like `mcp-auth-quickstart` works great here.
-1. The command you should enter to the next prompt ("What command should be run?") is `npx mcp-remote http://127.0.0.1:5000/mcp`.
-1. Use the default values for the rest of the prompts (e.g. timeout, description, environment variables) and configuration will be complete.
+1. Select or enter the following answers at the prompts:
+
+| Prompt                                                      | Answer                                     |
+| ----------------------------------------------------------- | ------------------------------------------ |
+| "What would you like to configure?"                         | "Add Extension"                            |
+| "What type of extension would you like to add?"             | "Command Line Extension"                   |
+| "What's the name of this extension?"                        | "mcp-auth-quickstart"                      |
+| "What command should be run?"                               | `npx mcp-remote http://127.0.0.1:5000/mcp` |
+| Other prompts (timeout, description, environment variables) | Use the default values                     |
+
 1. To start Goose, type `goose`. This will open a browser window and send you through the auth flow.
 1. Log in to your Auth0 instance and authorize your MCP server to gain access to your tools.
 1. In Goose, ask "What astronauts are in space right now?". This question is similar to the `GetAstronautsCurrentlyInSpace` operation from earlier, which fails as unauthenticated without the proper token.
