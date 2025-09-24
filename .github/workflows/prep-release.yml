@@ -232,7 +232,7 @@ jobs:
 
       - name: Open/Update draft PR to main
         env:
-          HEAD: ${{ github.ref_name }}
+          HEAD: release/${{ steps.bump.outputs.new_version }}
           TITLE: Releasing ${{ steps.bump.outputs.new_version }}
         shell: bash
         run: |

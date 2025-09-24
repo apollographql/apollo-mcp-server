@@ -71,4 +71,4 @@ safe_dir="${safe_dir//|/\\|}"
 sed "s|<test-dir>|$safe_dir|g" "$TEMPLATE_PATH" > "$GEN_CONFIG"
 
 # Run the command
-npx -y mcp-server-tester tools "$TESTS" --server-config "$GEN_CONFIG"
+npx -y mcp-server-tester@1.4.0 tools "$TESTS" --server-config "$GEN_CONFIG"

@@ -2,8 +2,10 @@ use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
-use rmcp::transport::StreamableHttpService;
+use axum_otel_metrics::HttpMetricsLayerBuilder;
+use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
     ServiceExt as _,
     transport::{SseServer, sse_server::SseServerConfig, stdio},
@@ -11,6 +13,7 @@ use rmcp::{
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
+use tower_http::trace::TraceLayer;
 use tracing::{Instrument as _, debug, error, info, trace};
 
 use crate::{
@@ -126,6 +129,7 @@ impl Starting {
                     auth: _,
                     address: _,
                     port: _,
+                    stateful_mode: _,
                 },
                 true,
             ) => Some(HealthCheck::new(self.config.health_check.clone())),
@@ -163,11 +167,32 @@ impl Starting {
                 router
             }};
         }
+
+        // Helper to enable CORS
+        macro_rules! with_cors {
+            ($router:expr, $config:expr) => {{
+                let mut router = $router;
+                if $config.enabled {
+                    match $config.build_cors_layer() {
+                        Ok(cors_layer) => {
+                            router = router.layer(cors_layer);
+                        }
+                        Err(e) => {
+                            error!("Failed to build CORS layer: {}", e);
+                            return Err(e);
+                        }
+                    }
+                }
+                router
+            }};
+        }
+
         match self.config.transport {
             Transport::StreamableHttp {
                 auth,
                 address,
                 port,
+                stateful_mode,
             } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
@@ -175,16 +200,48 @@ impl Starting {
                 let service = StreamableHttpService::new(
                     move || Ok(running.clone()),
                     LocalSessionManager::default().into(),
-                    Default::default(),
+                    StreamableHttpServerConfig {
+                        stateful_mode,
+                        ..Default::default()
+                    },
                 );
-                let mut router =
-                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth);
+                let mut router = with_cors!(
+                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth),
+                    self.config.cors
+                )
+                .layer(HttpMetricsLayerBuilder::new().build())
+                // include trace context as header into the response
+                .layer(OtelInResponseLayer)
+                //start OpenTelemetry trace on incoming request
+                .layer(OtelAxumLayer::default())
+                // Add tower-http tracing layer for additional HTTP-level tracing
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|request: &axum::http::Request<_>| {
+                            tracing::info_span!(
+                                "mcp_server",
+                                method = %request.method(),
+                                uri = %request.uri(),
+                                status_code = tracing::field::Empty,
+                            )
+                        })
+                        .on_response(
+                            |response: &axum::http::Response<_>,
+                             _latency: std::time::Duration,
+                             span: &tracing::Span| {
+                                span.record("status", tracing::field::display(response.status()));
+                            },
+                        ),
+                );
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
-                    let health_router = Router::new()
-                        .route(&health_check.config().path, get(health_endpoint))
-                        .with_state(health_check.clone());
+                    let health_router = with_cors!(
+                        Router::new()
+                            .route(&health_check.config().path, get(health_endpoint))
+                            .with_state(health_check.clone()),
+                        self.config.cors
+                    );
                     router = router.merge(health_router);
                 }
 
@@ -273,4 +330,54 @@ async fn health_endpoint(
     trace!(?health, query = ?query, "health check");
 
     Ok((status_code, Json(json!(health))))
+}
+
+#[cfg(test)]
+mod tests {
+    use http::HeaderMap;
+    use url::Url;
+
+    use crate::health::HealthCheckConfig;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn start_basic_server() {
+        let starting = Starting {
+            config: Config {
+                transport: Transport::StreamableHttp {
+                    auth: None,
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: 7799,
+                    stateful_mode: false,
+                },
+                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+                mutation_mode: MutationMode::All,
+                execute_introspection: true,
+                headers: HeaderMap::new(),
+                validate_introspection: true,
+                introspect_introspection: true,
+                search_introspection: true,
+                introspect_minify: false,
+                search_minify: false,
+                explorer_graph_ref: None,
+                custom_scalar_map: None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                disable_auth_token_passthrough: false,
+                search_leaf_depth: 5,
+                index_memory_bytes: 1024 * 1024 * 1024,
+                health_check: HealthCheckConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+                cors: Default::default(),
+            },
+            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
+                .expect("Valid schema"),
+            operations: vec![],
+        };
+        let running = starting.start();
+        assert!(running.await.is_ok());
+    }
 }

@@ -84,6 +84,7 @@ impl Config {
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
+#[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
     State(auth_config): State<Config>,
     token: Option<TypedHeader<Authorization<Bearer>>>,
@@ -104,17 +105,85 @@ async fn oauth_validate(
     };
 
     let validator = NetworkedTokenValidator::new(&auth_config.audiences, &auth_config.servers);
-    let token = token.ok_or_else(unauthorized_error)?;
+    let token = token.ok_or_else(|| {
+        tracing::Span::current().record("reason", "missing_token");
+        tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+        unauthorized_error()
+    })?;
 
-    let valid_token = validator
-        .validate(token.0)
-        .await
-        .ok_or_else(unauthorized_error)?;
+    let valid_token = validator.validate(token.0).await.ok_or_else(|| {
+        tracing::Span::current().record("reason", "invalid_token");
+        tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+        unauthorized_error()
+    })?;
 
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
     request.extensions_mut().insert(valid_token);
 
     let response = next.run(request).await;
+    tracing::Span::current().record("status_code", response.status().as_u16());
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::middleware::from_fn_with_state;
+    use axum::routing::get;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
+    use tower::ServiceExt; // for .oneshot()
+    use url::Url;
+
+    fn test_config() -> Config {
+        Config {
+            servers: vec![Url::parse("http://localhost:1234").unwrap()],
+            audiences: vec!["test-audience".to_string()],
+            resource: Url::parse("http://localhost:4000").unwrap(),
+            resource_documentation: None,
+            scopes: vec!["read".to_string()],
+            disable_auth_token_passthrough: false,
+        }
+    }
+
+    fn test_router(config: Config) -> Router {
+        Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(from_fn_with_state(config, oauth_validate))
+    }
+
+    #[tokio::test]
+    async fn missing_token_returns_unauthorized() {
+        let config = test_config();
+        let app = test_router(config.clone());
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let headers = res.headers();
+        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+        assert!(www_auth.contains("Bearer"));
+        assert!(www_auth.contains("resource_metadata"));
+    }
+
+    #[tokio::test]
+    async fn invalid_token_returns_unauthorized() {
+        let config = test_config();
+        let app = test_router(config.clone());
+        let req = Request::builder()
+            .uri("/test")
+            .header(AUTHORIZATION, "Bearer invalidtoken")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let headers = res.headers();
+        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+        assert!(www_auth.contains("Bearer"));
+        assert!(www_auth.contains("resource_metadata"));
+    }
 }

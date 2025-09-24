@@ -9,7 +9,6 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use crate::uplink::UplinkConfig;
-use crate::uplink::schema::schema_stream::SupergraphSdlQuery;
 use crate::uplink::stream_from_uplink;
 use derive_more::Display;
 use derive_more::From;
@@ -17,6 +16,7 @@ use educe::Educe;
 use event::Event;
 use event::Event::{NoMoreSchema, UpdateSchema};
 use futures::prelude::*;
+pub(crate) use schema_stream::SupergraphSdlQuery;
 use url::Url;
 
 /// Represents the new state of a schema after an update.

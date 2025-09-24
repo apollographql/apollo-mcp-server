@@ -6,6 +6,7 @@ use reqwest::header::HeaderMap;
 use url::Url;
 
 use crate::{
+    cors::CorsConfig,
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
     health::HealthCheckConfig,
@@ -48,6 +49,7 @@ struct Config {
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
+    cors: CorsConfig,
 }
 
 impl StateMachine {
@@ -81,6 +83,7 @@ impl StateMachine {
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
+                cors: server.cors,
             },
         });
 
@@ -153,7 +156,7 @@ impl StateMachine {
 
     #[allow(clippy::result_large_err)]
     fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
-        match Supergraph::new(&schema_state.sdl) {
+        match Supergraph::new_with_router_specs(&schema_state.sdl) {
             Ok(supergraph) => Ok(supergraph
                 .to_api_schema(ApiSchemaOptions::default())
                 .map_err(|e| ServerError::Federation(Box::new(e)))?

@@ -8,6 +8,7 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::auth;
+use crate::cors::CorsConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
@@ -40,6 +41,7 @@ pub struct Server {
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
+    cors: CorsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -80,6 +82,9 @@ pub enum Transport {
         /// The port to bind to
         #[serde(default = "Transport::default_port")]
         port: u16,
+
+        #[serde(default = "Transport::default_stateful_mode")]
+        stateful_mode: bool,
     },
 }
 
@@ -90,6 +95,10 @@ impl Transport {
 
     fn default_port() -> u16 {
         5000
+    }
+
+    fn default_stateful_mode() -> bool {
+        true
     }
 }
 
@@ -117,6 +126,7 @@ impl Server {
         search_leaf_depth: usize,
         index_memory_bytes: usize,
         health_check: HealthCheckConfig,
+        cors: CorsConfig,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -144,6 +154,7 @@ impl Server {
             search_leaf_depth,
             index_memory_bytes,
             health_check,
+            cors,
         }
     }
 

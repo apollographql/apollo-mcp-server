@@ -3,6 +3,7 @@ use apollo_mcp_registry::platform_api::operation_collections::error::CollectionE
 use apollo_mcp_registry::uplink::schema::event::Event as SchemaEvent;
 use std::fmt::Debug;
 use std::fmt::Formatter;
+use std::fmt::Result;
 use std::io;
 
 /// MCP Server events
@@ -24,7 +25,7 @@ pub enum Event {
 }
 
 impl Debug for Event {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self {
             Event::SchemaUpdated(event) => {
                 write!(f, "SchemaUpdated({event:?})")
@@ -42,5 +43,48 @@ impl Debug for Event {
                 write!(f, "Shutdown")
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_debug_event_schema_updated() {
+        let event = Event::SchemaUpdated(SchemaEvent::NoMoreSchema);
+        let output = format!("{:?}", event);
+        assert_eq!(output, "SchemaUpdated(NoMoreSchema)");
+    }
+
+    #[test]
+    fn test_debug_event_operations_updated() {
+        let event = Event::OperationsUpdated(vec![]);
+        let output = format!("{:?}", event);
+        assert_eq!(output, "OperationsChanged([])");
+    }
+
+    #[test]
+    fn test_debug_event_operation_error() {
+        let event = Event::OperationError(std::io::Error::other("TEST"), None);
+        let output = format!("{:?}", event);
+        assert_eq!(
+            output,
+            r#"OperationError(Custom { kind: Other, error: "TEST" }, None)"#
+        );
+    }
+
+    #[test]
+    fn test_debug_event_collection_error() {
+        let event = Event::CollectionError(CollectionError::Response("TEST".to_string()));
+        let output = format!("{:?}", event);
+        assert_eq!(output, r#"OperationError(Response("TEST"))"#);
+    }
+
+    #[test]
+    fn test_debug_event_shutdown() {
+        let event = Event::Shutdown;
+        let output = format!("{:?}", event);
+        assert_eq!(output, "Shutdown");
     }
 }
