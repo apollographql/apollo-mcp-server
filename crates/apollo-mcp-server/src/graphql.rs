@@ -126,6 +126,7 @@ pub trait Executable {
                 ),
                 meta: None,
                 structured_content: Some(json),
+<<<<<<< HEAD
             });
 
         // Record response metrics
@@ -156,6 +157,9 @@ pub trait Executable {
             .add(1, &attributes);
 
         result
+=======
+            })
+>>>>>>> origin/main
     }
 }
 

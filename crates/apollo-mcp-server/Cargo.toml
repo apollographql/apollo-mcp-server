@@ -6,7 +6,10 @@ license-file.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
+<<<<<<< HEAD
 build = "build.rs"
+=======
+>>>>>>> origin/main
 
 default-run = "apollo-mcp-server"
 
