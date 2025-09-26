@@ -5,6 +5,8 @@ operation_source = "The operation source - either operation (local file/op colle
 request_id = "The request id"
 success = "Sucess flag indicator"
 raw_operation = "Graphql operation text and metadata used for Tool generation"
+client_name = "The client name that initializes with the MCP Server"
+client_version = "The client version that initializes with the MCP Server"
 
 [metrics.apollo.mcp]
 "initialize.count" = "Number of times initialize has been called"

@@ -139,7 +139,7 @@ impl Operation {
     }
 
     /// Generate a description for an operation based on documentation in the schema
-    #[tracing::instrument(skip(comments, tree_shaker, graphql_schema))]
+    #[tracing::instrument(skip(comments, tree_shaker, graphql_schema, operation_def), fields(operation_type = ?operation_def.operation_type, operation_id = ?operation_def.name))]
     fn tool_description(
         comments: Option<String>,
         tree_shaker: &mut SchemaTreeShaker,
@@ -427,7 +427,7 @@ pub fn operation_name(
         .to_string())
 }
 
-#[tracing::instrument(skip(source_text))]
+#[tracing::instrument(skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
 pub fn variable_description_overrides(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
@@ -459,7 +459,7 @@ pub fn variable_description_overrides(
     argument_overrides_map
 }
 
-#[tracing::instrument(skip(source_text))]
+#[tracing::instrument(skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
 pub fn find_opening_parens_offset(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,

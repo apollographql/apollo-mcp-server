@@ -23,6 +23,12 @@ impl TelemetryAttribute {
             TelemetryAttribute::RawOperation => {
                 Key::from_static_str(TelemetryAttribute::RawOperation.as_str())
             }
+            TelemetryAttribute::ClientName => {
+                Key::from_static_str(TelemetryAttribute::ClientName.as_str())
+            }
+            TelemetryAttribute::ClientVersion => {
+                Key::from_static_str(TelemetryAttribute::ClientVersion.as_str())
+            }
         }
     }
 
