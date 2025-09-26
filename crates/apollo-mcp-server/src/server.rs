@@ -8,6 +8,7 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::auth;
+use crate::cors::Cors;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
@@ -58,6 +59,10 @@ pub enum Transport {
         #[serde(default)]
         auth: Option<auth::Config>,
 
+        /// CORS configuration
+        #[serde(default)]
+        cors: Option<Cors>,
+
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
         address: IpAddr,
@@ -72,6 +77,10 @@ pub enum Transport {
         /// Authentication configuration
         #[serde(default)]
         auth: Option<auth::Config>,
+
+        /// CORS configuration
+        #[serde(default)]
+        cors: Option<Cors>,
 
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
