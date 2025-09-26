@@ -2,7 +2,7 @@
   description = "MCP Support for Apollo Tooling";
 
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/release-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     unstable.url = "github:nixos/nixpkgs/nixpkgs-unstable";
 
     # Helper utility for keeping certain paths from garbage collection in CI
