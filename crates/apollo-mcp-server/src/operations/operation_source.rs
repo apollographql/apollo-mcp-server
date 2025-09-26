@@ -22,7 +22,11 @@ use super::RawOperation;
 const OPERATION_DOCUMENT_EXTENSION: &str = "graphql";
 
 /// The source of the operations exposed as MCP tools
+<<<<<<< HEAD
 #[derive(Clone, Debug)]
+=======
+#[derive(Clone)]
+>>>>>>> origin/main
 pub enum OperationSource {
     /// GraphQL document files
     Files(Vec<PathBuf>),
@@ -38,7 +42,10 @@ pub enum OperationSource {
 }
 
 impl OperationSource {
+<<<<<<< HEAD
     #[tracing::instrument(skip_all, fields(operation_source = ?self))]
+=======
+>>>>>>> origin/main
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
             OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
@@ -74,7 +81,10 @@ impl OperationSource {
         }
     }
 
+<<<<<<< HEAD
     #[tracing::instrument]
+=======
+>>>>>>> origin/main
     fn stream_file_changes(paths: Vec<PathBuf>) -> impl Stream<Item = Event> {
         let path_count = paths.len();
         let state = Arc::new(Mutex::new(HashMap::<PathBuf, Vec<RawOperation>>::new()));
