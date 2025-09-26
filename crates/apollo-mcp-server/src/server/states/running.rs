@@ -176,24 +176,28 @@ impl Running {
 }
 
 impl ServerHandler for Running {
-    #[tracing::instrument(skip(self, _request))]
+    #[tracing::instrument(skip_all, fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
-        _request: InitializeRequestParam,
+        request: InitializeRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let meter = &meter::METER;
+        let attributes = vec![KeyValue::new(
+            TelemetryAttribute::ClientName.to_key(),
+            request.client_info.name.clone(),
+        )];
         meter
             .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
-            .add(1, &[]);
+            .add(1, &attributes);
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip(self, context, request), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
+    #[tracing::instrument(skip_all, fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
