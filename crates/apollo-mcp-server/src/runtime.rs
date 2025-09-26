@@ -5,6 +5,7 @@
 
 mod config;
 mod endpoint;
+mod filtering_exporter;
 mod graphos;
 mod introspection;
 pub mod logging;
@@ -12,6 +13,7 @@ mod operation_source;
 mod overrides;
 mod schema_source;
 mod schemas;
+pub mod telemetry;
 
 use std::path::Path;
 
@@ -130,8 +132,13 @@ mod test {
         let config = "
             endpoint: http://from_file:4000/
         ";
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        let workspace = env!("CARGO_MANIFEST_DIR");
 
         figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            jail.set_env("PATH", &saved_path);
+            jail.set_env("INSTA_WORKSPACE_ROOT", workspace);
             let path = "config.yaml";
 
             jail.create_file(path, config)?;
@@ -144,6 +151,33 @@ mod test {
 
             insta::assert_debug_snapshot!(config, @r#"
             Config {
+                cors: CorsConfig {
+                    enabled: false,
+                    origins: [],
+                    match_origins: [],
+                    allow_any_origin: false,
+                    allow_credentials: false,
+                    allow_methods: [
+                        "GET",
+                        "POST",
+                        "DELETE",
+                    ],
+                    allow_headers: [
+                        "content-type",
+                        "mcp-protocol-version",
+                        "mcp-session-id",
+                        "traceparent",
+                        "tracestate",
+                    ],
+                    expose_headers: [
+                        "mcp-session-id",
+                        "traceparent",
+                        "tracestate",
+                    ],
+                    max_age: Some(
+                        7200,
+                    ),
+                },
                 custom_scalars: None,
                 endpoint: Endpoint(
                     Url {
@@ -241,6 +275,11 @@ mod test {
                     ),
                     path: None,
                     rotation: Hourly,
+                },
+                telemetry: Telemetry {
+                    exporters: None,
+                    service_name: None,
+                    version: None,
                 },
                 operations: Infer,
                 overrides: Overrides {

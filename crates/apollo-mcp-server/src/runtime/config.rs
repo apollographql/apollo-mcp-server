@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apollo_mcp_server::{health::HealthCheckConfig, server::Transport};
+use apollo_mcp_server::{cors::CorsConfig, health::HealthCheckConfig, server::Transport};
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -8,13 +8,16 @@ use url::Url;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides,
+    introspection::Introspection, logging::Logging, overrides::Overrides, telemetry::Telemetry,
 };
 
 /// Configuration for the MCP server
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
+    /// CORS configuration
+    pub cors: CorsConfig,
+
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,
 
@@ -39,6 +42,9 @@ pub struct Config {
 
     /// Logging configuration
     pub logging: Logging,
+
+    /// Telemetry configuration
+    pub telemetry: Telemetry,
 
     /// Operations
     pub operations: OperationSource,

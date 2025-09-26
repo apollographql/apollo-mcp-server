@@ -1,75 +1,86 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "Run apollo-mcp-server [Weather][Streamable HTTP]",
-            "runtimeExecutable": "cargo",
-            "runtimeArgs": [
-                "run",
-                "--bin",
-                "apollo-mcp-server",
-                "--",
-                "graphql/weather/config.yaml",
-            ],
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "env": {
-                "RUST_BACKTRACE": "1"
-            }
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug apollo-mcp-server [Weather][Streamable HTTP]",
-            "cargo": {
-                "args": [
-                    "build",
-                    "--bin=apollo-mcp-server",
-                    "--lib"
-                ],
-                "filter": {
-                    "name": "apollo-mcp-server",
-                    "kind": "bin"
-                }
-            },
-            "args": [
-                "graphql/weather/config.yaml",
-            ],
-            "cwd": "${workspaceFolder}",
-            "env": {
-                "RUST_BACKTRACE": "1"
-            }
-        },
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "Run apollo-mcp-server [TheSpaceDevs][Streamable HTTP]",
-            "runtimeExecutable": "cargo",
-            "runtimeArgs": [
-                "run",
-                "--bin",
-                "apollo-mcp-server",
-                "--",
-                "graphql/TheSpaceDevs/config.yaml",
-            ],
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal",
-            "env": {
-                "RUST_BACKTRACE": "1"
-            }
-        },
-        {
-            "type": "node",
-            "request": "launch",
-            "name": "Run mcp-inspector",
-            "runtimeExecutable": "npx",
-            "runtimeArgs": [
-                "@modelcontextprotocol/inspector"
-            ],
-            "cwd": "${workspaceFolder}",
-            "console": "integratedTerminal"
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Run apollo-mcp-server [Weather][Streamable HTTP]",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "--bin",
+        "apollo-mcp-server",
+        "--",
+        "graphql/weather/config.yaml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug apollo-mcp-server [Weather][Streamable HTTP]",
+      "cargo": {
+        "args": ["build", "--bin=apollo-mcp-server", "--lib"],
+        "filter": {
+          "name": "apollo-mcp-server",
+          "kind": "bin"
         }
-    ]
+      },
+      "args": ["graphql/weather/config.yaml"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "APOLLO_MCP_LOGGING__LEVEL": "debug"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Run apollo-mcp-server [TheSpaceDevs][Streamable HTTP]",
+      "runtimeExecutable": "cargo",
+      "runtimeArgs": [
+        "run",
+        "--bin",
+        "apollo-mcp-server",
+        "--",
+        "graphql/TheSpaceDevs/config.yaml"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "env": {
+        "RUST_BACKTRACE": "1"
+      }
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug apollo-mcp-server [TheSpaceDevs][Streamable HTTP]",
+      "cargo": {
+        "args": ["build", "--bin=apollo-mcp-server", "--lib"],
+        "filter": {
+          "name": "apollo-mcp-server",
+          "kind": "bin"
+        }
+      },
+      "args": ["graphql/TheSpaceDevs/config.yaml"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "RUST_BACKTRACE": "1",
+        "APOLLO_MCP_LOGGING__LEVEL": "debug"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "Run mcp-inspector",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["@modelcontextprotocol/inspector"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
 }

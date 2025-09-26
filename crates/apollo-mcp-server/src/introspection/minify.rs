@@ -1,6 +1,6 @@
 use apollo_compiler::schema::{ExtendedType, Type};
 use regex::Regex;
-use std::sync::OnceLock;
+use std::{collections::HashMap, sync::OnceLock};
 
 pub trait MinifyExt {
     /// Serialize in minified form
@@ -72,6 +72,38 @@ fn minify_input_object(input_object_type: &apollo_compiler::schema::InputObjectT
     format!("I:{type_name}:{fields}")
 }
 
+// We should only minify directives that assist the LLM in understanding the schema. This included @deprecated
+fn minify_directives(directives: &apollo_compiler::ast::DirectiveList) -> String {
+    let mut result = String::new();
+
+    static DIRECTIVES_TO_MINIFY: OnceLock<HashMap<&str, &str>> = OnceLock::new();
+    let directives_to_minify =
+        DIRECTIVES_TO_MINIFY.get_or_init(|| HashMap::from([("deprecated", "D")]));
+
+    for directive in directives.iter() {
+        if let Some(minified_name) = directives_to_minify.get(directive.name.as_str()) {
+            // Since we're only handling @deprecated right now we can just add the reason and minify it.
+            // We should handle this more generically in the future.
+            if !directive.arguments.is_empty()
+                && let Some(reason) = directive
+                    .arguments
+                    .iter()
+                    .find(|a| a.name == "reason")
+                    .and_then(|a| a.value.as_str())
+            {
+                result.push_str(&format!(
+                    "@{}(\"{}\")",
+                    minified_name,
+                    normalize_description(reason)
+                ));
+            } else {
+                result.push_str(&format!("@{}", minified_name));
+            }
+        }
+    }
+    result
+}
+
 fn minify_fields(
     fields: &apollo_compiler::collections::IndexMap<
         apollo_compiler::Name,
@@ -99,6 +131,8 @@ fn minify_fields(
         // Add field type
         result.push(':');
         result.push_str(&type_name(&field.ty));
+        result.push_str(&minify_directives(&field.directives));
+
         result.push(',');
     }
 
@@ -128,6 +162,7 @@ fn minify_input_fields(
         result.push_str(field_name.as_str());
         result.push(':');
         result.push_str(&type_name(&field.ty));
+        result.push_str(&minify_directives(&field.directives));
         result.push(',');
     }
 
@@ -147,13 +182,19 @@ fn minify_arguments(
         .map(|arg| {
             if let Some(desc) = arg.description.as_ref() {
                 format!(
-                    "\"{}\"{}:{}",
+                    "\"{}\"{}:{}{}",
                     normalize_description(desc),
                     arg.name.as_str(),
-                    type_name(&arg.ty)
+                    type_name(&arg.ty),
+                    minify_directives(&arg.directives)
                 )
             } else {
-                format!("{}:{}", arg.name.as_str(), type_name(&arg.ty))
+                format!(
+                    "{}:{}{}",
+                    arg.name.as_str(),
+                    type_name(&arg.ty),
+                    minify_directives(&arg.directives)
+                )
             }
         })
         .collect::<Vec<String>>()
@@ -210,4 +251,28 @@ fn normalize_description(desc: &str) -> String {
     static WHITESPACE_PATTERN: OnceLock<Regex> = OnceLock::new();
     let re = WHITESPACE_PATTERN.get_or_init(|| Regex::new(r"\s+").expect("regex pattern compiles"));
     re.replace_all(desc, "").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TEST_SCHEMA: &str = include_str!("tools/testdata/schema.graphql");
+
+    #[test]
+    fn test_minify_schema() {
+        let schema = apollo_compiler::schema::Schema::parse(TEST_SCHEMA, "schema.graphql")
+            .expect("Failed to parse schema")
+            .validate()
+            .expect("Failed to validate schema");
+
+        let minified = schema
+            .types
+            .iter()
+            .map(|(_, type_)| format!("{}: {}", type_.name().as_str(), type_.minify()))
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        insta::assert_snapshot!(minified);
+    }
 }

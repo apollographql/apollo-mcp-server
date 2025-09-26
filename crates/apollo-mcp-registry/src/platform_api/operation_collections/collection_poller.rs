@@ -248,7 +248,7 @@ impl From<&OperationCollectionDefaultEntry> for OperationData {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum CollectionSource {
     Id(String, PlatformApiConfig),
     Default(String, PlatformApiConfig),

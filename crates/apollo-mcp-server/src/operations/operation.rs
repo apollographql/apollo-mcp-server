@@ -48,6 +48,7 @@ impl Operation {
         self.inner
     }
 
+    #[tracing::instrument(skip(graphql_schema, custom_scalar_map))]
     pub fn from_document(
         raw_operation: RawOperation,
         graphql_schema: &GraphqlSchema,
@@ -138,6 +139,7 @@ impl Operation {
     }
 
     /// Generate a description for an operation based on documentation in the schema
+    #[tracing::instrument(skip(comments, tree_shaker, graphql_schema))]
     fn tool_description(
         comments: Option<String>,
         tree_shaker: &mut SchemaTreeShaker,
@@ -335,6 +337,7 @@ impl graphql::Executable for Operation {
 }
 
 #[allow(clippy::type_complexity)]
+#[tracing::instrument(skip_all)]
 pub fn operation_defs(
     source_text: &str,
     allow_mutations: bool,
@@ -424,6 +427,7 @@ pub fn operation_name(
         .to_string())
 }
 
+#[tracing::instrument(skip(source_text))]
 pub fn variable_description_overrides(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
@@ -455,6 +459,7 @@ pub fn variable_description_overrides(
     argument_overrides_map
 }
 
+#[tracing::instrument(skip(source_text))]
 pub fn find_opening_parens_offset(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
@@ -512,6 +517,7 @@ fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
         + tool_schema_string.len())
 }
 
+#[tracing::instrument(skip_all)]
 fn get_json_schema(
     operation: &Node<OperationDefinition>,
     schema_argument_descriptions: &HashMap<String, Vec<String>>,

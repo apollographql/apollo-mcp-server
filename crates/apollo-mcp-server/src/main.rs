@@ -11,7 +11,6 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use runtime::logging::Logging;
 use tracing::{info, warn};
 
 mod runtime;
@@ -42,9 +41,7 @@ async fn main() -> anyhow::Result<()> {
         None => runtime::read_config_from_env().unwrap_or_default(),
     };
 
-    // WorkerGuard is not used but needed to be at least defined or else the guard
-    // is cleaned up too early and file appender logging does not work
-    let _guard = Logging::setup(&config)?;
+    let _guard = runtime::telemetry::init_tracing_subscriber(&config)?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
@@ -145,6 +142,7 @@ async fn main() -> anyhow::Result<()> {
         .search_leaf_depth(config.introspection.search.leaf_depth)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
+        .cors(config.cors)
         .build()
         .start()
         .await?)

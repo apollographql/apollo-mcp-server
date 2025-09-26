@@ -6,6 +6,7 @@ use reqwest::header::HeaderMap;
 use url::Url;
 
 use crate::{
+    cors::CorsConfig,
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
     health::HealthCheckConfig,
@@ -48,6 +49,7 @@ struct Config {
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
+    cors: CorsConfig,
 }
 
 impl StateMachine {
@@ -81,6 +83,7 @@ impl StateMachine {
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
+                cors: server.cors,
             },
         });
 

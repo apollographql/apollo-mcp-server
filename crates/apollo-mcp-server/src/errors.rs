@@ -100,6 +100,9 @@ pub enum ServerError {
 
     #[error("Failed to index schema: {0}")]
     Indexing(#[from] IndexingError),
+
+    #[error("CORS configuration error: {0}")]
+    Cors(String),
 }
 
 /// An MCP tool error
