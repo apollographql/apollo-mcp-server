@@ -8,7 +8,11 @@
 
 # Apollo MCP Server version defined in apollo-mcp-server's Cargo.toml
 # Note: Change this line manually during the release steps.
+<<<<<<< HEAD
 $package_version = 'v0.8.0'
+=======
+$package_version = 'v0.9.0'
+>>>>>>> origin/main
 
 function Install-Binary($apollo_mcp_server_install_args) {
   $old_erroractionpreference = $ErrorActionPreference
