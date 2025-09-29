@@ -119,6 +119,7 @@ docker run \
   -p 5000:5000 \
   -v <PATH/TO/CONFIG/FILE>:/config.yaml \
   -v <PATH/TO/PROJECT/ROOT>:/data \
+  --pull always \
   ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
 ```
 
