@@ -183,10 +183,16 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let meter = &meter::METER;
-        let attributes = vec![KeyValue::new(
-            TelemetryAttribute::ClientName.to_key(),
-            request.client_info.name.clone(),
-        )];
+        let attributes = vec![
+            KeyValue::new(
+                TelemetryAttribute::ClientName.to_key(),
+                request.client_info.name.clone(),
+            ),
+            KeyValue::new(
+                TelemetryAttribute::ClientVersion.to_key(),
+                request.client_info.version.clone(),
+            ),
+        ];
         meter
             .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
