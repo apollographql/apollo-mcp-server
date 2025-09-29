@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use headers::HeaderMapExt as _;
-use reqwest::header::HeaderMap;
+use reqwest::header::{HeaderMap, HeaderValue};
 use rmcp::model::Implementation;
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -254,6 +254,22 @@ impl ServerHandler for Running {
                     // Also forward the mcp-session-id header if present
                     if let Some(session_id) = axum_parts.headers.get("mcp-session-id") {
                         headers.insert("mcp-session-id", session_id.clone());
+                    }
+
+                    if let Some(auth) = axum_parts.headers.get("authorization") {
+                        headers.insert("authorization", auth.clone());
+                    }
+
+                    //                         if name_lower == "authorization"
+                    // || name_lower == "x-mcp-proxy-auth"
+                    // || name_lower == "x-athena-context"
+
+                    if let Some(context_id) = axum_parts.headers.get("x-athena-context") {
+                        headers.insert("x-athena-context", context_id.clone());
+                    }
+
+                    if !headers.contains_key("x-athena-context") {
+                        headers.insert("x-athena-context", HeaderValue::from_static("432"));
                     }
                 }
 
