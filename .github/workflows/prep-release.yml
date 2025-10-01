@@ -91,7 +91,9 @@ jobs:
             esac
             
             NEW_VERSION="$MA.$MI.$PA"
+            RC_VERSION="$NEW_VERSION-rc.1"
             echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+            echo "rc_version=$RC_VERSION"
             echo "Bumped: $CURR -> $NEW_VERSION"
           fi
 
@@ -108,10 +110,11 @@ jobs:
           cargo install cargo-edit --locked
           cargo set-version --workspace "${{ steps.bump.outputs.new_version }}"
 
-      - name: Replace versions in scripts and docs
+      - name: Replace RC version in scripts and docs
+        if: ${{ steps.bump.outputs.rc_version != '' }}
         env:
           CURR_VERSION: ${{ steps.meta.outputs.current_version }}
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+          NEW_VERSION: ${{ steps.bump.outputs.rc_version }}
         run: |
           python3 - <<'PY'
           try:
@@ -161,12 +164,81 @@ jobs:
             sys.exit(1)
           PY
 
-      - name: Commit version bumps
+      - name: Commit and push RC version bumps
         id: commit_version_bumps
         run: |
           set -euo pipefail
           git add -A || true
-          git commit -m "chore(release): bumping to version ${{ steps.bump.outputs.new_version }}" || echo "No version bump changes to commit"
+          git commit -m "chore(release): bumping to version ${{ steps.bump.outputs.rc_version }}" || echo "No RC version bump changes to commit"
+          git push origin HEAD
+
+      - name: Create and push RC tag v${{ steps.bump.outputs.rc_version }}
+        if: ${{ steps.bump.outputs.rc_version != '' }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.bump.outputs.rc_version }}"
+          # Fail if tag already exists on remote
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::RC tag $tag already exists on origin."
+            exit 1
+          fi
+      
+          git tag -a "v$tag" -m "$tag"
+          git push origin tag "v$tag"
+
+      - name: Replace versions in scripts and docs with release version
+        env:
+          # If rc_version is non-empty, use it; otherwise use current_version
+          CURR_VERSION: ${{ steps.meta.outputs.rc_version != '' && steps.meta.outputs.rc_version || steps.meta.outputs.current_version }}
+          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
+        run: |
+          python3 - <<'PY'
+          try:
+            import os, re, sys, glob, pathlib
+          
+            current_version = os.environ["CURR_VERSION"]
+            new_version = os.environ["NEW_VERSION"]
+          
+            print(f"current={current_version} new={new_version}")
+          
+            # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
+            # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
+            # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
+            pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
+          
+            def repl(m): # preserve 'v' prefix if it existed
+              return (m.group(1) or '') + new_version
+          
+            # Targets to update
+            targets = [
+              "scripts/nix/install.sh",                # nix shell script
+              "scripts/windows/install.ps1",           # PowerShell
+              *glob.glob("**/*.mdx", recursive=True),  # docs
+            ]
+          
+            print(targets)
+            print(f"Scanning {len(targets)} targets…")
+          
+            changed = 0
+            for path in targets:
+              p = pathlib.Path(path)
+              if not p.exists():
+                continue
+              txt = p.read_text(encoding="utf-8")
+              new_txt, n = pat.subn(repl, txt)
+              if n:
+                p.write_text(new_txt, encoding="utf-8")
+                print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
+                changed += n
+          
+            if changed == 0:
+              print("::error::No occurrences of the current version were found.", file=sys.stderr)
+              sys.exit(1)
+          except Exception:
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
+          PY
 
       - name: Update changelog via xtask
         run: cargo xtask changeset changelog ${{ steps.bump.outputs.new_version }}
