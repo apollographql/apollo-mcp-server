@@ -1,25 +1,16 @@
-# [0.8.0] - 2025-09-12
+# [1.0.0] - 2025-10-01
 
-## 🚀 Features
+## 🐛 Fixes
 
-### feat: Configuration for disabling authorization token passthrough - @swcollard PR #336
+### fix: remove verbose logging - @swcollard PR #401
 
-A new optional new MCP Server configuration parameter, `transport.auth.disable_auth_token_passthrough`, which is `false` by default, that when true, will no longer pass through validated Auth tokens to the GraphQL API.
+The tracing-subscriber crate we are using to create logs does not have a configuration to exclude the span name and attributes from the log line. This led to rather verbose logs on app startup which would dump the full operation object into the logs before the actual log line. 
+
+This change strips the attributes from the top level spans so that we still have telemetry and tracing during this important work the server is doing, but they don't make it into the logs. The relevant details are provided in child spans after the operation has been parsed so we aren't losing any information other than a large json blob in the top level trace of generating Tools from GraphQL Operations.
 
 ## 🛠 Maintenance
 
-### Configure Codecov with coverage targets - @DaleSeo PR #337
+### deps: update rust to v1.90.0 - @DaleSeo PR #387
 
-This PR adds `codecov.yml` to set up Codecov with specific coverage targets and quality standards. It helps define clear expectations for code quality. It also includes some documentation about code coverage in `CONTRIBUTING.md` and adds the Codecov badge to `README.md`.
+Updates the Rust version to v1.90.0
 
-### Implement Test Coverage Measurement and Reporting - @DaleSeo PR #335
-
-This PR adds the bare minimum for code coverage reporting using [cargo-llvm-cov](https://crates.io/crates/cargo-llvm-cov) and integrates with [Codecov](https://www.codecov.io/). It adds a new `coverage` job to the CI workflow that generates and uploads coverage reporting in parallel with existing tests. The setup mirrors that of Router, except it uses `nextest` instead of the built-in test runner and CircleCI instead of GitHub Actions.
-
-### chore: update RMCP dependency ([328](https://github.com/apollographql/apollo-mcp-server/issues/328))
-
-Update the RMCP dependency to the latest version, pulling in newer specification changes.
-
-### ci: Pin stable rust version ([Issue #287](https://github.com/apollographql/apollo-mcp-server/issues/287))
-
-Pins the stable version of Rust to the current latest version to ensure backwards compatibility with future versions.

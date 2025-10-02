@@ -4,6 +4,113 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [1.0.0] - 2025-10-01
+
+# Apollo MCP Server 1.0 Release Notes
+
+Apollo MCP Server 1.0 marks the **General Availability (GA)** milestone, delivering a production-ready Model Context Protocol server that seamlessly bridges GraphQL APIs with AI applications. This release transforms how AI agents interact with GraphQL APIs through standardized MCP tools, enabling natural language access to your GraphQL operations.
+
+## 🎯 GA Highlights
+
+### **Production-Ready MCP Protocol Implementation**
+
+Apollo MCP Server 1.0 provides full compliance with the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18), enabling AI applications to discover and invoke GraphQL operations through standardized protocols. The server acts as a translation layer, converting GraphQL operations into MCP tools that AI models can execute through natural language requests.
+
+**Key Benefits:**
+
+- **Standardized AI Integration**: No more custom API bridges - use the industry-standard MCP protocol
+- **Automatic Tool Discovery**: AI agents automatically discover available GraphQL operations as MCP tools
+- **Type-Safe Execution**: All operations are validated against your GraphQL schema before execution
+- **Enterprise-Ready**: Full OAuth 2.1 authentication and comprehensive observability
+
+### **🚀 Multi-Transport Architecture**
+
+Flexible communication options for every deployment scenario:
+
+- **stdio**: Perfect for local development and debugging with MCP Inspector
+- **Streamable HTTP**: Production-grade transport with load balancer support and concurrent connections
+
+All transports maintain full MCP protocol compliance while optimizing for specific use cases.
+
+### **🔧 Advanced GraphQL Integration**
+
+**Custom Scalar Support**: Seamlessly handle specialized types like `DateTime`, `UUID`, and domain-specific scalars with automatic JSON Schema mapping.
+
+**Mutation Controls**: Fine-grained security controls to prevent unintended data changes:
+
+- `all`: Enable all mutations (default)
+- `none`: Disable all mutations for read-only access
+- `allowlist`: Only allow specific mutations
+
+### **📊 Flexible Schema & Operation Management**
+
+**Dual Schema Sources:**
+
+- **Local Files**: Direct schema control for development and offline scenarios
+- **Apollo GraphOS**: Centralized schema management with automatic updates via uplink integration
+
+**Multiple Operation Sources:**
+
+- **Local Statement Files**: Hot-reloading `.graphql` files for rapid development
+- **Persisted Query Manifests**: Security-focused pre-approved operation execution
+- **GraphOS Operation Collections**: Centrally managed operations with automatic polling
+- **GraphOS Persisted Queries**: Enterprise-grade operation management
+
+### **🤖 AI-Optimized Introspection Tools**
+
+**Core Tools:**
+
+- **`introspect`**: Comprehensive schema exploration with AI-friendly formatting
+- **`execute`**: Safe dynamic operation execution with proper error handling
+- **`validate`**: Operation validation without execution to prevent side effects
+- **`search`**: Semantic schema search to efficiently find relevant types and fields
+
+**AI Optimizations:**
+
+- **Minified Output**: Configurable minification reduces context window usage by 30%+ while preserving essential information
+- **Semantic Search**: Natural language schema exploration with ranked results
+
+### **⚙️ Configuration-Driven Architecture**
+
+**YAML Configuration**: Replace complex command-line arguments with structured, version-controllable configuration files.
+
+**Environment Variable Overrides**: Seamless environment-specific customization using the `APOLLO_MCP_` prefix convention.
+
+**Comprehensive Validation**: Clear error messages and sensible defaults for rapid deployment.
+
+### **🔐 Enterprise Security & Observability**
+
+**OAuth 2.1 Authentication**: Production-ready authentication supporting major identity providers:
+
+- Auth0, WorkOS, Keycloak, Okta
+- JWT token validation with audience and scope enforcement
+- OIDC discovery for automatic provider configuration
+
+**Health Monitoring**: Kubernetes-ready health checks with configurable liveness and readiness probes.
+
+**OpenTelemetry Integration**: Comprehensive observability with traces, metrics, and events:
+
+- Operation-level performance tracking
+- Semantic conventions for HTTP servers when using the Streamable HTTP transport.
+- OTLP export to any OpenTelemetry-compatible collector
+- Integration with existing monitoring infrastructure
+
+**CORS Support**: Enable browser-based MCP clients with comprehensive Cross-Origin Resource Sharing support following Apollo Router patterns.
+
+## 🐛 Fixes
+
+### fix: remove verbose logging - @swcollard PR #401
+
+The tracing-subscriber crate we are using to create logs does not have a configuration to exclude the span name and attributes from the log line. This led to rather verbose logs on app startup which would dump the full operation object into the logs before the actual log line.
+
+This change strips the attributes from the top level spans so that we still have telemetry and tracing during this important work the server is doing, but they don't make it into the logs. The relevant details are provided in child spans after the operation has been parsed so we aren't losing any information other than a large json blob in the top level trace of generating Tools from GraphQL Operations.
+
+## 🛠 Maintenance
+
+### deps: update rust to v1.90.0 - @DaleSeo PR #387
+
+Updates the Rust version to v1.90.0
+
 # [0.9.0] - 2025-09-24
 
 ## 🚀 Features
