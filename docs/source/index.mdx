@@ -18,92 +18,146 @@ Apollo MCP Server provides a standard way for AI models to access and orchestrat
 
 - **Maintain Full Security Control**: Use pre-defined, pre-approved persisted queries to maintain precise governance over which data and operations AI clients can access.
 
-
-<!-- Getting Started CTA -->
-<div class="mb-16 rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-8">
-  <h2 class="mb-4 text-2xl font-bold">Getting Started</h2>
-  <p class="mb-6 text-gray-700">Get up and running in a couple of minutes with the Quickstart. Topics include how to:</p>
-
-  <ul class="list-inside list-disc space-y-2 text-gray-700 mb-6">  
-    <li>creating your own MCP server (starting from scratch or using an existing Graph)</li>
-    <li>connect and test your MCP server in an AI client application (like Claude or Cursor)</li>
-    <li>exposing your GraphQL API operations as MCP tools </li>
-  </ul>
-  
-  <div class="flex gap-4">
-    <a href="/docs/apollo-mcp-server/quickstart" class="inline-block rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700">Quickstart → </a>
+<>
+  {"{"}/* Getting Started CTA */{"}"}
+  <div classname="mb-16 rounded-lg border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 p-8">
+    <h2 classname="mb-4 text-2xl font-bold">Getting Started</h2>
+    <p classname="mb-6 text-gray-700">
+      Get up and running in a couple of minutes with the Quickstart. Topics
+      include how to:
+    </p>
+    <ul classname="list-inside list-disc space-y-2 text-gray-700 mb-6">
+      <li>
+        creating your own MCP server (starting from scratch or using an existing
+        Graph)
+      </li>
+      <li>
+        connect and test your MCP server in an AI client application (like
+        Claude or Cursor)
+      </li>
+      <li>exposing your GraphQL API operations as MCP tools </li>
+    </ul>
+    <div classname="flex gap-4">
+      <a
+        href="/docs/apollo-mcp-server/quickstart"
+        classname="inline-block rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+      >
+        Quickstart →{" "}
+      </a>
+    </div>
   </div>
-</div>
-
-<!-- Feature Cards -->
-<div class="mb-12">
-  <h2 class="mb-6 text-2xl font-bold">Key Features & Guides</h2>
-
-  <div class="grid w-full grid-cols-2 gap-4">
-
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="text-3xl">📘</div>
+  {"{"}/* Feature Cards */{"}"}
+  <div classname="mb-12">
+    <h2 classname="mb-6 text-2xl font-bold">Key Features &amp; Guides</h2>
+    <div classname="grid w-full grid-cols-2 gap-4">
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="text-3xl">📘</div>
         <div>
-          <h3 class="mb-2 font-semibold">
-            <a href="/docs/apollo-mcp-server/how-it-works" class="text-blue-600 hover:underline">How It Works</a>
+          <h3 classname="mb-2 font-semibold">
+            <a
+              href="/docs/apollo-mcp-server/how-it-works"
+              classname="text-blue-600 hover:underline"
+            >
+              How It Works
+            </a>
           </h3>
-          <p class="text-sm text-gray-600">Understand the MCP architecture and how Apollo MCP Server works.</p>
+          <p classname="text-sm text-gray-600">
+            Understand the MCP architecture and how Apollo MCP Server works.
+          </p>
         </div>
       </div>
-
-      <!-- Running MCP Server -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">🚀</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/running" class="text-blue-600 hover:underline">Running the MCP Server</a>
+      {"{"}/* Running MCP Server */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">🚀</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/running"
+            classname="text-blue-600 hover:underline"
+          >
+            Running the MCP Server
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Run the server locally with <code>rover dev</code> or in containerized services.</p>
+        <p classname="text-sm text-gray-600">
+          Run the server locally with <code>rover dev</code> or in containerized
+          services.
+        </p>
       </div>
-
-      <!-- Tool Definition -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">🔧</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/tool-definition" class="text-blue-600 hover:underline">Tool Definition</a>
+      {"{"}/* Tool Definition */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">🔧</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/tool-definition"
+            classname="text-blue-600 hover:underline"
+          >
+            Tool Definition
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Create MCP tools from operation files, persisted queries, or schema introspection.</p>
+        <p classname="text-sm text-gray-600">
+          Create MCP tools from operation files, persisted queries, or schema
+          introspection.
+        </p>
       </div>
-
-      <!-- Configuration -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">⚙️</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/configuration" class="text-blue-600 hover:underline">Configuration</a>
+      {"{"}/* Configuration */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">⚙️</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/configuration"
+            classname="text-blue-600 hover:underline"
+          >
+            Configuration
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Configure transport options, endpoints, and GraphQL operations.</p>
+        <p classname="text-sm text-gray-600">
+          Configure transport options, endpoints, and GraphQL operations.
+        </p>
       </div>
-
-      <!-- Deploying -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">☁️</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/deploying" class="text-blue-600 hover:underline">Deployment</a>
+      {"{"}/* Deploying */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">☁️</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/deploying"
+            classname="text-blue-600 hover:underline"
+          >
+            Deployment
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Deploy to cloud infrastructure with containerization guides.</p>
+        <p classname="text-sm text-gray-600">
+          Deploy to cloud infrastructure with containerization guides.
+        </p>
       </div>
-
-      <!-- Telemetry -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">📊</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/telemetry" class="text-blue-600 hover:underline">Telemetry</a>
+      {"{"}/* Telemetry */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">📊</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/telemetry"
+            classname="text-blue-600 hover:underline"
+          >
+            Telemetry
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Observe your MCP server requests and performance.</p>
+        <p classname="text-sm text-gray-600">
+          Observe your MCP server requests and performance.
+        </p>
       </div>
-
-      <!-- Authentication -->
-      <div class="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
-        <div class="mb-3 text-2xl">🔐</div>
-        <h3 class="mb-2 font-semibold">
-          <a href="/docs/apollo-mcp-server/authentication" class="text-blue-600 hover:underline">Auth</a>
+      {"{"}/* Authentication */{"}"}
+      <div classname="rounded-lg border border-gray-200 p-5 transition hover:shadow-md">
+        <div classname="mb-3 text-2xl">🔐</div>
+        <h3 classname="mb-2 font-semibold">
+          <a
+            href="/docs/apollo-mcp-server/authentication"
+            classname="text-blue-600 hover:underline"
+          >
+            Auth
+          </a>
         </h3>
-        <p class="text-sm text-gray-600">Secure your MCP server with headers and authorization.</p>
+        <p classname="text-sm text-gray-600">
+          Secure your MCP server with headers and authorization.
+        </p>
       </div>
     </div>
   </div>
-</div>
+</>
