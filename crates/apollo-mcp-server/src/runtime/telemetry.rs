@@ -7,7 +7,7 @@ use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::{Instrument, Stream};
+use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
@@ -45,9 +45,25 @@ pub struct MetricsExporters {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub enum MetricTemporality {
+    Cumulative,
+    Delta,
+}
+
+impl MetricTemporality {
+    pub fn to_sdk(&self) -> Temporality {
+        match self {
+            MetricTemporality::Cumulative => Temporality::Cumulative,
+            MetricTemporality::Delta => Temporality::Delta,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct OTLPMetricExporter {
     endpoint: String,
     protocol: String,
+    temporality: MetricTemporality,
 }
 
 impl Default for OTLPMetricExporter {
@@ -55,6 +71,7 @@ impl Default for OTLPMetricExporter {
         Self {
             endpoint: "http://localhost:4317".into(),
             protocol: "grpc".into(),
+            temporality: MetricTemporality::Cumulative,
         }
     }
 }
@@ -122,10 +139,12 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
         "grpc" => opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
             .with_endpoint(otlp.endpoint.clone())
+            .with_temporality(otlp.temporality.to_sdk())
             .build()?,
         "http/protobuf" => opentelemetry_otlp::MetricExporter::builder()
             .with_http()
             .with_endpoint(otlp.endpoint.clone())
+            .with_temporality(otlp.temporality.to_sdk())
             .build()?,
         other => {
             return Err(anyhow::anyhow!(
@@ -331,6 +350,7 @@ mod tests {
                 otlp: Some(OTLPMetricExporter {
                     protocol: "bogus".to_string(),
                     endpoint: "http://localhost:4317".to_string(),
+                    temporality: MetricTemporality::Cumulative,
                 }),
                 omitted_attributes: None,
             }),
@@ -354,6 +374,7 @@ mod tests {
                 otlp: Some(OTLPMetricExporter {
                     protocol: "http/protobuf".to_string(),
                     endpoint: "http://localhost:4318/v1/metrics".to_string(),
+                    temporality: MetricTemporality::Delta,
                 }),
                 omitted_attributes: None,
             }),
