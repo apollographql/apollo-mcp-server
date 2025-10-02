@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "<your-mcp-server-name>": {
+      "command": "<localpath>/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
+      "args": [
+        "--directory",
+        "<localpath>/apollographql/apollo-mcp-server/<graphql-directory>",
+        "--schema",
+        "myapi.graphql",
+        "--endpoint",
+        "https://<mymcpendpoint>.app/",
+        "--introspection"
+      ]
+    }
+  }
+}
