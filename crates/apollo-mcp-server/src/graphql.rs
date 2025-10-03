@@ -1,11 +1,13 @@
 //! Execute GraphQL operations from an MCP tool
 
+use std::sync::LazyLock;
+
 use crate::errors::McpError;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest_middleware::{ClientBuilder, Extension};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
 use serde_json::{Map, Value};
@@ -23,6 +25,13 @@ pub struct OperationDetails {
     pub query: String,
     pub operation_name: Option<String>,
 }
+
+static GRAPHQL_CLIENT: LazyLock<ClientWithMiddleware> = LazyLock::new(|| {
+    ClientBuilder::new(reqwest::Client::new())
+        .with_init(Extension(OtelName("mcp-graphql-client".into())))
+        .with(TracingMiddleware::default())
+        .build()
+});
 
 /// Able to be executed as a GraphQL operation
 pub trait Executable {
@@ -86,12 +95,7 @@ pub trait Executable {
             }
         }
 
-        let client = ClientBuilder::new(reqwest::Client::new())
-            .with_init(Extension(OtelName("mcp-graphql-client".into())))
-            .with(TracingMiddleware::default())
-            .build();
-
-        let result = client
+        let result = GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())
