@@ -19,12 +19,12 @@ For most production deployments, use the all-in-one [Apollo Runtime Container](/
 
 ### Deploy the Apollo Runtime Container
 
-The Apollo Runtime Container includes all services necessary to serve GraphQL and MCP requests, including Apollo Router and Apollo MCP Server. Both port `4000` (GraphQL) and `5000` (MCP) are exposed.
+The Apollo Runtime Container includes all services necessary to serve GraphQL and MCP requests, including Apollo Router and Apollo MCP Server. Both port `4000` (GraphQL) and `8000` (MCP) are exposed.
 
 ```bash title="Deploy with GraphOS (Recommended)"
 docker run \
   -p 4000:4000 \
-  -p 5050:5000 \
+  -p 8000:8000 \
   --env APOLLO_GRAPH_REF="<your-graph-ref>" \
   --env APOLLO_KEY="<your-graph-api-key>" \
   --env MCP_ENABLE=1 \
