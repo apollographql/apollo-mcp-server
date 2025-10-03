@@ -94,7 +94,7 @@ impl Transport {
     }
 
     fn default_port() -> u16 {
-        5000
+        8000
     }
 
     fn default_stateful_mode() -> bool {
