@@ -244,20 +244,37 @@ transport:
 
 #### Metrics
 
-| Option                | Type             | Default                     | Description                                    |
-| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
-| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from metrics. |
+| Option                | Type                    | Default                     | Description                                    |
+| :-------------------- | :---------------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Metric Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
+| `omitted_attributes`  | `List<String>`          |                             | List of attributes to be omitted from metrics. |
+
+
+#### OTLP Metrics Exporter
+
+| Option        | Type          | Default                     | Description                                                                                                                                                               |
+| :---------    | :------------ | :-------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `endpoint`    | `URL`         | `http://localhost:4137`     | URL to export data to. Requires full path.                                                                                                                                |
+| `protocol`    | `string`      | `grpc`                      | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                       |
+| `temporality` | `Temporality` | `Cumulative`                | OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements or not. |
+
+##### Temporality
+
+| Option       | Type    | Description                                                                                       |
+| :----------- | :------ | :------------------------------------------------------------------------------------------------ |
+| `Cumulative` | `enum`  | The metric value will be the overall value since the start of the measurement. (default behavior) |
+| `Delta`      | `enum`  | The metric will be the difference in the measurement since the last time it was reported.         |
+
 
 #### Traces
 
-| Option                | Type             | Default                     | Description                                    |
-| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
-| `sampler`             | `SamplerOption`  | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
-| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from traces. |
+| Option                | Type                   | Default                     | Description                                    |
+| :-------------------- | :--------------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Trace Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
+| `sampler`             | `SamplerOption`        | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
+| `omitted_attributes`  | `List<String>`         |                             | List of attributes to be omitted from traces.  |
 
-#### OTLP Exporter
+#### OTLP Trace Exporter
 
 | Option      | Type      | Default                     | Description                                                      |
 | :---------  | :-------- | :-------------------------- | :--------------------------------------------------------------- |
