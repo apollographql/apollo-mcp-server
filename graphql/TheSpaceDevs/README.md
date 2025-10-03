@@ -69,16 +69,16 @@ There are operations located at `./operations/*.graphql` for you to use in your 
 docker run \
   -it --rm \
   --name apollo-mcp-server \
-  -p 5000:5000 \
+  -p 8000:8000 \
   -v $PWD/graphql/TheSpaceDevs:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest \
-  --http-port 5000 \
+  --http-port 8000 \
   --schema api.graphql \
   --operations operations \
   --endpoint https://thespacedevs-production.up.railway.app/
 ```
 
-2. Add the MCP SSE port to your MCP Server configuration for the client appliction you are running. If you are running locally, the server link will be `http://127.0.0.1:5000/sse`.
+2. Add the MCP SSE port to your MCP Server configuration for the client appliction you are running. If you are running locally, the server link will be `http://127.0.0.1:8000/sse`.
 
 _Note: Claude Desktop currently doesn't support SSE_
 
@@ -87,7 +87,7 @@ _Note: Claude Desktop currently doesn't support SSE_
   "mcpServers": {
     "thespacedevs": {
       "type": "sse",
-      "url": "http://127.0.0.1:5000/sse>"
+      "url": "http://127.0.0.1:8000/sse>"
     }
   }
 }
