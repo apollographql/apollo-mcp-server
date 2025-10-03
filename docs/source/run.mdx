@@ -4,13 +4,25 @@ title: Running the Apollo MCP Server
 
 There are multiple ways to run the Apollo MCP server.
 
-If you have an existing GraphQL API deployed, use the standalone MCP server binary to get started quickly.
+- If you have an existing GraphQL API deployed, use the standalone MCP server binary to get started quickly.
 
-If you use Docker in your developer workflow, use the Apollo MCP Server Docker image.
+- If you use Docker in your developer workflow, use the Apollo MCP Server Docker image.
 
-If you are running your GraphQL API locally with Rover, you can use the Rover CLI's `rover dev` command to run the MCP server alongside your local graph.
+- If you are running your GraphQL API locally with Rover, you can use the Rover CLI's `rover dev` command to run the MCP server alongside your local graph.
 
-If you are using the Apollo Runtime Container, you can use the container to run both the MCP server and the Apollo Router in a single container.
+- If you are using the Apollo Runtime Container, you can use the container to run both the MCP server and the Apollo Router in a single container.
+
+## With the Rover CLI
+
+The Rover CLI is a tool for working with GraphQL APIs locally.
+
+You can use the [`rover dev`](/rover/commands/dev) command of Rover CLI `v0.35` or later to run an Apollo MCP Server instance alongside your local graph. Use the `--mcp` flag to start an MCP server and provide an optional configuration file.
+
+```sh
+rover dev --mcp <PATH/TO/CONFIG> [...other rover dev flags]
+```
+
+For more information, see the [Rover CLI documentation](/rover).
 
 ## Standalone MCP server binary
 
@@ -128,18 +140,6 @@ This command:
 - Starts an MCP Server in a Docker container
 - Maps configuration files into the proper place for the Apollo MCP Server container
 - Forwards port 5000 for accessing the MCP Server
-
-## With the Rover CLI
-
-The Rover CLI is a tool for working with GraphQL APIs locally.
-
-You can use the [`rover dev`](/rover/commands/dev) command of Rover CLI `v0.35` or later to run an Apollo MCP Server instance alongside your local graph. Use the `--mcp` flag to start an MCP server and provide an optional configuration file.
-
-```sh
-rover dev --mcp <PATH/TO/CONFIG> [...other rover dev flags]
-```
-
-For more information, see the [Rover CLI documentation](/rover).
 
 ## With the Apollo Runtime Container
 
