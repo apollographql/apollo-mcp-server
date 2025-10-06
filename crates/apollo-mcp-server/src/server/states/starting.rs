@@ -222,6 +222,7 @@ impl Starting {
                                 "mcp_server",
                                 method = %request.method(),
                                 uri = %request.uri(),
+                                session_id = tracing::field::Empty,
                                 status_code = tracing::field::Empty,
                             )
                         })
@@ -229,7 +230,17 @@ impl Starting {
                             |response: &axum::http::Response<_>,
                              _latency: std::time::Duration,
                              span: &tracing::Span| {
-                                span.record("status", tracing::field::display(response.status()));
+                                span.record(
+                                    "status_code",
+                                    tracing::field::display(response.status()),
+                                );
+                                if let Some(session_id) = response
+                                    .headers()
+                                    .get("mcp-session-id")
+                                    .and_then(|v| v.to_str().ok())
+                                {
+                                    span.record("session_id", tracing::field::display(session_id));
+                                }
                             },
                         ),
                 );
