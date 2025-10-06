@@ -98,6 +98,20 @@ When an MCP client initializes a session with Apollo MCP Server, it receives a s
 
 Most cloud load balancers (ALB, GCP LB) don't support header-based session affinity. Use Nginx, HAProxy, or Envoy/Istio for proper session routing.
 
+#### Stateless mode
+
+Although MCP is a stateful protocol by default, the Streamable HTTP transport supports operating in a stateless mode.
+This means that the session ID will not be passed back and forth between the client and server and each request made to the MCP server happens in its own HTTP POST.
+Disabling the session state being managed in memory by a single host allows for horizontal scaling of the server, though could lead to unknown issues if your MCP client has a dependency on sticky sessions.
+
+You can configure stateless mode in the transport config section:
+
+```yaml
+transport:
+  type: streamable_http
+  stateful_mode: false
+```
+
 ### Scaling Recommendations
 
 For the Apollo Runtime Container:
