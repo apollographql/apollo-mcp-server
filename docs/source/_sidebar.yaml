@@ -1,7 +1,7 @@
 switcher:
   heading: "Apollo MCP Server"
   versions:
-    - label: v0
+    - label: v1
       latest: true
       href: ./
 defaultOpenDepth: 2
