@@ -64,10 +64,164 @@ fn forward_headers(names: &[String], incoming: &HeaderMap, outgoing: &mut Header
 #[cfg(test)]
 mod tests {
     use super::*;
+    use headers::Authorization;
+    use http::Extensions;
     use reqwest::header::HeaderValue;
 
+    use crate::auth::ValidToken;
+
     #[test]
-    fn test_forward_no_headers_by_default() {
+    fn test_build_request_headers_includes_static_headers() {
+        let mut static_headers = HeaderMap::new();
+        static_headers.insert("x-api-key", HeaderValue::from_static("static-key"));
+        static_headers.insert("user-agent", HeaderValue::from_static("mcp-server"));
+
+        let forward_header_names = vec![];
+        let incoming_headers = HeaderMap::new();
+        let extensions = Extensions::new();
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            false,
+        );
+
+        assert_eq!(result.get("x-api-key").unwrap(), "static-key");
+        assert_eq!(result.get("user-agent").unwrap(), "mcp-server");
+    }
+
+    #[test]
+    fn test_build_request_headers_forwards_configured_headers() {
+        let static_headers = HeaderMap::new();
+        let forward_header_names = vec!["x-tenant-id".to_string(), "x-trace-id".to_string()];
+
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert("x-tenant-id", HeaderValue::from_static("tenant-123"));
+        incoming_headers.insert("x-trace-id", HeaderValue::from_static("trace-456"));
+        incoming_headers.insert("other-header", HeaderValue::from_static("ignored"));
+
+        let extensions = Extensions::new();
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            false,
+        );
+
+        assert_eq!(result.get("x-tenant-id").unwrap(), "tenant-123");
+        assert_eq!(result.get("x-trace-id").unwrap(), "trace-456");
+        assert!(result.get("other-header").is_none());
+    }
+
+    #[test]
+    fn test_build_request_headers_adds_oauth_token_when_enabled() {
+        let static_headers = HeaderMap::new();
+        let forward_header_names = vec![];
+        let incoming_headers = HeaderMap::new();
+
+        let mut extensions = Extensions::new();
+        let token = ValidToken(Authorization::bearer("test-token").unwrap());
+        extensions.insert(token);
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            false,
+        );
+
+        assert!(result.get("authorization").is_some());
+        assert_eq!(result.get("authorization").unwrap(), "Bearer test-token");
+    }
+
+    #[test]
+    fn test_build_request_headers_skips_oauth_token_when_disabled() {
+        let static_headers = HeaderMap::new();
+        let forward_header_names = vec![];
+        let incoming_headers = HeaderMap::new();
+
+        let mut extensions = Extensions::new();
+        let token = ValidToken(Authorization::bearer("test-token").unwrap());
+        extensions.insert(token);
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            true,
+        );
+
+        assert!(result.get("authorization").is_none());
+    }
+
+    #[test]
+    fn test_build_request_headers_forwards_mcp_session_id() {
+        let static_headers = HeaderMap::new();
+        let forward_header_names = vec![];
+
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert("mcp-session-id", HeaderValue::from_static("session-123"));
+
+        let extensions = Extensions::new();
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            false,
+        );
+
+        assert_eq!(result.get("mcp-session-id").unwrap(), "session-123");
+    }
+
+    #[test]
+    fn test_build_request_headers_combined_scenario() {
+        // Static headers
+        let mut static_headers = HeaderMap::new();
+        static_headers.insert("x-api-key", HeaderValue::from_static("static-key"));
+
+        // Forward specific headers
+        let forward_header_names = vec!["x-tenant-id".to_string()];
+
+        // Incoming headers
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert("x-tenant-id", HeaderValue::from_static("tenant-123"));
+        incoming_headers.insert("mcp-session-id", HeaderValue::from_static("session-456"));
+        incoming_headers.insert(
+            "ignored-header",
+            HeaderValue::from_static("should-not-appear"),
+        );
+
+        // OAuth token
+        let mut extensions = Extensions::new();
+        let token = ValidToken(Authorization::bearer("oauth-token").unwrap());
+        extensions.insert(token);
+
+        let result = build_request_headers(
+            &static_headers,
+            &forward_header_names,
+            &incoming_headers,
+            &extensions,
+            false,
+        );
+
+        // Verify all parts combined correctly
+        assert_eq!(result.get("x-api-key").unwrap(), "static-key");
+        assert_eq!(result.get("x-tenant-id").unwrap(), "tenant-123");
+        assert_eq!(result.get("mcp-session-id").unwrap(), "session-456");
+        assert_eq!(result.get("authorization").unwrap(), "Bearer oauth-token");
+        assert!(result.get("ignored-header").is_none());
+    }
+
+    #[test]
+    fn test_forward_headers_no_headers_by_default() {
         let names: Vec<String> = vec![];
 
         let mut incoming = HeaderMap::new();
@@ -81,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn test_forward_only_allowed_headers() {
+    fn test_forward_headers_only_specific_headers() {
         let names = vec![
             "x-tenant-id".to_string(),     // Multi-tenancy
             "x-trace-id".to_string(),      // Distributed tracing
@@ -112,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_hop_by_hop_headers_blocked() {
+    fn test_forward_headers_blocks_hop_by_hop_headers() {
         let names = vec!["connection".to_string(), "content-length".to_string()];
 
         let mut incoming = HeaderMap::new();
@@ -128,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn test_case_insensitive_matching() {
+    fn test_forward_headers_case_insensitive_matching() {
         let names = vec!["X-Tenant-ID".to_string()];
 
         let mut incoming = HeaderMap::new();
