@@ -265,7 +265,7 @@ Your project includes a pre-configured `mcp.Dockerfile` for easy deployment. Thi
 1. Run locally:
 
     ```bash
-    docker run -p 4000:4000 -p 5050:5050 \
+    docker run -p 4000:4000 -p 5050:5000 \
       -e APOLLO_KEY=$APOLLO_KEY \
       -e APOLLO_GRAPH_REF=$APOLLO_GRAPH_REF \
       -e MCP_ENABLE=1 \
@@ -280,7 +280,7 @@ Your project includes a pre-configured `mcp.Dockerfile` for easy deployment. Thi
 | ---------------------------- | ------------------------------- | -------- |
 | `APOLLO_KEY`                 | Your graph's API key            | Yes      |
 | `APOLLO_GRAPH_REF`           | Your graph reference            | Yes      |
-| `APOLLO_MCP_TRANSPORT__PORT` | MCP server port (default: 5050) | No       |
+| `APOLLO_MCP_TRANSPORT__PORT` | MCP server port (default: 5000) | No       |
 | `APOLLO_ROUTER_PORT`         | Router port (default: 4000)     | No       |
 
 For more deployment options, see the [Deploy the MCP Server](/apollo-mcp-server/deploy) page.
