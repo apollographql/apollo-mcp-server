@@ -1,0 +1,23 @@
+🚀 TheSpaceDevs API Execution Hints:
+
+• Popular queries to explore:
+  - Launch data: Use 'launches' field with filters like upcoming, status, or date ranges
+  - Spacecraft info: Query 'spacecraft' for technical details and mission history
+  - Astronaut data: Access 'astronauts' for crew information and flight records
+  - Agency details: Use 'agencies' to get space organization information
+
+• Common filter patterns:
+  - Date filtering: Use 'net__gte' and 'net__lte' for launch time windows
+  - Status filtering: 'status__ids' accepts arrays like [1,3,4] for launch statuses
+  - Limit results: Always include 'limit' parameter to control response size
+
+• Best practices:
+  - Start with small limit values (10-20) to avoid large responses
+  - Use 'ordering' parameter to sort results (e.g., 'net' for launch date)
+  - Check 'total_count' in responses to understand dataset size
+  - Combine multiple fields for richer data (launches + spacecraft + agencies)
+
+• Example useful queries:
+  - Next SpaceX launches: filter by agency name and upcoming status
+  - ISS crew rotations: query astronauts with ISS mission filters
+  - Recent successful launches: filter by status and recent dates

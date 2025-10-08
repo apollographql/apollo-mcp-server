@@ -13,6 +13,8 @@ overrides:
 introspection:
   execute:
     enabled: true
+    hints_file: execute_hints.txt
+    # hints: Some inline hints that could be used instead of hints_file
   introspect:
     enabled: true
   search:

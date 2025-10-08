@@ -254,6 +254,8 @@ mod test {
                 introspection: Introspection {
                     execute: ExecuteConfig {
                         enabled: false,
+                        hints: None,
+                        hints_file: None,
                     },
                     introspect: IntrospectConfig {
                         enabled: false,
