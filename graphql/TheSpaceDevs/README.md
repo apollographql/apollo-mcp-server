@@ -64,7 +64,7 @@ docker run \
   -it --rm \
   --name apollo-mcp-server \
   -p 8000:8000 \
-  -v $PWD/graphql/TheSpaceDevs/config.yaml \
+  -v $PWD/graphql/TheSpaceDevs/config.yaml:/config.yaml \
   -v $PWD/graphql/TheSpaceDevs:/data \
   ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
 ```
