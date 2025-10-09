@@ -38,28 +38,22 @@ Here is an example configuration you can use _(Note: you must provide your fill 
     "thespacedevs": {
       "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
       "args": [
-        "--directory",
-        "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/graphql/TheSpaceDevs",
-        "--schema",
-        "api.graphql",
-        "--operations",
-        "operations",
-        "--endpoint",
-        "https://thespacedevs-production.up.railway.app/",
-        "--introspection"
+        "graphql/TheSpaceDevs/config.yaml"
       ]
     }
   }
 }
 ```
 
-## Using Server-Side-Events (SSE) with Apollo MCP server
+## Using Streamable HTTP with Apollo MCP server
 
-There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration along with the `--introspection` option that enables the LLM to generate a dynamic operation along with the ability to execute it. 
+There are operations located at `./operations/*.graphql` for you to use in your configuration. You can provide a set of operations in your MCP configuration that enables the LLM to generate a dynamic operation along with the ability to execute it. 
 
-### Running SSE with `rover dev`
+### Running with `rover dev`
 
-**_Coming soon_**
+```BASH
+rover dev --supergraph-config supergraph.yaml --mcp config.yaml
+```
 
 ### Running Apollo MCP server Docker image
 
@@ -70,15 +64,12 @@ docker run \
   -it --rm \
   --name apollo-mcp-server \
   -p 8000:8000 \
+  -v $PWD/graphql/TheSpaceDevs/config.yaml \
   -v $PWD/graphql/TheSpaceDevs:/data \
-  ghcr.io/apollographql/apollo-mcp-server:latest \
-  --http-port 8000 \
-  --schema api.graphql \
-  --operations operations \
-  --endpoint https://thespacedevs-production.up.railway.app/
+  ghcr.io/apollographql/apollo-mcp-server:latest /config.yaml
 ```
 
-2. Add the MCP SSE port to your MCP Server configuration for the client appliction you are running. If you are running locally, the server link will be `http://127.0.0.1:8000/sse`.
+2. Add the MCP port to your MCP Server configuration for the client application you are running. If you are running locally, the server link will be `http://127.0.0.1:8000/mcp`.
 
 _Note: Claude Desktop currently doesn't support SSE_
 
@@ -86,8 +77,11 @@ _Note: Claude Desktop currently doesn't support SSE_
 {
   "mcpServers": {
     "thespacedevs": {
-      "type": "sse",
-      "url": "http://127.0.0.1:8000/sse>"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://127.0.0.1:8000/mcp"
+      ]
     }
   }
 }
@@ -103,78 +97,7 @@ Here is an example configuration you can use _(Note: you must provide your fill 
     "thespacedevs": {
       "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
       "args": [
-        "--directory",
-        "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/graphql/TheSpaceDevs",
-        "--schema",
-        "api.graphql",
-        "--operations",
-        "operations",
-        "--endpoint",
-        "https://thespacedevs-production.up.railway.app/",
-        "--introspection"
-      ]
-    }
-  }
-}
-```
-
-## Using Persisted Queries - GraphOS Scale and Enterprise tiers only
-
-You can configure the Apollo MCP server to use [Persisted Queries with GraphOS](https://www.apollographql.com/docs/graphos/routing/security/persisted-queries). In order to do this, you'll have to setup GraphOS and run a router instance configured to that persisted query list:
-
-1. Create a new graph in [GraphOS](https://studio.apollographql.com/org)
-2. Publish the `api.schema` to the graph you created, _you should see a modal pop up with the command information you need - make sure to save the API key as you'll use it again_
-
-```
-APOLLO_KEY=service:my-new-graph:V9_dIUACHIQh5VnhW21SXg \
-  rover subgraph publish my-new-graph@current \
-  --schema ./api.graphql \
-  --name thespacedevs \
-  --routing-url https://thespacedevs-production.up.railway.app/
-```
-
-3. Create a new [Persisted Queries List (PQL)](https://www.apollographql.com/docs/graphos/platform/security/persisted-queries#1-pql-creation-and-linking) for the newly created graph in GraphOS. Make sure to link it to your current variant.
-4. Publish operations to PQL in GraphOS
-
-```
-rover persisted-queries publish \
-  --graph-id my-new-graph \
-  --list-id "PQL-ID" \
-  --manifest ./persisted_queries/apollo.json
-```
-
-_Note: If you added new operations to the operations folder, you'll need to re-generate the persisted queries manifest. There is a VS Code Task you can use in the command palette "Tasks: Run Task" that runs the following command:_
-
-```
-npx @apollo/generate-persisted-query-manifest \
-  generate-persisted-query-manifest \
-  --config persisted_queries.config.json
-```
-
-5. In the command invoking or starting up your Apollo MCP Server with SSE, you'll need to export your `APOLLO_KEY` from the second step along with `APOLLO_GRAPH_REF=my-new-graph@current`.
-
-```bash
-export APOLLO_KEY=service:my-new-graph:V9_dIUACHIQh5VnhW21SXg
-export APOLLO_GRAPH_REF=my-new-graph@current
-```
-
-6. Modify your Apollo MCP Server configuration to use the manifest option instead of operations.
-
-```json
-{
-  "mcpServers": {
-    "thespacedevs": {
-      "command": "/Users/michaelwatson/Documents/GitHub/apollographql/apollo-mcp-server/target/debug/apollo-mcp-server",
-      "args": [
-        "--directory",
-        "/Users/michaelwatson/Documents/GitHub/apollographql/mcp-apollo/graphql/TheSpaceDevs",
-        "--schema",
-        "api.graphql",
-        "--manifest",
-        "persisted_queries/apollo.json",
-        "--endpoint",
-        "https://thespacedevs-production.up.railway.app/",
-        "--introspection"
+        "graphql/TheSpaceDevs/config.yaml"
       ]
     }
   }
