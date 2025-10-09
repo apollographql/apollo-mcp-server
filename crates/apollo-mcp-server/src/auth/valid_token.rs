@@ -98,7 +98,12 @@ pub(super) trait ValidateToken {
                         continue;
                     }
                 });
-                val.set_audience(self.get_audiences());
+
+                if !self.get_audiences().is_empty() {
+                    val.set_audience(self.get_audiences());
+                } else {
+                    val.validate_aud = false;
+                }
 
                 val
             };
@@ -445,5 +450,39 @@ mod test {
                 .then_some(())
                 .ok_or("Expected warning for validation failure".to_string())
         });
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_empty_audiences() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: KeyAlgorithm::HS512,
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![],
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        let token = jwt.token().to_string();
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .0
+                .token(),
+            token
+        );
     }
 }
