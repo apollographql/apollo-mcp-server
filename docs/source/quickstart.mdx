@@ -61,12 +61,12 @@ You can start your MCP server locally with `rover dev`.
         
     </Tabs>
 
-1. You should see some output indicating that the GraphQL server is running at `http://localhost:4000` and the MCP server is running at `http://127.0.0.1:5050`.
+1. You should see some output indicating that the GraphQL server is running at `http://localhost:4000` and the MCP server is running at `http://127.0.0.1:8000`.
 
 1. In a new terminal window, run the MCP Inspector to verify the server is running:
 
     ```terminal showLineNumbers=false
-    npx @modelcontextprotocol/inspector http://127.0.0.1:5050/mcp --transport http
+    npx @modelcontextprotocol/inspector http://127.0.0.1:8000/mcp --transport http
     ```
 
 1. This will automatically open your browser to `http://127.0.0.1:6274`.
@@ -94,7 +94,7 @@ Copy the configuration:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:5050/mcp"
+        "http://127.0.0.1:8000/mcp"
       ]
     }
   }
@@ -107,7 +107,7 @@ Copy the configuration:
 Install using the CLI:
 
 ```bash
-claude mcp add apollo-mcp npx mcp-remote http://127.0.0.1:5050/mcp
+claude mcp add apollo-mcp npx mcp-remote http://127.0.0.1:8000/mcp
 ```
 </ExpansionPanel>
 
@@ -127,7 +127,7 @@ Or install manually:
 1. Go to **Cursor Settings** → **MCP** → **Add new MCP Server**
 2. Name: `Apollo MCP` (choose a title)
 3. Command: `npx`
-4. Arguments: `["mcp-remote", "http://127.0.0.1:5050/mcp"]`
+4. Arguments: `["mcp-remote", "http://127.0.0.1:8000/mcp"]`
 </ExpansionPanel>
 
 <ExpansionPanel title="Goose">
@@ -147,13 +147,13 @@ default:
           command: npx
           args:
             - mcp-remote
-            - http://127.0.0.1:5050/mcp
+            - http://127.0.0.1:8000/mcp
 ```
 
 Or use the Goose CLI to add the MCP server:
 
 ```bash
-goose mcp add apollo-mcp npx mcp-remote http://127.0.0.1:5050/mcp
+goose mcp add apollo-mcp npx mcp-remote http://127.0.0.1:8000/mcp
 ```
 </ExpansionPanel>
 
@@ -161,7 +161,7 @@ goose mcp add apollo-mcp npx mcp-remote http://127.0.0.1:5050/mcp
 1. Go to **Advanced settings** → **Extensions** → **Add custom extension**
 2. Name: `Apollo MCP`
 3. Type: **STDIO**
-4. Command: `npx mcp-remote http://127.0.0.1:5050/mcp`
+4. Command: `npx mcp-remote http://127.0.0.1:8000/mcp`
 </ExpansionPanel>
 
 <ExpansionPanel title="OpenCode">
@@ -176,7 +176,7 @@ Edit `~/.config/opencode/opencode.json`:
       "command": [
         "npx",
         "mcp-remote",
-        "http://127.0.0.1:5050/mcp"
+        "http://127.0.0.1:8000/mcp"
       ],
       "enabled": true
     }
@@ -189,7 +189,7 @@ Edit `~/.config/opencode/opencode.json`:
 1. Go to **Windsurf Settings → MCP → Add new MCP Server**
 2. Name: `Apollo MCP`
 3. Command: `npx`
-4. Arguments: `["mcp-remote", "http://127.0.0.1:5050/mcp"]`
+4. Arguments: `["mcp-remote", "http://127.0.0.1:8000/mcp"]`
 
 Alternatively, edit your Windsurf configuration file directly:
 
@@ -200,7 +200,7 @@ Alternatively, edit your Windsurf configuration file directly:
       "command": "npx",
       "args": [
         "mcp-remote",
-        "http://127.0.0.1:5050/mcp"
+        "http://127.0.0.1:8000/mcp"
       ]
     }
   }
@@ -265,7 +265,7 @@ Your project includes a pre-configured `mcp.Dockerfile` for easy deployment. Thi
 1. Run locally:
 
     ```bash
-    docker run -p 4000:4000 -p 5050:5000 \
+    docker run -p 4000:4000 -p 8000:8000 \
       -e APOLLO_KEY=$APOLLO_KEY \
       -e APOLLO_GRAPH_REF=$APOLLO_GRAPH_REF \
       -e MCP_ENABLE=1 \
@@ -280,7 +280,7 @@ Your project includes a pre-configured `mcp.Dockerfile` for easy deployment. Thi
 | ---------------------------- | ------------------------------- | -------- |
 | `APOLLO_KEY`                 | Your graph's API key            | Yes      |
 | `APOLLO_GRAPH_REF`           | Your graph reference            | Yes      |
-| `APOLLO_MCP_TRANSPORT__PORT` | MCP server port (default: 5000) | No       |
+| `APOLLO_MCP_TRANSPORT__PORT` | MCP server port (default: 8000) | No       |
 | `APOLLO_ROUTER_PORT`         | Router port (default: 4000)     | No       |
 
 For more deployment options, see the [Deploy the MCP Server](/apollo-mcp-server/deploy) page.
@@ -312,7 +312,7 @@ After deploying, update your MCP client configuration to use the deployed URL:
 
 **Connection refused errors:**
 - Confirm the server is running on the correct port
-- Verify firewall settings allow connections to localhost:5050
+- Verify firewall settings allow connections to localhost:8000
 - For remote connections, ensure the host is set to `0.0.0.0` in your config
 
 **Authentication issues:**
