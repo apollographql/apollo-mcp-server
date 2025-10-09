@@ -5,10 +5,9 @@ use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest_middleware::{ClientBuilder, Extension};
-use reqwest_tracing::{OtelName, TracingMiddleware};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
 use serde_json::{Map, Value};
+use std::time::Duration;
 use url::Url;
 
 #[derive(Debug)]
@@ -86,11 +85,34 @@ pub trait Executable {
         }
 
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .user_agent("curl/8.4.0")  // Match curl user agent
-            .danger_accept_invalid_certs(false)  // Validate certificates
-            .danger_accept_invalid_hostnames(false)  // Validate hostnames
+            .timeout(Duration::from_secs(
+                std::env::var("REQWEST_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30)
+            ))
+            .connect_timeout(Duration::from_secs(
+                std::env::var("REQWEST_CONNECT_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10)
+            ))
+            .user_agent(
+                std::env::var("REQWEST_USER_AGENT")
+                    .unwrap_or_else(|_| "curl/8.4.0".to_string())
+            )
+            .danger_accept_invalid_certs(
+                std::env::var("REQWEST_SSL_VERIFY")
+                    .ok()
+                    .map(|s| s == "false")
+                    .unwrap_or(false)
+            )
+            .danger_accept_invalid_hostnames(
+                std::env::var("REQWEST_SSL_VERIFY_HOSTNAME")
+                    .ok()
+                    .map(|s| s == "false")
+                    .unwrap_or(false)
+            )
             .build()
             .map_err(|e| {
                 McpError::new(
