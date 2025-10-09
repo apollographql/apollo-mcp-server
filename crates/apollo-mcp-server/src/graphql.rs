@@ -39,7 +39,6 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
-    #[tracing::instrument(skip(self, request))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
@@ -86,12 +85,22 @@ pub trait Executable {
             }
         }
 
-        let client = ClientBuilder::new(reqwest::Client::new())
-            .with_init(Extension(OtelName("mcp-graphql-client".into())))
-            .with(TracingMiddleware::default())
-            .build();
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .user_agent("curl/8.4.0")  // Match curl user agent
+            .danger_accept_invalid_certs(false)  // Validate certificates
+            .danger_accept_invalid_hostnames(false)  // Validate hostnames
+            .build()
+            .map_err(|e| {
+                McpError::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    format!("Failed to create HTTP client: {e}"),
+                    None,
+                )
+            })?;
 
-        let result = client
+        let response = client
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
             .body(Value::Object(request_body).to_string())
@@ -103,16 +112,26 @@ pub trait Executable {
                     format!("Failed to send GraphQL request: {reqwest_error}"),
                     None,
                 )
-            })?
-            .json::<Value>()
-            .await
-            .map_err(|reqwest_error| {
-                McpError::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to read GraphQL response body: {reqwest_error}"),
-                    None,
-                )
-            })
+            })?;
+
+        let status = response.status();
+        let response_text = response.text().await.map_err(|reqwest_error| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Failed to read response text: {reqwest_error}"),
+                None,
+            )
+        })?;
+
+        let json: Value = serde_json::from_str(&response_text).map_err(|reqwest_error| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Failed to parse JSON response (status: {}, body: {}): {reqwest_error}", status, response_text),
+                None,
+            )
+        })?;
+
+        let result = Ok(json)
             .map(|json| CallToolResult {
                 content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
                 is_error: Some(

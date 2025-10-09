@@ -27,7 +27,8 @@ insta = { version = "1.43.1", features = [
 reqwest = { version = "0.12.15", default-features = false, features = [
   "gzip",
   "json",
-  "native-tls-vendored",
+  "http2",
+  "rustls-tls",
 ] }
 rstest = "0.25.0"
 secrecy = { version = "0.10.3", features = ["serde"] }
