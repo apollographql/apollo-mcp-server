@@ -115,6 +115,7 @@ async fn main() -> anyhow::Result<()> {
         .endpoint(config.endpoint.into_inner())
         .maybe_explorer_graph_ref(explorer_graph_ref)
         .headers(config.headers)
+        .forward_headers(config.forward_headers)
         .execute_introspection(config.introspection.execute.enabled)
         .validate_introspection(config.introspection.validate.enabled)
         .introspect_introspection(config.introspection.introspect.enabled)

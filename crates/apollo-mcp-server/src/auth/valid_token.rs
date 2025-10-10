@@ -12,7 +12,7 @@ use url::Url;
 /// Note: This is used as a marker to ensure that we have validated this
 /// separately from just reading the header itself.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ValidToken(pub(super) Authorization<Bearer>);
+pub(crate) struct ValidToken(pub(crate) Authorization<Bearer>);
 
 impl Deref for ValidToken {
     type Target = Authorization<Bearer>;
