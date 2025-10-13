@@ -32,12 +32,25 @@ pub struct Input {
 }
 
 impl Execute {
-    pub fn new(mutation_mode: MutationMode) -> Self {
+    pub fn new(mutation_mode: MutationMode, hints: Option<String>) -> Self {
+        let base_description = "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. If available, first use the `validate` tool to validate operations. DO NOT try to execute introspection queries.";
+        
+        let description = match hints.as_ref() {
+            Some(hint_text) => {
+                tracing::info!("Execute tool created with custom hints: {}", hint_text);
+                format!("{}\n\n{}", base_description, hint_text)
+            },
+            None => {
+                tracing::info!("Execute tool created without custom hints");
+                base_description.to_string()
+            },
+        };
+        
         Self {
             mutation_mode,
             tool: Tool::new(
                 EXECUTE_TOOL_NAME,
-                "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. If available, first use the `validate` tool to validate operations. DO NOT try to execute introspection queries.",
+                description,
                 schema_from_type!(Input),
             ),
         }
@@ -106,7 +119,7 @@ mod tests {
 
     #[test]
     fn execute_query_with_variables_as_string() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let query = "query GetUser($id: ID!) { user(id: $id) { id name } }";
         let variables = json!({ "id": "123" });
@@ -128,7 +141,7 @@ mod tests {
 
     #[test]
     fn execute_query_with_variables_as_json() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let query = "query GetUser($id: ID!) { user(id: $id) { id name } }";
         let variables = json!({ "id": "123" });
@@ -150,7 +163,7 @@ mod tests {
 
     #[test]
     fn execute_query_without_variables() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let query = "query GetUser($id: ID!) { user(id: $id) { id name } }";
 
@@ -170,7 +183,7 @@ mod tests {
 
     #[test]
     fn execute_query_anonymous_operation() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let query = "{ user(id: \"123\") { id name } }";
         let input = json!({
@@ -188,7 +201,7 @@ mod tests {
 
     #[test]
     fn execute_query_err_with_mutation_when_mutation_mode_is_none() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let query = "mutation MutationName { id }".to_string();
         let input = json!({
@@ -207,7 +220,7 @@ mod tests {
 
     #[test]
     fn execute_query_ok_with_mutation_when_mutation_mode_is_all() {
-        let execute = Execute::new(MutationMode::All);
+        let execute = Execute::new(MutationMode::All, None);
 
         let query = "mutation MutationName { id }".to_string();
         let input = json!({
@@ -230,7 +243,7 @@ mod tests {
             MutationMode::Explicit,
             MutationMode::All,
         ] {
-            let execute = Execute::new(mutation_mode);
+            let execute = Execute::new(mutation_mode, None);
 
             let input = json!({
                 "query": "subscription SubscriptionName { id }",
@@ -249,7 +262,7 @@ mod tests {
 
     #[test]
     fn execute_query_invalid_input() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let input = json!({
             "nonsense": "whatever",
@@ -275,7 +288,7 @@ mod tests {
 
     #[test]
     fn execute_query_invalid_variables() {
-        let execute = Execute::new(MutationMode::None);
+        let execute = Execute::new(MutationMode::None, None);
 
         let input = json!({
             "query": "query GetUser($id: ID!) { user(id: $id) { id name } }",
