@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use apollo_mcp_server::{cors::CorsConfig, health::HealthCheckConfig, server::Transport};
+use dc_mcp_server::{cors::CorsConfig, health::HealthCheckConfig, server::Transport};
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;

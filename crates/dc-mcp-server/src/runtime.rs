@@ -47,14 +47,14 @@ pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error
         .extract()
 }
 
-/// Figment provider that handles mapping common Apollo environment variables into
+/// Figment provider that handles mapping common DC environment variables into
 /// the nested structure needed by the config
 fn apollo_common_env() -> Env {
-    Env::prefixed("APOLLO_")
-        .only(&["graph_ref", "key", "uplink_endpoints"])
+    Env::prefixed("DC_")
+        .only(&["graph_ref", "api_key", "uplink_endpoints"])
         .map(|key| match key.to_string().to_lowercase().as_str() {
             "graph_ref" => "GRAPHOS:APOLLO_GRAPH_REF".into(),
-            "key" => "GRAPHOS:APOLLO_KEY".into(),
+            "api_key" => "GRAPHOS:APOLLO_KEY".into(),
             "uplink_endpoints" => "GRAPHOS:APOLLO_UPLINK_ENDPOINTS".into(),
 
             // This case should never happen, so we just pass through this case as is
@@ -143,7 +143,7 @@ mod test {
 
             jail.create_file(path, config)?;
             jail.set_env(
-                "APOLLO_UPLINK_ENDPOINTS",
+                "DC_UPLINK_ENDPOINTS",
                 "http://from_env:4000/,http://from_env2:4000/",
             );
 

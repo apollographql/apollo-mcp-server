@@ -5,10 +5,9 @@ use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest_middleware::{ClientBuilder, Extension};
-use reqwest_tracing::{OtelName, TracingMiddleware};
 use rmcp::model::{CallToolResult, Content, ErrorCode};
 use serde_json::{Map, Value};
+use std::time::Duration;
 use url::Url;
 
 #[derive(Debug)]
@@ -39,7 +38,6 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
-    #[tracing::instrument(skip(self, request))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
@@ -86,14 +84,47 @@ pub trait Executable {
             }
         }
 
-        let client = ClientBuilder::new(reqwest::Client::new())
-            .with_init(Extension(OtelName("mcp-graphql-client".into())))
-            .with(TracingMiddleware::default())
-            .build();
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(
+                std::env::var("REQWEST_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30),
+            ))
+            .connect_timeout(Duration::from_secs(
+                std::env::var("REQWEST_CONNECT_TIMEOUT")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(10),
+            ))
+            .user_agent(
+                std::env::var("REQWEST_USER_AGENT").unwrap_or_else(|_| "curl/8.4.0".to_string()),
+            )
+            .danger_accept_invalid_certs(
+                std::env::var("REQWEST_SSL_VERIFY")
+                    .ok()
+                    .map(|s| s == "false")
+                    .unwrap_or(false),
+            )
+            .danger_accept_invalid_hostnames(
+                std::env::var("REQWEST_SSL_VERIFY_HOSTNAME")
+                    .ok()
+                    .map(|s| s == "false")
+                    .unwrap_or(false),
+            )
+            .build()
+            .map_err(|e| {
+                McpError::new(
+                    ErrorCode::INTERNAL_ERROR,
+                    format!("Failed to create HTTP client: {e}"),
+                    None,
+                )
+            })?;
 
-        let result = client
+        let response = client
             .post(request.endpoint.as_str())
             .headers(self.headers(&request.headers))
+            .header("Content-Type", "application/json")
             .body(Value::Object(request_body).to_string())
             .send()
             .await
@@ -103,30 +134,42 @@ pub trait Executable {
                     format!("Failed to send GraphQL request: {reqwest_error}"),
                     None,
                 )
-            })?
-            .json::<Value>()
-            .await
-            .map_err(|reqwest_error| {
-                McpError::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to read GraphQL response body: {reqwest_error}"),
-                    None,
-                )
-            })
-            .map(|json| CallToolResult {
-                content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
-                is_error: Some(
-                    json.get("errors")
-                        .filter(|value| !matches!(value, Value::Null))
-                        .is_some()
-                        && json
-                            .get("data")
-                            .filter(|value| !matches!(value, Value::Null))
-                            .is_none(),
+            })?;
+
+        let status = response.status();
+        let response_text = response.text().await.map_err(|reqwest_error| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Failed to read response text: {reqwest_error}"),
+                None,
+            )
+        })?;
+
+        let json: Value = serde_json::from_str(&response_text).map_err(|reqwest_error| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!(
+                    "Failed to parse JSON response (status: {}, body: {}): {reqwest_error}",
+                    status, response_text
                 ),
-                meta: None,
-                structured_content: Some(json),
-            });
+                None,
+            )
+        })?;
+
+        let result = Ok(json).map(|json| CallToolResult {
+            content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
+            is_error: Some(
+                json.get("errors")
+                    .filter(|value| !matches!(value, Value::Null))
+                    .is_some()
+                    && json
+                        .get("data")
+                        .filter(|value| !matches!(value, Value::Null))
+                        .is_none(),
+            ),
+            meta: None,
+            structured_content: Some(json),
+        });
 
         // Record response metrics
         let attributes = vec![
@@ -372,7 +415,7 @@ mod test {
                 assert!(
                     e.message
                         .to_string()
-                        .starts_with("Failed to read GraphQL response body")
+                        .starts_with("Failed to parse JSON response")
                 );
             }
             _ => {

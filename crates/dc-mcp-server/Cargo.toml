@@ -1,5 +1,5 @@
 [package]
-name = "apollo-mcp-server"
+name = "dc-mcp-server"
 authors.workspace = true
 edition.workspace = true
 license-file.workspace = true
@@ -8,7 +8,7 @@ rust-version.workspace = true
 version.workspace = true
 build = "build.rs"
 
-default-run = "apollo-mcp-server"
+default-run = "dc-mcp-server"
 
 [dependencies]
 anyhow = "1.0.98"
@@ -70,14 +70,15 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
 async-trait = "0.1.89"
+chrono = { version = "0.4.41", default-features = false, features = ["serde"] }
 
 [dev-dependencies]
-chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 mockito = "1.7.0"
 opentelemetry_sdk = { version = "0.30.0", features = ["testing"] }
 rstest.workspace = true
+tempfile = "3.8.1"
 tokio.workspace = true
 tower = "0.5.2"
 tracing-test = "0.2.5"
@@ -94,7 +95,7 @@ toml = "0.9.5"
 workspace = true
 
 [[bin]]
-name = "apollo-mcp-server"
+name = "dc-mcp-server"
 path = "src/main.rs"
 
 [[bin]]
