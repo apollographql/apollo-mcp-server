@@ -20,6 +20,7 @@ All fields are optional.
 | `cors`           | `Cors`                |                          | CORS configuration                                               |
 | `custom_scalars` | `FilePath`            |                          | Path to a [custom scalar map](/apollo-mcp-server/custom-scalars) |
 | `endpoint`       | `URL`                 | `http://localhost:4000/` | The target GraphQL endpoint                                      |
+| `forward_headers`| `List<string>`        | `[]`                     | Headers to forward from MCP clients to GraphQL API               |
 | `graphos`        | `GraphOS`             |                          | Apollo-specific credential overrides                             |
 | `headers`        | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
 | `health_check`   | `HealthCheck`         |                          | Health check configuration                                       |
@@ -42,6 +43,19 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_graph_ref`        | `string` |         | The Apollo GraphOS graph reference. You can also provide this with the `APOLLO_GRAPH_REF` environment variable  |
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
+
+### Forward Headers
+
+The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
+
+This is useful for:
+- Multi-tenant applications (forwarding tenant IDs)
+- A/B testing (forwarding experiment IDs)
+- Geo information (forwarding country Codes)
+- Client identification (forwarding AI client names)
+- Internal instrumentation (forwarding correlation IDs)
+
+Supports exact header names only. Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
 
 ### CORS
 

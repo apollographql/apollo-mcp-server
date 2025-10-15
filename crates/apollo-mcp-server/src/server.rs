@@ -12,6 +12,7 @@ use crate::cors::CorsConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
+use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::operations::{MutationMode, OperationSource};
 
@@ -26,6 +27,7 @@ pub struct Server {
     operation_source: OperationSource,
     endpoint: Url,
     headers: HeaderMap,
+    forward_headers: ForwardHeaders,
     execute_introspection: bool,
     validate_introspection: bool,
     introspect_introspection: bool,
@@ -111,6 +113,7 @@ impl Server {
         operation_source: OperationSource,
         endpoint: Url,
         headers: HeaderMap,
+        forward_headers: ForwardHeaders,
         execute_introspection: bool,
         validate_introspection: bool,
         introspect_introspection: bool,
@@ -139,6 +142,7 @@ impl Server {
             operation_source,
             endpoint,
             headers,
+            forward_headers,
             execute_introspection,
             validate_introspection,
             introspect_introspection,
