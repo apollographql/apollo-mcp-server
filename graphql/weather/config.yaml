@@ -16,3 +16,6 @@ introspection:
     enabled: true
   validate:
     enabled: true
+cors:
+  enabled: true
+  allow_any_origin: true

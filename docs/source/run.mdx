@@ -140,7 +140,7 @@ The container sets a few defaults for ease of use:
 
 - **Working Directory is `/data`**: Make sure to mount static schemas / operations to this location
   using the volume flag when running [(`-v` / `--volume`)](https://docs.docker.com/reference/cli/docker/container/run/#volume).
-- **HTTP Streamable Transport on port 5000**: Make sure to export container port 5000 for HTTP Streamable connections to
+- **HTTP Streamable Transport on port 8000**: Make sure to export container port 8000 for HTTP Streamable connections to
   the MCP server using the port flag when running [(`-p` / `--port`)](https://docs.docker.com/reference/cli/docker/container/run/#publish)
 
 </Note>
@@ -151,7 +151,7 @@ Run the following Docker command to start the MCP Server, replacing the values f
 docker run \
   -it --rm \
   --name apollo-mcp-server \
-  -p 5000:5000 \
+  -p 8000:8000 \
   -v <PATH/TO/CONFIG/FILE>:/config.yaml \
   -v <PATH/TO/PROJECT/ROOT>:/data \
   --pull always \
@@ -162,7 +162,7 @@ This command:
 
 - Starts an MCP Server in a Docker container
 - Maps configuration files into the proper place for the Apollo MCP Server container
-- Forwards port 5000 for accessing the MCP Server
+- Forwards port 8000 for accessing the MCP Server
 
 ## With the Apollo Runtime Container
 
@@ -170,12 +170,12 @@ The Apollo Runtime Container runs both the MCP Server and the [Apollo Router](ht
 
 The Apollo Runtime container includes all services necessary to serve GraphQL and MCP requests, including the Router and MCP Server. It is the easiest way to operate a GraphQL API with MCP support.
 
-To serve both MCP and GraphQL requests, both port `4000` and `5000` will need to be exposed. An example command which retrieves the schema from Uplink is:
+To serve both MCP and GraphQL requests, both port `4000` and `8000` will need to be exposed. An example command which retrieves the schema from Uplink is:
 
 ```bash title="Docker" {3, 6}
 docker run \
   -p 4000:4000 \
-  -p 5000:5000 \
+  -p 8000:8000 \
   --env APOLLO_GRAPH_REF="<your-graph-ref>" \
   --env APOLLO_KEY="<your-graph-api-key>" \
   --env MCP_ENABLE=1 \

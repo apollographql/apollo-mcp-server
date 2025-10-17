@@ -140,6 +140,7 @@ impl Starting {
             schema,
             operations: Arc::new(Mutex::new(operations)),
             headers: self.config.headers,
+            forward_headers: self.config.forward_headers.clone(),
             endpoint: self.config.endpoint,
             execute_tool,
             introspect_tool,
@@ -222,6 +223,7 @@ impl Starting {
                                 "mcp_server",
                                 method = %request.method(),
                                 uri = %request.uri(),
+                                session_id = tracing::field::Empty,
                                 status_code = tracing::field::Empty,
                             )
                         })
@@ -229,7 +231,17 @@ impl Starting {
                             |response: &axum::http::Response<_>,
                              _latency: std::time::Duration,
                              span: &tracing::Span| {
-                                span.record("status", tracing::field::display(response.status()));
+                                span.record(
+                                    "status_code",
+                                    tracing::field::display(response.status()),
+                                );
+                                if let Some(session_id) = response
+                                    .headers()
+                                    .get("mcp-session-id")
+                                    .and_then(|v| v.to_str().ok())
+                                {
+                                    span.record("session_id", tracing::field::display(session_id));
+                                }
                             },
                         ),
                 );
@@ -355,6 +367,7 @@ mod tests {
                 mutation_mode: MutationMode::All,
                 execute_introspection: true,
                 headers: HeaderMap::new(),
+                forward_headers: vec![],
                 validate_introspection: true,
                 introspect_introspection: true,
                 search_introspection: true,

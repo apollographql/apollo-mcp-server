@@ -90,8 +90,10 @@ impl Introspect {
                         && schema
                             .root_operation(OperationType::Mutation)
                             .is_none_or(|root_name| {
+                                // Allow introspection of the mutation type itself even when mutations are disabled
                                 extended_type.name() != root_name
-                                    || (type_name == root_name.as_str() && self.allow_mutations)
+                                    || type_name == root_name.as_str()
+                                    || self.allow_mutations
                             })
                         && schema
                             .root_operation(OperationType::Subscription)
@@ -187,5 +189,132 @@ mod tests {
         // Should contain minification legend
         assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
         assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_introspect_query_depth_1_returns_fields(schema: Valid<Schema>) {
+        let introspect = Introspect::new(
+            Arc::new(Mutex::new(schema)),
+            Some("Query".to_string()),
+            Some("Mutation".to_string()),
+            false,
+        );
+
+        let result = introspect
+            .execute(Input {
+                type_name: "Query".to_string(),
+                depth: 1,
+            })
+            .await
+            .expect("Introspect execution failed");
+
+        let content = result
+            .content
+            .iter()
+            .filter_map(|c| {
+                use rmcp::model::RawContent;
+                use std::ops::Deref;
+                let c = c.deref();
+                match c {
+                    RawContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        // Query with depth 1 should return the Query type with its fields
+        assert!(!result.content.is_empty());
+        assert!(content.contains("type Query"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_introspect_mutation_depth_1_returns_fields(schema: Valid<Schema>) {
+        let introspect = Introspect::new(
+            Arc::new(Mutex::new(schema)),
+            Some("Query".to_string()),
+            Some("Mutation".to_string()),
+            false,
+        );
+
+        let result = introspect
+            .execute(Input {
+                type_name: "Mutation".to_string(),
+                depth: 1,
+            })
+            .await
+            .expect("Introspect execution failed");
+
+        let content = result
+            .content
+            .iter()
+            .filter_map(|c| {
+                use rmcp::model::RawContent;
+                use std::ops::Deref;
+                let c = c.deref();
+                match c {
+                    RawContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        // Mutation with depth 1 should return the Mutation type with its fields, just like Query
+        assert!(
+            !result.content.is_empty(),
+            "Mutation introspection should return content"
+        );
+        assert!(
+            content.contains("type Mutation"),
+            "Should contain Mutation type definition"
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn test_introspect_mutation_depth_1_with_mutations_disabled(schema: Valid<Schema>) {
+        // This test verifies the fix: when mutations are not allowed, mutation introspection should still work
+        let introspect = Introspect::new(
+            Arc::new(Mutex::new(schema)),
+            Some("Query".to_string()),
+            None,
+            false,
+        );
+
+        let result = introspect
+            .execute(Input {
+                type_name: "Mutation".to_string(),
+                depth: 1,
+            })
+            .await
+            .expect("Introspect execution failed");
+
+        let content = result
+            .content
+            .iter()
+            .filter_map(|c| {
+                use rmcp::model::RawContent;
+                use std::ops::Deref;
+                let c = c.deref();
+                match c {
+                    RawContent::Text(text) => Some(text.text.clone()),
+                    _ => None,
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        // After the fix: mutation introspection should work even when mutations are disabled
+        assert!(
+            !result.content.is_empty(),
+            "Mutation introspection should return content even when mutations are disabled"
+        );
+        assert!(
+            content.contains("type Mutation"),
+            "Should contain Mutation type definition"
+        );
     }
 }
