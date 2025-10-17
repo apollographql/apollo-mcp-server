@@ -70,6 +70,29 @@ To install or upgrade to a **specific version** of Apollo MCP Server (recommende
 
 </Tabs>
 
+To install or upgrade to a specific version of Apollo MCP Server that is a **release candidate** (recommended for those that want to test early builds):
+
+<Tabs>
+
+    <Tab label="Linux / MacOS">
+
+    ```terminal showLineNumbers=false
+    # Note the `v` prefixing the version number and the `-rc` suffix
+    curl -sSL https://mcp.apollo.dev/download/nix/v0.7.4-rc.1 | sh
+    ```
+
+    </Tab>
+
+    <Tab label="Windows">
+
+    ```terminal showLineNumbers=false
+    # Note the `v` prefixing the version number and the `-rc` suffix
+    iwr 'https://mcp.apollo.dev/download/win/v0.7.4-rc.1' | iex
+    ```
+    </Tab>
+
+</Tabs>
+
 You can configure the Apollo MCP server using a [YAML configuration file](/apollo-mcp-server/config-file).
 
 If the file is not provided, environment variables for your Apollo graph credentials (`APOLLO_GRAPH_REF` and `APOLLO_KEY`) are required for the server to run.
