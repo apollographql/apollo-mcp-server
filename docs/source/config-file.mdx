@@ -187,6 +187,12 @@ The available fields depend on the value of the nested `type` key:
 | `port`          | `8000` (default)      | `u16`      | The port to bind to                                                       |
 | `stateful_mode` | `true` (default)      | `bool`     | Flag to enable or disable stateful mode and session management.           |
 
+<Note>
+
+For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services). 
+
+</Note>
+
 ##### SSE (Deprecated, use StreamableHTTP)
 
 | Option    | Value                 | Value Type | Description                                                                                                      |
