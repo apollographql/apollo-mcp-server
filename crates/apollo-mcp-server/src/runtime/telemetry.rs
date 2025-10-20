@@ -1,23 +1,23 @@
 mod sampler;
 
+use crate::runtime::Config;
 use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::Logging;
 use crate::runtime::telemetry::sampler::SamplerOption;
-use crate::runtime::Config;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
-use opentelemetry::{global, trace::TracerProvider as _, Key, KeyValue};
+use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
+    Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, SdkTracerProvider},
-    Resource,
 };
 use opentelemetry_semantic_conventions::{
-    attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
     SCHEMA_URL,
+    attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -39,10 +39,10 @@ pub struct Exporters {
     tracing: Option<TracingExporters>,
 }
 
-/// Telemetry exporter options
+/// Metric telemetry exporter options
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "protocol", rename_all = "lowercase")]
-pub enum TelemetryExporter {
+pub enum MetricTelemetryExporter {
     /// GRPC Exporter
     Grpc {
         endpoint: String,
@@ -64,9 +64,30 @@ pub enum TelemetryExporter {
     },
 }
 
+/// Trace telemetry exporter options
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "protocol", rename_all = "lowercase")]
+pub enum TraceTelemetryExporter {
+    /// GRPC Exporter
+    Grpc {
+        endpoint: String,
+        #[serde(default, deserialize_with = "parsers::metadata_map_from_str")]
+        #[schemars(schema_with = "super::schemas::header_map")]
+        metadata: MetadataMap,
+    },
+
+    /// Http/protobuf exporter
+    #[serde(rename = "http/protobuf")]
+    HttpProtobuf {
+        endpoint: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MetricsExporters {
-    otlp: Option<TelemetryExporter>,
+    otlp: Option<MetricTelemetryExporter>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
@@ -103,12 +124,12 @@ impl From<&MetricTemporality> for Temporality {
         match value {
             MetricTemporality::Cumulative => Temporality::Cumulative,
             MetricTemporality::Delta => Temporality::Delta,
-            MetricTemporality::LowMemory => Temporality::LowMemory
+            MetricTemporality::LowMemory => Temporality::LowMemory,
         }
     }
 }
 
-impl Default for TelemetryExporter {
+impl Default for MetricTelemetryExporter {
     fn default() -> Self {
         Self::Grpc {
             endpoint: "http://localhost:4317".into(),
@@ -120,9 +141,18 @@ impl Default for TelemetryExporter {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TracingExporters {
-    otlp: Option<TelemetryExporter>,
+    otlp: Option<TraceTelemetryExporter>,
     sampler: Option<SamplerOption>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
+}
+
+impl Default for TraceTelemetryExporter {
+    fn default() -> Self {
+        Self::Grpc {
+            endpoint: "http://localhost:4317".into(),
+            metadata: MetadataMap::default(),
+        }
+    }
 }
 
 mod parsers {
@@ -206,7 +236,7 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
         })?;
 
     let exporter = match otlp {
-        TelemetryExporter::Grpc {
+        MetricTelemetryExporter::Grpc {
             endpoint,
             temporality,
             metadata,
@@ -216,7 +246,7 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
             .with_temporality(temporality.into())
             .with_metadata(metadata.clone())
             .build()?,
-        TelemetryExporter::HttpProtobuf {
+        MetricTelemetryExporter::HttpProtobuf {
             endpoint,
             temporality,
             headers,
@@ -273,14 +303,14 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         })?;
 
     let exporter = match otlp {
-        TelemetryExporter::Grpc {
+        TraceTelemetryExporter::Grpc {
             endpoint, metadata, ..
         } => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
             .with_endpoint(endpoint)
             .with_metadata(metadata.clone())
             .build()?,
-        TelemetryExporter::HttpProtobuf {
+        TraceTelemetryExporter::HttpProtobuf {
             endpoint, headers, ..
         } => opentelemetry_otlp::SpanExporter::builder()
             .with_http()
@@ -375,8 +405,8 @@ impl Drop for TelemetryGuard {
 
 #[cfg(test)]
 mod tests {
-    use http::{HeaderMap, HeaderValue};
     use super::*;
+    use http::{HeaderMap, HeaderValue};
 
     fn test_config(
         service_name: Option<&str>,
@@ -403,11 +433,11 @@ mod tests {
             Some("test-config"),
             Some("1.0.0"),
             Some(MetricsExporters {
-                otlp: Some(TelemetryExporter::default()),
+                otlp: Some(MetricTelemetryExporter::default()),
                 omitted_attributes: None,
             }),
             Some(TracingExporters {
-                otlp: Some(TelemetryExporter::default()),
+                otlp: Some(TraceTelemetryExporter::default()),
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: Some(ommitted),
             }),
@@ -424,7 +454,7 @@ mod tests {
             None,
             None,
             Some(MetricsExporters {
-                otlp: Some(TelemetryExporter::HttpProtobuf {
+                otlp: Some(MetricTelemetryExporter::HttpProtobuf {
                     endpoint: "http://localhost:4318/v1/metrics".to_string(),
                     temporality: MetricTemporality::Delta,
                     headers: HashMap::new(),
@@ -444,9 +474,8 @@ mod tests {
             None,
             None,
             Some(TracingExporters {
-                otlp: Some(TelemetryExporter::HttpProtobuf {
+                otlp: Some(TraceTelemetryExporter::HttpProtobuf {
                     endpoint: "http://localhost:4318/v1/traces".to_string(),
-                    temporality: MetricTemporality::Cumulative,
                     headers: HashMap::new(),
                 }),
                 sampler: Some(SamplerOption::default()),
@@ -467,9 +496,8 @@ mod tests {
             None,
             None,
             Some(TracingExporters {
-                otlp: Some(TelemetryExporter::Grpc {
+                otlp: Some(TraceTelemetryExporter::Grpc {
                     endpoint: "http://localhost:4318/v1/traces".to_string(),
-                    temporality: MetricTemporality::Cumulative,
                     metadata: MetadataMap::from_headers(header_map),
                 }),
                 sampler: Some(SamplerOption::default()),
@@ -490,9 +518,8 @@ mod tests {
             None,
             None,
             Some(TracingExporters {
-                otlp: Some(TelemetryExporter::HttpProtobuf {
+                otlp: Some(TraceTelemetryExporter::HttpProtobuf {
                     endpoint: "http://localhost:4318/v1/traces".to_string(),
-                    temporality: MetricTemporality::Cumulative,
                     headers: header_map,
                 }),
                 sampler: Some(SamplerOption::default()),
