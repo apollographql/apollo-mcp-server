@@ -80,6 +80,7 @@ pub enum MetricTemporality {
 }
 
 impl<'de> Deserialize<'de> for MetricTemporality {
+    /// Case insensitive deserializer for str to MetricTemporality
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
