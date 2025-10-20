@@ -244,6 +244,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
  "syn 2.0.106",
  "thiserror 2.0.17",
  "tokio",

@@ -91,7 +91,7 @@ pub struct MetricsExporters {
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
-#[derive(Debug, Default, JsonSchema, Serialize)]
+#[derive(Debug, Default, JsonSchema, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum MetricTemporality {
     #[default]
@@ -407,6 +407,8 @@ impl Drop for TelemetryGuard {
 mod tests {
     use super::*;
     use http::{HeaderMap, HeaderValue};
+    use rstest::rstest;
+    use serde::de::value::{Error, StrDeserializer};
 
     fn test_config(
         service_name: Option<&str>,
@@ -448,8 +450,8 @@ mod tests {
         assert!(guard.is_ok());
     }
 
-    #[tokio::test]
-    async fn http_protocol_returns_valid_meter_provider() {
+    #[test]
+    fn http_protocol_returns_valid_meter_provider() {
         let config = test_config(
             None,
             None,
@@ -467,8 +469,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn http_protocol_returns_valid_tracer_provider() {
+    #[test]
+    fn http_protocol_returns_valid_tracer_provider() {
         let config = test_config(
             None,
             None,
@@ -508,8 +510,8 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn http_protobuf_metric_exporter_with_headers_returns_valid_tracer_provider() {
+    #[test]
+    fn http_protobuf_metric_exporter_with_headers_returns_valid_tracer_provider() {
         let mut header_map = HashMap::new();
         header_map.insert("key".to_string(), "value".to_string());
 
@@ -528,5 +530,61 @@ mod tests {
         );
         let result = init_tracer_provider(&config.telemetry);
         assert!(result.is_ok());
+    }
+
+    #[rstest]
+    #[case::lower_cumulative("cumulative", MetricTemporality::Cumulative)]
+    #[case::title_cumulative("Cumulative", MetricTemporality::Cumulative)]
+    #[case::upper_cumulative("CUMULATIVE", MetricTemporality::Cumulative)]
+    #[case::lower_delta("delta", MetricTemporality::Delta)]
+    #[case::title_delta("Delta", MetricTemporality::Delta)]
+    #[case::upper_delta("DELTA", MetricTemporality::Delta)]
+    #[case::lower_lowmemory("lowmemory", MetricTemporality::LowMemory)]
+    #[case::title_lowmemory("LowMemory", MetricTemporality::LowMemory)]
+    #[case::upper_lowmemory("LOWMEMORY", MetricTemporality::LowMemory)]
+    fn direct_deserialization_deserializes_into_the_correct_temporality(
+        #[case] value: &str,
+        #[case] expected: MetricTemporality,
+    ) {
+        let de = StrDeserializer::<Error>::new(value);
+        let actual: MetricTemporality = MetricTemporality::deserialize(de).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::lower_cumulative("cumulative", MetricTemporality::Cumulative)]
+    #[case::title_cumulative("Cumulative", MetricTemporality::Cumulative)]
+    #[case::upper_cumulative("CUMULATIVE", MetricTemporality::Cumulative)]
+    #[case::lower_delta("delta", MetricTemporality::Delta)]
+    #[case::title_delta("Delta", MetricTemporality::Delta)]
+    #[case::upper_delta("DELTA", MetricTemporality::Delta)]
+    #[case::lower_lowmemory("lowmemory", MetricTemporality::LowMemory)]
+    #[case::title_lowmemory("LowMemory", MetricTemporality::LowMemory)]
+    #[case::upper_lowmemory("LOWMEMORY", MetricTemporality::LowMemory)]
+    fn yaml_deserialization_deserializes_into_the_correct_temporality(
+        #[case] yaml_value: &str,
+        #[case] expected: MetricTemporality,
+    ) {
+        let actual: MetricTemporality = serde_yaml::from_str(yaml_value).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn yaml_deserialization_of_invalid_value_results_in_an_unknown_variant_error() {
+        let result: Result<MetricTemporality, _> = serde_yaml::from_str("invalid");
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("expected an error for invalid temporality")
+                .to_string()
+                .contains("unknown variant")
+        );
+    }
+
+    #[test]
+    fn direct_deserialization_of_invalid_value_results_in_an_unknown_variant_error() {
+        let de = StrDeserializer::<Error>::new("invalid");
+        let err = MetricTemporality::deserialize(de).unwrap_err();
+        assert!(err.to_string().contains("unknown variant"));
     }
 }
