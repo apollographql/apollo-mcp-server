@@ -15,7 +15,9 @@
   graphqlFilter = path: _type: builtins.match ".*graphql$" path != null;
   testFilter = path: _type: builtins.match ".*snap$" path != null;
   srcFilter = path: type:
-    (graphqlFilter path type) || (testFilter path type) || (craneLib.filterCargoSources path type);
+    (graphqlFilter path type)
+    || (testFilter path type)
+    || (craneLib.filterCargoSources path type);
 
   # Crane options
   src = pkgs.lib.cleanSourceWith {
@@ -24,7 +26,8 @@
     name = "source"; # Be reproducible, regardless of the directory name
   };
 
-  craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
+  # Use default system toolchain to avoid compatibility issues
+  craneLib = crane.mkLib pkgs;
   craneCommonArgs = {
     inherit src;
     pname = "apollo-mcp";
@@ -32,6 +35,10 @@
 
     nativeBuildInputs = [perl pkg-config];
     buildInputs = [];
+
+    # Force native builds only to prevent cross-compilation
+    CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.config;
+    CARGO_TARGET_DIR = "target";
 
     # Meta information about the packages
     meta = {
@@ -46,32 +53,45 @@
 
   # Generate a derivation for just the dependencies of the project so that they
   # can be cached across all of the various checks and builders.
-  cargoArtifacts = craneLib.buildDepsOnly craneCommonArgs;
+  # Use buildDepsOnly with target override to avoid cross-compilation
+  cargoArtifacts = craneLib.buildDepsOnly (
+    craneCommonArgs
+    // {
+      # Force native target only
+      CARGO_BUILD_TARGET = pkgs.stdenv.hostPlatform.config;
+      # Override cargo check to specify target (crane already adds --release --locked)
+      cargoCheckExtraArgs = "--target ${pkgs.stdenv.hostPlatform.config}";
+      # Override linker to use native gcc instead of cross-compilation linker
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER = "gcc";
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_CC = "gcc";
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_CXX = "g++";
+    }
+  );
 in {
   # Expose the list of build dependencies for inheriting in dev shells
   nativeDependencies = craneCommonArgs.nativeBuildInputs;
   dependencies = craneCommonArgs.buildInputs;
 
   # Expose derivations that should be cached in CI
-  cache = [
-    cargoArtifacts
-  ];
+  cache = [cargoArtifacts];
 
   # Expose checks for the project used by the root nix flake
   checks = {
-    clippy = craneLib.cargoClippy (craneCommonArgs
+    clippy = craneLib.cargoClippy (
+      craneCommonArgs
       // {
         inherit cargoArtifacts;
-        cargoClippyExtraArgs = "--all-targets -- --deny warnings";
-      });
-    docs = craneLib.cargoDoc (craneCommonArgs
+        cargoClippyExtraArgs = "-- --deny warnings";
+      }
+    );
+    docs = craneLib.cargoDoc (
+      craneCommonArgs
       // {
         inherit cargoArtifacts;
-      });
+      }
+    );
 
-    rustfmt = craneLib.cargoFmt {
-      inherit src;
-    };
+    rustfmt = craneLib.cargoFmt {inherit src;};
     toml-fmt = craneLib.taploFmt {
       src = pkgs.lib.sources.sourceFilesBySuffices src [".toml"];
     };
@@ -98,16 +118,19 @@ in {
       # Helper for generating a command using cargo-zigbuild and other shell-expanded
       # env vars.
       mkCmd = cmd:
-        builtins.concatStringsSep " " ((lib.optionals stdenv.isDarwin ["SDKROOT=${apple-sdk.sdkroot}"])
+        builtins.concatStringsSep " " (
+          (lib.optionals stdenv.isDarwin ["SDKROOT=${apple-sdk.sdkroot}"])
           ++ [
             "CARGO_ZIGBUILD_CACHE_DIR=$TMP/.cache/cargo-zigbuild"
             "ZIG_LOCAL_CACHE_DIR=$TMP/.cache/zig-local"
             "ZIG_GLOBAL_CACHE_DIR=$TMP/.cache/zig-global"
 
             "${cargo-zigbuild-patched}/bin/cargo-zigbuild ${cmd}"
-          ]);
+          ]
+        );
     in
-      craneLib.buildPackage (craneCommonArgs
+      craneLib.buildPackage (
+        craneCommonArgs
         // {
           pname = craneCommonArgs.pname + "-${target}";
           nativeBuildInputs = [
@@ -123,19 +146,20 @@ in {
 
           # Use zig for both CC and linker since it actually supports cross-compilation
           # nicely.
-          cargoExtraArgs = lib.strings.concatStringsSep " " ([
-              "--target ${zig-target}"
-            ]
+          cargoExtraArgs = lib.strings.concatStringsSep " " (
+            ["--target ${zig-target}"]
             # x86_64-apple-darwin compilation has a bug that causes release builds to
             # fail with "bad relocation", so we build debug targets for it instead.
             # See: https://github.com/rust-cross/cargo-zigbuild/issues/338
-            ++ (lib.optionals (target != "x86_64-apple-darwin") ["--release"]));
+            ++ (lib.optionals (target != "x86_64-apple-darwin") ["--release"])
+          );
 
           cargoCheckCommand = mkCmd "check";
           cargoBuildCommand = mkCmd "zigbuild";
 
           # Make sure to compile it for the specified target
           CARGO_BUILD_TARGET = target;
-        });
+        }
+      );
   };
 }

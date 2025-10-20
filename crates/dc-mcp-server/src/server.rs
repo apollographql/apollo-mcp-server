@@ -1,10 +1,12 @@
 use std::net::{IpAddr, Ipv4Addr};
+use std::sync::Arc;
 
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
+use tokio::sync::{Mutex, RwLock};
 use url::Url;
 
 use crate::auth;
@@ -14,6 +16,7 @@ use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
 use crate::health::HealthCheckConfig;
 use crate::operations::{MutationMode, OperationSource};
+use crate::token_manager::TokenManager;
 
 mod states;
 
@@ -26,6 +29,7 @@ pub struct Server {
     operation_source: OperationSource,
     endpoint: Url,
     headers: HeaderMap,
+    shared_headers: Option<Arc<RwLock<HeaderMap>>>,
     execute_introspection: bool,
     validate_introspection: bool,
     introspect_introspection: bool,
@@ -42,6 +46,7 @@ pub struct Server {
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
     cors: CorsConfig,
+    token_manager: Option<Arc<Mutex<TokenManager>>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -111,6 +116,7 @@ impl Server {
         operation_source: OperationSource,
         endpoint: Url,
         headers: HeaderMap,
+        #[builder(into)] shared_headers: Option<Arc<RwLock<HeaderMap>>>,
         execute_introspection: bool,
         validate_introspection: bool,
         introspect_introspection: bool,
@@ -127,6 +133,7 @@ impl Server {
         index_memory_bytes: usize,
         health_check: HealthCheckConfig,
         cors: CorsConfig,
+        token_manager: Option<Arc<Mutex<TokenManager>>>,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -139,6 +146,7 @@ impl Server {
             operation_source,
             endpoint,
             headers,
+            shared_headers,
             execute_introspection,
             validate_introspection,
             introspect_introspection,
@@ -155,6 +163,7 @@ impl Server {
             index_memory_bytes,
             health_check,
             cors,
+            token_manager,
         }
     }
 

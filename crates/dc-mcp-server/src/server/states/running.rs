@@ -37,13 +37,14 @@ use crate::{
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
     operations::{MutationMode, Operation, RawOperation},
+    token_manager::TokenManager,
 };
 
 #[derive(Clone)]
 pub(super) struct Running {
     pub(super) schema: Arc<Mutex<Valid<Schema>>>,
     pub(super) operations: Arc<Mutex<Vec<Operation>>>,
-    pub(super) headers: HeaderMap,
+    pub(super) headers: Arc<RwLock<HeaderMap>>,
     pub(super) endpoint: Url,
     pub(super) execute_tool: Option<Execute>,
     pub(super) introspect_tool: Option<Introspect>,
@@ -58,6 +59,7 @@ pub(super) struct Running {
     pub(super) disable_schema_description: bool,
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) health_check: Option<HealthCheck>,
+    pub(super) token_manager: Option<Arc<Mutex<TokenManager>>>,
 }
 
 impl Running {
@@ -209,6 +211,15 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        // Proactively refresh token if needed before executing any tool
+        if let Some(token_manager) = &self.token_manager {
+            let mut tm = token_manager.lock().await;
+            if let Err(e) = tm.get_valid_token().await {
+                error!("Failed to refresh token before request: {}", e);
+                // Don't fail the request, let it try with the current token
+            }
+        }
+
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
@@ -235,7 +246,7 @@ impl ServerHandler for Running {
                     .await
             }
             EXECUTE_TOOL_NAME => {
-                let mut headers = self.headers.clone();
+                let mut headers = self.headers.read().await.clone();
                 if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
                     // Optionally extract the validated token and propagate it to upstream servers if present
                     if !self.disable_auth_token_passthrough
@@ -268,7 +279,7 @@ impl ServerHandler for Running {
                     .await
             }
             _ => {
-                let mut headers = self.headers.clone();
+                let mut headers = self.headers.read().await.clone();
                 if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
                     // Optionally extract the validated token and propagate it to upstream servers if present
                     if !self.disable_auth_token_passthrough
@@ -407,7 +418,7 @@ mod tests {
         let running = Running {
             schema: Arc::new(Mutex::new(schema)),
             operations: Arc::new(Mutex::new(vec![])),
-            headers: HeaderMap::new(),
+            headers: Arc::new(RwLock::new(HeaderMap::new())),
             endpoint: "http://localhost:4000".parse().unwrap(),
             execute_tool: None,
             introspect_tool: None,
@@ -422,6 +433,7 @@ mod tests {
             disable_schema_description: false,
             disable_auth_token_passthrough: false,
             health_check: None,
+            token_manager: None,
         };
 
         let operations = vec![

@@ -1,16 +1,16 @@
 [workspace]
 resolver = "2"
 members = [
-  "crates/apollo-mcp-server",
+  "crates/dc-mcp-server",
   "crates/apollo-mcp-registry",
   "crates/apollo-schema-index",
 ]
 
 [workspace.package]
-authors = ["Apollo <opensource@apollographql.com>"]
+authors = ["DoControl <dev@docontrol.io>"]
 edition = "2024"
 license-file = "LICENSE"
-repository = "https://github.com/apollographql/apollo-mcp-server"
+repository = "https://github.com/docontrol-io/dc-mcp-server"
 rust-version = "1.89.0"
 version = "1.0.0"
 
@@ -27,7 +27,7 @@ insta = { version = "1.43.1", features = [
 reqwest = { version = "0.12.15", default-features = false, features = [
   "gzip",
   "json",
-  "native-tls-vendored",
+  "rustls-tls-native-roots",
 ] }
 rstest = "0.25.0"
 secrecy = { version = "0.10.3", features = ["serde"] }

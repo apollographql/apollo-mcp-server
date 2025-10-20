@@ -4,7 +4,7 @@ use crate::runtime::Config;
 use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::Logging;
 use crate::runtime::telemetry::sampler::SamplerOption;
-use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
+use dc_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::{Instrument, Stream};

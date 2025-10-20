@@ -1,0 +1,122 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: dc-mcp-server-linux-x86_64
+            binary_path: target/release/dc-mcp-server
+          - os: macos-latest
+            artifact_name: dc-mcp-server-macos-aarch64
+            binary_path: target/release/dc-mcp-server
+          - os: windows-latest
+            artifact_name: dc-mcp-server-windows-x86_64
+            binary_path: target/release/dc-mcp-server.exe
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build and Test
+        run: |
+          cargo build --release --package dc-mcp-server
+          cargo test --workspace
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo fmt --all -- --check
+
+      - name: Create release package
+        shell: bash
+        run: |
+          RELEASE_DIR="release"
+          BIN_NAME="${{ matrix.binary_path }}"
+          ARTIFACT_NAME="${{ matrix.artifact_name }}"
+          VERSION=${{ github.event.inputs.tag || github.ref_name }}
+
+          mkdir -p "$RELEASE_DIR/$ARTIFACT_NAME"
+          cp "$BIN_NAME" "$RELEASE_DIR/$ARTIFACT_NAME/"
+          cp README.md LICENSE "$RELEASE_DIR/$ARTIFACT_NAME/" 2>/dev/null || true
+
+          # Create checksums
+          cd "$RELEASE_DIR/$ARTIFACT_NAME"
+          BINARY_FILE=$(basename "$BIN_NAME")
+          if command -v sha256sum &> /dev/null; then
+            sha256sum "$BINARY_FILE" > "${BINARY_FILE}.sha256"
+          else
+            shasum -a 256 "$BINARY_FILE" > "${BINARY_FILE}.sha256"
+          fi
+          cd -
+
+          # Create tar.gz archive
+          tar -czvf "${ARTIFACT_NAME}.tar.gz" -C "$RELEASE_DIR" "$ARTIFACT_NAME"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Move artifacts to root
+        run: |
+          mkdir -p release-assets
+          find artifacts -name "*.tar.gz" -exec cp {} release-assets/ \;
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Release ${{ github.event.inputs.tag || github.ref_name }}
+          files: release-assets/*.tar.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

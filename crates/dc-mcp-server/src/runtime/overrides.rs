@@ -1,4 +1,4 @@
-use apollo_mcp_server::operations::MutationMode;
+use dc_mcp_server::operations::MutationMode;
 use schemars::JsonSchema;
 use serde::Deserialize;
 

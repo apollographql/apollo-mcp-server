@@ -139,7 +139,10 @@ impl Starting {
         let running = Running {
             schema,
             operations: Arc::new(Mutex::new(operations)),
-            headers: self.config.headers,
+            headers: self
+                .config
+                .shared_headers
+                .unwrap_or_else(|| Arc::new(RwLock::new(self.config.headers))),
             endpoint: self.config.endpoint,
             execute_tool,
             introspect_tool,
@@ -154,6 +157,7 @@ impl Starting {
             disable_schema_description: self.config.disable_schema_description,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
+            token_manager: self.config.token_manager.clone(),
         };
 
         // Helper to enable auth
@@ -355,6 +359,7 @@ mod tests {
                 mutation_mode: MutationMode::All,
                 execute_introspection: true,
                 headers: HeaderMap::new(),
+                shared_headers: None,
                 validate_introspection: true,
                 introspect_introspection: true,
                 search_introspection: true,
@@ -372,6 +377,7 @@ mod tests {
                     ..Default::default()
                 },
                 cors: Default::default(),
+                token_manager: None,
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
