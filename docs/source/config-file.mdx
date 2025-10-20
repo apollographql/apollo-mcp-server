@@ -288,8 +288,8 @@ transport:
 |:-------------|:---------------------------------------------|:------------------------|:---------------------------------------------------------------|
 | `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                     |
 | `protocol`   | `string`                                     | `grpc`                  | Protocol for export. `grpc` and `http/protobuf` are supported. |
-| `metadata`   | `Key/Value Pairs`                            |                         | The metadata key values for GRPC protocol                      |
-| `headers`    | `Key/Value Pairs`                            |                         | The header key values for HTTP/Protobuf protocol               |
+| `metadata`   | Key-value pairs                            |                         | The metadata key-value pairs. Used only if `protocol` is set to `grpc`.                      |
+| `headers`    | Key-value pairs                            |                         | The header key-value pairs. Used only if `protocol` is set to `http/protobuf`.               |
 
 #### MetricTemporality
 
