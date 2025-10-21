@@ -490,7 +490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn grpc_metric_exporter_with_metadata_returns_valid_tracer_provider() {
+    async fn grpc_trace_exporter_with_metadata_returns_valid_tracer_provider() {
         let mut header_map = HeaderMap::new();
         header_map.insert("key", HeaderValue::from_static("value"));
 
