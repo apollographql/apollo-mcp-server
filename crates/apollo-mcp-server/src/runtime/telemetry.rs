@@ -408,7 +408,8 @@ mod tests {
     use super::*;
     use http::{HeaderMap, HeaderValue};
     use rstest::rstest;
-    use serde::de::value::{Error, StrDeserializer};
+    use serde::de::value::{Error, MapDeserializer, StrDeserializer};
+    use tonic::metadata::MetadataValue;
 
     fn test_config(
         service_name: Option<&str>,
@@ -586,5 +587,62 @@ mod tests {
         let de = StrDeserializer::<Error>::new("invalid");
         let err = MetricTemporality::deserialize(de).unwrap_err();
         assert!(err.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn deserializes_into_a_metadata_map() {
+        let de = MapDeserializer::<_, Error>::new(
+            vec![
+                ("some-key".to_string(), "some-value".to_string()),
+                ("another-key".to_string(), "another-value".to_string()),
+            ]
+                .into_iter(),
+        );
+
+        let map: MetadataMap = parsers::metadata_map_from_str(de).unwrap();
+
+        assert_eq!(
+            map.get("some-key"),
+            Some(&MetadataValue::try_from("some-value").unwrap())
+        );
+        assert_eq!(
+            map.get("another-key"),
+            Some(&MetadataValue::try_from("another-value").unwrap())
+        );
+    }
+
+    #[test]
+    fn yaml_key_value_pairs_deserialize_into_a_metadata_map() {
+        let y = r#"
+          exporters:
+            metrics:
+              otlp:
+                protocol: grpc
+                endpoint: "http://127.0.0.1:4317"
+                metadata:
+                  some-key: some-value
+                  another-key: another-value
+        "#;
+
+        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let metric_exporter = telemetry_config
+            .exporters.unwrap()
+            .metrics.unwrap()
+            .otlp.unwrap();
+
+        match metric_exporter {
+            MetricTelemetryExporter::Grpc { metadata, .. } => {
+                assert_eq!(
+                    metadata.get("some-key"),
+                    Some(&MetadataValue::try_from("some-value").unwrap())
+                );
+
+                assert_eq!(
+                    metadata.get("another-key"),
+                    Some(&MetadataValue::try_from("another-value").unwrap())
+                );
+            }
+            MetricTelemetryExporter::HttpProtobuf { .. } => { panic!("unexpected protocol") }
+        }
     }
 }
