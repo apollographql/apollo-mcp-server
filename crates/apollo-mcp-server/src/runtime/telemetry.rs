@@ -596,7 +596,7 @@ mod tests {
                 ("some-key".to_string(), "some-value".to_string()),
                 ("another-key".to_string(), "another-value".to_string()),
             ]
-                .into_iter(),
+            .into_iter(),
         );
 
         let map: MetadataMap = parsers::metadata_map_from_str(de).unwrap();
@@ -626,9 +626,12 @@ mod tests {
 
         let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
         let metric_exporter = telemetry_config
-            .exporters.unwrap()
-            .metrics.unwrap()
-            .otlp.unwrap();
+            .exporters
+            .unwrap()
+            .metrics
+            .unwrap()
+            .otlp
+            .unwrap();
 
         match metric_exporter {
             MetricTelemetryExporter::Grpc { metadata, .. } => {
@@ -642,7 +645,9 @@ mod tests {
                     Some(&MetadataValue::try_from("another-value").unwrap())
                 );
             }
-            MetricTelemetryExporter::HttpProtobuf { .. } => { panic!("unexpected protocol") }
+            MetricTelemetryExporter::HttpProtobuf { .. } => {
+                panic!("unexpected protocol")
+            }
         }
     }
 }
