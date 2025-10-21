@@ -1,3 +1,0 @@
-### Fix compatibility issue with VSCode/Copilot - @DaleSeo PR #447
-
-This updates Apollo MCP Server’s tool schemas from [Draft 2020-12](https://json-schema.org/draft/2020-12) to [Draft‑07](https://json-schema.org/draft-07) which is more widely supported across different validators. VSCode/Copilot still validate against Draft‑07, so rejects Apollo MCP Server’s tools. Our JSON schemas don’t rely on newer features, so downgrading improves compatibility across MCP clients with no practical impact.
