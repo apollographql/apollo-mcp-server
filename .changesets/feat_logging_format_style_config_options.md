@@ -1,3 +1,9 @@
-### Adding config options to specify the logging format style - @alocay PR #460
+### Adding config options to specify the logging format style - @alocay PR #463
 
-An optional logging output format style config option can now be specified with either `full` (default), `compact`, `json`, or `pretty`.
+Adding configuration options for logging output format. The available options are `full` (default), `compact`, `json`, and `pretty`.
+
+```
+logging:
+  level: info
+  format: compact
+```
