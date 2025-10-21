@@ -9,6 +9,7 @@ use crate::{
     cors::CorsConfig,
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
+    headers::ForwardHeaders,
     health::HealthCheckConfig,
     operations::MutationMode,
 };
@@ -34,6 +35,7 @@ struct Config {
     transport: Transport,
     endpoint: Url,
     headers: HeaderMap,
+    forward_headers: ForwardHeaders,
     execute_introspection: bool,
     validate_introspection: bool,
     introspect_introspection: bool,
@@ -68,6 +70,7 @@ impl StateMachine {
                 transport: server.transport,
                 endpoint: server.endpoint,
                 headers: server.headers,
+                forward_headers: server.forward_headers,
                 execute_introspection: server.execute_introspection,
                 validate_introspection: server.validate_introspection,
                 introspect_introspection: server.introspect_introspection,

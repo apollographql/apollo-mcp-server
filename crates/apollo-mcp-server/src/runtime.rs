@@ -240,6 +240,7 @@ mod test {
                     ],
                 },
                 headers: {},
+                forward_headers: [],
                 health_check: HealthCheckConfig {
                     enabled: false,
                     path: "/health",

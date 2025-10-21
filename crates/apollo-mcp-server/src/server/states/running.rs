@@ -1,8 +1,6 @@
-use std::ops::Deref as _;
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
-use headers::HeaderMapExt as _;
 use opentelemetry::trace::FutureExt;
 use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
@@ -24,11 +22,11 @@ use url::Url;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::{
-    auth::ValidToken,
     custom_scalar_map::CustomScalarMap,
     errors::{McpError, ServerError},
     explorer::{EXPLORER_TOOL_NAME, Explorer},
     graphql::{self, Executable as _},
+    headers::{ForwardHeaders, build_request_headers},
     health::HealthCheck,
     introspection::tools::{
         execute::{EXECUTE_TOOL_NAME, Execute},
@@ -44,6 +42,7 @@ pub(super) struct Running {
     pub(super) schema: Arc<Mutex<Valid<Schema>>>,
     pub(super) operations: Arc<Mutex<Vec<Operation>>>,
     pub(super) headers: HeaderMap,
+    pub(super) forward_headers: ForwardHeaders,
     pub(super) endpoint: Url,
     pub(super) execute_tool: Option<Execute>,
     pub(super) introspect_tool: Option<Introspect>,
@@ -235,20 +234,19 @@ impl ServerHandler for Running {
                     .await
             }
             EXECUTE_TOOL_NAME => {
-                let mut headers = self.headers.clone();
-                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
-                    // Optionally extract the validated token and propagate it to upstream servers if present
-                    if !self.disable_auth_token_passthrough
-                        && let Some(token) = axum_parts.extensions.get::<ValidToken>()
-                    {
-                        headers.typed_insert(token.deref().clone());
-                    }
-
-                    // Forward the mcp-session-id header if present
-                    if let Some(session_id) = axum_parts.headers.get("mcp-session-id") {
-                        headers.insert("mcp-session-id", session_id.clone());
-                    }
-                }
+                let headers = if let Some(axum_parts) =
+                    context.extensions.get::<axum::http::request::Parts>()
+                {
+                    build_request_headers(
+                        &self.headers,
+                        &self.forward_headers,
+                        &axum_parts.headers,
+                        &axum_parts.extensions,
+                        self.disable_auth_token_passthrough,
+                    )
+                } else {
+                    self.headers.clone()
+                };
 
                 self.execute_tool
                     .as_ref()
@@ -268,20 +266,19 @@ impl ServerHandler for Running {
                     .await
             }
             _ => {
-                let mut headers = self.headers.clone();
-                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
-                    // Optionally extract the validated token and propagate it to upstream servers if present
-                    if !self.disable_auth_token_passthrough
-                        && let Some(token) = axum_parts.extensions.get::<ValidToken>()
-                    {
-                        headers.typed_insert(token.deref().clone());
-                    }
-
-                    // Also forward the mcp-session-id header if present
-                    if let Some(session_id) = axum_parts.headers.get("mcp-session-id") {
-                        headers.insert("mcp-session-id", session_id.clone());
-                    }
-                }
+                let headers = if let Some(axum_parts) =
+                    context.extensions.get::<axum::http::request::Parts>()
+                {
+                    build_request_headers(
+                        &self.headers,
+                        &self.forward_headers,
+                        &axum_parts.headers,
+                        &axum_parts.extensions,
+                        self.disable_auth_token_passthrough,
+                    )
+                } else {
+                    self.headers.clone()
+                };
 
                 let graphql_request = graphql::Request {
                     input: Value::from(request.arguments.clone()),
@@ -408,6 +405,7 @@ mod tests {
             schema: Arc::new(Mutex::new(schema)),
             operations: Arc::new(Mutex::new(vec![])),
             headers: HeaderMap::new(),
+            forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
             execute_tool: None,
             introspect_tool: None,

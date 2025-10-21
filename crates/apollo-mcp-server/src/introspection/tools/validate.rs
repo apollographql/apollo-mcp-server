@@ -11,7 +11,6 @@ use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
-use std::default::Default;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

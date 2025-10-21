@@ -20,6 +20,7 @@ All fields are optional.
 | `cors`           | `Cors`                |                          | CORS configuration                                               |
 | `custom_scalars` | `FilePath`            |                          | Path to a [custom scalar map](/apollo-mcp-server/custom-scalars) |
 | `endpoint`       | `URL`                 | `http://localhost:4000/` | The target GraphQL endpoint                                      |
+| `forward_headers`| `List<string>`        | `[]`                     | Headers to forward from MCP clients to GraphQL API               |
 | `graphos`        | `GraphOS`             |                          | Apollo-specific credential overrides                             |
 | `headers`        | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
 | `health_check`   | `HealthCheck`         |                          | Health check configuration                                       |
@@ -42,6 +43,19 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_graph_ref`        | `string` |         | The Apollo GraphOS graph reference. You can also provide this with the `APOLLO_GRAPH_REF` environment variable  |
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
+
+### Forward Headers
+
+The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
+
+This is useful for:
+- Multi-tenant applications (forwarding tenant IDs)
+- A/B testing (forwarding experiment IDs)
+- Geo information (forwarding country Codes)
+- Client identification (forwarding AI client names)
+- Internal instrumentation (forwarding correlation IDs)
+
+Supports exact header names only. Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
 
 ### CORS
 
@@ -170,8 +184,14 @@ The available fields depend on the value of the nested `type` key:
 | :-------------- | :-------------------- | :--------- | :------------------------------------------------------------------------ |
 | `type`          | `"streamable_http"`   |            | Host the MCP server on the configuration, using streamable HTTP messages. |
 | `address`       | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                 |
-| `port`          | `5000` (default)      | `u16`      | The port to bind to                                                       |
+| `port`          | `8000` (default)      | `u16`      | The port to bind to                                                       |
 | `stateful_mode` | `true` (default)      | `bool`     | Flag to enable or disable stateful mode and session management.           |
+
+<Note>
+
+For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services). 
+
+</Note>
 
 ##### SSE (Deprecated, use StreamableHTTP)
 
@@ -179,7 +199,7 @@ The available fields depend on the value of the nested `type` key:
 | :-------- | :-------------------- | :--------- | :--------------------------------------------------------------------------------------------------------------- |
 | `type`    | `"sse"`               |            | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
 | `address` | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                                                        |
-| `port`    | `5000` (default)      | `u16`      | The port to bind to                                                                                              |
+| `port`    | `8000` (default)      | `u16`      | The port to bind to                                                                                              |
 
 ### Auth
 
@@ -244,20 +264,29 @@ transport:
 
 #### Metrics
 
-| Option                | Type             | Default                     | Description                                    |
-| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
-| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from metrics. |
+| Option                | Type                    | Default                     | Description                                    |
+| :-------------------- | :---------------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Metric Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
+| `omitted_attributes`  | `List<String>`          |                             | List of attributes to be omitted from metrics. |
+
+
+#### OTLP Metrics Exporter
+
+| Option        | Type                                     | Default                  | Description                                                                                                                                                                                             |
+| :---------    | :--------------------------------------- | :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `endpoint`    | `URL`                                    | `http://localhost:4317`  | URL to export data to. Requires full path.                                                                                                                                                              |
+| `protocol`    | `string`                                 | `grpc`                   | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                                                     |
+| `temporality` | `MetricTemporality` | `Cumulative`             | Optional OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements (Cumulative) or not (Delta). |
 
 #### Traces
 
-| Option                | Type             | Default                     | Description                                    |
-| :-------------------- | :--------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
-| `sampler`             | `SamplerOption`  | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
-| `omitted_attributes`  | `List<String>`   |                             | List of attributes to be omitted from traces. |
+| Option                | Type                   | Default                     | Description                                    |
+| :-------------------- | :--------------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`                | `OTLP Trace Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
+| `sampler`             | `SamplerOption`        | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
+| `omitted_attributes`  | `List<String>`         |                             | List of attributes to be omitted from traces.  |
 
-#### OTLP Exporter
+#### OTLP Trace Exporter
 
 | Option      | Type      | Default                     | Description                                                      |
 | :---------  | :-------- | :-------------------------- | :--------------------------------------------------------------- |

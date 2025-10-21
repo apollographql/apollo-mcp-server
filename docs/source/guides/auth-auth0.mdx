@@ -31,7 +31,7 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
 1. In your dashboard, navigate to **Applications** -> **APIs**.
 1. Click **Create API**.
 1. Give it a friendly name like `MCP Auth API`.
-1. For the **Identifier** field, Auth0 recommends using a URL. This identifier is used in the MCP server configuration later as the `audience` property. For this guide, use `http://localhost:5000/mcp-example`.
+1. For the **Identifier** field, Auth0 recommends using a URL. This identifier is used in the MCP server configuration later as the `audience` property. For this guide, use `http://localhost:8000/mcp-example`.
 1. Leave the defaults for the rest of the fields and click **Create**.
 1. Navigate to your dashboard **Settings**.
    1. Under **General** -> **API Authorization Settings**, set the **Default Audience** to the `Identifier` you chose.
@@ -89,14 +89,14 @@ Configure the MCP server to use the Auth0 instance for authentication.
          - https://<AUTH0 DOMAIN> # Fill in your Auth0 domain
        audiences:
          - <AUTH0 DEFAULT AUDIENCE> # Fill in your Auth0 Identifier
-       resource: http://127.0.0.1:5000/mcp
+       resource: http://127.0.0.1:8000/mcp
        scopes:
          - read:users # Adjust scopes as needed
    ```
 
 1. Replace the `<AUTH0 DOMAIN>` with your own Auth0 domain from earlier.
 
-1. Replace the `<AUTH0 DEFAULT AUDIENCE>` with the matching `Identifier` you set when creating the Auth0 API. In this guide, you used `http://localhost:5000/mcp-example`.
+1. Replace the `<AUTH0 DEFAULT AUDIENCE>` with the matching `Identifier` you set when creating the Auth0 API. In this guide, you used `http://localhost:8000/mcp-example`.
 
 Your MCP server is now configured to use Auth0 for authentication.
 
@@ -188,7 +188,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
    The browser should open automatically with a proxy auth token.
 
-1. In the MCP Inspector, select `Streamable HTTP` as the Transport Type and enter `http://127.0.0.1:5000/mcp` as the URL.
+1. In the MCP Inspector, select `Streamable HTTP` as the Transport Type and enter `http://127.0.0.1:8000/mcp` as the URL.
 1. Click **Connect**. This triggers the OAuth flow, and you are redirected to the Auth0 login page.
 1. Log in with the credentials you set up in the Auth0 connection and allow MCP Inspector access.
 1. After you connect, the browser redirects back to MCP Inspector.
@@ -241,7 +241,7 @@ Then, continue with the following steps:
 | "What would you like to configure?"                         | "Add Extension"                            |
 | "What type of extension would you like to add?"             | "Command Line Extension"                   |
 | "What's the name of this extension?"                        | "mcp-auth-quickstart"                      |
-| "What command should be run?"                               | `npx mcp-remote http://127.0.0.1:5000/mcp` |
+| "What command should be run?"                               | `npx mcp-remote http://127.0.0.1:8000/mcp` |
 | Other prompts (timeout, description, environment variables) | Use the default values                     |
 
 1. To start Goose, type `goose`. This will open a browser window and send you through the auth flow.
@@ -255,8 +255,8 @@ Then, continue with the following steps:
 
 #### MCP Server Won't Start
 
-- **Error**: "Port 5000 is already in use"
-  - Solution: Kill any existing processes using port 5000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
+- **Error**: "Port 8000 is already in use"
+  - Solution: Kill any existing processes using port 8000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
 - **Error**: "Failed to load supergraph configuration"
   - Solution: Verify you're running the command from the repo root directory
   - Solution: Check that the path to `supergraph.yaml` is correct
@@ -269,7 +269,7 @@ Then, continue with the following steps:
 
 - **Error**: "Failed to connect to server"
   - Solution: Ensure the MCP server is running (check terminal output)
-  - Solution: Verify you're using the correct URL (`http://127.0.0.1:5000/mcp`)
+  - Solution: Verify you're using the correct URL (`http://127.0.0.1:8000/mcp`)
   - Solution: Check if your firewall is blocking the connection
 
 ### Infinite loop during OAuth flow

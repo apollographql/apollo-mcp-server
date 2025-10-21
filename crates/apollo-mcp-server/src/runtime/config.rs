@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use apollo_mcp_server::{cors::CorsConfig, health::HealthCheckConfig, server::Transport};
+use apollo_mcp_server::{
+    cors::CorsConfig, headers::ForwardHeaders, health::HealthCheckConfig, server::Transport,
+};
 use reqwest::header::HeaderMap;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -32,6 +34,10 @@ pub struct Config {
     #[serde(deserialize_with = "parsers::map_from_str")]
     #[schemars(schema_with = "super::schemas::header_map")]
     pub headers: HeaderMap,
+
+    /// List of header names to forward from MCP client requests to GraphQL requests
+    #[serde(default)]
+    pub forward_headers: ForwardHeaders,
 
     /// Health check configuration
     #[serde(default)]

@@ -26,7 +26,7 @@ The following snippet includes an example of each option (use either `allow_any_
 ```yaml title="mcp.yaml"
 transport:
   type: streamable_http
-  port: 5000
+  port: 8000
 
 cors:
   # Enable CORS support
@@ -207,7 +207,7 @@ Here's a simple example of connecting to Apollo MCP Server from a browser:
 
 ```javascript
 async function connectToMCP() {
-  const response = await fetch("http://127.0.0.1:5000/mcp", {
+  const response = await fetch("http://127.0.0.1:8000/mcp", {
     method: "POST",
     headers: {
       Accept: "application/json, text/event-stream",

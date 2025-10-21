@@ -174,7 +174,7 @@
           # Image configuration
           # See: https://github.com/moby/moby/blob/46f7ab808b9504d735d600e259ca0723f76fb164/image/spec/spec.md#container-runconfig-field-descriptions
           config = let
-            http-port = 5000;
+            http-port = 8000;
           in {
             # Provide default options that can be unset / overridden by the end-user
             Env = [
