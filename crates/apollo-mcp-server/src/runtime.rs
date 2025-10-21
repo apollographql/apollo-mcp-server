@@ -276,6 +276,7 @@ mod test {
                     ),
                     path: None,
                     rotation: Hourly,
+                    format: Full,
                 },
                 telemetry: Telemetry {
                     exporters: None,

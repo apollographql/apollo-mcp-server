@@ -4,18 +4,20 @@
 //! helper functions
 
 mod defaults;
+mod format_style;
 mod log_rotation_kind;
 mod parsers;
 
+use crate::runtime::logging::defaults::default_format;
+use crate::runtime::logging::format_style::FormatStyle;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_appender::rolling::RollingFileAppender;
-use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::Layer;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::{EnvFilter, Layer as LayerTrait, Registry};
 
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -36,6 +38,9 @@ pub struct Logging {
     /// [default: Hourly]
     #[serde(default = "defaults::default_rotation")]
     pub rotation: LogRotationKind,
+
+    #[serde(default = "defaults::default_format")]
+    pub format: FormatStyle,
 }
 
 impl Default for Logging {
@@ -44,17 +49,13 @@ impl Default for Logging {
             level: defaults::log_level(),
             path: None,
             rotation: defaults::default_rotation(),
+            format: default_format(),
         }
     }
 }
 
 type LoggingLayerResult = (
-    Layer<
-        tracing_subscriber::Registry,
-        tracing_subscriber::fmt::format::DefaultFields,
-        tracing_subscriber::fmt::format::Format,
-        BoxMakeWriter,
-    >,
+    Box<dyn tracing_subscriber::layer::Layer<Registry> + Send + Sync>,
     Option<tracing_appender::non_blocking::WorkerGuard>,
 );
 
@@ -106,13 +107,34 @@ impl Logging {
             None => (BoxMakeWriter::new(std::io::stdout), None, true),
         };
 
-        Ok((
-            tracing_subscriber::fmt::layer()
+        let layer = tracing_subscriber::fmt::layer();
+        let formatted_layer = match logging.format {
+            FormatStyle::Full => layer
                 .with_writer(writer)
                 .with_ansi(with_ansi)
-                .with_target(false),
-            guard,
-        ))
+                .with_target(false)
+                .boxed(),
+            FormatStyle::Compact => layer
+                .compact()
+                .with_writer(writer)
+                .with_ansi(with_ansi)
+                .with_target(false)
+                .boxed(),
+            FormatStyle::Json => layer
+                .json()
+                .with_writer(writer)
+                .with_ansi(with_ansi)
+                .with_target(false)
+                .boxed(),
+            FormatStyle::Pretty => layer
+                .pretty()
+                .with_writer(writer)
+                .with_ansi(with_ansi)
+                .with_target(false)
+                .boxed(),
+        };
+
+        Ok((formatted_layer, guard))
     }
 }
 
