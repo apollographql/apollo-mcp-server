@@ -33,7 +33,6 @@ impl<'de> Deserialize<'de> for FormatStyle {
 #[cfg(test)]
 mod tests {
     use crate::runtime::logging::format_style::FormatStyle;
-    use crate::runtime::telemetry::MetricTemporality;
     use rstest::rstest;
     use serde::Deserialize;
     use serde::de::value::{Error, StrDeserializer};
@@ -88,7 +87,7 @@ mod tests {
 
     #[test]
     fn yaml_deserialization_of_invalid_style_results_in_an_unknown_variant_error() {
-        let result: Result<MetricTemporality, _> = serde_yaml::from_str("invalid");
+        let result: Result<FormatStyle, _> = serde_yaml::from_str("invalid");
         assert!(result.is_err());
         assert!(
             result
@@ -101,7 +100,7 @@ mod tests {
     #[test]
     fn direct_deserialization_of_invalid_style_results_in_an_unknown_variant_error() {
         let de = StrDeserializer::<Error>::new("invalid");
-        let err = MetricTemporality::deserialize(de).unwrap_err();
+        let err = FormatStyle::deserialize(de).unwrap_err();
         assert!(err.to_string().contains("unknown variant"));
     }
 }
