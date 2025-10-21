@@ -29,4 +29,4 @@ cors:
 #        endpoint: "http://127.0.0.1:4317"
 #        protocol: "grpc"
 #        metadata:
-#          api-key: my-super-secret-key
+#          some-key: some-value

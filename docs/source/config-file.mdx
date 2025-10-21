@@ -266,13 +266,13 @@ transport:
 
 #### OTLP Metrics Exporter
 
-| Option        | Type                | Default                 | Description                                                                                                                                                                                             |
-|:--------------|:--------------------|:------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `endpoint`    | `URL`               | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                                                              |
-| `protocol`    | `string`            | `grpc`                  | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                                                     |
-| `temporality` | `MetricTemporality` | `Cumulative`            | Optional OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements (Cumulative) or not (Delta). |
-| `metadata`    | `Key/Value Pairs`   |                         | The metadata key values for GRPC protocol                                                                                                                                                               |
-| `headers`     | `Key/Value Pairs`   |                         | The header key values for HTTP/Protobuf protocol                                                                                                                                                        |
+| Option        | Type                                           | Default                 | Description                                                                                                                                                                                               |
+|:--------------|:-----------------------------------------------|:------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `endpoint`    | `URL`                                          | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                                                                |
+| `protocol`    | `string`                                       | `grpc`                  | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                                                       |
+| `temporality` | `MetricTemporality`                            | `Cumulative`            | Optional OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements (Cumulative) or not (Delta).   |
+| `metadata`   | Key-value pairs                                |                         | The metadata key-value pairs. Used only if `protocol` is set to `grpc`.                                                                                                                                   |
+| `headers`    | Key-value pairs                                |                         | The header key-value pairs. Used only if `protocol` is set to `http/protobuf`.                                                                                                                            |
 
 <ExpansionPanel title="Metrics telemetry config example using gRPC">
 
@@ -304,12 +304,12 @@ telemetry:
 
 #### OTLP Trace Exporter
 
-| Option       | Type                                         | Default                 | Description                                                    |
-|:-------------|:---------------------------------------------|:------------------------|:---------------------------------------------------------------|
-| `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                     |
-| `protocol`   | `string`                                     | `grpc`                  | Protocol for export. `grpc` and `http/protobuf` are supported. |
-| `metadata`   | Key-value pairs                              |                         | The metadata key-value pairs. Used only if `protocol` is set to `grpc`.                      |
-| `headers`    | Key-value pairs                              |                         | The header key-value pairs. Used only if `protocol` is set to `http/protobuf`.               |
+| Option       | Type                                         | Default                 | Description                                                                    |
+|:-------------|:---------------------------------------------|:------------------------|:-------------------------------------------------------------------------------|
+| `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                                     |
+| `protocol`   | `string`                                     | `grpc`                  | Protocol for export. `grpc` and `http/protobuf` are supported.                 |
+| `metadata`   | Key-value pairs                              |                         | The metadata key-value pairs. Used only if `protocol` is set to `grpc`.        |
+| `headers`    | Key-value pairs                              |                         | The header key-value pairs. Used only if `protocol` is set to `http/protobuf`. |
 
 <ExpansionPanel title="Tracing telemetry config example using HTTP/Protobuf">
 
