@@ -181,7 +181,6 @@
               # Use Streamable HTTP transport by default, bound to all addresses
               "APOLLO_MCP_TRANSPORT__TYPE=streamable_http"
               "APOLLO_MCP_TRANSPORT__ADDRESS=0.0.0.0"
-              "APOLLO_MCP_TRANSPORT__PORT=${builtins.toString http-port}"
             ];
             WorkingDir = "/data";
 
