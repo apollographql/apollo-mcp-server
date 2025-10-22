@@ -117,10 +117,11 @@ These fields are under the top-level `introspection` key. Learn more about the M
 These fields are under the top-level `logging` key.
 
 | Option     | Type                                                | Default    | Description                                                                       |
-| :--------- | :-------------------------------------------------- | :--------- | :-------------------------------------------------------------------------------- |
+|:-----------|:----------------------------------------------------|:-----------|:----------------------------------------------------------------------------------|
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
 | `path`     | `FilePath`                                          |            | An output file path for logging. If not provided logging outputs to stdio/stderr. |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
+| `format`   | `oneOf ["full", "compact", "json", "pretty"]`       | `"full"`   | The log output format style                                                       |
 
 ### Operation source
 
