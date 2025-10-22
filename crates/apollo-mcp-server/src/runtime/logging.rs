@@ -39,7 +39,7 @@ pub struct Logging {
     #[serde(default = "defaults::default_rotation")]
     pub rotation: LogRotationKind,
 
-    #[serde(default = "defaults::default_format")]
+    #[serde(default)]
     pub format: FormatStyle,
 }
 
