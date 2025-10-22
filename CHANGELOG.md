@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+# [1.1.1] - 2025-10-21
+
+## 🐛 Fixes
+
+### fix docker image ignoring port setting - @DaleSeo PR #467
+
+The Docker image had `APOLLO_MCP_TRANSPORT__PORT=8000` baked in as an environment variable in `flake.nix`. Since environment variables take precedence over config file settings (by design in our config loading logic), users are unable to override the port in their `config.yaml` when running the Docker container.
+
+
+
 # [1.1.0] - 2025-10-16
 
 ## ❗ BREAKING ❗
