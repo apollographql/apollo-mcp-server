@@ -49,7 +49,7 @@ impl Default for Logging {
             level: defaults::log_level(),
             path: None,
             rotation: defaults::default_rotation(),
-            format: default_format(),
+            format: Default::default(),
         }
     }
 }
