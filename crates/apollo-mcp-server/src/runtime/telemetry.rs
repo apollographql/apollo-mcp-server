@@ -6,7 +6,8 @@ use crate::runtime::logging::Logging;
 use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
+use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
     Resource,
@@ -19,8 +20,8 @@ use opentelemetry_semantic_conventions::{
     attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
-use std::collections::HashSet;
+use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::{HashMap, HashSet};
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -38,67 +39,162 @@ pub struct Exporters {
     tracing: Option<TracingExporters>,
 }
 
+/// Metric telemetry exporter options
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "protocol", rename_all = "lowercase")]
+pub enum MetricTelemetryExporter {
+    /// GRPC Exporter
+    Grpc {
+        endpoint: String,
+        #[serde(default)]
+        temporality: MetricTemporality,
+        #[serde(default, deserialize_with = "parsers::metadata_map_from_str")]
+        #[schemars(schema_with = "super::schemas::header_map")]
+        metadata: MetadataMap,
+    },
+
+    /// Http/protobuf exporter
+    #[serde(rename = "http/protobuf")]
+    HttpProtobuf {
+        endpoint: String,
+        #[serde(default)]
+        temporality: MetricTemporality,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
+/// Trace telemetry exporter options
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(tag = "protocol", rename_all = "lowercase")]
+pub enum TraceTelemetryExporter {
+    /// GRPC Exporter
+    Grpc {
+        endpoint: String,
+        #[serde(default, deserialize_with = "parsers::metadata_map_from_str")]
+        #[schemars(schema_with = "super::schemas::header_map")]
+        metadata: MetadataMap,
+    },
+
+    /// Http/protobuf exporter
+    #[serde(rename = "http/protobuf")]
+    HttpProtobuf {
+        endpoint: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MetricsExporters {
-    otlp: Option<OTLPMetricExporter>,
+    otlp: Option<MetricTelemetryExporter>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, JsonSchema, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
 pub enum MetricTemporality {
+    #[default]
     Cumulative,
     Delta,
+    LowMemory,
 }
 
-impl OTLPMetricExporter {
-    pub fn to_temporality(&self) -> Temporality {
-        match self
-            .temporality
-            .as_ref()
-            .unwrap_or(&MetricTemporality::Cumulative)
-        {
-            MetricTemporality::Cumulative => Temporality::Cumulative,
-            MetricTemporality::Delta => Temporality::Delta,
+impl<'de> Deserialize<'de> for MetricTemporality {
+    /// Case insensitive deserializer for str to MetricTemporality
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "cumulative" => Ok(Self::Cumulative),
+            "delta" => Ok(Self::Delta),
+            "lowmemory" | "low_memory" => Ok(Self::LowMemory),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["cumulative", "delta", "lowmemory"],
+            )),
         }
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct OTLPMetricExporter {
-    endpoint: String,
-    protocol: String,
-    temporality: Option<MetricTemporality>,
+impl From<&MetricTemporality> for Temporality {
+    fn from(value: &MetricTemporality) -> Self {
+        match value {
+            MetricTemporality::Cumulative => Temporality::Cumulative,
+            MetricTemporality::Delta => Temporality::Delta,
+            MetricTemporality::LowMemory => Temporality::LowMemory,
+        }
+    }
 }
 
-impl Default for OTLPMetricExporter {
+impl Default for MetricTelemetryExporter {
     fn default() -> Self {
-        Self {
+        Self::Grpc {
             endpoint: "http://localhost:4317".into(),
-            protocol: "grpc".into(),
-            temporality: Some(MetricTemporality::Cumulative),
+            temporality: MetricTemporality::default(),
+            metadata: MetadataMap::default(),
         }
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TracingExporters {
-    otlp: Option<OTLPTracingExporter>,
+    otlp: Option<TraceTelemetryExporter>,
     sampler: Option<SamplerOption>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct OTLPTracingExporter {
-    endpoint: String,
-    protocol: String,
+impl Default for TraceTelemetryExporter {
+    fn default() -> Self {
+        Self::Grpc {
+            endpoint: "http://localhost:4317".into(),
+            metadata: MetadataMap::default(),
+        }
+    }
 }
 
-impl Default for OTLPTracingExporter {
-    fn default() -> Self {
-        Self {
-            endpoint: "http://localhost:4317".into(),
-            protocol: "grpc".into(),
+mod parsers {
+    use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
+    use serde::Deserializer;
+    use std::str::FromStr;
+    use tonic::metadata::{MetadataKey, MetadataValue};
+
+    pub(super) fn metadata_map_from_str<'de, D>(deserializer: D) -> Result<MetadataMap, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct MapFromStrVisitor;
+        impl<'de> serde::de::Visitor<'de> for MapFromStrVisitor {
+            type Value = MetadataMap;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+                formatter.write_str("a map of header string keys and values")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::MapAccess<'de>,
+            {
+                let mut parsed = MetadataMap::with_capacity(map.size_hint().unwrap_or(0));
+
+                // While there are entries remaining in the input, add them
+                // into our map.
+                while let Some((key, value)) = map.next_entry::<String, String>()? {
+                    let key = MetadataKey::from_str(&key)
+                        .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+                    let value = MetadataValue::from_str(&value)
+                        .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+
+                    parsed.insert(key, value);
+                }
+
+                Ok(parsed)
+            }
         }
+
+        deserializer.deserialize_map(MapFromStrVisitor)
     }
 }
 
@@ -139,22 +235,27 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
             anyhow::anyhow!("No metrics exporters configured, at least one is required")
         })?;
 
-    let exporter = match otlp.protocol.as_str() {
-        "grpc" => opentelemetry_otlp::MetricExporter::builder()
+    let exporter = match otlp {
+        MetricTelemetryExporter::Grpc {
+            endpoint,
+            temporality,
+            metadata,
+        } => opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
-            .with_endpoint(otlp.endpoint.clone())
-            .with_temporality(otlp.to_temporality())
+            .with_endpoint(endpoint)
+            .with_temporality(temporality.into())
+            .with_metadata(metadata.clone())
             .build()?,
-        "http/protobuf" => opentelemetry_otlp::MetricExporter::builder()
+        MetricTelemetryExporter::HttpProtobuf {
+            endpoint,
+            temporality,
+            headers,
+        } => opentelemetry_otlp::MetricExporter::builder()
             .with_http()
-            .with_endpoint(otlp.endpoint.clone())
-            .with_temporality(otlp.to_temporality())
+            .with_endpoint(endpoint)
+            .with_temporality(temporality.into())
+            .with_headers(headers.clone())
             .build()?,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Unsupported OTLP protocol: {other}. Supported protocols are: grpc, http/protobuf"
-            ));
-        }
     };
 
     let omitted_attributes: HashSet<TelemetryAttribute> = metrics_exporters
@@ -201,20 +302,21 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
             anyhow::anyhow!("No tracing exporters configured, at least one is required")
         })?;
 
-    let exporter = match otlp.protocol.as_str() {
-        "grpc" => opentelemetry_otlp::SpanExporter::builder()
+    let exporter = match otlp {
+        TraceTelemetryExporter::Grpc {
+            endpoint, metadata, ..
+        } => opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
-            .with_endpoint(otlp.endpoint.clone())
+            .with_endpoint(endpoint)
+            .with_metadata(metadata.clone())
             .build()?,
-        "http/protobuf" => opentelemetry_otlp::SpanExporter::builder()
+        TraceTelemetryExporter::HttpProtobuf {
+            endpoint, headers, ..
+        } => opentelemetry_otlp::SpanExporter::builder()
             .with_http()
-            .with_endpoint(otlp.endpoint.clone())
+            .with_endpoint(endpoint)
+            .with_headers(headers.clone())
             .build()?,
-        other => {
-            return Err(anyhow::anyhow!(
-                "Unsupported OTLP protocol: {other}. Supported protocols are: grpc, http/protobuf"
-            ));
-        }
     };
 
     let sampler: opentelemetry_sdk::trace::Sampler = tracer_exporters
@@ -304,6 +406,10 @@ impl Drop for TelemetryGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::{HeaderMap, HeaderValue};
+    use rstest::rstest;
+    use serde::de::value::{Error, MapDeserializer, StrDeserializer};
+    use tonic::metadata::MetadataValue;
 
     fn test_config(
         service_name: Option<&str>,
@@ -330,12 +436,12 @@ mod tests {
             Some("test-config"),
             Some("1.0.0"),
             Some(MetricsExporters {
-                otlp: Some(OTLPMetricExporter::default()),
+                otlp: Some(MetricTelemetryExporter::default()),
                 omitted_attributes: None,
             }),
             Some(TracingExporters {
-                otlp: Some(OTLPTracingExporter::default()),
-                sampler: Default::default(),
+                otlp: Some(TraceTelemetryExporter::default()),
+                sampler: Some(SamplerOption::default()),
                 omitted_attributes: Some(ommitted),
             }),
         );
@@ -345,40 +451,16 @@ mod tests {
         assert!(guard.is_ok());
     }
 
-    #[tokio::test]
-    async fn unknown_protocol_raises_meter_provider_error() {
+    #[test]
+    fn http_protocol_returns_valid_meter_provider() {
         let config = test_config(
             None,
             None,
             Some(MetricsExporters {
-                otlp: Some(OTLPMetricExporter {
-                    protocol: "bogus".to_string(),
-                    endpoint: "http://localhost:4317".to_string(),
-                    temporality: None,
-                }),
-                omitted_attributes: None,
-            }),
-            None,
-        );
-        let result = init_meter_provider(&config.telemetry);
-        assert!(
-            result
-                .err()
-                .map(|e| e.to_string().contains("Unsupported OTLP protocol"))
-                .unwrap_or(false)
-        );
-    }
-
-    #[tokio::test]
-    async fn http_protocol_returns_valid_meter_provider() {
-        let config = test_config(
-            None,
-            None,
-            Some(MetricsExporters {
-                otlp: Some(OTLPMetricExporter {
-                    protocol: "http/protobuf".to_string(),
+                otlp: Some(MetricTelemetryExporter::HttpProtobuf {
                     endpoint: "http://localhost:4318/v1/metrics".to_string(),
-                    temporality: Some(MetricTemporality::Delta),
+                    temporality: MetricTemporality::Delta,
+                    headers: HashMap::new(),
                 }),
                 omitted_attributes: None,
             }),
@@ -388,46 +470,184 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn unknown_protocol_raises_tracer_provider_error() {
+    #[test]
+    fn http_protocol_returns_valid_tracer_provider() {
         let config = test_config(
             None,
             None,
             None,
             Some(TracingExporters {
-                otlp: Some(OTLPTracingExporter {
-                    protocol: "bogus".to_string(),
-                    endpoint: "http://localhost:4317".to_string(),
-                }),
-                sampler: Default::default(),
-                omitted_attributes: None,
-            }),
-        );
-        let result = init_tracer_provider(&config.telemetry);
-        assert!(
-            result
-                .err()
-                .map(|e| e.to_string().contains("Unsupported OTLP protocol"))
-                .unwrap_or(false)
-        );
-    }
-
-    #[tokio::test]
-    async fn http_protocol_returns_valid_tracer_provider() {
-        let config = test_config(
-            None,
-            None,
-            None,
-            Some(TracingExporters {
-                otlp: Some(OTLPTracingExporter {
-                    protocol: "http/protobuf".to_string(),
+                otlp: Some(TraceTelemetryExporter::HttpProtobuf {
                     endpoint: "http://localhost:4318/v1/traces".to_string(),
+                    headers: HashMap::new(),
                 }),
-                sampler: Default::default(),
+                sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
             }),
         );
         let result = init_tracer_provider(&config.telemetry);
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn grpc_trace_exporter_with_metadata_returns_valid_tracer_provider() {
+        let mut header_map = HeaderMap::new();
+        header_map.insert("key", HeaderValue::from_static("value"));
+
+        let config = test_config(
+            None,
+            None,
+            None,
+            Some(TracingExporters {
+                otlp: Some(TraceTelemetryExporter::Grpc {
+                    endpoint: "http://localhost:4318/v1/traces".to_string(),
+                    metadata: MetadataMap::from_headers(header_map),
+                }),
+                sampler: Some(SamplerOption::default()),
+                omitted_attributes: None,
+            }),
+        );
+        let result = init_tracer_provider(&config.telemetry);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn http_protobuf_metric_exporter_with_headers_returns_valid_tracer_provider() {
+        let mut header_map = HashMap::new();
+        header_map.insert("key".to_string(), "value".to_string());
+
+        let config = test_config(
+            None,
+            None,
+            None,
+            Some(TracingExporters {
+                otlp: Some(TraceTelemetryExporter::HttpProtobuf {
+                    endpoint: "http://localhost:4318/v1/traces".to_string(),
+                    headers: header_map,
+                }),
+                sampler: Some(SamplerOption::default()),
+                omitted_attributes: None,
+            }),
+        );
+        let result = init_tracer_provider(&config.telemetry);
+        assert!(result.is_ok());
+    }
+
+    #[rstest]
+    #[case::lower_cumulative("cumulative", MetricTemporality::Cumulative)]
+    #[case::title_cumulative("Cumulative", MetricTemporality::Cumulative)]
+    #[case::upper_cumulative("CUMULATIVE", MetricTemporality::Cumulative)]
+    #[case::lower_delta("delta", MetricTemporality::Delta)]
+    #[case::title_delta("Delta", MetricTemporality::Delta)]
+    #[case::upper_delta("DELTA", MetricTemporality::Delta)]
+    #[case::lower_lowmemory("lowmemory", MetricTemporality::LowMemory)]
+    #[case::title_lowmemory("LowMemory", MetricTemporality::LowMemory)]
+    #[case::upper_lowmemory("LOWMEMORY", MetricTemporality::LowMemory)]
+    fn direct_deserialization_deserializes_into_the_correct_temporality(
+        #[case] value: &str,
+        #[case] expected: MetricTemporality,
+    ) {
+        let de = StrDeserializer::<Error>::new(value);
+        let actual: MetricTemporality = MetricTemporality::deserialize(de).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case::lower_cumulative("cumulative", MetricTemporality::Cumulative)]
+    #[case::title_cumulative("Cumulative", MetricTemporality::Cumulative)]
+    #[case::upper_cumulative("CUMULATIVE", MetricTemporality::Cumulative)]
+    #[case::lower_delta("delta", MetricTemporality::Delta)]
+    #[case::title_delta("Delta", MetricTemporality::Delta)]
+    #[case::upper_delta("DELTA", MetricTemporality::Delta)]
+    #[case::lower_lowmemory("lowmemory", MetricTemporality::LowMemory)]
+    #[case::title_lowmemory("LowMemory", MetricTemporality::LowMemory)]
+    #[case::upper_lowmemory("LOWMEMORY", MetricTemporality::LowMemory)]
+    fn yaml_deserialization_deserializes_into_the_correct_temporality(
+        #[case] yaml_value: &str,
+        #[case] expected: MetricTemporality,
+    ) {
+        let actual: MetricTemporality = serde_yaml::from_str(yaml_value).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn yaml_deserialization_of_invalid_value_results_in_an_unknown_variant_error() {
+        let result: Result<MetricTemporality, _> = serde_yaml::from_str("invalid");
+        assert!(result.is_err());
+        assert!(
+            result
+                .expect_err("expected an error for invalid temporality")
+                .to_string()
+                .contains("unknown variant")
+        );
+    }
+
+    #[test]
+    fn direct_deserialization_of_invalid_value_results_in_an_unknown_variant_error() {
+        let de = StrDeserializer::<Error>::new("invalid");
+        let err = MetricTemporality::deserialize(de).unwrap_err();
+        assert!(err.to_string().contains("unknown variant"));
+    }
+
+    #[test]
+    fn deserializes_into_a_metadata_map() {
+        let de = MapDeserializer::<_, Error>::new(
+            vec![
+                ("some-key".to_string(), "some-value".to_string()),
+                ("another-key".to_string(), "another-value".to_string()),
+            ]
+            .into_iter(),
+        );
+
+        let map: MetadataMap = parsers::metadata_map_from_str(de).unwrap();
+
+        assert_eq!(
+            map.get("some-key"),
+            Some(&MetadataValue::try_from("some-value").unwrap())
+        );
+        assert_eq!(
+            map.get("another-key"),
+            Some(&MetadataValue::try_from("another-value").unwrap())
+        );
+    }
+
+    #[test]
+    fn yaml_key_value_pairs_deserialize_into_a_metadata_map() {
+        let y = r#"
+          exporters:
+            metrics:
+              otlp:
+                protocol: grpc
+                endpoint: "http://127.0.0.1:4317"
+                metadata:
+                  some-key: some-value
+                  another-key: another-value
+        "#;
+
+        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let metric_exporter = telemetry_config
+            .exporters
+            .unwrap()
+            .metrics
+            .unwrap()
+            .otlp
+            .unwrap();
+
+        match metric_exporter {
+            MetricTelemetryExporter::Grpc { metadata, .. } => {
+                assert_eq!(
+                    metadata.get("some-key"),
+                    Some(&MetadataValue::try_from("some-value").unwrap())
+                );
+
+                assert_eq!(
+                    metadata.get("another-key"),
+                    Some(&MetadataValue::try_from("another-value").unwrap())
+                );
+            }
+            MetricTelemetryExporter::HttpProtobuf { .. } => {
+                panic!("unexpected protocol")
+            }
+        }
     }
 }

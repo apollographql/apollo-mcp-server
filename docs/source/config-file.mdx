@@ -272,11 +272,32 @@ transport:
 
 #### OTLP Metrics Exporter
 
-| Option        | Type                                     | Default                  | Description                                                                                                                                                                                             |
-| :---------    | :--------------------------------------- | :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `endpoint`    | `URL`                                    | `http://localhost:4317`  | URL to export data to. Requires full path.                                                                                                                                                              |
-| `protocol`    | `string`                                 | `grpc`                   | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                                                     |
-| `temporality` | `MetricTemporality` | `Cumulative`             | Optional OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements (Cumulative) or not (Delta). |
+| Option        | Type                                           | Default                 | Description                                                                                                                                                                                                 |
+|:--------------|:-----------------------------------------------|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `endpoint`    | `URL`                                          | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                                                                  |
+| `protocol`    | `string`                                       | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.                                                                                                                             |
+| `temporality` | `MetricTemporality`                            | `Cumulative`            | Specifies how additive quantities are expressed over time. `Cumulative` means reported values include previous measurements, and `Delta` means they don't.                                                  |
+| `metadata`   | Key-value pairs                                |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.                                                                                                                            |
+| `headers`    | Key-value pairs                                |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`.                                                                                                    |
+
+<ExpansionPanel title="Metrics telemetry config example using gRPC">
+
+The following example configures metrics telemetry to use the `grpc` protocol and sends data to the `http://localhost:4317` endpoint. It uses a cumulative temporality and includes metadata with each request.
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    metrics:
+      otlp:
+        endpoint: http://localhost:4317
+        protocol: grpc
+        temporality: cumulative
+        metadata:
+          key-name: some-value
+          key-two: another-value
+```
+
+</ExpansionPanel>
 
 #### Traces
 
@@ -288,10 +309,38 @@ transport:
 
 #### OTLP Trace Exporter
 
-| Option      | Type      | Default                     | Description                                                      |
-| :---------  | :-------- | :-------------------------- | :--------------------------------------------------------------- |
-| `endpoint`  | `URL`     | `http://localhost:4317`     | URL to export data to. Requires full path.                       |
-| `protocol`  | `string`  | `grpc`                      | Protocol for export. `grpc` and `http/protobuf` are supported.   |
+| Option       | Type                                         | Default                 | Description                                                                              |
+|:-------------|:---------------------------------------------|:------------------------|:-----------------------------------------------------------------------------------------|
+| `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                                               |
+| `protocol`   | `string`                                     | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.          |
+| `metadata`   | Key-value pairs                              |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.         |
+| `headers`    | Key-value pairs                              |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`. |
+
+<ExpansionPanel title="Tracing telemetry config example using HTTP/Protobuf">
+
+The following example section configures tracing telemetry to use the `http/protobuf` protocol and sends data to the `http://localhost:4317` endpoint. It also includes headers with each request.
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    tracing:
+      otlp:
+        endpoint: http://localhost:4317
+        protocol: http/protobuf
+        headers:
+          key-name: some-value
+          key-two: another-value
+```
+
+</ExpansionPanel>
+
+#### MetricTemporality
+
+| Option       | Type        | Description                    |
+|:-------------|:------------|:-------------------------------|
+| `cumulative` | `string`    | Cumulative temporality option. |
+| `delta`      | `string`    | Delta temporality option.      |
+| `lowmemory`  | `string`    | Low memory temporality option. |
 
 #### SamplerOption
 
