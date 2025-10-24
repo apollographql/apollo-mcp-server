@@ -46,10 +46,10 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 
 ### Headers
 
-The `headers` option allows you to specify a list of hard-coded headers and values to include in all GraphQL requests.
+The `headers` option allows you to specify a list of static, hard-coded headers and value. These headers are included in all GraphQL requests.
 
 ```yaml title="mcp.yaml"
-headers: { "apollo-client-name": "my-mcp-server" }
+headers: { "apollographql-client-name": "my-mcp-server" }
 ```
 
 To forward header values from the client, use the [forward headers](#forward-headers) option.
