@@ -44,6 +44,16 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
 
+### Headers
+
+The `headers` option allows you to specify a list of hard-coded headers and values to include in all GraphQL requests.
+
+```yaml title="mcp.yaml"
+headers: { "apollo-client-name": "my-mcp-server" }
+```
+
+To forward header values from the client, use the [forward headers](#forward-headers) option.
+
 ### Forward Headers
 
 The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
