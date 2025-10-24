@@ -54,18 +54,39 @@ headers: { "apollo-client-name": "my-mcp-server" }
 
 To forward header values from the client, use the [forward headers](#forward-headers) option.
 
-### Forward Headers
+### Forward headers
 
 The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
 
 This is useful for:
 - Multi-tenant applications (forwarding tenant IDs)
 - A/B testing (forwarding experiment IDs)
-- Geo information (forwarding country Codes)
-- Client identification (forwarding AI client names)
+- Geo information (forwarding country codes)
+- Client identification (forwarding client names)
 - Internal instrumentation (forwarding correlation IDs)
 
 Supports exact header names only. Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
+
+```yaml title="mcp.yaml"
+forward_headers:
+  - x-geo-country
+  - x-client-name
+```
+
+<Caution>
+
+Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens. Forwarding credentials can introduce confused deputy vulnerabilities where your GraphQL API may incorrectly trust headers as though they were validated by the MCP Server. 
+
+<br/><br/>
+
+Header forwarding is intended for non-sensitive metadata like A/B testing, feature flagging, geo information from CDNs, or internal instrumentation.
+
+<br/><br/>
+
+For passing through credentials, use the [auth configuration](#auth).
+
+</Caution>
+
 
 ### CORS
 
