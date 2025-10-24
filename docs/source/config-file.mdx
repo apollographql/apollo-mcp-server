@@ -71,8 +71,9 @@ Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically bl
 
 ```yaml title="mcp.yaml"
 forward_headers:
+  - x-tenant-id
+  - x-experiment-id
   - x-geo-country
-  - x-client-name
 ```
 
 <Caution>
