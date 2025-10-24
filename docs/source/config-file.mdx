@@ -78,18 +78,20 @@ forward_headers:
 
 <Caution>
 
-Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens. Forwarding credentials can introduce confused deputy vulnerabilities where your GraphQL API may incorrectly trust headers as though they were validated by the MCP Server. 
+Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens. 
 
 <br/><br/>
 
-Header forwarding is intended for non-sensitive metadata like A/B testing, feature flagging, geo information from CDNs, or internal instrumentation.
+According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction), token passthrough introduces serious security risks:
 
-<br/><br/>
+- **Audience confusion**: If the MCP Server accepts tokens not intended for it, it can violate OAuth's trust boundaries.
+- **Confused deputy problem**: If an unvalidated token is passed downstream, a downstream API may incorrectly trust it as though it were validated by the MCP Server.
 
-For passing through credentials, use the [auth configuration](#auth).
+<br/>
+
+Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details and how to use the [auth configuration](#auth).
 
 </Caution>
-
 
 ### CORS
 

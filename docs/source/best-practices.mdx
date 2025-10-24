@@ -27,17 +27,3 @@ In particular, we strongly recommend contract variants when using:
 If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router.
 
 Use the `headers` option when running the MCP Server to pass the header to the router. The default name of the header expected by the router is `apollographql-client-name`. To use a different header name, configure `telemetry.apollo.client_name_header` in router YAML configuration.
-
-## Avoid token passthrough for authentication
-
-Token passthrough forwards `Authorization` headers from MCP clients through MCP Servers to downstream APIs. Although it might seem useful in some multi-tenant setups, the Apollo MCP Server intentionally does not support this pattern and we strongly discourage its use.
-
-According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction), this pattern introduces serious security risks:
-
-- **Audience confusion**: If the MCP Server accepts tokens not intended for it, it can violate OAuth’s trust boundaries.
-- **Confused deputy problem**: If an unvalidated token is passed downstream, a downstream API may incorrectly trust it as though it were validated by the MCP Server.
-
-To maintain clear trust boundaries, MCP servers must only accept tokens explicitly issued for themselves and must act as independent OAuth clients when calling upstream services.
-Forwarding client tokens downstream is not allowed.
-
-Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details.
