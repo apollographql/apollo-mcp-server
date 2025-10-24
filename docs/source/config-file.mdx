@@ -44,18 +44,56 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
 
-### Forward Headers
+### Static headers
 
-The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
+The `headers` option enables you to specify a list of static, hard-coded headers and values. These are included in all GraphQL requests.
+
+```yaml title="mcp.yaml"
+headers: { "apollographql-client-name": "my-mcp-server" }
+```
+
+To forward dynamic header values from the client, use the [`forward_headers` option](#forwarding-headers) instead.
+
+### Forwarding headers
+
+The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API.
 
 This is useful for:
 - Multi-tenant applications (forwarding tenant IDs)
 - A/B testing (forwarding experiment IDs)
-- Geo information (forwarding country Codes)
-- Client identification (forwarding AI client names)
+- Geo information (forwarding country codes)
+- Client identification (forwarding client names)
 - Internal instrumentation (forwarding correlation IDs)
 
-Supports exact header names only. Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
+Header names should match exactly but are case-insensitive.
+
+Header values are forwarded as-is, according to what the MCP client provides.
+
+Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
+
+```yaml title="mcp.yaml"
+forward_headers:
+  - x-tenant-id
+  - x-experiment-id
+  - x-geo-country
+```
+
+<Caution>
+
+Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens.
+
+<br/><br/>
+
+According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction), token passthrough introduces serious security risks:
+
+- **Audience confusion**: If the MCP Server accepts tokens not intended for it, it can violate OAuth's trust boundaries.
+- **Confused deputy problem**: If an unvalidated token is passed downstream, a downstream API may incorrectly trust it as though it were validated by the MCP Server.
+
+<br/>
+
+Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details and how to use the [auth configuration](#auth).
+
+</Caution>
 
 ### CORS
 
