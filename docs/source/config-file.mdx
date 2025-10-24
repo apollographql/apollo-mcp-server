@@ -44,19 +44,19 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
 
-### Headers
+### Static headers
 
-The `headers` option allows you to specify a list of static, hard-coded headers and value. These headers are included in all GraphQL requests.
+The `headers` option enables you to specify a list of static, hard-coded headers and values. These are included in all GraphQL requests.
 
 ```yaml title="mcp.yaml"
 headers: { "apollographql-client-name": "my-mcp-server" }
 ```
 
-To forward header values from the client, use the [forward headers](#forward-headers) option.
+To forward dynamic header values from the client, use the [`forward_headers` option](#forwarding-headers) instead.
 
-### Forward headers
+### Forwarding headers
 
-The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API. 
+The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API.
 
 This is useful for:
 - Multi-tenant applications (forwarding tenant IDs)
@@ -66,6 +66,8 @@ This is useful for:
 - Internal instrumentation (forwarding correlation IDs)
 
 Header names should match exactly but are case-insensitive.
+
+Header values are forwarded as-is, according to what the MCP client provides.
 
 Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
 
@@ -78,7 +80,7 @@ forward_headers:
 
 <Caution>
 
-Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens. 
+Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens.
 
 <br/><br/>
 
