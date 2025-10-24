@@ -41,9 +41,3 @@ To maintain clear trust boundaries, MCP servers must only accept tokens explicit
 Forwarding client tokens downstream is not allowed.
 
 Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details.
-
-## Avoid forwarding credentials with header forwarding
-
-The [forward_headers](/apollo-mcp-server/config-file#forward-headers) setting is designed for forwarding **non-sensitive metadata** like A/B testing, feature flagging, geo information from CDNs, or internal instrumentation.
-
-**We strongly recommend against using header forwarding for passing through credentials** such as API keys or access tokens. Forwarding credentials can introduce confused deputy vulnerabilities where your GraphQL API may incorrectly trust headers as though they were validated by the MCP Server.
