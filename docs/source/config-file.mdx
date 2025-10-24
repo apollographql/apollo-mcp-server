@@ -65,7 +65,9 @@ This is useful for:
 - Client identification (forwarding client names)
 - Internal instrumentation (forwarding correlation IDs)
 
-Supports exact header names only. Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
+Header names should match exactly but are case-insensitive.
+
+Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
 
 ```yaml title="mcp.yaml"
 forward_headers:
