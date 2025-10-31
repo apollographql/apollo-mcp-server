@@ -2,7 +2,7 @@ mod sampler;
 
 use crate::runtime::Config;
 use crate::runtime::filtering_exporter::FilteringExporter;
-use crate::runtime::logging::Logging;
+use crate::runtime::logging::{Logging, LoggingLayerBuilder};
 use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
@@ -363,7 +363,7 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
         SdkMeterProvider::builder().build()
     };
     let env_filter = Logging::env_filter(&config.logging)?;
-    let (logging_layer, logging_guard) = Logging::logging_layer(&config.logging)?;
+    let (logging_layer, logging_guard) = LoggingLayerBuilder::new().build(&config.logging)?;
 
     let tracer = tracer_provider.tracer("apollo-mcp-trace");
 
