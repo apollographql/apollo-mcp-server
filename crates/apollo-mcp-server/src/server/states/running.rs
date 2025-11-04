@@ -14,7 +14,7 @@ use rmcp::{
     service::RequestContext,
 };
 use serde_json::Value;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
@@ -23,7 +23,7 @@ use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::{
     custom_scalar_map::CustomScalarMap,
-    errors::{McpError, ServerError},
+    errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
     graphql::{self, Executable as _},
     headers::{ForwardHeaders, build_request_headers},
@@ -39,8 +39,8 @@ use crate::{
 
 #[derive(Clone)]
 pub(super) struct Running {
-    pub(super) schema: Arc<Mutex<Valid<Schema>>>,
-    pub(super) operations: Arc<Mutex<Vec<Operation>>>,
+    pub(super) schema: Arc<RwLock<Valid<Schema>>>,
+    pub(super) operations: Arc<RwLock<Vec<Operation>>>,
     pub(super) headers: HeaderMap,
     pub(super) forward_headers: ForwardHeaders,
     pub(super) endpoint: Url,
@@ -61,15 +61,17 @@ pub(super) struct Running {
 
 impl Running {
     /// Update a running server with a new schema.
-    pub(super) async fn update_schema(self, schema: Valid<Schema>) -> Result<Running, ServerError> {
+    ///
+    /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
+    pub(super) async fn update_schema(&self, schema: Valid<Schema>) {
         debug!("Schema updated:\n{}", schema);
+
+        // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
+        let mut operations_lock = self.operations.write().await;
 
         // Update the operations based on the new schema. This is necessary because the MCP tool
         // input schemas and description are derived from the schema.
-        let operations: Vec<Operation> = self
-            .operations
-            .lock()
-            .await
+        let operations: Vec<Operation> = operations_lock
             .iter()
             .cloned()
             .map(|operation| operation.into_inner())
@@ -92,29 +94,34 @@ impl Running {
         debug!(
             "Updated {} operations:\n{}",
             operations.len(),
-            serde_json::to_string_pretty(&operations)?
+            serde_json::to_string_pretty(&operations).unwrap_or_default()
         );
-        *self.operations.lock().await = operations;
-
         // Update the schema itself
-        *self.schema.lock().await = schema;
+        *self.schema.write().await = schema;
+
+        *operations_lock = operations;
 
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-        Ok(self)
+
+        // Now that clients have been notified, drop the lock so they can get the updated operations
+        drop(operations_lock);
     }
 
+    /// Update a running server with new operations.
+    ///
+    /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
     #[tracing::instrument(skip_all)]
-    pub(super) async fn update_operations(
-        self,
-        operations: Vec<RawOperation>,
-    ) -> Result<Running, ServerError> {
+    pub(super) async fn update_operations(&self, operations: Vec<RawOperation>) {
         debug!("Operations updated:\n{:?}", operations);
 
+        // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
+        let mut operations_lock = self.operations.write().await;
+
         // Update the operations based on the current schema
-        {
-            let schema = &*self.schema.lock().await;
-            let updated_operations: Vec<Operation> = operations
+        let updated_operations: Vec<Operation> = {
+            let schema = &*self.schema.read().await;
+            operations
                 .into_iter()
                 .filter_map(|operation| {
                     operation
@@ -130,19 +137,21 @@ impl Running {
                             None
                         })
                 })
-                .collect();
+                .collect()
+        };
 
-            debug!(
-                "Loaded {} operations:\n{}",
-                updated_operations.len(),
-                serde_json::to_string_pretty(&updated_operations)?
-            );
-            *self.operations.lock().await = updated_operations;
-        }
+        debug!(
+            "Loaded {} operations:\n{}",
+            updated_operations.len(),
+            serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
+        );
+        *operations_lock = updated_operations;
 
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-        Ok(self)
+
+        // Now that clients have been notified, drop the lock so they can get the updated operations
+        drop(operations_lock);
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
@@ -286,7 +295,7 @@ impl ServerHandler for Running {
                     headers,
                 };
                 self.operations
-                    .lock()
+                    .read()
                     .await
                     .iter()
                     .find(|op| op.as_ref().name == tool_name)
@@ -337,7 +346,7 @@ impl ServerHandler for Running {
             next_cursor: None,
             tools: self
                 .operations
-                .lock()
+                .read()
                 .await
                 .iter()
                 .map(|op| op.as_ref().clone())
@@ -401,9 +410,68 @@ mod tests {
             .validate()
             .unwrap();
 
+        let operations = Arc::new(RwLock::new(vec![]));
+
         let running = Running {
-            schema: Arc::new(Mutex::new(schema)),
-            operations: Arc::new(Mutex::new(vec![])),
+            schema: Arc::new(RwLock::new(schema)),
+            operations: operations.clone(),
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            endpoint: "http://localhost:4000".parse().unwrap(),
+            execute_tool: None,
+            introspect_tool: None,
+            search_tool: None,
+            explorer_tool: None,
+            validate_tool: None,
+            custom_scalar_map: None,
+            peers: Arc::new(RwLock::new(vec![])),
+            cancellation_token: CancellationToken::new(),
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            disable_auth_token_passthrough: false,
+            health_check: None,
+        };
+
+        let new_operations = vec![
+            RawOperation::from((
+                "query Valid { id }".to_string(),
+                Some("valid.graphql".to_string()),
+            )),
+            RawOperation::from((
+                "query Invalid {{ id }".to_string(),
+                Some("invalid.graphql".to_string()),
+            )),
+            RawOperation::from((
+                "query { id }".to_string(),
+                Some("unnamed.graphql".to_string()),
+            )),
+        ];
+
+        running.update_operations(new_operations.clone()).await;
+
+        // Check that our local copy of operations is updated, representing what the server sees
+        let updated_operations = operations.read().await;
+
+        assert_eq!(updated_operations.len(), 1);
+        assert_eq!(updated_operations.first().unwrap().as_ref().name, "Valid");
+    }
+
+    #[tokio::test]
+    async fn changing_schema_invalidates_outdated_operations() {
+        let schema = Arc::new(RwLock::new(
+            Schema::parse(
+                "type Query { data: String, something: String }",
+                "schema.graphql",
+            )
+            .unwrap()
+            .validate()
+            .unwrap(),
+        ));
+
+        let running = Running {
+            schema: schema.clone(),
+            operations: Arc::new(RwLock::new(vec![])),
             headers: HeaderMap::new(),
             forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
@@ -424,23 +492,23 @@ mod tests {
 
         let operations = vec![
             RawOperation::from((
-                "query Valid { id }".to_string(),
+                "query Valid { data }".to_string(),
                 Some("valid.graphql".to_string()),
             )),
             RawOperation::from((
-                "query Invalid {{ id }".to_string(),
+                "query WillBeStale { something }".to_string(),
                 Some("invalid.graphql".to_string()),
-            )),
-            RawOperation::from((
-                "query { id }".to_string(),
-                Some("unnamed.graphql".to_string()),
             )),
         ];
 
-        let updated_running = running.update_operations(operations).await.unwrap();
-        let updated_operations = updated_running.operations.lock().await;
+        running.update_operations(operations).await;
 
-        assert_eq!(updated_operations.len(), 1);
-        assert_eq!(updated_operations.first().unwrap().as_ref().name, "Valid");
+        let new_schema = Schema::parse("type Query { data: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        running.update_schema(new_schema.clone()).await;
+
+        assert_eq!(*schema.read().await, new_schema);
     }
 }
