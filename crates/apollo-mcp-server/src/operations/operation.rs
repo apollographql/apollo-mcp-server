@@ -26,7 +26,7 @@ use super::{MutationMode, RawOperation, schema_walker};
 /// A valid GraphQL operation
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
-    tool: Tool,
+    pub(crate) tool: Tool,
     inner: RawOperation,
     operation_name: String,
 }

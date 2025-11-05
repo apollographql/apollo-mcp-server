@@ -4,7 +4,8 @@ use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
-use rmcp::model::Implementation;
+use rmcp::ErrorData;
+use rmcp::model::{Implementation, ListResourcesResult, ReadResourceResult, ResourceContents};
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
@@ -41,6 +42,7 @@ use crate::{
 pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
     pub(super) operations: Arc<RwLock<Vec<Operation>>>,
+    pub(super) apps: Vec<crate::apps::App>,
     pub(super) headers: HeaderMap,
     pub(super) forward_headers: ForwardHeaders,
     pub(super) endpoint: Url,
@@ -298,6 +300,7 @@ impl ServerHandler for Running {
                     .read()
                     .await
                     .iter()
+                    .chain(self.apps.iter().map(|app| &app.operation))
                     .find(|op| op.as_ref().name == tool_name)
                     .ok_or(tool_not_found(&tool_name))?
                     .execute(graphql_request)
@@ -342,6 +345,7 @@ impl ServerHandler for Running {
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
             .build()
             .add(1, &[]);
+
         Ok(ListToolsResult {
             next_cursor: None,
             tools: self
@@ -355,7 +359,50 @@ impl ServerHandler for Running {
                 .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.apps.iter().map(|app| app.operation.as_ref().clone()))
                 .collect(),
+        })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult {
+            resources: self.apps.iter().map(|app| app.resource()).collect(),
+            next_cursor: None,
+        })
+    }
+
+    async fn read_resource(
+        &self,
+        request: rmcp::model::ReadResourceRequestParam,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let request_uri = Url::parse(&request.uri).map_err(|err| {
+            ErrorData::resource_not_found(
+                format!("Requested resource has an invalid URI: {err}"),
+                None,
+            )
+        })?;
+        let Some(app) = self
+            .apps
+            .iter()
+            .find(|app| app.uri.path() == request_uri.path())
+        else {
+            return Err(ErrorData::resource_not_found(
+                format!("Resource not found for URI: {}", request.uri),
+                None,
+            ));
+        };
+        Ok(ReadResourceResult {
+            contents: vec![ResourceContents::TextResourceContents {
+                uri: request.uri,
+                mime_type: Some("text/html+skybridge".to_string()),
+                text: app.resource.clone(),
+                meta: None,
+            }],
         })
     }
 
@@ -378,6 +425,7 @@ impl ServerHandler for Running {
             capabilities: ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
+                .enable_resources()
                 .build(),
             ..Default::default()
         }
@@ -415,6 +463,8 @@ mod tests {
         let running = Running {
             schema: Arc::new(RwLock::new(schema)),
             operations: operations.clone(),
+            #[cfg(feature = "apps")]
+            apps: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
@@ -472,6 +522,8 @@ mod tests {
         let running = Running {
             schema: schema.clone(),
             operations: Arc::new(RwLock::new(vec![])),
+            #[cfg(feature = "apps")]
+            apps: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
