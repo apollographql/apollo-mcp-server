@@ -12,7 +12,7 @@ use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 /// The name of the tool to get GraphQL schema type information
 pub const INTROSPECT_TOOL_NAME: &str = "introspect";
@@ -20,7 +20,7 @@ pub const INTROSPECT_TOOL_NAME: &str = "introspect";
 /// A tool to get detailed information about specific types from the GraphQL schema.
 #[derive(Clone)]
 pub struct Introspect {
-    schema: Arc<Mutex<Valid<Schema>>>,
+    schema: Arc<RwLock<Valid<Schema>>>,
     allow_mutations: bool,
     minify: bool,
     pub tool: Tool,
@@ -38,7 +38,7 @@ pub struct Input {
 
 impl Introspect {
     pub fn new(
-        schema: Arc<Mutex<Valid<Schema>>>,
+        schema: Arc<RwLock<Valid<Schema>>>,
         root_query_type: Option<String>,
         root_mutation_type: Option<String>,
         minify: bool,
@@ -57,7 +57,7 @@ impl Introspect {
 
     #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
-        let schema = self.schema.lock().await;
+        let schema = self.schema.read().await;
         let type_name = input.type_name.as_str();
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         match schema.types.get(type_name) {
@@ -147,22 +147,24 @@ mod tests {
     use apollo_compiler::validation::Valid;
     use rstest::{fixture, rstest};
     use std::sync::Arc;
-    use tokio::sync::Mutex;
+    use tokio::sync::RwLock;
 
     const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
 
     #[fixture]
-    fn schema() -> Valid<Schema> {
-        Schema::parse(TEST_SCHEMA, "schema.graphql")
-            .expect("Failed to parse test schema")
-            .validate()
-            .expect("Failed to validate test schema")
+    fn schema() -> Arc<RwLock<Valid<Schema>>> {
+        Arc::new(RwLock::new(
+            Schema::parse(TEST_SCHEMA, "schema.graphql")
+                .expect("Failed to parse test schema")
+                .validate()
+                .expect("Failed to validate test schema"),
+        ))
     }
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_tool_description_is_not_minified(schema: Valid<Schema>) {
-        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, false);
+    async fn test_introspect_tool_description_is_not_minified(schema: Arc<RwLock<Valid<Schema>>>) {
+        let introspect = Introspect::new(schema, None, None, false);
 
         let description = introspect.tool.description.unwrap();
 
@@ -180,9 +182,9 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_introspect_tool_description_is_minified_with_an_appropriate_legend(
-        schema: Valid<Schema>,
+        schema: Arc<RwLock<Valid<Schema>>>,
     ) {
-        let introspect = Introspect::new(Arc::new(Mutex::new(schema)), None, None, true);
+        let introspect = Introspect::new(schema, None, None, true);
 
         let description = introspect.tool.description.unwrap();
 
@@ -193,9 +195,9 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_query_depth_1_returns_fields(schema: Valid<Schema>) {
+    async fn test_introspect_query_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
         let introspect = Introspect::new(
-            Arc::new(Mutex::new(schema)),
+            schema,
             Some("Query".to_string()),
             Some("Mutation".to_string()),
             false,
@@ -231,9 +233,9 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_mutation_depth_1_returns_fields(schema: Valid<Schema>) {
+    async fn test_introspect_mutation_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
         let introspect = Introspect::new(
-            Arc::new(Mutex::new(schema)),
+            schema,
             Some("Query".to_string()),
             Some("Mutation".to_string()),
             false,
@@ -275,14 +277,11 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_mutation_depth_1_with_mutations_disabled(schema: Valid<Schema>) {
+    async fn test_introspect_mutation_depth_1_with_mutations_disabled(
+        schema: Arc<RwLock<Valid<Schema>>>,
+    ) {
         // This test verifies the fix: when mutations are not allowed, mutation introspection should still work
-        let introspect = Introspect::new(
-            Arc::new(Mutex::new(schema)),
-            Some("Query".to_string()),
-            None,
-            false,
-        );
+        let introspect = Introspect::new(schema, Some("Query".to_string()), None, false);
 
         let result = introspect
             .execute(Input {

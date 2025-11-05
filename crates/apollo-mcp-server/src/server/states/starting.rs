@@ -11,7 +11,7 @@ use rmcp::{
     transport::{SseServer, sse_server::SseServerConfig, stdio},
 };
 use serde_json::json;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tower_http::trace::TraceLayer;
 use tracing::{Instrument as _, debug, error, info, trace};
@@ -93,7 +93,7 @@ impl Starting {
                     .flatten()
             })
             .flatten();
-        let schema = Arc::new(Mutex::new(self.schema));
+        let schema = Arc::new(RwLock::new(self.schema));
         let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
                 schema.clone(),
@@ -138,7 +138,7 @@ impl Starting {
 
         let running = Running {
             schema,
-            operations: Arc::new(Mutex::new(operations)),
+            operations: Arc::new(RwLock::new(operations)),
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
             endpoint: self.config.endpoint,

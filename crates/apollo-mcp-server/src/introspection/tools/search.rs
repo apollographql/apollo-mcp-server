@@ -15,7 +15,7 @@ use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 /// The name of the tool to search a GraphQL schema.
@@ -27,7 +27,7 @@ const MAX_SEARCH_RESULTS: usize = 5;
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]
 pub struct Search {
-    schema: Arc<Mutex<Valid<Schema>>>,
+    schema: Arc<RwLock<Valid<Schema>>>,
     index: SchemaIndex,
     allow_mutations: bool,
     leaf_depth: usize,
@@ -54,7 +54,7 @@ pub enum IndexingError {
 
 impl Search {
     pub fn new(
-        schema: Arc<Mutex<Valid<Schema>>>,
+        schema: Arc<RwLock<Valid<Schema>>>,
         allow_mutations: bool,
         leaf_depth: usize,
         index_memory_bytes: usize,
@@ -65,7 +65,7 @@ impl Search {
         } else {
             OperationType::Query.into()
         };
-        let locked = &schema.try_lock()?;
+        let locked = &schema.try_read()?;
         Ok(Self {
             schema: schema.clone(),
             index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
@@ -111,7 +111,7 @@ impl Search {
                 .join("\n"),
         );
 
-        let schema = self.schema.lock().await;
+        let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         for root_path in root_paths {
             let path_len = root_path.inner.len();
@@ -211,7 +211,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
-        let schema = Arc::new(Mutex::new(schema));
+        let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
             .expect("Failed to create search tool");
 
@@ -229,7 +229,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
-        let schema = Arc::new(Mutex::new(schema));
+        let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), true, 1, 15_000_000, false)
             .expect("Failed to create search tool");
 
@@ -251,7 +251,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_search_tool_description_is_not_minified(schema: Valid<Schema>) {
-        let schema = Arc::new(Mutex::new(schema));
+        let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
             .expect("Failed to create search tool");
 
@@ -270,7 +270,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_tool_description_minified(schema: Valid<Schema>) {
-        let schema = Arc::new(Mutex::new(schema));
+        let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, true)
             .expect("Failed to create search tool");
 
