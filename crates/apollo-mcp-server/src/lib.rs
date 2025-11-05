@@ -1,5 +1,6 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
+pub mod apps;
 pub mod auth;
 pub mod cors;
 pub mod custom_scalar_map;

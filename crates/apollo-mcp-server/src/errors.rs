@@ -103,6 +103,9 @@ pub enum ServerError {
 
     #[error("CORS configuration error: {0}")]
     Cors(String),
+
+    #[error("Failed to load apps: {0}")]
+    Apps(String),
 }
 
 /// An MCP tool error
