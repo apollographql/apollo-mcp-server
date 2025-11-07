@@ -19,8 +19,8 @@ use std::path::Path;
 
 pub use config::Config;
 use figment::{
-    Figment,
     providers::{Env, Format, Yaml},
+    Figment,
 };
 pub use operation_source::{IdOrDefault, OperationSource};
 pub use schema_source::SchemaSource;

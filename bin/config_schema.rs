@@ -6,7 +6,7 @@
 use anyhow::Context;
 use schemars::schema_for;
 
-mod runtime;
+use apollo_mcp_runtime as runtime;
 
 fn main() -> anyhow::Result<()> {
     println!(

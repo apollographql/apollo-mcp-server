@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+  "crates/apollo-mcp-runtime",
   "crates/apollo-mcp-server",
   "crates/apollo-mcp-registry",
   "crates/apollo-schema-index",
@@ -66,3 +67,32 @@ expect_used = "deny"
 indexing_slicing = "deny"
 unwrap_used = "deny"
 panic = "deny"
+
+[package]
+name = "apollo-mcp"
+authors.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+apollo-mcp-server = {path = "crates/apollo-mcp-server"}
+apollo-mcp-runtime = {path = "crates/apollo-mcp-runtime"}
+apollo-mcp-registry = {path = "crates/apollo-mcp-registry"}
+anyhow = "1.0.98"
+clap = { version = "4.5.36", features = ["derive", "env"] }
+schemars = { version = "1.0.1", features = ["url2"] }
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[[bin]]
+name = "mcp-server"
+path = "bin/main.rs"
+
+[[bin]]
+name = "config-schema"
+path = "bin/config_schema.rs"
+test = false

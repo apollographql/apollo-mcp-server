@@ -50,7 +50,7 @@ fn filter_omitted_apollo_attributes(kv: &KeyValue, omitted_attributes: &HashSet<
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::filtering_exporter::FilteringExporter;
+    use crate::filtering_exporter::FilteringExporter;
     use opentelemetry::trace::{SpanContext, SpanKind, Status, TraceState};
     use opentelemetry::{InstrumentationScope, Key, KeyValue, SpanId, TraceFlags, TraceId};
     use opentelemetry_sdk::Resource;

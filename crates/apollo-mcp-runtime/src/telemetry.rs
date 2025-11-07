@@ -1,9 +1,9 @@
 mod sampler;
 
-use crate::runtime::Config;
-use crate::runtime::filtering_exporter::FilteringExporter;
-use crate::runtime::logging::Logging;
-use crate::runtime::telemetry::sampler::SamplerOption;
+use crate::Config;
+use crate::filtering_exporter::FilteringExporter;
+use crate::logging::Logging;
+use crate::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::WithExportConfig;
