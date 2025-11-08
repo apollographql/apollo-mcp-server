@@ -10,6 +10,8 @@ items:
     href: "."
   - label: "Quickstart"
     href: "./quickstart"
+  - label: "Testing & Deployment Workflow"
+    href: "./testing-deployment-workflow"
   - label: "Define tools"
     href: "./define-tools"
   - label: "Configuration"
