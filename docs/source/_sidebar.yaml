@@ -10,8 +10,6 @@ items:
     href: "."
   - label: "Quickstart"
     href: "./quickstart"
-  - label: "Testing & Deployment Workflow"
-    href: "./testing-deployment-workflow"
   - label: "Define tools"
     href: "./define-tools"
   - label: "Configuration"
@@ -44,5 +42,7 @@ items:
     href: "./limitations"
   - label: "Guides"
     children:
+      - label: "Development to Production Workflows"
+        href: "./guides/dev-to-prod-workflows"
       - label: "Authorization with Auth0"
         href: "./guides/auth-auth0"
