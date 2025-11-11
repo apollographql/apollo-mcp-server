@@ -18,9 +18,15 @@ pub(crate) struct App {
     /// The GraphQL operation that defines the app's tool
     pub(crate) operation: Operation,
     /// The HTML resource that serves as the app's UI
-    pub(crate) resource: String,
+    pub(crate) resource: AppResource,
     /// The URI of the app's resource
     pub(crate) uri: Url,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum AppResource {
+    Local(String),
+    Remote(Url),
 }
 
 impl App {
@@ -119,13 +125,23 @@ pub(crate) fn load_from_path(
             Ok(Some(op)) => op,
         };
 
-        let resource_path = path.join(manifest.resource);
-        let resource = read_to_string(&resource_path).map_err(|err| {
-            format!(
-                "Failed to read resource from {resource_path}: {err}",
-                resource_path = resource_path.to_string_lossy(),
-            )
-        })?;
+        let resource = if manifest.resource.starts_with("http://")
+            || manifest.resource.starts_with("https://")
+        {
+            let url = Url::parse(&manifest.resource).map_err(|err| {
+                format!("Failed to parse resource URL {}: {err}", manifest.resource)
+            })?;
+            AppResource::Remote(url)
+        } else {
+            let resource_path = path.join(&manifest.resource);
+            let contents = read_to_string(&resource_path).map_err(|err| {
+                format!(
+                    "Failed to read resource from {resource_path}: {err}",
+                    resource_path = resource_path.to_string_lossy(),
+                )
+            })?;
+            AppResource::Local(contents)
+        };
 
         let name = manifest
             .name
@@ -190,7 +206,7 @@ mod test_load_from_path {
     use assert_fs::{TempDir, prelude::*};
 
     #[test]
-    fn test_happy_path() {
+    fn test_local_resource() {
         let temp = TempDir::new().expect("Could not create temporary directory for test");
         let app_dir = temp.child("MyApp");
         app_dir
@@ -219,8 +235,49 @@ mod test_load_from_path {
         .expect("Failed to load apps");
         assert_eq!(apps.len(), 1);
         let app = &apps[0];
-        assert_eq!(app.resource, html);
+        match &app.resource {
+            AppResource::Local(contents) => assert_eq!(contents, html),
+            AppResource::Remote(url) => panic!("unexpected remote resource {url}"),
+        }
         assert_eq!(app.uri, "ui://widget/MyApp#abcdef".parse().unwrap());
         assert_eq!(app.operation.tool.name, "MyApp");
+    }
+
+    #[test]
+    fn test_remote_resource() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("RemoteApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": "https://example.com/widget/index.html",
+                            "operations": [{"body": "query MyOperation { hello }", "prefetch": true, "prefetchID": "__anonymous"}]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        match &app.resource {
+            AppResource::Remote(url) => {
+                assert_eq!(url.as_str(), "https://example.com/widget/index.html")
+            }
+            AppResource::Local(contents) => {
+                panic!("expected remote resource, found local: {contents}")
+            }
+        }
     }
 }

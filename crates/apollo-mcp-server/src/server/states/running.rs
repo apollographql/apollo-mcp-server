@@ -26,6 +26,7 @@ use url::Url;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::{
+    apps::AppResource,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -194,7 +195,7 @@ impl Running {
         }
     }
 
-    fn read_resource_impl(
+    async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParam,
     ) -> Result<ReadResourceResult, ErrorData> {
@@ -214,11 +215,45 @@ impl Running {
                 None,
             ));
         };
+        let text = match &app.resource {
+            AppResource::Local(contents) => contents.clone(),
+            AppResource::Remote(url) => {
+                let response = reqwest::Client::new()
+                    .get(url.clone())
+                    .send()
+                    .await
+                    .map_err(|err| {
+                        ErrorData::resource_not_found(
+                            format!("Failed to fetch resource from {}: {err}", url),
+                            None,
+                        )
+                    })?;
+
+                if !response.status().is_success() {
+                    return Err(ErrorData::resource_not_found(
+                        format!(
+                            "Failed to fetch resource from {}: received status {}",
+                            url,
+                            response.status()
+                        ),
+                        None,
+                    ));
+                }
+
+                response.text().await.map_err(|err| {
+                    ErrorData::resource_not_found(
+                        format!("Failed to read resource body from {}: {err}", url),
+                        None,
+                    )
+                })?
+            }
+        };
+
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
                 uri: request.uri,
                 mime_type: Some("text/html+skybridge".to_string()),
-                text: app.resource.clone(),
+                text,
                 meta: None,
             }],
         })
@@ -402,7 +437,7 @@ impl ServerHandler for Running {
         request: rmcp::model::ReadResourceRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        self.read_resource_impl(request)
+        self.read_resource_impl(request).await
     }
 
     fn get_info(&self) -> ServerInfo {
@@ -571,9 +606,8 @@ mod tests {
     }
 
     const RESOURCE_URI: &str = "http://localhost:4000/resource#1234";
-    const RESOURCE_CONTENT: &str = "abcdef";
 
-    fn running_with_apps() -> Running {
+    fn running_with_apps(resource: AppResource) -> Running {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -584,7 +618,7 @@ mod tests {
                 .into_operation(&schema, None, MutationMode::All, false, false)
                 .unwrap()
                 .unwrap(),
-            resource: RESOURCE_CONTENT.to_string(),
+            resource,
             uri: RESOURCE_URI.parse().unwrap(),
         };
 
@@ -613,7 +647,9 @@ mod tests {
 
     #[tokio::test]
     async fn resource_list_includes_app_resources() {
-        let resources = running_with_apps().list_resources_impl().resources;
+        let resources = running_with_apps(AppResource::Local("abcdef".to_string()))
+            .list_resources_impl()
+            .resources;
 
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].uri, RESOURCE_URI);
@@ -621,13 +657,15 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_from_running() {
-        let running = running_with_apps();
+        let resource_content = "This is a test resource";
+        let running = running_with_apps(AppResource::Local(resource_content.to_string()));
         let mut resource = running
             .read_resource_impl(ReadResourceRequestParam {
                 uri: "http://localhost:4000/resource#a_different_fragment"
                     .parse()
                     .unwrap(),
             })
+            .await
             .unwrap();
         assert_eq!(resource.contents.len(), 1);
         let Some(ResourceContents::TextResourceContents {
@@ -639,7 +677,7 @@ mod tests {
         else {
             panic!("Expected TextResourceContents");
         };
-        assert_eq!(text, RESOURCE_CONTENT);
+        assert_eq!(text, resource_content);
         assert_eq!(mime_type.unwrap(), "text/html+skybridge");
         assert_eq!(meta, None);
         assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
@@ -647,19 +685,53 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_that_does_not_exist() {
-        let running = running_with_apps();
-        let result = running.read_resource_impl(ReadResourceRequestParam {
-            uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
-        });
+        let running = running_with_apps(AppResource::Local("abcdef".to_string()));
+        let result = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
+            })
+            .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn getting_resource_from_running_with_invalid_uri() {
-        let running = running_with_apps();
-        let result = running.read_resource_impl(ReadResourceRequestParam {
-            uri: "not a uri".parse().unwrap(),
-        });
+        let running = running_with_apps(AppResource::Local("abcdef".to_string()));
+        let result = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: "not a uri".parse().unwrap(),
+            })
+            .await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_remote_resource_downloads_content() {
+        let mut server = mockito::Server::new_async().await;
+        let body = "<html>remote</html>";
+        let mock = server
+            .mock("GET", "/widget")
+            .with_status(200)
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
+        let running = running_with_apps(AppResource::Remote(url));
+
+        let mut resource = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: RESOURCE_URI.to_string(),
+            })
+            .await
+            .expect("resource fetch failed");
+
+        mock.assert();
+        let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
+        else {
+            panic!("unexpected resource contents");
+        };
+        assert_eq!(text, body);
     }
 }
