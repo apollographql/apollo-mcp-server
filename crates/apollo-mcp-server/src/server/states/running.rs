@@ -23,6 +23,7 @@ use url::Url;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::{
+    apps::AppResource,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -379,11 +380,16 @@ impl ServerHandler for Running {
                 None,
             ));
         };
+        let text = match &app.resource {
+            AppResource::Local(contents) => contents.clone(),
+            AppResource::Remote(url) => fetch_remote_resource(url).await?,
+        };
+
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
                 uri: request.uri,
                 mime_type: Some("text/html+skybridge".to_string()),
-                text: app.resource.clone(),
+                text,
                 meta: None,
             }],
         })
@@ -428,6 +434,37 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 ) -> Result<T, McpError> {
     serde_json::from_value(Value::from(arguments.arguments))
         .map_err(|_| McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None))
+}
+
+async fn fetch_remote_resource(url: &Url) -> Result<String, ErrorData> {
+    let response = reqwest::Client::new()
+        .get(url.clone())
+        .send()
+        .await
+        .map_err(|err| {
+            ErrorData::resource_not_found(
+                format!("Failed to fetch resource from {}: {err}", url),
+                None,
+            )
+        })?;
+
+    if !response.status().is_success() {
+        return Err(ErrorData::resource_not_found(
+            format!(
+                "Failed to fetch resource from {}: received status {}",
+                url,
+                response.status()
+            ),
+            None,
+        ));
+    }
+
+    response.text().await.map_err(|err| {
+        ErrorData::resource_not_found(
+            format!("Failed to read resource body from {}: {err}", url),
+            None,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -543,5 +580,26 @@ mod tests {
         running.update_schema(new_schema.clone()).await;
 
         assert_eq!(*schema.read().await, new_schema);
+    }
+
+    #[tokio::test]
+    async fn fetch_remote_resource_downloads_content() {
+        let mut server = mockito::Server::new_async().await;
+        let body = "<html>remote</html>";
+        let mock = server
+            .mock("GET", "/widget")
+            .with_status(200)
+            .with_body(body)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
+        let contents = fetch_remote_resource(&url)
+            .await
+            .expect("resource fetch failed");
+
+        mock.assert();
+        assert_eq!(contents, body);
     }
 }

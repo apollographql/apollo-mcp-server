@@ -1,4 +1,6 @@
+# Local developer tools
 .idea/*
+AGENTS.md
 
 # Let run configurations be unignored so they can be shared if desired
 !.idea/runConfigurations/
