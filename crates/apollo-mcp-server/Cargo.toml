@@ -50,7 +50,7 @@ regex = "1.11.1"
 reqwest-middleware = "0.4.2"
 reqwest-tracing = { version = "0.5.8", features = ["opentelemetry_0_30"] }
 reqwest.workspace = true
-rmcp = { version = "0.8", features = [
+rmcp = { version = "0.8", git = "https://github.com/modelcontextprotocol/rust-sdk/",  features = [
   "server",
   "transport-io",
   "transport-sse-server",
@@ -73,6 +73,7 @@ url.workspace = true
 async-trait = "0.1.89"
 
 [dev-dependencies]
+assert_fs = "1"
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
@@ -91,6 +92,10 @@ quote = "1.0.40"
 serde.workspace = true
 syn = "2.0.106"
 toml = "0.9.5"
+
+[features]
+default = ["apps"]
+apps = []
 
 [lints]
 workspace = true

@@ -692,7 +692,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -720,8 +720,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
 
         let json = to_sorted_json!(tool.input_schema);
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
@@ -756,7 +757,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -787,8 +788,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
         {
           "type": "object",
@@ -824,7 +826,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -865,8 +867,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
         {
           "type": "object",
@@ -912,7 +915,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -946,8 +949,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
         {
           "type": "object",
@@ -986,7 +990,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -1024,8 +1028,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
         {
           "type": "object",
@@ -1068,7 +1073,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -1099,8 +1104,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
         {
           "type": "object",
@@ -1136,7 +1142,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -1184,8 +1190,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
         {
           "type": "object",
@@ -1238,7 +1245,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -1284,8 +1291,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -1308,7 +1316,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -1349,8 +1357,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -1495,7 +1504,7 @@ mod tests {
                 .ok_or("Expected warning about unknown type in logs".to_string())
         });
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -1521,8 +1530,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -1556,7 +1566,7 @@ mod tests {
                 .ok_or("Expected warning about custom scalar without map in logs".to_string())
         });
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -1589,8 +1599,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -1628,7 +1639,7 @@ mod tests {
                 .ok_or("Expected warning about custom scalar missing in logs".to_string())
         });
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -1661,8 +1672,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -1688,7 +1700,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -1722,8 +1734,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -2129,7 +2142,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        insta::assert_debug_snapshot!(operation.tool, @r###"
+        insta::assert_debug_snapshot!(operation.tool, @r##"
         Tool {
             name: "Test",
             title: None,
@@ -2174,8 +2187,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -2201,7 +2215,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -2229,8 +2243,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -2638,7 +2653,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -2694,8 +2709,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
 
         let json = to_sorted_json!(tool.input_schema);
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
@@ -2758,7 +2774,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r##"
         Tool {
             name: "QueryName",
             title: None,
@@ -2810,8 +2826,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "##);
 
         let json = to_sorted_json!(tool.input_schema);
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
@@ -2914,7 +2931,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        insta::assert_debug_snapshot!(operation, @r###"
+        insta::assert_debug_snapshot!(operation, @r#"
         Operation {
             tool: Tool {
                 name: "MutationName",
@@ -2939,6 +2956,7 @@ mod tests {
                     },
                 ),
                 icons: None,
+                meta: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -2949,7 +2967,7 @@ mod tests {
             },
             operation_name: "MutationName",
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -2971,7 +2989,7 @@ mod tests {
         .unwrap()
         .unwrap();
 
-        insta::assert_debug_snapshot!(operation, @r###"
+        insta::assert_debug_snapshot!(operation, @r#"
         Operation {
             tool: Tool {
                 name: "MutationName",
@@ -2996,6 +3014,7 @@ mod tests {
                     },
                 ),
                 icons: None,
+                meta: None,
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
@@ -3006,7 +3025,7 @@ mod tests {
             },
             operation_name: "MutationName",
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3029,7 +3048,7 @@ mod tests {
         .unwrap();
         let tool = Tool::from(operation);
 
-        insta::assert_debug_snapshot!(tool, @r###"
+        insta::assert_debug_snapshot!(tool, @r#"
         Tool {
             name: "QueryName",
             title: None,
@@ -3053,8 +3072,9 @@ mod tests {
                 },
             ),
             icons: None,
+            meta: None,
         }
-        "###);
+        "#);
         insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
         {
           "type": "object",
