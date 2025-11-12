@@ -4,6 +4,7 @@ use std::{fs::read_to_string, sync::Arc};
 use apollo_compiler::{Schema, validation::Valid};
 use rmcp::model::{Meta, RawResource, Resource, Tool};
 use serde::Deserialize;
+use serde_json::{Map, Value, json};
 use tracing::debug;
 use url::Url;
 
@@ -168,7 +169,13 @@ pub(crate) fn load_from_path(
                             tool.description.into()
                         },
                     ),
-                    input_schema: operation.tool.input_schema.clone(),
+                    input_schema: if let Some(extra_inputs) = tool.extra_inputs {
+                        let mut merged = operation.tool.input_schema.as_ref().clone();
+                        merge_inputs(&mut merged, extra_inputs);
+                        Arc::new(merged)
+                    } else {
+                        operation.tool.input_schema.clone()
+                    },
                     title: operation.tool.title.clone(),
                     output_schema: operation.tool.output_schema.clone(),
                     annotations: operation.tool.annotations.clone(),
@@ -218,6 +225,50 @@ pub(crate) fn load_from_path(
     Ok(apps)
 }
 
+fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>) {
+    let mut properties = orig
+        .remove("properties")
+        .and_then(|val| {
+            if let Value::Object(properties) = val {
+                Some(properties)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    let mut required = orig
+        .remove("required")
+        .and_then(|val| {
+            if let Value::Array(required) = val {
+                Some(required)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+
+    for extra_input in extra {
+        if extra_input.required {
+            let value = Value::String(extra_input.name.clone());
+            if !required.contains(&value) {
+                required.push(value);
+            }
+        }
+
+        properties.insert(
+            extra_input.name,
+            json!({
+                "description": extra_input.description,
+                "type": extra_input.value_type
+            }),
+        );
+    }
+
+    orig.insert("properties".to_string(), Value::Object(properties));
+    orig.insert("required".to_string(), Value::Array(required));
+}
+
 #[derive(Clone, Deserialize)]
 struct Manifest {
     hash: String,
@@ -258,6 +309,18 @@ struct OperationDefinition {
 struct ToolDefinition {
     name: String,
     description: String,
+    #[serde(rename = "extraInputs", default)]
+    extra_inputs: Option<Vec<ExtraInputDefinition>>,
+}
+
+#[derive(Clone, Deserialize)]
+struct ExtraInputDefinition {
+    name: String,
+    description: String,
+    #[serde(rename = "type")]
+    value_type: String,
+    #[serde(default)]
+    required: bool,
 }
 
 #[cfg(test)]
