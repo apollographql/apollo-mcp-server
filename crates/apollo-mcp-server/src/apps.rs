@@ -20,6 +20,8 @@ pub(crate) struct App {
     pub(crate) resource: AppResource,
     /// The URI of the app's resource
     pub(crate) uri: Url,
+    /// Prefetch identifier from the manifest, used to nest tool responses
+    pub(crate) prefetch_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -85,14 +87,19 @@ pub(crate) fn load_from_path(
             )
         })?;
 
-        let Some(operation_str) = manifest
-            .operations
-            .iter()
-            .find_map(|op| op.prefetch_id.is_some().then(|| op.body.to_string()))
+        let Some((prefetch_id, prefetch_operation)) =
+            manifest.operations.into_iter().find_map(|op| {
+                if let Some(prefetch_id) = op.prefetch_id {
+                    Some((prefetch_id, op.body))
+                } else {
+                    None
+                }
+            })
         else {
             // TODO: Allow applications with only post-fetch operations
             return Err("Exactly one prefetch operation must be defined".into());
         };
+        let operation_str = prefetch_operation;
 
         let raw = RawOperation::from((operation_str, path.to_str().map(String::from)));
         let mut operation = match Operation::from_document(
@@ -156,6 +163,7 @@ pub(crate) fn load_from_path(
             uri,
             operation,
             resource,
+            prefetch_id,
         });
     }
     Ok(apps)
@@ -234,6 +242,7 @@ mod test_load_from_path {
         }
         assert_eq!(app.uri, "ui://widget/MyApp#abcdef".parse().unwrap());
         assert_eq!(app.operation.tool.name, "MyApp");
+        assert_eq!(app.prefetch_id, "__anonymous");
     }
 
     #[test]
@@ -272,5 +281,6 @@ mod test_load_from_path {
                 panic!("expected remote resource, found local: {contents}")
             }
         }
+        assert_eq!(app.prefetch_id, "__anonymous");
     }
 }
