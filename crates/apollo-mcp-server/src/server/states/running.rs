@@ -220,32 +220,23 @@ impl ServerHandler for Running {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
-        let result = match tool_name.as_ref() {
-            INTROSPECT_TOOL_NAME => {
-                self.introspect_tool
-                    .as_ref()
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(convert_arguments(request)?)
-                    .await
-            }
-            SEARCH_TOOL_NAME => {
-                self.search_tool
-                    .as_ref()
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(convert_arguments(request)?)
-                    .await
-            }
-            EXPLORER_TOOL_NAME => {
-                self.explorer_tool
-                    .as_ref()
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(convert_arguments(request)?)
-                    .await
-            }
-            EXECUTE_TOOL_NAME => {
-                let headers = if let Some(axum_parts) =
-                    context.extensions.get::<axum::http::request::Parts>()
-                {
+        let result = if tool_name == INTROSPECT_TOOL_NAME
+            && let Some(introspect_tool) = &self.introspect_tool
+        {
+            introspect_tool.execute(convert_arguments(request)?).await
+        } else if tool_name == SEARCH_TOOL_NAME
+            && let Some(search_tool) = &self.search_tool
+        {
+            search_tool.execute(convert_arguments(request)?).await
+        } else if tool_name == EXPLORER_TOOL_NAME
+            && let Some(explorer_tool) = &self.explorer_tool
+        {
+            explorer_tool.execute(convert_arguments(request)?).await
+        } else if tool_name == EXECUTE_TOOL_NAME
+            && let Some(execute_tool) = &self.execute_tool
+        {
+            let headers =
+                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
                     build_request_headers(
                         &self.headers,
                         &self.forward_headers,
@@ -257,53 +248,45 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-                self.execute_tool
-                    .as_ref()
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(graphql::Request {
-                        input: Value::from(request.arguments.clone()),
-                        endpoint: &self.endpoint,
-                        headers,
-                    })
-                    .await
-            }
-            VALIDATE_TOOL_NAME => {
-                self.validate_tool
-                    .as_ref()
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(convert_arguments(request)?)
-                    .await
-            }
-            _ => {
-                let headers = if let Some(axum_parts) =
-                    context.extensions.get::<axum::http::request::Parts>()
-                {
-                    build_request_headers(
-                        &self.headers,
-                        &self.forward_headers,
-                        &axum_parts.headers,
-                        &axum_parts.extensions,
-                        self.disable_auth_token_passthrough,
-                    )
-                } else {
-                    self.headers.clone()
-                };
-
-                let graphql_request = graphql::Request {
+            execute_tool
+                .execute(graphql::Request {
                     input: Value::from(request.arguments.clone()),
                     endpoint: &self.endpoint,
                     headers,
+                })
+                .await
+        } else if tool_name == VALIDATE_TOOL_NAME
+            && let Some(validate_tool) = &self.validate_tool
+        {
+            validate_tool.execute(convert_arguments(request)?).await
+        } else {
+            let headers =
+                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
+                    build_request_headers(
+                        &self.headers,
+                        &self.forward_headers,
+                        &axum_parts.headers,
+                        &axum_parts.extensions,
+                        self.disable_auth_token_passthrough,
+                    )
+                } else {
+                    self.headers.clone()
                 };
-                self.operations
-                    .read()
-                    .await
-                    .iter()
-                    .find(|op| op.as_ref().name == tool_name)
-                    .ok_or(tool_not_found(&tool_name))?
-                    .execute(graphql_request)
-                    .with_context(Context::current())
-                    .await
-            }
+
+            let graphql_request = graphql::Request {
+                input: Value::from(request.arguments.clone()),
+                endpoint: &self.endpoint,
+                headers,
+            };
+            self.operations
+                .read()
+                .await
+                .iter()
+                .find(|op| op.as_ref().name == tool_name)
+                .ok_or(tool_not_found(&tool_name))?
+                .execute(graphql_request)
+                .with_context(Context::current())
+                .await
         };
 
         // Track errors for health check
