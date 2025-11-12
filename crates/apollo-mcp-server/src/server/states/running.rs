@@ -5,7 +5,9 @@ use opentelemetry::trace::FutureExt;
 use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
-use rmcp::model::{Implementation, ListResourcesResult, ReadResourceResult, ResourceContents};
+use rmcp::model::{
+    Content, Implementation, ListResourcesResult, ReadResourceResult, ResourceContents,
+};
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
@@ -14,7 +16,7 @@ use rmcp::{
     },
     service::RequestContext,
 };
-use serde_json::Value;
+use serde_json::{Map, Value};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -281,16 +283,32 @@ impl ServerHandler for Running {
                 endpoint: &self.endpoint,
                 headers,
             };
-            self.operations
-                .read()
-                .await
+            let operation = {
+                let operations = self.operations.read().await;
+                operations
+                    .iter()
+                    .find(|op| op.as_ref().name == tool_name)
+                    .cloned()
+            };
+            if let Some(operation) = operation {
+                operation
+                    .execute(graphql_request)
+                    .with_context(Context::current())
+                    .await
+            } else if let Some(app) = self
+                .apps
                 .iter()
-                .chain(self.apps.iter().map(|app| &app.operation))
-                .find(|op| op.as_ref().name == tool_name)
-                .ok_or(tool_not_found(&tool_name))?
-                .execute(graphql_request)
-                .with_context(Context::current())
-                .await
+                .find(|app| app.operation.as_ref().name == tool_name)
+            {
+                let result = app
+                    .operation
+                    .execute(graphql_request)
+                    .with_context(Context::current())
+                    .await?;
+                Ok(nest_app_tool_result(result, &app.prefetch_id))
+            } else {
+                Err(tool_not_found(&tool_name))
+            }
         };
 
         // Track errors for health check
@@ -436,6 +454,20 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
         .map_err(|_| McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None))
 }
 
+/// For prefetch App data, there will potentially be 0 or multiple results.
+/// We key any results based on a manifest-defined `prefetchID` so the UI can distinguish between different prefetches.
+fn nest_app_tool_result(mut result: CallToolResult, prefetch_id: &str) -> CallToolResult {
+    if let Some(structured_content) = result.structured_content.take() {
+        let mut map = Map::new();
+        map.insert(prefetch_id.to_string(), structured_content);
+        let wrapped = Value::Object(map);
+        result.structured_content = Some(wrapped.clone());
+        result.content =
+            vec![Content::json(&wrapped).unwrap_or(Content::text(wrapped.to_string()))];
+    }
+    result
+}
+
 async fn fetch_remote_resource(url: &Url) -> Result<String, ErrorData> {
     let response = reqwest::Client::new()
         .get(url.clone())
@@ -470,6 +502,7 @@ async fn fetch_remote_resource(url: &Url) -> Result<String, ErrorData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[tokio::test]
     async fn invalid_operations_should_not_crash_server() {
@@ -601,5 +634,32 @@ mod tests {
 
         mock.assert();
         assert_eq!(contents, body);
+    }
+
+    #[test]
+    fn nests_app_tool_result_under_prefetch_id() {
+        let original = json!({
+            "data": {
+                "hello": "world"
+            }
+        });
+        let result = CallToolResult {
+            content: vec![],
+            structured_content: Some(original.clone()),
+            is_error: Some(false),
+            meta: None,
+        };
+
+        let nested = nest_app_tool_result(result, "prefetch");
+        let expected = json!({
+            "prefetch": original
+        });
+
+        assert_eq!(nested.structured_content, Some(expected.clone()));
+        assert_eq!(
+            nested.content,
+            vec![Content::json(&expected).expect("serialize nested response")]
+        );
+        assert_eq!(nested.is_error, Some(false));
     }
 }
