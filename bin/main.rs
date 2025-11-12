@@ -10,10 +10,8 @@ use apollo_mcp_server::server::Server;
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
-use runtime::IdOrDefault;
+use apollo_mcp_runtime::{IdOrDefault, self as runtime};
 use tracing::{info, warn};
-
-mod runtime;
 
 /// Clap styling
 const STYLES: Styles = Styles::styled()

@@ -170,6 +170,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "apollo-mcp"
+version = "1.1.1"
+dependencies = [
+ "anyhow",
+ "apollo-mcp-registry",
+ "apollo-mcp-runtime",
+ "apollo-mcp-server",
+ "clap",
+ "schemars",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "apollo-mcp-registry"
 version = "1.1.1"
 dependencies = [
@@ -198,22 +213,50 @@ dependencies = [
 ]
 
 [[package]]
-name = "apollo-mcp-server"
+name = "apollo-mcp-runtime"
 version = "1.1.1"
 dependencies = [
  "anyhow",
+ "apollo-mcp-registry",
+ "apollo-mcp-server",
+ "chrono",
+ "figment",
+ "headers",
+ "insta",
+ "mockito",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "reqwest",
+ "rstest",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.17",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-appender",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "apollo-mcp-server"
+version = "1.1.1"
+dependencies = [
  "apollo-compiler",
  "apollo-federation",
  "apollo-mcp-registry",
  "apollo-schema-index",
- "async-trait",
  "axum",
  "axum-extra",
  "axum-otel-metrics",
  "axum-tracing-opentelemetry",
  "bon",
  "chrono",
- "clap",
  "cruet",
  "figment",
  "futures",
@@ -227,11 +270,6 @@ dependencies = [
  "lz-str",
  "mockito",
  "opentelemetry",
- "opentelemetry-appender-log",
- "opentelemetry-otlp",
- "opentelemetry-resource-detectors",
- "opentelemetry-semantic-conventions",
- "opentelemetry-stdout",
  "opentelemetry_sdk",
  "prettyplease",
  "quote",
@@ -252,10 +290,6 @@ dependencies = [
  "tower",
  "tower-http",
  "tracing",
- "tracing-appender",
- "tracing-core",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "tracing-test",
  "url",
 ]
@@ -2538,16 +2572,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentelemetry-appender-log"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e688026e48f4603494f619583e0aa0b0edd9c0b9430e1c46804df2ff32bc8798"
-dependencies = [
- "log",
- "opentelemetry",
-]
-
-[[package]]
 name = "opentelemetry-http"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2592,32 +2616,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "opentelemetry-resource-detectors"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a44e076f07fa3d76e741991f4f7d3ecbac0eed8521ced491fbdf8db77d024cf"
-dependencies = [
- "opentelemetry",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
-]
-
-[[package]]
 name = "opentelemetry-semantic-conventions"
 version = "0.30.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83d059a296a47436748557a353c5e6c5705b9470ef6c95cfc52c21a8814ddac2"
-
-[[package]]
-name = "opentelemetry-stdout"
-version = "0.30.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "447191061af41c3943e082ea359ab8b64ff27d6d34d30d327df309ddef1eef6f"
-dependencies = [
- "chrono",
- "opentelemetry",
- "opentelemetry_sdk",
-]
 
 [[package]]
 name = "opentelemetry_sdk"
