@@ -205,6 +205,7 @@ impl Running {
                 None,
             )
         })?;
+
         let Some(app) = self
             .apps
             .iter()
@@ -350,21 +351,41 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            let graphql_request = graphql::Request {
-                input: Value::from(request.arguments.clone()),
-                endpoint: &self.endpoint,
-                headers: &headers,
+            let operation = {
+                let operations = self.operations.read().await;
+                operations
+                    .iter()
+                    .find(|op| op.as_ref().name == tool_name)
+                    .cloned()
             };
-            self.operations
-                .read()
-                .await
+            if let Some(operation) = operation {
+                let graphql_request = graphql::Request {
+                    input: Value::from(request.arguments),
+                    endpoint: &self.endpoint,
+                    headers: &headers,
+                };
+                operation
+                    .execute(graphql_request)
+                    .with_context(Context::current())
+                    .await
+            } else if let Some(tool) = self
+                .apps
                 .iter()
-                .chain(self.apps.iter().map(|app| &app.operation))
-                .find(|op| op.as_ref().name == tool_name)
-                .ok_or(tool_not_found(&tool_name))?
-                .execute(graphql_request)
-                .with_context(Context::current())
-                .await
+                .find_map(|app| app.tools.iter().find(|tool| tool.tool.name == tool_name))
+            {
+                let graphql_request = graphql::Request {
+                    input: Value::from(request.arguments),
+                    endpoint: &self.endpoint,
+                    headers: &headers,
+                };
+
+                tool.operation
+                    .execute(graphql_request)
+                    .with_context(Context::current())
+                    .await
+            } else {
+                Err(tool_not_found(&tool_name))
+            }
         };
 
         // Track errors for health check
@@ -417,7 +438,11 @@ impl ServerHandler for Running {
                 .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.apps.iter().map(|app| app.operation.as_ref().clone()))
+                .chain(
+                    self.apps
+                        .iter()
+                        .flat_map(|app| app.tools.iter().map(|tool| tool.tool.clone())),
+                )
                 .collect(),
         })
     }
@@ -488,9 +513,9 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::ReadResourceRequestParam;
+    use rmcp::model::{JsonObject, ReadResourceRequestParam, Tool};
 
-    use crate::apps::App;
+    use crate::apps::{App, AppTool};
 
     use super::*;
 
@@ -614,10 +639,16 @@ mod tests {
             .unwrap();
 
         let app = App {
-            operation: RawOperation::from(("query GetId { id }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, false, false)
-                .unwrap()
-                .unwrap(),
+            name: "MyApp".to_string(),
+            tools: vec![AppTool {
+                operation: Arc::new(
+                    RawOperation::from(("query GetId { id }".to_string(), None))
+                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .unwrap()
+                        .unwrap(),
+                ),
+                tool: Tool::new("GetId", "a description", JsonObject::new()),
+            }],
             resource,
             uri: RESOURCE_URI.parse().unwrap(),
         };
