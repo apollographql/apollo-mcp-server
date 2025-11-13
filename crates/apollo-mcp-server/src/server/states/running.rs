@@ -36,6 +36,8 @@ use crate::{
     },
     operations::{MutationMode, Operation, RawOperation},
 };
+use opentelemetry::Context as OtelContext;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Clone)]
 pub(super) struct Running {
@@ -208,6 +210,11 @@ impl ServerHandler for Running {
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
+            && let Some(otel_cx) = parts.extensions.get::<OtelContext>()
+        {
+            tracing::Span::current().set_parent(otel_cx.clone());
+        }
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
@@ -326,8 +333,13 @@ impl ServerHandler for Running {
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParam>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
+            && let Some(otel_cx) = parts.extensions.get::<OtelContext>()
+        {
+            tracing::Span::current().set_parent(otel_cx.clone());
+        }
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
