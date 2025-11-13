@@ -333,7 +333,7 @@ telemetry:
           key-two: another-value
 ```
 
-For services like New Relic, use `delta` temporality and pass your API key via metadata:
+For observability platforms that prefer delta temporality (such as New Relic), configure the temporality and pass your API key via metadata:
 
 ```yaml config.yaml
 telemetry:
@@ -344,13 +344,13 @@ telemetry:
         protocol: grpc
         temporality: delta
         metadata:
-          api-key: <NEW_RELIC_API_KEY>
+          api-key: <YOUR_API_KEY>
 ```
 
 To use environment variables for sensitive values like API keys:
 
 ```sh
-export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${NEW_RELIC_API_KEY}"
+export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR_API_KEY}"
 ```
 
 </ExpansionPanel>
