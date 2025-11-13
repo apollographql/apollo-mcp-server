@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-registry"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "derive_more",
  "educe",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-server"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "apollo-compiler",
@@ -244,11 +244,13 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "serde_yaml",
  "syn 2.0.106",
  "thiserror 2.0.17",
  "tokio",
  "tokio-util",
  "toml",
+ "tonic",
  "tower",
  "tower-http",
  "tracing",
@@ -273,7 +275,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-schema-index"
-version = "1.1.1"
+version = "1.2.0"
 dependencies = [
  "apollo-compiler",
  "enumset",
@@ -1675,7 +1677,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2",
+ "socket2 0.6.0",
  "tokio",
  "tower-service",
  "tracing",
@@ -3646,6 +3648,16 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "socket2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "233504af464074f9d066d7b5416c5f9b894a5862a6506e306f7b816cdd6f1807"
@@ -4032,7 +4044,7 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
- "socket2",
+ "socket2 0.6.0",
  "tokio-macros",
  "windows-sys 0.59.0",
 ]
@@ -4140,8 +4152,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e581ba15a835f4d9ea06c55ab1bd4dce26fc53752c69a04aac00703bfb49ba9"
 dependencies = [
  "async-trait",
+ "axum",
  "base64",
  "bytes",
+ "h2",
  "http",
  "http-body",
  "http-body-util",
@@ -4151,6 +4165,7 @@ dependencies = [
  "percent-encoding",
  "pin-project",
  "prost",
+ "socket2 0.5.10",
  "tokio",
  "tokio-stream",
  "tower",

@@ -12,7 +12,7 @@ use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 /// The name of the tool to validate an ad hoc GraphQL operation
 pub const VALIDATE_TOOL_NAME: &str = "validate";
@@ -20,7 +20,7 @@ pub const VALIDATE_TOOL_NAME: &str = "validate";
 #[derive(Clone)]
 pub struct Validate {
     pub tool: Tool,
-    schema: Arc<Mutex<Valid<Schema>>>,
+    schema: Arc<RwLock<Valid<Schema>>>,
 }
 
 /// Input for the validate tool
@@ -31,7 +31,7 @@ pub struct Input {
 }
 
 impl Validate {
-    pub fn new(schema: Arc<Mutex<Valid<Schema>>>) -> Self {
+    pub fn new(schema: Arc<RwLock<Valid<Schema>>>) -> Self {
         Self {
             schema,
             tool: Tool::new(
@@ -61,7 +61,7 @@ impl Validate {
                 )
             })?;
 
-        let schema_guard = self.schema.lock().await;
+        let schema_guard = self.schema.read().await;
         Parser::new()
             .parse_executable(&schema_guard, input.operation.as_str(), "operation.graphql")
             .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?
@@ -84,9 +84,9 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    static SCHEMA: std::sync::LazyLock<Arc<Mutex<Valid<Schema>>>> =
+    static SCHEMA: std::sync::LazyLock<Arc<RwLock<Valid<Schema>>>> =
         std::sync::LazyLock::new(|| {
-            Arc::new(Mutex::new(
+            Arc::new(RwLock::new(
                 Schema::parse_and_validate(
                     "type Query { id: ID! hello(name: String!): String! }",
                     "schema.graphql",
