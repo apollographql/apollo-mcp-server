@@ -318,7 +318,7 @@ transport:
 
 <ExpansionPanel title="Metrics telemetry config example using gRPC">
 
-The following example configures metrics telemetry to use the `grpc` protocol and sends data to the `http://localhost:4317` endpoint. It uses a cumulative temporality and includes metadata with each request.
+The following example configures metrics telemetry to use the `grpc` protocol and sends data to the `http://localhost:4317` endpoint. It includes metadata with each request.
 
 ```yaml config.yaml
 telemetry:
@@ -331,6 +331,26 @@ telemetry:
         metadata:
           key-name: some-value
           key-two: another-value
+```
+
+For observability platforms that prefer delta temporality (such as New Relic), configure the temporality and pass your API key via metadata:
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    metrics:
+      otlp:
+        endpoint: https://otlp.nr-data.net:4317
+        protocol: grpc
+        temporality: delta
+        metadata:
+          api-key: <YOUR_API_KEY>
+```
+
+To use environment variables for sensitive values like API keys:
+
+```sh
+export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR_API_KEY}"
 ```
 
 </ExpansionPanel>
