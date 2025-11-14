@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -145,9 +145,26 @@ impl OperationSource {
                                 // loaded, then send a single event with the operations for all
                                 // paths.
                                 if state.len() == path_count {
-                                    Some(Event::OperationsUpdated(
-                                        state.values().flatten().cloned().collect::<Vec<_>>(),
-                                    ))
+                                    // Deduplicate operations by their canonical source path
+                                    let mut seen_paths = HashSet::new();
+                                    let deduplicated_operations: Vec<RawOperation> = state
+                                        .values()
+                                        .flatten()
+                                        .filter(|op| {
+                                            if let Some(source_path) = &op.source_path {
+                                                // Try to canonicalize the path, fall back to the original if it fails
+                                                let canonical_path = PathBuf::from(source_path)
+                                                    .canonicalize()
+                                                    .unwrap_or_else(|_| PathBuf::from(source_path));
+                                                seen_paths.insert(canonical_path)
+                                            } else {
+                                                // If there's no source path, include the operation
+                                                true
+                                            }
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    Some(Event::OperationsUpdated(deduplicated_operations))
                                 } else {
                                     None
                                 }
@@ -174,5 +191,56 @@ impl From<ManifestSource> for OperationSource {
 impl From<Vec<PathBuf>> for OperationSource {
     fn from(paths: Vec<PathBuf>) -> Self {
         OperationSource::Files(paths)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use std::env::temp_dir;
+    use std::fs;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_deduplication_of_overlapping_paths() {
+        let temp_base = temp_dir();
+        let test_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let tools_dir = temp_base.join(format!("test_dedup_{}", test_id));
+        fs::create_dir(&tools_dir).unwrap();
+
+        let operation_file = tools_dir.join("TestOperation.graphql");
+        let mut file = fs::File::create(&operation_file).unwrap();
+        writeln!(file, "query TestOperation {{ __typename }}").unwrap();
+        drop(file);
+
+        let paths = vec![tools_dir.clone(), operation_file.clone()];
+
+        let operation_source = OperationSource::Files(paths);
+        let mut stream = operation_source.into_stream().await;
+
+        if let Some(Event::OperationsUpdated(operations)) = stream.next().await {
+            assert_eq!(
+                operations.len(),
+                1,
+                "Expected 1 operation after deduplication, but got {}",
+                operations.len()
+            );
+
+            assert!(operations[0].source_path.is_some());
+            let source_path = operations[0].source_path.as_ref().unwrap();
+            assert!(
+                source_path.ends_with("TestOperation.graphql"),
+                "Expected source path to end with TestOperation.graphql, got: {}",
+                source_path
+            );
+        } else {
+            panic!("Expected OperationsUpdated event");
+        }
+
+        let _ = fs::remove_dir_all(&tools_dir);
     }
 }
