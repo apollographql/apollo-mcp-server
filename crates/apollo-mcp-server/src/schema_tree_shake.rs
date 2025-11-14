@@ -496,10 +496,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
     }
 }
 
-fn selection_set_to_fields(
-    selection_set: &Selection,
-    named_fragments: &HashMap<String, Node<FragmentDefinition>>,
-) -> Vec<Node<Field>> {
+fn selection_set_to_fields(selection_set: &Selection) -> Vec<Node<Field>> {
     match selection_set {
         Selection::Field(field) => {
             if field.name == "__typename" {
@@ -508,20 +505,10 @@ fn selection_set_to_fields(
                 vec![field.clone()]
             }
         }
-        Selection::FragmentSpread(fragment) => named_fragments
-            .get(fragment.fragment_name.as_str())
-            .map(|f| {
-                f.selection_set
-                    .iter()
-                    .flat_map(|s| selection_set_to_fields(s, named_fragments))
-                    .collect()
-            })
-            .unwrap_or_default(),
-        Selection::InlineFragment(fragment) => fragment
-            .selection_set
-            .iter()
-            .flat_map(|s| selection_set_to_fields(s, named_fragments))
-            .collect(),
+        // Don't expand fragment spreads here - they need to be handled with their target type
+        Selection::FragmentSpread(_fragment) => vec![],
+        // Don't expand inline fragments here - they need to be handled with their target type
+        Selection::InlineFragment(_fragment) => vec![],
     }
 }
 
@@ -551,6 +538,58 @@ fn build_argument_name_to_value_map(arguments: &[Node<Argument>]) -> HashMap<&st
         .collect::<HashMap<_, _>>()
 }
 
+fn retain_fragments(
+    tree_shaker: &mut SchemaTreeShaker,
+    selection_set: &[Selection],
+    depth_limit: DepthLimit,
+) {
+    for selection in selection_set {
+        match selection {
+            Selection::FragmentSpread(fragment_spread) => {
+                // Clone the data we need before taking mutable borrow
+                let fragment_info = tree_shaker
+                    .named_fragments
+                    .get(fragment_spread.fragment_name.as_str())
+                    .map(|fragment_def| {
+                        (
+                            fragment_def.type_condition.as_str(),
+                            fragment_def.selection_set.clone(),
+                        )
+                    });
+
+                if let Some((type_condition, fragment_selection_set)) = fragment_info
+                    && let Some(target_type) = tree_shaker.schema.types.get(type_condition)
+                {
+                    retain_type(
+                        tree_shaker,
+                        target_type,
+                        Some(&fragment_selection_set),
+                        depth_limit,
+                    );
+                }
+            }
+            Selection::InlineFragment(inline_fragment) => {
+                if let Some(type_condition) = &inline_fragment.type_condition
+                    && let Some(target_type) = tree_shaker.schema.types.get(type_condition.as_str())
+                {
+                    retain_type(
+                        tree_shaker,
+                        target_type,
+                        Some(&inline_fragment.selection_set),
+                        depth_limit,
+                    );
+                }
+            }
+            Selection::Field(field) => {
+                // Handle nested fragments in field selection sets
+                if !field.selection_set.is_empty() {
+                    retain_fragments(tree_shaker, &field.selection_set, depth_limit.decrement());
+                }
+            }
+        }
+    }
+}
+
 fn retain_type(
     tree_shaker: &mut SchemaTreeShaker,
     extended_type: &ExtendedType,
@@ -563,10 +602,16 @@ fn retain_type(
     }
 
     let type_name = extended_type.name().as_str();
+
+    // Handle fragments first with their correct type context
+    if let Some(selection_set) = selection_set {
+        retain_fragments(tree_shaker, selection_set, depth_limit);
+    }
+
     let selected_fields = if let Some(selection_set) = selection_set {
         let selected_fields = selection_set
             .iter()
-            .flat_map(|s| selection_set_to_fields(s, &tree_shaker.named_fragments))
+            .flat_map(selection_set_to_fields)
             .collect::<Vec<_>>();
 
         Some(selected_fields)
@@ -1402,5 +1447,107 @@ mod test {
 
         assert!(description.is_some());
         assert_eq!(*description.unwrap(), vec!["the value"]);
+    }
+
+    #[test]
+    fn should_retain_types_referenced_in_inline_fragments() {
+        let source_text = r#"
+            type Query {
+                search: [SearchResult]
+            }
+
+            union SearchResult = User | Post
+
+            type User {
+                id: ID
+                name: String
+            }
+
+            type Post {
+                id: ID
+                title: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query Search { \
+                search { \
+                    ... on User { id name } \
+                    ... on Post { id title } \
+                }
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let shaken_schema = shaker.shaken().unwrap();
+
+        let user_type = shaken_schema.types.get("User");
+        assert!(user_type.is_some());
+        let post_type = shaken_schema.types.get("Post");
+        assert!(post_type.is_some());
+    }
+
+    #[test]
+    fn should_retain_types_referenced_in_fragment_spreads() {
+        let source_text = r#"
+            type Query {
+                search: [SearchResult]
+            }
+
+            union SearchResult = User | Post
+
+            type User {
+                id: ID
+                name: String
+            }
+
+            type Post {
+                id: ID
+                title: String
+            }
+        "#;
+        let document = Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap();
+        let schema = document.to_schema_validate().unwrap();
+        let mut shaker = SchemaTreeShaker::new(&schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query Search { \
+                search { \
+                    ...UserFields \
+                    ...PostFields \
+                }
+            } \
+            fragment UserFields on User { \
+                id \
+                name \
+            } \
+            fragment PostFields on Post { \
+                id \
+                title \
+            }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let shaken_schema = shaker.shaken().unwrap();
+
+        let user_type = shaken_schema.types.get("User");
+        assert!(user_type.is_some());
+        let post_type = shaken_schema.types.get("Post");
+        assert!(post_type.is_some());
     }
 }
