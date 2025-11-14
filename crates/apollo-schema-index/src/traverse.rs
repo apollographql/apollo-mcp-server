@@ -77,6 +77,7 @@ impl SchemaExt for Schema {
                                 }));
                             }
                             ExtendedType::Interface(interface) => {
+                                // Traverse interface fields
                                 stack.extend(interface.fields.values().map(|field| {
                                     let field_type = field.ty.inner_named_type();
                                     let field_args = field
@@ -92,6 +93,27 @@ impl SchemaExt for Schema {
                                             field_type.clone(),
                                         ),
                                     )
+                                }));
+
+                                // Also traverse all types that implement this interface
+                                // This ensures that fields defined only on implementing types are indexed
+                                stack.extend(self.types.values().filter_map(|t| {
+                                    if let ExtendedType::Object(obj) = t
+                                        && obj
+                                            .implements_interfaces
+                                            .iter()
+                                            .any(|iface| iface.name == interface.name)
+                                    {
+                                        return Some((
+                                            &obj.name,
+                                            current_path.clone().add_child(
+                                                None,
+                                                vec![],
+                                                obj.name.clone(),
+                                            ),
+                                        ));
+                                    }
+                                    None
                                 }));
                             }
                             ExtendedType::Union(union) => {
