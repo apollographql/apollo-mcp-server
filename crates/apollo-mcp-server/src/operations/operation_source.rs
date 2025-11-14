@@ -156,7 +156,15 @@ impl OperationSource {
                                                 let canonical_path = PathBuf::from(source_path)
                                                     .canonicalize()
                                                     .unwrap_or_else(|_| PathBuf::from(source_path));
-                                                seen_paths.insert(canonical_path)
+                                                let is_new =
+                                                    seen_paths.insert(canonical_path.clone());
+                                                if !is_new {
+                                                    tracing::debug!(
+                                                        ?canonical_path,
+                                                        "Filtered duplicate operation"
+                                                    );
+                                                }
+                                                is_new
                                             } else {
                                                 // If there's no source path, include the operation
                                                 true
