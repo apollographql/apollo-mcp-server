@@ -552,13 +552,13 @@ fn retain_fragments(
                     .get(fragment_spread.fragment_name.as_str())
                     .map(|fragment_def| {
                         (
-                            fragment_def.type_condition.as_str().to_string(),
+                            fragment_def.type_condition.as_str(),
                             fragment_def.selection_set.clone(),
                         )
                     });
 
                 if let Some((type_condition, fragment_selection_set)) = fragment_info
-                    && let Some(target_type) = tree_shaker.schema.types.get(type_condition.as_str())
+                    && let Some(target_type) = tree_shaker.schema.types.get(type_condition)
                 {
                     retain_type(
                         tree_shaker,
@@ -569,18 +569,15 @@ fn retain_fragments(
                 }
             }
             Selection::InlineFragment(inline_fragment) => {
-                if let Some(type_condition) = &inline_fragment.type_condition {
-                    let type_condition_str = type_condition.as_str().to_string();
-                    if let Some(target_type) =
-                        tree_shaker.schema.types.get(type_condition_str.as_str())
-                    {
-                        retain_type(
-                            tree_shaker,
-                            target_type,
-                            Some(&inline_fragment.selection_set),
-                            depth_limit,
-                        );
-                    }
+                if let Some(type_condition) = &inline_fragment.type_condition
+                    && let Some(target_type) = tree_shaker.schema.types.get(type_condition.as_str())
+                {
+                    retain_type(
+                        tree_shaker,
+                        target_type,
+                        Some(&inline_fragment.selection_set),
+                        depth_limit,
+                    );
                 }
             }
             Selection::Field(field) => {
