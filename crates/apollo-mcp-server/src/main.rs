@@ -11,7 +11,7 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 mod runtime;
 
@@ -47,6 +47,8 @@ async fn main() -> anyhow::Result<()> {
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
         env!("CARGO_PKG_VERSION")
     );
+
+    debug!("Configuration: {config:#?}");
 
     let schema_source = match config.schema {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
