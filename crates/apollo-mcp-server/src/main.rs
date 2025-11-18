@@ -48,7 +48,9 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
+    #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
+    #[cfg_attr(coverage_nightly, coverage(on))]
 
     let schema_source = match config.schema {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
