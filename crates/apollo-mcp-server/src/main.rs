@@ -51,7 +51,6 @@ async fn main() -> anyhow::Result<()> {
     #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
     #[cfg_attr(coverage_nightly, coverage(on))]
-
     let schema_source = match config.schema {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
         runtime::SchemaSource::Uplink => SchemaSource::Registry(config.graphos.uplink_config()?),
