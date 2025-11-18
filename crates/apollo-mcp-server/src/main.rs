@@ -11,7 +11,7 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 mod runtime;
 
@@ -48,6 +48,9 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    debug!("Configuration: {config:#?}");
+    #[cfg_attr(coverage_nightly, coverage(on))]
     let schema_source = match config.schema {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
         runtime::SchemaSource::Uplink => SchemaSource::Registry(config.graphos.uplink_config()?),
