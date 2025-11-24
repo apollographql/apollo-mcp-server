@@ -13,7 +13,7 @@ use rmcp::model::{CallToolResult, Content, ErrorCode};
 use serde_json::{Map, Value};
 use url::Url;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Request<'a> {
     pub input: Value,
     pub endpoint: &'a Url,
@@ -62,6 +62,8 @@ pub trait Executable {
             String::from("variables"),
             self.variables(request.input.clone())?,
         )]);
+
+        println!("request_body: {:?}", request_body);
 
         if let Some(id) = self.persisted_query_id() {
             request_body.insert(

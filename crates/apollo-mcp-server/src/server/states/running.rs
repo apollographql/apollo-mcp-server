@@ -6,7 +6,7 @@ use opentelemetry::{Context, KeyValue};
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    Content, Implementation, ListResourcesResult, ReadResourceResult, ResourceContents,
+    Content, Implementation, ListResourcesResult, Meta, ReadResourceResult, ResourceContents,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -16,7 +16,7 @@ use rmcp::{
     },
     service::RequestContext,
 };
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
@@ -225,6 +225,7 @@ impl ServerHandler for Running {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
+
         let result = match tool_name.as_ref() {
             INTROSPECT_TOOL_NAME => {
                 self.introspect_tool
@@ -297,7 +298,7 @@ impl ServerHandler for Running {
                 let graphql_request = graphql::Request {
                     input: Value::from(request.arguments.clone()),
                     endpoint: &self.endpoint,
-                    headers,
+                    headers: headers.clone(),
                 };
                 let operation = {
                     let operations = self.operations.read().await;
@@ -311,17 +312,41 @@ impl ServerHandler for Running {
                         .execute(graphql_request)
                         .with_context(Context::current())
                         .await
-                } else if let Some(app) = self
-                    .apps
-                    .iter()
-                    .find(|app| app.operation.as_ref().name == tool_name)
-                {
-                    let result = app
+                } else if let Some(tool) = self.apps.iter().find_map(|app| {
+                    app.tools
+                        .iter()
+                        .find(|tool| tool.operation.as_ref().name == tool_name)
+                }) {
+                    // We don't want to send the extra inputs as graphql variables so we'll filter them out (they are not in the extracted operation schema)
+                    let filtered_args = request
+                        .arguments
+                        .clone()
+                        .map(|m| filter_args_by_schema(m, &tool.operation.tool.input_schema))
+                        .unwrap_or_default();
+                    let graphql_request = graphql::Request {
+                        input: Value::from(filtered_args),
+                        endpoint: &self.endpoint,
+                        headers,
+                    };
+
+                    // TODO: We can parallize if there are multiple
+                    let mut prefetch_results = Vec::new();
+                    for (prefetch_id, operation) in &tool.prefetch_operations {
+                        let call = operation
+                            // TODO: We probably need to create a new graphql request for this?
+                            .execute(graphql_request.clone())
+                            .with_context(Context::current())
+                            .await?;
+
+                        prefetch_results.push((prefetch_id.clone(), call));
+                    }
+
+                    let result = tool
                         .operation
                         .execute(graphql_request)
                         .with_context(Context::current())
                         .await?;
-                    Ok(nest_app_tool_result(result, &app.prefetch_id))
+                    Ok(nest_app_tool_result(result, &tool_name, prefetch_results))
                 } else {
                     Err(tool_not_found(&tool_name))
                 }
@@ -378,7 +403,11 @@ impl ServerHandler for Running {
                 .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.apps.iter().map(|app| app.operation.as_ref().clone()))
+                .chain(
+                    self.apps
+                        .iter()
+                        .flat_map(|app| app.tools.iter().map(|tool| tool.as_tool())),
+                )
                 .collect(),
         })
     }
@@ -405,6 +434,7 @@ impl ServerHandler for Running {
                 None,
             )
         })?;
+
         let Some(app) = self
             .apps
             .iter()
@@ -425,7 +455,19 @@ impl ServerHandler for Running {
                 uri: request.uri,
                 mime_type: Some("text/html+skybridge".to_string()),
                 text,
-                meta: None,
+                // meta: None,
+                meta: Some({
+                    let mut meta = Meta::new();
+                    meta.insert(
+                        "openai/widgetCSP".into(),
+                        // TODO: This needs to come from the manifest file!
+                        json!({
+                            "connect_domains": ["https://unscriptural-unadvancing-kiley.ngrok-free.dev"],
+                            "resource_domains": ["https://unscriptural-unadvancing-kiley.ngrok-free.dev", "https://cdn.dummyjson.com"]
+                        }),
+                    );
+                    meta
+                }),
             }],
         })
     }
@@ -456,6 +498,20 @@ impl ServerHandler for Running {
     }
 }
 
+fn filter_args_by_schema(
+    mut args: Map<String, Value>,
+    schema: &Map<String, Value>,
+) -> Map<String, Value> {
+    let allowed = schema
+        .get("properties")
+        .and_then(|v| v.as_object())
+        .map(|o| o.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+
+    args.retain(|k, _| allowed.contains(k));
+    args
+}
+
 fn tool_not_found(name: &str) -> McpError {
     McpError::new(
         ErrorCode::METHOD_NOT_FOUND,
@@ -473,14 +529,37 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 
 /// For prefetch App data, there will potentially be 0 or multiple results.
 /// We key any results based on a manifest-defined `prefetchID` so the UI can distinguish between different prefetches.
-fn nest_app_tool_result(mut result: CallToolResult, prefetch_id: &str) -> CallToolResult {
+fn nest_app_tool_result(
+    mut result: CallToolResult,
+    tool_name: &str,
+    prefetch_results: Vec<(String, CallToolResult)>,
+) -> CallToolResult {
     if let Some(structured_content) = result.structured_content.take() {
         let mut map = Map::new();
-        map.insert(prefetch_id.to_string(), structured_content);
+
+        // Main tool result
+        map.insert("result".into(), structured_content);
+
+        // Prefetch results
+        let mut prefetch = Map::new();
+        prefetch_results.iter().for_each(|(prefetch_id, result)| {
+            if let Some(structured_content) = &result.structured_content {
+                prefetch.insert(prefetch_id.into(), structured_content.clone());
+            }
+        });
+        map.insert("prefetch".into(), Value::Object(prefetch));
+
         let wrapped = Value::Object(map);
         result.structured_content = Some(wrapped.clone());
         result.content =
             vec![Content::json(&wrapped).unwrap_or(Content::text(wrapped.to_string()))];
+
+        // Attach tool name to the result meta
+        result.meta = Some({
+            let mut meta = Meta::new();
+            meta.insert("toolName".into(), Value::String(tool_name.to_string()));
+            meta
+        });
     }
     result
 }
@@ -669,7 +748,7 @@ mod tests {
             meta: None,
         };
 
-        let nested = nest_app_tool_result(result, "prefetch");
+        let nested = nest_app_tool_result(result, "my_awesome_tool", vec![]);
         let expected = json!({
             "prefetch": original
         });
