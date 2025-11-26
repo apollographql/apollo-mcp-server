@@ -294,7 +294,7 @@ impl ServerHandler for Running {
                 .execute(graphql::Request {
                     input: Value::from(request.arguments.clone()),
                     endpoint: &self.endpoint,
-                    headers,
+                    headers: &headers,
                 })
                 .await
         } else if tool_name == VALIDATE_TOOL_NAME
@@ -318,7 +318,7 @@ impl ServerHandler for Running {
             let graphql_request = graphql::Request {
                 input: Value::from(request.arguments.clone()),
                 endpoint: &self.endpoint,
-                headers,
+                headers: &headers,
             };
             self.operations
                 .read()
