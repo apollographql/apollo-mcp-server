@@ -227,6 +227,7 @@ mod tests {
         let app = App {
             name: "MyApp".to_string(),
             resource: AppResource::Local("blah".to_string()),
+            csp_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
             tools: vec![AppTool {
                 operation: primary_operation.clone(),
