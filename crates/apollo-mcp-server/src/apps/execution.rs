@@ -5,7 +5,7 @@ use futures::future::try_join_all;
 use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use rmcp::model::{CallToolResult, Content, JsonObject};
+use rmcp::model::{CallToolResult, Content, JsonObject, Meta};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -73,13 +73,18 @@ pub(crate) async fn execute_app(
     }
 
     let prefetch_results = try_join_all(prefetch_calls.into_iter()).await?;
-    Ok(nest_app_tool_result(result, prefetch_results))
+    Ok(nest_app_tool_result(
+        result,
+        &tool.tool.name,
+        prefetch_results,
+    ))
 }
 
 /// For prefetch App data, there will potentially be 0 or multiple results.
 /// We key any results based on a manifest-defined `prefetchID` so the UI can distinguish between different prefetches.
 fn nest_app_tool_result(
     mut result: CallToolResult,
+    tool_name: &str,
     prefetch_results: Vec<(String, CallToolResult)>,
 ) -> CallToolResult {
     if let Some(structured_content) = result.structured_content.take() {
@@ -103,6 +108,13 @@ fn nest_app_tool_result(
         result.content =
             vec![Content::json(&wrapped).unwrap_or(Content::text(wrapped.to_string()))];
         result.structured_content = Some(wrapped);
+
+        // Attach tool name to the result meta
+        result.meta = Some({
+            let mut meta = Meta::new();
+            meta.insert("toolName".into(), Value::String(tool_name.to_string()));
+            meta
+        });
     }
     result
 }
