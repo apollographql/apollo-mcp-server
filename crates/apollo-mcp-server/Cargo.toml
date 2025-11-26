@@ -73,6 +73,7 @@ url.workspace = true
 async-trait = "0.1.89"
 
 [dev-dependencies]
+assert_fs = "1"
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
@@ -91,6 +92,9 @@ quote = "1.0.40"
 serde.workspace = true
 syn = "2.0.106"
 toml = "0.9.5"
+
+[features]
+apps = []
 
 [lints]
 workspace = true
