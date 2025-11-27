@@ -12,6 +12,10 @@ use crate::{
     operations::{MutationMode, Operation, RawOperation},
 };
 
+mod execution;
+
+pub(crate) use execution::find_and_execute_app;
+
 /// An app, which consists of a tool and a resource to be used together.
 #[derive(Clone, Debug)]
 pub(crate) struct App {
@@ -22,6 +26,8 @@ pub(crate) struct App {
     pub(crate) uri: Url,
     /// Entrypoint tools for this app
     pub(crate) tools: Vec<AppTool>,
+    /// Any operations that should _always_ be executed for any of the tools (after the initial tool operation)
+    pub(crate) prefetch_operations: Vec<PrefetchOperation>,
 }
 
 /// An MCP tool which serves as an entrypoint for an app.
@@ -31,6 +37,15 @@ pub(crate) struct AppTool {
     pub(crate) operation: Arc<Operation>,
     /// The MCP tool definition
     pub(crate) tool: Tool,
+}
+
+/// An operation that should be executed for every invocation of an app.
+#[derive(Clone, Debug)]
+pub(crate) struct PrefetchOperation {
+    /// The operation to execute
+    pub(crate) operation: Arc<Operation>,
+    /// A unique ID for the operation that the UI will use to look up its data
+    pub(crate) prefetch_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +129,7 @@ pub(crate) fn load_from_path(
         meta.insert("openai/outputTemplate".to_string(), uri.to_string().into());
         meta.insert("openai/widgetAccessible".to_string(), true.into());
 
+        let mut prefetch_operations = Vec::new();
         let mut tools = Vec::new();
 
         for operation_def in manifest.operations {
@@ -164,6 +180,13 @@ pub(crate) fn load_from_path(
                     tool,
                 })
             }
+
+            if let Some(prefetch_id) = operation_def.prefetch_id {
+                prefetch_operations.push(PrefetchOperation {
+                    prefetch_id,
+                    operation,
+                });
+            }
         }
 
         let resource = if manifest.resource.starts_with("http://")
@@ -189,6 +212,7 @@ pub(crate) fn load_from_path(
             uri,
             resource,
             tools,
+            prefetch_operations,
         });
     }
     Ok(apps)
@@ -225,7 +249,6 @@ struct OperationDefinition {
     body: String,
     /// If this operation should be prefetched, this ID indicates where the UI expects to find the data
     #[serde(rename = "prefetchID", default)]
-    #[allow(dead_code)] // Will use in follow-up PR
     prefetch_id: Option<String>,
     /// The tools which make up this app
     tools: Vec<ToolDefinition>,
@@ -376,5 +399,58 @@ mod test_load_from_path {
             app.tools[2].tool.description.as_ref().unwrap(),
             "Description for Tool3"
         );
+    }
+
+    #[test]
+    fn prefetch_operations() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("MultipleToolsApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation { hello }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1"}
+                        ], "prefetchID": "prefetchId1"},
+                        {"body": "query MyOtherOperation { world }", "tools": [], "prefetchID": "prefetchId2"}
+                    ]}"#,
+            )
+            .unwrap();
+
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse(
+                "type Query { hello: String, world: String }",
+                "schema.graphql",
+            )
+            .unwrap()
+            .validate()
+            .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        assert_eq!(app.tools.len(), 1);
+        assert_eq!(app.prefetch_operations.len(), 2);
+        let prefetch_that_matches_tool = app
+            .prefetch_operations
+            .iter()
+            .find(|prefetch| prefetch.prefetch_id == "prefetchId1")
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(
+                &prefetch_that_matches_tool.operation,
+                &app.tools[0].operation
+            ),
+            "Prefetches should be deduplicated via Arc comparison"
+        )
     }
 }

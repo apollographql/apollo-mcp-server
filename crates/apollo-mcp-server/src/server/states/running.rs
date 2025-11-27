@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
 
+use crate::apps::find_and_execute_app;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::{
@@ -368,21 +369,16 @@ impl ServerHandler for Running {
                     .execute(graphql_request)
                     .with_context(Context::current())
                     .await
-            } else if let Some(tool) = self
-                .apps
-                .iter()
-                .find_map(|app| app.tools.iter().find(|tool| tool.tool.name == tool_name))
+            } else if let Some(res) = find_and_execute_app(
+                &self.apps,
+                &tool_name,
+                &headers,
+                request.arguments.as_ref(),
+                &self.endpoint,
+            )
+            .await
             {
-                let graphql_request = graphql::Request {
-                    input: Value::from(request.arguments),
-                    endpoint: &self.endpoint,
-                    headers: &headers,
-                };
-
-                tool.operation
-                    .execute(graphql_request)
-                    .with_context(Context::current())
-                    .await
+                res
             } else {
                 Err(tool_not_found(&tool_name))
             }
@@ -651,6 +647,7 @@ mod tests {
             }],
             resource,
             uri: RESOURCE_URI.parse().unwrap(),
+            prefetch_operations: vec![],
         };
 
         Running {
