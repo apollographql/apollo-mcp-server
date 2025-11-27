@@ -27,7 +27,7 @@ use super::{MutationMode, RawOperation, schema_walker};
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     pub(crate) tool: Tool,
-    inner: RawOperation,
+    pub(crate) inner: RawOperation,
     operation_name: String,
 }
 
