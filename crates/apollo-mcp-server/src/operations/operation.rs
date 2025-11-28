@@ -111,11 +111,50 @@ impl Operation {
                 ));
             };
 
-            let tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(
+            // Generate output schema from selection set
+            let output_schema = if let Some(root_type_name) =
+                graphql_schema.root_operation(operation.operation_type)
+            {
+                if let Some(root_type) = graphql_schema.types.get(root_type_name) {
+                    let named_fragments: HashMap<
+                        String,
+                        Node<apollo_compiler::ast::FragmentDefinition>,
+                    > = document
+                        .definitions
+                        .iter()
+                        .filter_map(|def| match def {
+                            Definition::FragmentDefinition(fragment_def) => {
+                                Some((fragment_def.name.to_string(), fragment_def.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+
+                    serde_json::to_value(schema_walker::selection_set_to_schema(
+                        &operation.selection_set,
+                        root_type,
+                        graphql_schema,
+                        custom_scalar_map,
+                        &named_fragments,
+                    ))
+                    .ok()
+                    .and_then(|v| match v {
+                        Value::Object(obj) => Some(obj),
+                        _ => None,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            let mut tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(
                 ToolAnnotations::new()
                     .read_only(operation.operation_type != OperationType::Mutation)
                     .destructive(operation.operation_type == OperationType::Mutation),
             );
+            tool.output_schema = output_schema.map(std::sync::Arc::new);
             let character_count = tool_character_length(&tool);
             match character_count {
                 Ok(length) => info!(
@@ -708,7 +747,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -778,7 +885,75 @@ mod tests {
                     String("id"),
                 ],
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -859,7 +1034,75 @@ mod tests {
                     String("id"),
                 ],
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -943,7 +1186,75 @@ mod tests {
                     String("id"),
                 ],
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1024,7 +1335,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1102,7 +1481,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1190,7 +1637,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1293,7 +1808,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1361,7 +1944,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1536,7 +2187,75 @@ mod tests {
                     "id": Object {},
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1607,7 +2326,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1682,7 +2469,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -1746,7 +2601,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -2201,7 +3124,76 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "field": Object {
+                                    "description": String("the Query.field field"),
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -2259,7 +3251,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -2727,7 +3787,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -2846,7 +3974,75 @@ mod tests {
                     },
                 },
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
@@ -2978,7 +4174,75 @@ mod tests {
                     "type": String("object"),
                     "properties": Object {},
                 },
-                output_schema: None,
+                output_schema: Some(
+                    {
+                        "type": String("object"),
+                        "properties": Object {
+                            "data": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "id": Object {
+                                        "oneOf": Array [
+                                            Object {
+                                                "type": String("string"),
+                                            },
+                                            Object {
+                                                "type": String("null"),
+                                            },
+                                        ],
+                                    },
+                                },
+                            },
+                            "errors": Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "type": String("object"),
+                                    "properties": Object {
+                                        "message": Object {
+                                            "type": String("string"),
+                                        },
+                                        "locations": Object {
+                                            "type": String("array"),
+                                            "items": Object {
+                                                "type": String("object"),
+                                                "properties": Object {
+                                                    "line": Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                    "column": Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        "path": Object {
+                                            "type": String("array"),
+                                            "items": Object {
+                                                "oneOf": Array [
+                                                    Object {
+                                                        "type": String("string"),
+                                                    },
+                                                    Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                        "extensions": Object {
+                                            "type": String("object"),
+                                        },
+                                    },
+                                    "required": Array [
+                                        String("message"),
+                                    ],
+                                },
+                            },
+                            "extensions": Object {
+                                "type": String("object"),
+                            },
+                        },
+                    },
+                ),
                 annotations: Some(
                     ToolAnnotations {
                         title: None,
@@ -3038,7 +4302,75 @@ mod tests {
                     "type": String("object"),
                     "properties": Object {},
                 },
-                output_schema: None,
+                output_schema: Some(
+                    {
+                        "type": String("object"),
+                        "properties": Object {
+                            "data": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "id": Object {
+                                        "oneOf": Array [
+                                            Object {
+                                                "type": String("string"),
+                                            },
+                                            Object {
+                                                "type": String("null"),
+                                            },
+                                        ],
+                                    },
+                                },
+                            },
+                            "errors": Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "type": String("object"),
+                                    "properties": Object {
+                                        "message": Object {
+                                            "type": String("string"),
+                                        },
+                                        "locations": Object {
+                                            "type": String("array"),
+                                            "items": Object {
+                                                "type": String("object"),
+                                                "properties": Object {
+                                                    "line": Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                    "column": Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                },
+                                            },
+                                        },
+                                        "path": Object {
+                                            "type": String("array"),
+                                            "items": Object {
+                                                "oneOf": Array [
+                                                    Object {
+                                                        "type": String("string"),
+                                                    },
+                                                    Object {
+                                                        "type": String("integer"),
+                                                    },
+                                                ],
+                                            },
+                                        },
+                                        "extensions": Object {
+                                            "type": String("object"),
+                                        },
+                                    },
+                                    "required": Array [
+                                        String("message"),
+                                    ],
+                                },
+                            },
+                            "extensions": Object {
+                                "type": String("object"),
+                            },
+                        },
+                    },
+                ),
                 annotations: Some(
                     ToolAnnotations {
                         title: None,
@@ -3098,7 +4430,75 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {},
             },
-            output_schema: None,
+            output_schema: Some(
+                {
+                    "type": String("object"),
+                    "properties": Object {
+                        "data": Object {
+                            "type": String("object"),
+                            "properties": Object {
+                                "id": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
+                                },
+                            },
+                        },
+                        "errors": Object {
+                            "type": String("array"),
+                            "items": Object {
+                                "type": String("object"),
+                                "properties": Object {
+                                    "message": Object {
+                                        "type": String("string"),
+                                    },
+                                    "locations": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "type": String("object"),
+                                            "properties": Object {
+                                                "line": Object {
+                                                    "type": String("integer"),
+                                                },
+                                                "column": Object {
+                                                    "type": String("integer"),
+                                                },
+                                            },
+                                        },
+                                    },
+                                    "path": Object {
+                                        "type": String("array"),
+                                        "items": Object {
+                                            "oneOf": Array [
+                                                Object {
+                                                    "type": String("string"),
+                                                },
+                                                Object {
+                                                    "type": String("integer"),
+                                                },
+                                            ],
+                                        },
+                                    },
+                                    "extensions": Object {
+                                        "type": String("object"),
+                                    },
+                                },
+                                "required": Array [
+                                    String("message"),
+                                ],
+                            },
+                        },
+                        "extensions": Object {
+                            "type": String("object"),
+                        },
+                    },
+                },
+            ),
             annotations: Some(
                 ToolAnnotations {
                     title: None,
