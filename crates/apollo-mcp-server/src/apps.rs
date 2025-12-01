@@ -30,6 +30,12 @@ pub(crate) struct App {
     pub(crate) prefetch_operations: Vec<PrefetchOperation>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum AppResource {
+    Local(String),
+    Remote(Url),
+}
+
 /// An MCP tool which serves as an entrypoint for an app.
 #[derive(Clone, Debug)]
 pub(crate) struct AppTool {
@@ -46,12 +52,6 @@ pub(crate) struct PrefetchOperation {
     pub(crate) operation: Arc<Operation>,
     /// A unique ID for the operation that the UI will use to look up its data
     pub(crate) prefetch_id: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum AppResource {
-    Local(String),
-    Remote(Url),
 }
 
 impl App {

@@ -32,7 +32,7 @@ pub(crate) async fn find_and_execute_app(
     None
 }
 
-pub(crate) async fn execute_app(
+async fn execute_app(
     app: &App,
     tool: &AppTool,
     headers: &HeaderMap,
