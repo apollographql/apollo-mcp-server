@@ -113,7 +113,8 @@ impl Operation {
 
             let tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(
                 ToolAnnotations::new()
-                    .read_only(operation.operation_type != OperationType::Mutation),
+                    .read_only(operation.operation_type != OperationType::Mutation)
+                    .destructive(operation.operation_type == OperationType::Mutation),
             );
             let character_count = tool_character_length(&tool);
             match character_count {
@@ -714,7 +715,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -782,7 +785,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -861,7 +866,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -943,7 +950,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1022,7 +1031,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1098,7 +1109,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1184,7 +1197,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1285,7 +1300,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1351,7 +1368,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1524,7 +1543,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1593,7 +1614,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1666,7 +1689,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -1728,7 +1753,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -2181,7 +2208,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -2237,7 +2266,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -2703,7 +2734,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -2820,7 +2853,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
@@ -2950,7 +2985,9 @@ mod tests {
                         read_only_hint: Some(
                             false,
                         ),
-                        destructive_hint: None,
+                        destructive_hint: Some(
+                            true,
+                        ),
                         idempotent_hint: None,
                         open_world_hint: None,
                     },
@@ -3008,7 +3045,9 @@ mod tests {
                         read_only_hint: Some(
                             false,
                         ),
-                        destructive_hint: None,
+                        destructive_hint: Some(
+                            true,
+                        ),
                         idempotent_hint: None,
                         open_world_hint: None,
                     },
@@ -3066,7 +3105,9 @@ mod tests {
                     read_only_hint: Some(
                         true,
                     ),
-                    destructive_hint: None,
+                    destructive_hint: Some(
+                        false,
+                    ),
                     idempotent_hint: None,
                     open_world_hint: None,
                 },
