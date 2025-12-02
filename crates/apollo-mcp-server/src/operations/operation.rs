@@ -551,10 +551,16 @@ fn ensure_properties_exists(json_object: &mut Value) {
 }
 
 fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
-    let tool_schema_string = serde_json::to_string_pretty(&serde_json::json!(tool.input_schema))?;
+    let input_schema_len =
+        serde_json::to_string_pretty(&serde_json::json!(tool.input_schema))?.len();
+    let output_schema_len = match &tool.output_schema {
+        Some(schema) => serde_json::to_string_pretty(schema.as_ref())?.len(),
+        None => 0,
+    };
     Ok(tool.name.len()
         + tool.description.as_ref().map(|d| d.len()).unwrap_or(0)
-        + tool_schema_string.len())
+        + input_schema_len
+        + output_schema_len)
 }
 
 #[tracing::instrument(skip_all)]
@@ -638,7 +644,7 @@ mod tests {
     use crate::{
         custom_scalar_map::CustomScalarMap,
         graphql::Executable as _,
-        operations::{MutationMode, Operation, RawOperation},
+        operations::{MutationMode, Operation, RawOperation, operation::tool_character_length},
     };
 
     // Example schema for tests
@@ -4522,5 +4528,109 @@ mod tests {
           "properties": {}
         }
         "#);
+    }
+
+    #[test]
+    fn tool_character_length_without_output_schema() {
+        use serde_json::Map;
+
+        let mut input_schema = Map::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+        input_schema.insert(
+            "properties".to_string(),
+            serde_json::json!({ "id": { "type": "string" } }),
+        );
+
+        let tool = Tool::new("test_tool", "A test tool description", input_schema.clone());
+
+        let length = tool_character_length(&tool).unwrap();
+
+        let expected_input_schema_len =
+            serde_json::to_string_pretty(&serde_json::json!(input_schema))
+                .unwrap()
+                .len();
+
+        assert_eq!(
+            length,
+            "test_tool".len() + "A test tool description".len() + expected_input_schema_len
+        );
+    }
+
+    #[test]
+    fn tool_character_length_with_output_schema() {
+        use serde_json::Map;
+
+        let mut input_schema = Map::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+        input_schema.insert(
+            "properties".to_string(),
+            serde_json::json!({ "id": { "type": "string" } }),
+        );
+
+        let mut tool = Tool::new("test_tool", "A test tool description", input_schema.clone());
+
+        let mut output_schema = Map::new();
+        output_schema.insert("type".to_string(), serde_json::json!("object"));
+        output_schema.insert(
+            "properties".to_string(),
+            serde_json::json!({
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "result": { "type": "string" }
+                    }
+                }
+            }),
+        );
+        tool.output_schema = Some(std::sync::Arc::new(output_schema.clone()));
+
+        let length = tool_character_length(&tool).unwrap();
+
+        let expected_input_schema_len =
+            serde_json::to_string_pretty(&serde_json::json!(input_schema))
+                .unwrap()
+                .len();
+
+        let expected_output_schema_len =
+            serde_json::to_string_pretty(&serde_json::json!(output_schema))
+                .unwrap()
+                .len();
+
+        assert_eq!(
+            length,
+            "test_tool".len()
+                + "A test tool description".len()
+                + expected_input_schema_len
+                + expected_output_schema_len
+        );
+    }
+
+    #[test]
+    fn tool_character_length_output_schema_adds_to_total() {
+        use serde_json::Map;
+
+        let mut input_schema = Map::new();
+        input_schema.insert("type".to_string(), serde_json::json!("object"));
+
+        let tool_without = Tool::new("test_tool", "A test tool description", input_schema.clone());
+
+        let mut tool_with = tool_without.clone();
+        let mut output_schema = Map::new();
+        output_schema.insert("type".to_string(), serde_json::json!("object"));
+        output_schema.insert(
+            "properties".to_string(),
+            serde_json::json!({ "data": { "type": "string" } }),
+        );
+        tool_with.output_schema = Some(std::sync::Arc::new(output_schema.clone()));
+
+        let length_without = tool_character_length(&tool_without).unwrap();
+        let length_with = tool_character_length(&tool_with).unwrap();
+
+        let expected_output_schema_len =
+            serde_json::to_string_pretty(&serde_json::json!(output_schema))
+                .unwrap()
+                .len();
+
+        assert_eq!(length_with - length_without, expected_output_schema_len);
     }
 }
