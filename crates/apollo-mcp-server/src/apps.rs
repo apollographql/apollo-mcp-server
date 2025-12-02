@@ -516,4 +516,60 @@ mod test_load_from_path {
             "Prefetches should be deduplicated via Arc comparison"
         )
     }
+
+    #[test]
+    fn should_map_extra_inputs_to_input_schema() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("ExtraInputsApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation { hello }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1", "extraInputs": [{
+                            "name": "isAwesome",
+                            "type": "boolean",
+                            "description": "Is everything awesome?",
+                            "required": true
+                          }]}
+                        ]}
+                    ]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse(
+                "type Query { hello: String, world: String }",
+                "schema.graphql",
+            )
+            .unwrap()
+            .validate()
+            .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+        )
+        .expect("Failed to load apps");
+
+        let input_schema = &apps[0].tools[0].tool.input_schema;
+
+        let properties = input_schema
+            .get("properties")
+            .expect("Should have a properties property")
+            .as_object()
+            .expect("Properties should be a map");
+        let required = input_schema
+            .get("required")
+            .expect("Should have a required property")
+            .as_array()
+            .expect("Required should be an array");
+
+        assert!(properties.contains_key("isAwesome"));
+        assert!(required.contains(&Value::String("isAwesome".to_string())));
+    }
 }
