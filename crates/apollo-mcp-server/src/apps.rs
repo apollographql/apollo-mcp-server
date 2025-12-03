@@ -5,7 +5,7 @@ use std::{fs::read_to_string, sync::Arc};
 
 use apollo_compiler::{Schema, validation::Valid};
 use rmcp::model::{Meta, RawResource, Resource, Tool};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tracing::debug;
 use url::Url;
@@ -25,6 +25,8 @@ pub(crate) struct App {
     pub(crate) name: String,
     /// The HTML resource that serves as the app's UI
     pub(crate) resource: AppResource,
+    /// Any CSP settings to apply to the resource
+    pub(crate) csp_settings: Option<CSPSettings>,
     /// The URI of the app's resource
     pub(crate) uri: Url,
     /// Entrypoint tools for this app
@@ -220,6 +222,7 @@ pub(crate) fn load_from_path(
             name,
             uri,
             resource,
+            csp_settings: manifest.csp,
             tools,
             prefetch_operations,
         });
@@ -278,6 +281,7 @@ struct Manifest {
     resource: String,
     name: Option<String>,
     description: Option<String>,
+    csp: Option<CSPSettings>,
     #[allow(dead_code)] // Only used to verify we recognize the file
     format: ManifestFormat,
     #[allow(dead_code)] // Only used to verify we recognize the version
@@ -347,6 +351,15 @@ struct ExtraInputDefinition {
     value_type: JsonSchemaType,
     #[serde(default)]
     required: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all(deserialize = "camelCase"))]
+pub(crate) struct CSPSettings {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) connect_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) resource_domains: Option<Vec<String>>,
 }
 
 #[cfg(test)]
