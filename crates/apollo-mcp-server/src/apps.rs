@@ -1,3 +1,5 @@
+use core::fmt;
+use std::fmt::Display;
 use std::path::Path;
 use std::{fs::read_to_string, sync::Arc};
 
@@ -248,7 +250,7 @@ fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>)
             extra_input.name,
             json!({
                 "description": extra_input.description,
-                "type": extra_input.value_type
+                "type": extra_input.value_type.to_string()
             }),
         );
     }
@@ -302,11 +304,35 @@ struct ToolDefinition {
 }
 
 #[derive(Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum JsonSchemaType {
+    String,
+    Number,
+    Boolean,
+    Integer,
+    Array,
+    Object,
+}
+
+impl Display for JsonSchemaType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            JsonSchemaType::String => "string",
+            JsonSchemaType::Number => "number",
+            JsonSchemaType::Boolean => "boolean",
+            JsonSchemaType::Integer => "integer",
+            JsonSchemaType::Array => "array",
+            JsonSchemaType::Object => "object",
+        })
+    }
+}
+
+#[derive(Clone, Deserialize)]
 struct ExtraInputDefinition {
     name: String,
     description: String,
     #[serde(rename = "type")]
-    value_type: String,
+    value_type: JsonSchemaType,
     #[serde(default)]
     required: bool,
 }
