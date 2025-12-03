@@ -223,13 +223,11 @@ fn format_interfaces(
 }
 
 fn type_name(ty: &Type) -> String {
-    let name = shorten_scalar_names(ty.inner_named_type().as_str());
-    if ty.is_list() {
-        format!("[{name}]")
-    } else if ty.is_non_null() {
-        format!("{name}!")
-    } else {
-        name.to_string()
+    match ty {
+        Type::List(inner) => format!("[{}]", type_name(inner)),
+        Type::NonNullList(inner) => format!("[{}]!", type_name(inner)),
+        Type::Named(name) => shorten_scalar_names(name.as_str()).to_string(),
+        Type::NonNullNamed(name) => format!("{}!", shorten_scalar_names(name.as_str())),
     }
 }
 
