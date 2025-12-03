@@ -28,6 +28,7 @@
     self,
     cache-nix-action,
     crane,
+    features ? "",
     flake-utils,
     nixpkgs,
     rust-overlay,
@@ -46,7 +47,7 @@
       # Define the toolchain based on the rust-toolchain file
       toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-        inherit crane toolchain;
+        inherit crane toolchain features;
       };
 
       # Supporting tools
@@ -117,7 +118,7 @@
               targets = [target];
             };
             apollo-mcp-cross = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-              inherit crane;
+              inherit crane features;
               toolchain = crossToolchain;
             };
           in
