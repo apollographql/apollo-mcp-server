@@ -279,7 +279,6 @@ struct Manifest {
     resource: String,
     name: Option<String>,
     description: Option<String>,
-    #[serde(default)]
     csp: Option<CSPSettings>,
     #[allow(dead_code)] // Only used to verify we recognize the file
     format: ManifestFormat,
