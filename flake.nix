@@ -28,11 +28,11 @@
     self,
     cache-nix-action,
     crane,
-    features ? "",
     flake-utils,
     nixpkgs,
     rust-overlay,
     unstable,
+    ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
@@ -46,6 +46,10 @@
 
       # Define the toolchain based on the rust-toolchain file
       toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+      # Accept features from --argstr or default to empty string
+      features = inputs.features or "";
+
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
         inherit crane toolchain features;
       };
