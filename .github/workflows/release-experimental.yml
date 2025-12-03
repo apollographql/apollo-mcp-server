@@ -77,6 +77,8 @@ jobs:
           gc-max-store-size: 5G
 
       - name: Build binaries
+        env:
+          APOLLO_MCP_FEATURES: ${{ inputs.features }}
         run: |
           mkdir release
           for BUILD_TARGET in ${{ matrix.targets }}; do
@@ -87,7 +89,7 @@ jobs:
             cp README.md LICENSE "release/$TARGET/dist"
 
             echo "Building release for $TARGET..."
-            nix build .#$BUILD_TARGET --argstr features "${{ inputs.features }}"
+            nix build .#$BUILD_TARGET
             cp result/bin/* "release/$TARGET/dist/"
           done
 

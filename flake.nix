@@ -47,8 +47,8 @@
       # Define the toolchain based on the rust-toolchain file
       toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
 
-      # Accept features from --argstr or default to empty string
-      features = inputs.features or "";
+      # Accept features from environment variable or default to empty string
+      features = builtins.getEnv "APOLLO_MCP_FEATURES";
 
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
         inherit crane toolchain features;
