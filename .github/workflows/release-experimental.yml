@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Validate experimental version pattern
         run: |
-          if ! echo "${{ inputs.version }}" | grep -qE '^\d+\.\d+\.\d+-experimental\.\d+$'; then
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+-experimental\.[0-9]+$'; then
             echo "Error: Version must match pattern: X.Y.Z-experimental.N"
             echo "Examples: 1.2.1-experimental.1, 2.0.0-experimental.3"
             echo "Provided: ${{ inputs.version }}"
