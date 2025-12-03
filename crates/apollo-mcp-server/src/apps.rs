@@ -226,27 +226,15 @@ pub(crate) fn load_from_path(
 }
 
 fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>) {
-    let mut properties = orig
-        .remove("properties")
-        .and_then(|val| {
-            if let Value::Object(properties) = val {
-                Some(properties)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+    let mut properties = match orig.remove("properties") {
+        Some(Value::Object(props)) => props,
+        _ => Map::default(),
+    };
 
-    let mut required = orig
-        .remove("required")
-        .and_then(|val| {
-            if let Value::Array(required) = val {
-                Some(required)
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+    let mut required = match orig.remove("required") {
+        Some(Value::Array(req)) => req,
+        _ => Vec::default(),
+    };
 
     for extra_input in extra {
         if extra_input.required {
