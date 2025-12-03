@@ -173,7 +173,7 @@ pub(crate) fn load_from_path(
                     ),
                     input_schema: if let Some(extra_inputs) = tool.extra_inputs {
                         let mut merged = operation.tool.input_schema.as_ref().clone();
-                        merge_inputs(&mut merged, extra_inputs);
+                        merge_inputs(&mut merged, extra_inputs)?;
                         Arc::new(merged)
                     } else {
                         operation.tool.input_schema.clone()
@@ -227,7 +227,10 @@ pub(crate) fn load_from_path(
     Ok(apps)
 }
 
-fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>) {
+fn merge_inputs(
+    orig: &mut Map<String, Value>,
+    extra: Vec<ExtraInputDefinition>,
+) -> Result<(), String> {
     let mut properties = match orig.remove("properties") {
         Some(Value::Object(props)) => props,
         _ => Map::default(),
@@ -239,6 +242,13 @@ fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>)
     };
 
     for extra_input in extra {
+        if properties.contains_key(&extra_input.name) {
+            return Err(format!(
+                "Extra input with name '{}' failed to process because another input with this name was already processed. Make sure your extra_input names are unique, both from each other and any graphql variables you may have.",
+                extra_input.name
+            ));
+        }
+
         if extra_input.required {
             let value = Value::String(extra_input.name.clone());
             if !required.contains(&value) {
@@ -257,6 +267,8 @@ fn merge_inputs(orig: &mut Map<String, Value>, extra: Vec<ExtraInputDefinition>)
 
     orig.insert("properties".to_string(), Value::Object(properties));
     orig.insert("required".to_string(), Value::Array(required));
+
+    Ok(())
 }
 
 #[derive(Clone, Deserialize)]
@@ -585,5 +597,103 @@ mod test_load_from_path {
 
         assert!(properties.contains_key("isAwesome"));
         assert!(required.contains(&Value::String("isAwesome".to_string())));
+    }
+
+    #[test]
+    fn should_error_when_multiple_extra_inputs_with_same_name() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("ExtraInputsSameNameApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation { hello }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1", "extraInputs": [{
+                            "name": "isAwesome",
+                            "type": "boolean",
+                            "description": "Is everything awesome?",
+                            "required": true
+                          },
+                          {
+                            "name": "isAwesome",
+                            "type": "boolean",
+                            "description": "Is everything awesome still?",
+                            "required": false
+                          }
+                          ]}
+                        ]}
+                    ]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse(
+                "type Query { hello: String, world: String }",
+                "schema.graphql",
+            )
+            .unwrap()
+            .validate()
+            .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+        );
+
+        assert!(apps.is_err());
+        assert_eq!(
+            apps.err().unwrap(),
+            "Extra input with name 'isAwesome' failed to process because another input with this name was already processed. Make sure your extra_input names are unique, both from each other and any graphql variables you may have."
+        )
+    }
+
+    #[test]
+    fn should_error_when_extra_input_name_conflicts_with_graphql_variable() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("ExtraInputsSameNameApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation($isAwesome: Boolean) { hello(isAwesome: $isAwesome) }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1", "extraInputs": [{
+                            "name": "isAwesome",
+                            "type": "boolean",
+                            "description": "Is everything awesome?",
+                            "required": true
+                          }
+                          ]}
+                        ]}
+                    ]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse(
+                "type Query { hello(isAwesome: Boolean): String, world: String }",
+                "schema.graphql",
+            )
+            .unwrap()
+            .validate()
+            .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+        );
+
+        assert!(apps.is_err());
+        assert_eq!(
+            apps.err().unwrap(),
+            "Extra input with name 'isAwesome' failed to process because another input with this name was already processed. Make sure your extra_input names are unique, both from each other and any graphql variables you may have."
+        )
     }
 }
