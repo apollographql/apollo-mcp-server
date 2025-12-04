@@ -29,9 +29,34 @@ jobs:
             exit 1
           fi
 
+  update-version:
+    name: Update version in install scripts
+    needs: validate
+    runs-on: ubuntu-24.04
+    outputs:
+      release_commit: ${{ steps.commit-version.outputs.commit_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Update install script versions
+        run: |
+          sed -i 's/^PACKAGE_VERSION=".*"$/PACKAGE_VERSION="v${{ inputs.version }}"/' scripts/nix/install.sh
+          sed -i "s/^\$package_version = '.*'$/\$package_version = 'v${{ inputs.version }}'/" scripts/windows/install.ps1
+
+      - name: Commit version updates
+        id: commit-version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scripts/nix/install.sh scripts/windows/install.ps1
+          git commit -m "chore: update install scripts to version ${{ inputs.version }}"
+          echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+
   build:
     name: Release binaries
-    needs: validate
+    needs: update-version
     strategy:
       matrix:
         include:
@@ -212,6 +237,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ needs.update-version.outputs.release_commit }}
           files: artifacts/*
           prerelease: ${{ contains(env.VERSION, '-experimental.') }}
           make_latest: false
@@ -223,11 +249,12 @@ jobs:
 
   publish:
     name: Publish the release
-    needs: build
+    needs: [build, update-version]
     runs-on: ubuntu-24.04
     steps:
       - name: Make latest
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
+          target_commitish: ${{ needs.update-version.outputs.release_commit }}
           prerelease: ${{ contains(env.VERSION, '-experimental.') }}
