@@ -77,8 +77,8 @@ jobs:
             bundle: windows
             targets: cross-aarch64-pc-windows-gnullvm cross-x86_64-pc-windows-gnullvm
 
-          # # Apple SDK does not allow us to cross compile from non-apple-branded
-          # # machines, so we run that bundle on a macOS runner
+          # Apple SDK does not allow us to cross compile from non-apple-branded
+          # machines, so we run that bundle on a macOS runner
           - os: macos-latest
             bundle: darwin
             targets: cross-aarch64-apple-darwin cross-x86_64-apple-darwin
