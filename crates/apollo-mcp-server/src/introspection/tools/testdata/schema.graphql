@@ -273,6 +273,7 @@ type Query {
   posts(filter: PostFilter): [Post!]!
   comments(postId: ID!): [Comment!]!
   notifications(filter: NotificationFilter): [Notification!]!
+  subNotifications(filter: NotificationFilter): [[Notification!]!]!
   search(query: String!): SearchResult!
 }
 
