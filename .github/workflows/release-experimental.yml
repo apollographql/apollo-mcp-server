@@ -213,7 +213,7 @@ jobs:
         with:
           tag_name: v${{ env.VERSION }}
           files: artifacts/*
-          prerelease: ${{ contains(env.VERSION, '-experimental-') }}
+          prerelease: ${{ contains(env.VERSION, '-experimental.') }}
           make_latest: false # this runs for each combination in the matrix - don't mark as latest until all are done
 
       - name: Generate artifact attestation
@@ -230,4 +230,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
-          prerelease: ${{ contains(env.VERSION, '-experimental-') }}
+          prerelease: ${{ contains(env.VERSION, '-experimental.') }}
