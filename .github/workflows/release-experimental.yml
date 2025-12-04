@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ needs.update-version.outputs.release_commit }}
       - uses: nixbuild/nix-quick-install-action@v30
         with:
           nix_conf: ${{ env.nix_conf }}
