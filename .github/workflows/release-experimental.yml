@@ -33,8 +33,11 @@ jobs:
     name: Update version in install scripts
     needs: validate
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     outputs:
       release_commit: ${{ steps.commit-version.outputs.commit_sha }}
+      temp_branch: ${{ steps.commit-version.outputs.temp_branch }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -45,14 +48,18 @@ jobs:
           sed -i 's/^PACKAGE_VERSION=".*"$/PACKAGE_VERSION="v${{ inputs.version }}"/' scripts/nix/install.sh
           sed -i "s/^\$package_version = '.*'$/\$package_version = 'v${{ inputs.version }}'/" scripts/windows/install.ps1
 
-      - name: Commit version updates
+      - name: Commit and push to temporary branch
         id: commit-version
         run: |
+          TEMP_BRANCH="release-temp-${{ inputs.version }}-${{ github.run_id }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$TEMP_BRANCH"
           git add scripts/nix/install.sh scripts/windows/install.ps1
           git commit -m "chore: update install scripts to version ${{ inputs.version }}"
+          git push origin "$TEMP_BRANCH"
           echo "commit_sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "temp_branch=$TEMP_BRANCH" >> $GITHUB_OUTPUT
 
   build:
     name: Release binaries
@@ -258,3 +265,17 @@ jobs:
           tag_name: v${{ env.VERSION }}
           target_commitish: ${{ needs.update-version.outputs.release_commit }}
           prerelease: ${{ contains(env.VERSION, '-experimental.') }}
+
+  cleanup:
+    name: Cleanup temporary branch
+    needs: [publish, update-version]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    if: always()
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Delete temporary branch
+        run: |
+          git push origin --delete ${{ needs.update-version.outputs.temp_branch }} || true
