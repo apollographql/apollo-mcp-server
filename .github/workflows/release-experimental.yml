@@ -78,7 +78,7 @@ jobs:
 
       - name: Build binaries
         env:
-          APOLLO_MCP_FEATURES: ${{ inputs.features }}
+          APOLLO_MCP_BUILD_FEATURES: ${{ inputs.features }}
         run: |
           mkdir release
           for BUILD_TARGET in ${{ matrix.targets }}; do
@@ -214,7 +214,7 @@ jobs:
           tag_name: v${{ env.VERSION }}
           files: artifacts/*
           prerelease: ${{ contains(env.VERSION, '-experimental.') }}
-          make_latest: false # this runs for each combination in the matrix - don't mark as latest until all are done
+          make_latest: false
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v2
