@@ -89,7 +89,7 @@ jobs:
             cp README.md LICENSE "release/$TARGET/dist"
 
             echo "Building release for $TARGET..."
-            nix build .#$BUILD_TARGET
+            nix build --impure .#$BUILD_TARGET
             cp result/bin/* "release/$TARGET/dist/"
           done
 
