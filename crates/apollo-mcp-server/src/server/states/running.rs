@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
-use opentelemetry::trace::FutureExt;
-use opentelemetry::{Context, KeyValue};
+use opentelemetry::KeyValue;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
@@ -26,12 +25,12 @@ use url::Url;
 use crate::apps::find_and_execute_app;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
+use crate::operations::{execute_operation, find_and_execute_operation};
 use crate::{
     apps::AppResource,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
-    graphql::{self, Executable as _},
     headers::{ForwardHeaders, build_request_headers},
     health::HealthCheck,
     introspection::tools::{
@@ -334,13 +333,13 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            execute_tool
-                .execute(graphql::Request {
-                    input: Value::from(request.arguments.clone()),
-                    endpoint: &self.endpoint,
-                    headers: &headers,
-                })
-                .await
+            execute_operation(
+                execute_tool,
+                &headers,
+                request.arguments.as_ref(),
+                &self.endpoint,
+            )
+            .await
         } else if tool_name == VALIDATE_TOOL_NAME
             && let Some(validate_tool) = &self.validate_tool
         {
@@ -359,23 +358,16 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            let operation = {
-                let operations = self.operations.read().await;
-                operations
-                    .iter()
-                    .find(|op| op.as_ref().name == tool_name)
-                    .cloned()
-            };
-            if let Some(operation) = operation {
-                let graphql_request = graphql::Request {
-                    input: Value::from(request.arguments),
-                    endpoint: &self.endpoint,
-                    headers: &headers,
-                };
-                operation
-                    .execute(graphql_request)
-                    .with_context(Context::current())
-                    .await
+            if let Some(res) = find_and_execute_operation(
+                &self.operations.read().await,
+                &tool_name,
+                &headers,
+                request.arguments.as_ref(),
+                &self.endpoint,
+            )
+            .await
+            {
+                res
             } else if let Some(res) = find_and_execute_app(
                 &self.apps,
                 &tool_name,
