@@ -226,7 +226,8 @@ fn type_name(ty: &Type) -> String {
     match ty {
         Type::List(inner) => format!("[{}]", type_name(inner)),
         Type::NonNullList(inner) => format!("[{}]!", type_name(inner)),
-        Type::Named(name) => shorten_scalar_names(name.as_str()).to_string(),
+        #[allow(clippy::useless_format)]
+        Type::Named(name) => format!("{}", shorten_scalar_names(name.as_str())),
         Type::NonNullNamed(name) => format!("{}!", shorten_scalar_names(name.as_str())),
     }
 }
