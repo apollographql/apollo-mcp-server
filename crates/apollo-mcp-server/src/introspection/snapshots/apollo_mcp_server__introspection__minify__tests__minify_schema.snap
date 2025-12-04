@@ -53,7 +53,7 @@ CreatePostInput: I:CreatePostInput:title:s!,content:s!,status:ContentStatus,tags
 UpdatePostInput: I:UpdatePostInput:title:s,content:s,status:ContentStatus,tags:[s!]
 CreateCommentInput: I:CreateCommentInput:content:s!,postId:d!,parentCommentId:d
 NotificationFilter: I:NotificationFilter:priority:NotificationPriority,read:b,type:s,startDate:DateTime,endDate:DateTime
-Query: T:Query:node(id:d!):Node,user(id:d!):User,post(id:d!):Post,postsOld(filter:[d!]):[Post!]!@D("Usepostsinstead"),posts(filter:PostFilter):[Post!]!,comments(postId:d!):[Comment!]!,notifications(filter:NotificationFilter):[Notification!]!,search(query:s!):SearchResult!
+Query: T:Query:node(id:d!):Node,user(id:d!):User,post(id:d!):Post,postsOld(filter:[d!]):[Post!]!@D("Usepostsinstead"),posts(filter:PostFilter):[Post!]!,comments(postId:d!):[Comment!]!,notifications(filter:NotificationFilter):[Notification!]!,subNotifications(filter:NotificationFilter):[[Notification!]!]!,search(query:s!):SearchResult!
 Mutation: T:Mutation:createUser(input:CreateUserInput!):User!,createPost(input:CreatePostInput!):Post!,updatePost(id:d!,input:UpdatePostInput!):Post!,createComment(input:CreateCommentInput!):Comment!,deletePost(id:d!):b!,uploadMedia(file:Upload!):Media!,updateUserPreferences(id:d!,preferences:UserPreferencesInput!):UserPreferences!
 Subscription: T:Subscription:postUpdated(id:d!):Post!,newComment(postId:d!):Comment!,notificationReceived(userId:d!):Notification!
 SearchResult: U:SearchResult:User,Post,Comment,Tag
