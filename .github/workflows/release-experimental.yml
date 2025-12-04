@@ -40,16 +40,16 @@ jobs:
             bundle: linux
             targets: cross-aarch64-unknown-linux-gnu cross-aarch64-unknown-linux-musl cross-x86_64-unknown-linux-gnu cross-x86_64-unknown-linux-musl
 
-          # We can compile the windows target from linux
-          - os: ubuntu-24.04
-            bundle: windows
-            targets: cross-aarch64-pc-windows-gnullvm cross-x86_64-pc-windows-gnullvm
+          # # We can compile the windows target from linux
+          # - os: ubuntu-24.04
+          #   bundle: windows
+          #   targets: cross-aarch64-pc-windows-gnullvm cross-x86_64-pc-windows-gnullvm
 
-          # Apple SDK does not allow us to cross compile from non-apple-branded
-          # machines, so we run that bundle on a macOS runner
-          - os: macos-latest
-            bundle: darwin
-            targets: cross-aarch64-apple-darwin cross-x86_64-apple-darwin
+          # # Apple SDK does not allow us to cross compile from non-apple-branded
+          # # machines, so we run that bundle on a macOS runner
+          # - os: macos-latest
+          #   bundle: darwin
+          #   targets: cross-aarch64-apple-darwin cross-x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
