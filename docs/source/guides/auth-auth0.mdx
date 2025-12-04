@@ -36,7 +36,7 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
 1. Navigate to your dashboard **Settings**.
    1. Under **General** -> **API Authorization Settings**, set the **Default Audience** to the `Identifier` you chose.
    1. Navigate to the **Advanced** tab.
-   1. Toggle on **OIDC Dynamic Application Registration** to enable [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
+   1. Toggle on **Dynamic Client Registration (DCR)** to enable [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
    1. Toggle on **Enable Application Connections**.
    1. Save your changes.
 
@@ -66,7 +66,7 @@ Your Auth0 setup is now complete. You have an API with an audience and a connect
 <ExpansionPanel title="Something went wrong? Try these troubleshooting steps">
   - Check that the `curl` command is correct and that you have the correct values for `<CONNECTION ID>`, `<AUTH0 DOMAIN>`, and `<MGMT API ACCESS TOKEN>`.
   - Check that you have the correct permissions to promote the connection to domain level. 
-    - In your Auth0 dashboard, navigate to **Applications** -> **API Explorer Application** -> **APIs**. Ensure that the **Auth0 Management API** is authorized.
+    - In your Auth0 dashboard, navigate to **Applications** -> **Applications** -> **API Explorer Application** -> **APIs**. Ensure that the **Auth0 Management API** is authorized.
     - Expand the **Auth0 Management API** item and enable the `update:connections` permission.
     ![Auth0 Management API Permissions](../images/auth0-permissions-enable.png)
     - Click **Update** to save your changes.
