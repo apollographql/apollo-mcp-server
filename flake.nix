@@ -32,6 +32,7 @@
     nixpkgs,
     rust-overlay,
     unstable,
+    ...
   } @ inputs:
     flake-utils.lib.eachDefaultSystem (system: let
       pkgs = nixpkgs.legacyPackages.${system};
@@ -45,8 +46,12 @@
 
       # Define the toolchain based on the rust-toolchain file
       toolchain = unstable-pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+
+      # Accept features from environment variable or default to empty string
+      features = builtins.getEnv "APOLLO_MCP_BUILD_FEATURES";
+
       apollo-mcp-builder = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-        inherit crane toolchain;
+        inherit crane toolchain features;
       };
 
       # Supporting tools
@@ -117,7 +122,7 @@
               targets = [target];
             };
             apollo-mcp-cross = unstable-pkgs.callPackage ./nix/apollo-mcp.nix {
-              inherit crane;
+              inherit crane features;
               toolchain = crossToolchain;
             };
           in
