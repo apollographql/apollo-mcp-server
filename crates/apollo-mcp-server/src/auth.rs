@@ -65,11 +65,13 @@ impl Config {
         let cors = CorsLayer::new()
             .allow_methods([Method::GET])
             .allow_origin(Any);
+
+        // Mount the .well-known endpoint at the path derived from the resource URL
+        let resource_path = self.resource.path().trim_end_matches('/');
+        let well_known_path = format!("{}/.well-known/oauth-protected-resource", resource_path);
+
         let auth_router = Router::new()
-            .route(
-                "/.well-known/oauth-protected-resource",
-                get(protected_resource),
-            )
+            .route(&well_known_path, get(protected_resource))
             .with_state(self.clone())
             .layer(cors);
 
@@ -94,7 +96,12 @@ async fn oauth_validate(
     // Consolidated unauthorized error for use with any fallible step in this process
     let unauthorized_error = || {
         let mut resource = auth_config.resource.clone();
-        resource.set_path("/.well-known/oauth-protected-resource");
+        // Preserve the configured path and append the well-known endpoint
+        let current_path = resource.path().trim_end_matches('/');
+        resource.set_path(&format!(
+            "{}/.well-known/oauth-protected-resource",
+            current_path
+        ));
 
         (
             StatusCode::UNAUTHORIZED,
@@ -151,6 +158,17 @@ mod tests {
         }
     }
 
+    fn test_config_with_path(path: &str) -> Config {
+        Config {
+            servers: vec![Url::parse("http://localhost:1234").unwrap()],
+            audiences: vec!["test-audience".to_string()],
+            resource: Url::parse(&format!("http://localhost:4000{}", path)).unwrap(),
+            resource_documentation: None,
+            scopes: vec!["read".to_string()],
+            disable_auth_token_passthrough: false,
+        }
+    }
+
     fn test_router(config: Config) -> Router {
         Router::new()
             .route("/test", get(|| async { "ok" }))
@@ -185,5 +203,112 @@ mod tests {
         let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
+    }
+
+    #[tokio::test]
+    async fn resource_metadata_url_preserves_path() {
+        let config = test_config_with_path("/custom-path");
+        let app = test_router(config.clone());
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        let www_auth = res
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            www_auth.contains("/custom-path/.well-known/oauth-protected-resource"),
+            "Expected resource_metadata to include custom path, got: {}",
+            www_auth
+        );
+    }
+
+    #[tokio::test]
+    async fn resource_metadata_url_works_without_path() {
+        let config = test_config();
+        let app = test_router(config.clone());
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        let www_auth = res
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            www_auth.contains("http://localhost:4000/.well-known/oauth-protected-resource"),
+            "Expected resource_metadata at root, got: {}",
+            www_auth
+        );
+    }
+
+    #[tokio::test]
+    async fn resource_metadata_url_handles_trailing_slash() {
+        let config = test_config_with_path("/custom-path/");
+        let app = test_router(config.clone());
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+        let www_auth = res
+            .headers()
+            .get(WWW_AUTHENTICATE)
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert!(
+            www_auth.contains("/custom-path/.well-known/oauth-protected-resource"),
+            "Expected clean path without double slashes, got: {}",
+            www_auth
+        );
+        assert!(
+            !www_auth.contains("4000//"),
+            "Should not contain double slashes after host, got: {}",
+            www_auth
+        );
+    }
+
+    #[tokio::test]
+    async fn well_known_endpoint_accessible_at_custom_path() {
+        let config = test_config_with_path("/custom-path");
+        let app = config.enable_middleware(Router::new());
+
+        let req = Request::builder()
+            .uri("/custom-path/.well-known/oauth-protected-resource")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn well_known_endpoint_accessible_at_root() {
+        let config = test_config();
+        let app = config.enable_middleware(Router::new());
+
+        let req = Request::builder()
+            .uri("/.well-known/oauth-protected-resource")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn well_known_endpoint_not_at_root_when_custom_path() {
+        let config = test_config_with_path("/custom-path");
+        let app = config.enable_middleware(Router::new());
+
+        let req = Request::builder()
+            .uri("/.well-known/oauth-protected-resource")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_ne!(res.status(), StatusCode::OK);
     }
 }
