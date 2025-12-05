@@ -127,13 +127,7 @@ fn filter_inputs_for_operation(
     Some(
         inputs
             .iter()
-            .filter(|(key, _)| {
-                operation
-                    .inner
-                    .variables
-                    .as_ref()
-                    .is_some_and(|variables| variables.contains_key(*key))
-            })
+            .filter(|(key, _)| operation.variable_definitions.contains_key(*key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     )

@@ -29,6 +29,8 @@ pub struct Operation {
     pub(crate) tool: Tool,
     pub(crate) inner: RawOperation,
     operation_name: String,
+    // Holds the raw variables defined in an operation
+    pub(crate) variable_definitions: HashMap<String, String>,
 }
 
 impl AsRef<Tool> for Operation {
@@ -129,10 +131,23 @@ impl Operation {
                     operation_name
                 ),
             }
+
+            let variable_definitions = operation
+                .variables
+                .iter()
+                .map(|variable| {
+                    (
+                        variable.name.to_string(),
+                        variable.ty.inner_named_type().to_string(),
+                    )
+                })
+                .collect::<_>();
+
             Ok(Some(Operation {
                 tool,
                 inner: raw_operation,
                 operation_name,
+                variable_definitions,
             }))
         } else {
             Ok(None)
