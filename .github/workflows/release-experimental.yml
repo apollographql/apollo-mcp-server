@@ -202,10 +202,10 @@ jobs:
             TMP_DIST=`mktemp -d`
             mkdir $TMP_DIST/dist
             cp "$BINARY_PATH" "$TMP_DIST/dist/"
-            zip -r "$TMP_DIST/apollo-mcp-server-$VERSION.zip" "$TMP_DIST/dist"
+            zip -r "$TMP_DIST/apollo-mcp-server-v$VERSION.zip" "$TMP_DIST/dist"
 
             echo "> Beginning notarization process (might take up to 20m)..."
-            xcrun notarytool submit "$TMP_DIST/apollo-mcp-server-$VERSION.zip" \
+            xcrun notarytool submit "$TMP_DIST/apollo-mcp-server-v$VERSION.zip" \
               --apple-id "$APPLE_USERNAME" \
               --password "$APPLE_NOTARIZATION_PASSWORD" \
               --team-id "$APPLE_TEAM_ID" \
@@ -230,7 +230,7 @@ jobs:
             RENAMED=${RENAMED/aarch64-pc-windows-gnullvm/aarch64-pc-windows-msvc}
 
             echo "Creating an artifact for $RELEASE"
-            tar -C release/$RELEASE -cf - dist/ | gzip -9 > artifacts/apollo-mcp-server-$VERSION-$RENAMED.tar.gz
+            tar -C release/$RELEASE -cf - dist/ | gzip -9 > artifacts/apollo-mcp-server-v$VERSION-$RENAMED.tar.gz
           done
 
       # We only need to generate the config schema for a release once, so we do it
