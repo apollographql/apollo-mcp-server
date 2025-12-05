@@ -96,10 +96,17 @@ async fn oauth_validate(
         let mut resource = auth_config.resource.clone();
         resource.set_path("/.well-known/oauth-protected-resource");
 
+        let scope = if auth_config.scopes.is_empty() {
+            None
+        } else {
+            Some(auth_config.scopes.join(" "))
+        };
+
         (
             StatusCode::UNAUTHORIZED,
             TypedHeader(WwwAuthenticate::Bearer {
                 resource_metadata: resource,
+                scope,
             }),
         )
     };
@@ -185,5 +192,33 @@ mod tests {
         let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
+    }
+
+    #[tokio::test]
+    async fn missing_token_with_multiple_scopes() {
+        let mut config = test_config();
+        config.scopes = vec!["read".to_string(), "write".to_string()];
+        let app = test_router(config);
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let headers = res.headers();
+        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+        assert!(www_auth.contains(r#"scope="read write""#));
+    }
+
+    #[tokio::test]
+    async fn missing_token_without_scopes_omits_scope_parameter() {
+        let mut config = test_config();
+        config.scopes = vec![];
+        let app = test_router(config);
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let headers = res.headers();
+        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+        assert!(www_auth.contains("Bearer"));
+        assert!(www_auth.contains("resource_metadata"));
+        assert!(!www_auth.contains("scope="));
     }
 }
