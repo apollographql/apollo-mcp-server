@@ -10,7 +10,10 @@ use serde_json::{Map, Value};
 use crate::custom_scalar_map::CustomScalarMap;
 
 mod name;
+mod output;
 mod r#type;
+
+pub use output::selection_set_to_schema;
 
 /// Convert a GraphQL type into a JSON Schema.
 ///
