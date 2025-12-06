@@ -3018,6 +3018,7 @@ mod tests {
                 source_path: None,
             },
             operation_name: "MutationName",
+            variable_definitions: {},
         }
         "#);
     }
@@ -3078,6 +3079,7 @@ mod tests {
                 source_path: None,
             },
             operation_name: "MutationName",
+            variable_definitions: {},
         }
         "#);
     }
