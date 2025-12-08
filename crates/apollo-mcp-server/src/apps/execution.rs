@@ -126,17 +126,13 @@ fn filter_inputs_for_operation(
     let inputs = inputs?;
     let operation_properties = operation.tool.input_schema.get("properties")?.as_object()?;
 
-    let r = Some(
+    Some(
         inputs
             .iter()
             .filter(|(key, _)| operation_properties.contains_key(*key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
-    );
-
-    println!("result of filter: {:?}", r);
-
-    return r;
+    )
 }
 
 #[cfg(test)]
