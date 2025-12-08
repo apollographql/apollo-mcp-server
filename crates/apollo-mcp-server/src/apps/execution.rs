@@ -124,16 +124,12 @@ fn filter_inputs_for_operation(
     operation: &Operation,
 ) -> Option<JsonObject> {
     let inputs = inputs?;
+    let operation_properties = operation.tool.input_schema.get("properties")?.as_object()?;
+
     Some(
         inputs
             .iter()
-            .filter(|(key, _)| {
-                operation
-                    .inner
-                    .variables
-                    .as_ref()
-                    .is_some_and(|variables| variables.contains_key(*key))
-            })
+            .filter(|(key, _)| operation_properties.contains_key(*key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     )
