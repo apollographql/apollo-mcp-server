@@ -129,7 +129,6 @@ impl Operation {
                     operation_name
                 ),
             }
-
             Ok(Some(Operation {
                 tool,
                 inner: raw_operation,
