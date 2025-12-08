@@ -50,9 +50,11 @@ impl graphql::Executable for Execute {
     }
 
     fn operation(&self, input: Value) -> Result<OperationDetails, McpError> {
-        let input = serde_json::from_value::<Input>(input).map_err(|_| {
+        let mut input = serde_json::from_value::<Input>(input).map_err(|_| {
             McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
         })?;
+
+        input.query = input.query.replace("\\n", "");
 
         let (_, operation_def, source_path) =
             operation_defs(&input.query, self.mutation_mode == MutationMode::All, None)
@@ -166,6 +168,25 @@ mod tests {
             })
         );
         assert_eq!(Executable::variables(&execute, input), Ok(Value::Null));
+    }
+
+    #[test]
+    fn execute_query_with_line_breaks() {
+        let execute = Execute::new(MutationMode::None);
+
+        let query = "query GetUser($id: ID!) {\\n user(id: $id) {\\n id\\n name\\n } }";
+
+        let input = json!({
+            "query": query,
+        });
+
+        assert_eq!(
+            Executable::operation(&execute, input.clone()),
+            Ok(OperationDetails {
+                query: query.to_string().replace("\\n", ""),
+                operation_name: Some("GetUser".to_string()),
+            })
+        );
     }
 
     #[test]
