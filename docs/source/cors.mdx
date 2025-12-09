@@ -1,68 +1,71 @@
 ---
-title: Configuring CORS
+title: Configuring CORS for Apollo MCP Server
 ---
 
-## Configuring CORS
+## Why it matters
 
-Control browser access to your MCP server
+When your clients include browsers (for example, Single Page Apps or other browser‑based frontends), you need Cross‑Origin Resource Sharing (CORS) properly configured, otherwise browsers will block requests. Misconfigurations (too permissive or too restrictive) can lead to bugs or security issues. By default, Apollo MCP Server has CORS **disabled**.
+
+This page shows how to enable and configure CORS for Apollo MCP Server.
 
 ---
 
 **This article describes CORS configuration that's specific to Apollo MCP Server**. For a more general introduction to CORS and common considerations, see [MDN's CORS documentation](https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS).
 
-By default, Apollo MCP Server has CORS disabled. If your MCP server serves tools to browser-based applications, you need to enable CORS and configure one of the following in the `cors` section of your server's YAML config file:
+## Enabling CORS
 
-- Add the origins of those web applications to the server's list of allowed `origins`.
-  - Use this option if there is a known, finite list of web applications that consume your MCP server.
-- Add a regex that matches the origins of those web applications to the server's list of allowed `match_origins`.
-  - This option comes in handy if you want to match origins against a pattern, see the example below that matches subdomains of a specific namespace.
-- Enable the `allow_any_origin` option.
-  - Use this option if your MCP server is a public API with arbitrarily many web app consumers.
-  - With this option enabled, the server sends the wildcard (\*) value for the `Access-Control-Allow-Origin` header. This enables _any_ website to initiate browser connections to it (but they can't provide cookies or other credentials).
-- If clients need to authenticate their requests with cookies, you _must_ use either `origins`, `match_origins`, or the combination of both options. When using both options, note that `origins` is evaluated before `match_origins`.
-
-The following snippet includes an example of each option (use either `allow_any_origin`, or `origins` and/or `match_origins`):
+To enable CORS, add a `cors` section to your Apollo MCP Server YAML config file:
 
 ```yaml title="mcp.yaml"
-transport:
-  type: streamable_http
-  port: 8000
-
 cors:
-  # Enable CORS support
   enabled: true
+```
 
-  # Set to true to allow any origin
-  # (Defaults to false)
+If `enabled` is not set to `true`, all other CORS options are ignored.
+
+### Configuring Allowed Origins
+
+You must specify which browser origins are allowed to access your MCP Server.
+
+#### Allow any origin
+
+```yaml title="mcp.yaml"
+cors:
+  enabled: true
   allow_any_origin: true
+```
 
-  # List of accepted origins
-  # (Ignored if allow_any_origin is true)
-  #
-  # An origin is a combination of scheme, hostname and port.
-  # It does not have any path section, so no trailing slash.
+If you set `allow_any_origin` to `true` (the default is `false`), Apollo MCP Server will respond with `Access-Control-Allow-Origin: *` in all CORS responses. This means that _any_ website can initiate browser connections. It is important to note that your client will not be able to authenticate to your MCP Server if you use this configuration.
+
+#### Origins
+
+```yaml title="mcp.yaml"
+cors:
+  enabled: true
   origins:
     - https://www.your-app.example.com
-
-  # List of origin patterns (regex matching)
-  match_origins:
-    - "^https://([a-z0-9]+[.])*api[.]example[.]com$" # any host that uses https and ends with .api.example.com
+    - https://staging.your-app.example.com
 ```
 
-You can also disable CORS entirely by setting `enabled` to `false` or omitting the `cors` section:
+Setting `origins` to any list of URLs restricts access to only those specific servers. If you have a known list of web applications accessing your MCP server, you should use this option. An origin is a combination of protocol, hostname, and port. It does not have a path section, so there should be no trailing slash.
+
+#### Match Origins
 
 ```yaml title="mcp.yaml"
 cors:
-  enabled: false
+  enabled: true
+  match_origins:
+    - "^http://localhost:\d+$" # Any localhost url from any port
+    - "^https://([a-z0-9]+[.])*.api.example.com$" # Any host that uses https and is either api.example.com or a subdomain of it
 ```
 
-If your MCP server serves exclusively _non_-browser-based clients, you probably don't need to enable CORS configuration.
+The `match_origins` configuration option allows you to use a regular expression to set endpoints that can interact with your Apollo MCP Server. While `match_origins` can be used with `origins`, it is always evaluated after `origins`.
 
 ### Passing credentials
 
 If your MCP server requires requests to include a user's credentials (e.g., via cookies), you need to modify your CORS configuration to tell the browser those credentials are allowed.
 
-You can enable credentials with CORS by setting the Access-Control-Allow-Credentials HTTP header to `true`.
+You can enable credentials with CORS by setting the `Access-Control-Allow-Credentials` HTTP header to `true`.
 
 To allow browsers to pass credentials to the server, set `allow_credentials` to `true`, like so:
 
@@ -132,35 +135,6 @@ cors:
   # Adds the Access-Control-Max-Age header
   # Maximum age (in seconds) for preflight cache
   max_age: 7200 # 2 hours
-```
-
-### Origin matching
-
-Apollo MCP Server supports two types of origin matching:
-
-#### Exact origins
-
-Use the `origins` array for exact origin matches:
-
-```yaml
-cors:
-  enabled: true
-  origins:
-    - http://localhost:3000
-    - https://myapp.example.com
-```
-
-#### Pattern matching
-
-Use the `match_origins` array for regex pattern matching:
-
-```yaml
-cors:
-  enabled: true
-  match_origins:
-    - "^https://localhost:[0-9]+$" # Any localhost HTTPS port
-    - "^http://localhost:[0-9]+$" # Any localhost HTTP port
-    - "^https://.*\\.example\\.com$" # Any subdomain of example.com
 ```
 
 ### Common configurations
