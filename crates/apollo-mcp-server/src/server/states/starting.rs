@@ -384,7 +384,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_distributed_tracing_extracts_traceparent() {
+    async fn test_otel_context_middleware_does_not_break_requests() {
         use tracing_subscriber::layer::SubscriberExt;
 
         // Initialize tracing for test
@@ -415,7 +415,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_distributed_tracing_works_without_traceparent() {
+    async fn test_otel_context_middleware_works_without_traceparent() {
         let _ = tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer())
             .try_init();
