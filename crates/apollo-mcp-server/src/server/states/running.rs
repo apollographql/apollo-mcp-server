@@ -1,23 +1,5 @@
 use std::sync::Arc;
 
-use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
-use crate::meter;
-use crate::server::states::telemetry::get_parent_span;
-use crate::{
-    custom_scalar_map::CustomScalarMap,
-    errors::{McpError, ServerError},
-    explorer::{EXPLORER_TOOL_NAME, Explorer},
-    graphql::{self, Executable as _},
-    headers::{ForwardHeaders, build_request_headers},
-    health::HealthCheck,
-    introspection::tools::{
-        execute::{EXECUTE_TOOL_NAME, Execute},
-        introspect::{INTROSPECT_TOOL_NAME, Introspect},
-        search::{SEARCH_TOOL_NAME, Search},
-        validate::{VALIDATE_TOOL_NAME, Validate},
-    },
-    operations::{MutationMode, Operation, RawOperation},
-};
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::{Context, KeyValue};
@@ -36,6 +18,25 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
+
+use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
+use crate::meter;
+use crate::server::states::telemetry::get_parent_span;
+use crate::{
+    custom_scalar_map::CustomScalarMap,
+    errors::{McpError, ServerError},
+    explorer::{EXPLORER_TOOL_NAME, Explorer},
+    graphql::{self, Executable as _},
+    headers::{ForwardHeaders, build_request_headers},
+    health::HealthCheck,
+    introspection::tools::{
+        execute::{EXECUTE_TOOL_NAME, Execute},
+        introspect::{INTROSPECT_TOOL_NAME, Introspect},
+        search::{SEARCH_TOOL_NAME, Search},
+        validate::{VALIDATE_TOOL_NAME, Validate},
+    },
+    operations::{MutationMode, Operation, RawOperation},
+};
 
 #[derive(Clone)]
 pub(super) struct Running {
