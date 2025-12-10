@@ -1,49 +1,26 @@
-# [1.2.1] - 2025-11-18
+# [1.3.0] - 2025-12-10
 
 ## 🚀 Features
 
-### feat: adding a debug print out for the entire parsed configuration - @alocay PR #496
+### Set destructiveHint in tool annotations - @DaleSeo PR #510
 
-Adding a debug print out to display the entire parsed configuration at the start of the server.
+This PR explicitly sets the `destructiveHint` annotation for MCP tools based on the GraphQL operation type. We now set `destructiveHint: false` for queries and `destructiveHint: true` for mutations to avoid relying on client-side spec compliance.
 
-Example output:
-```
-2025-11-18T16:12:29.253985Z  INFO Apollo MCP Server v1.2.0 // (c) Apollo Graph, Inc. // Licensed under MIT
-2025-11-18T16:12:29.254074Z DEBUG Configuration: Config {
-    cors: CorsConfig {
-        enabled: true,
-        origins: [],
-        match_origins: [],
-        allow_any_origin: true,
-        allow_credentials: false,
-        allow_methods: [
-            "GET",
-            "POST",
-            "DELETE",
-        ],
-        allow_headers: [
-            "content-type",
-            "mcp-protocol-version",
-            "mcp-session-id",
-            "traceparent",
-            "tracestate",
-        ],
-        ...
-```
+We currently only sets `readOnlyHint` based on whether the operation is a query and omits `destructiveHint`. Per [the MCP spec](https://modelcontextprotocol.io/legacy/concepts/tools#available-tool-annotations), `destructiveHint` defaults to true when omitted. The spec also says `destructiveHint` should be ignored when `readOnlyHint` is true, but OpenAI doesn't appear to implement this correctly.
 
 ## 🐛 Fixes
 
-### Fix fragment field validation in schema tree shaking - @DaleSeo PR #471
+### Fix broken non nullable return types in minified schema - @esilverm PR #514
 
-Fixed "field not found" errors that occurred when loading operations containing GraphQL fragments (inline fragments or fragment spreads) on union types or interfaces. The schema tree shaking algorithm now correctly handles fragments by evaluating them against their specific type conditions.
+Fix handling of minified return types to support non-null lists and other non-null cases to improve operation construction accuracy.
 
-### Implement deduplication of operations - @DaleSeo PR #491
+## 🛠 Maintenance
 
-Fixed an issue where specifying both a directory and an explicit file path within that directory in the `operations.paths` configuration would create duplicate tools.
-The server now automatically deduplicates operations based on their canonical file paths, ensuring that only one tool is created per unique operation file, regardless of how the paths are specified in the configuration.
+### Clean up sanitize module - @DaleSeo PR #503
 
-### Index fields from interface implementing types - @DaleSeo PR #494
+Just cleaning up unused code
 
-Fixed an issue where the search tool would not return results for fields that only exist on types implementing an interface. 
-Now when a query returns an interface type, the search tool correctly indexes and searches all fields from implementing types, making implementation-specific fields discoverable even when accessed through interface types.
+### Abstract away operation execution logic from the server's running state - @DaleSeo PR #517
+
+I abstracted the operation execution logic from the server's running state, following the pattern used in apps. This change helped me write tests and identify a subtle bug where the execute tool wasn't propagating the OTel context.
 
