@@ -228,7 +228,6 @@ dependencies = [
  "mockito",
  "opentelemetry",
  "opentelemetry-appender-log",
- "opentelemetry-http",
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",
  "opentelemetry-semantic-conventions",

@@ -328,11 +328,6 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        // let parent_cx = get_otel_parent_context(&context);
-        // let span = tracing::info_span!("list_tool");
-        // span.set_parent(parent_cx);
-
-        // let _enter = span.enter();
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
