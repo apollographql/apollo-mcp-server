@@ -25,8 +25,8 @@ use url::Url;
 use crate::apps::find_and_execute_app;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
-use crate::server::states::telemetry::get_parent_span;
 use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::server::states::telemetry::get_parent_span;
 use crate::{
     apps::AppResource,
     custom_scalar_map::CustomScalarMap,
