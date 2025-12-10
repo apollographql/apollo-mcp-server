@@ -1,5 +1,6 @@
 <component name="ProjectRunConfigurationManager">
   <configuration default="false" name="Run spacedevs" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+    <option name="buildProfileId" value="dev" />
     <option name="command" value="run --package apollo-mcp-server --bin apollo-mcp-server -- ./graphql/TheSpaceDevs/config.yaml" />
     <option name="workingDirectory" value="file://$PROJECT_DIR$" />
     <envs />

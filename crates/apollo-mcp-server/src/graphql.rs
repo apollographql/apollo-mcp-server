@@ -17,7 +17,7 @@ use url::Url;
 pub struct Request<'a> {
     pub input: Value,
     pub endpoint: &'a Url,
-    pub headers: HeaderMap,
+    pub headers: &'a HeaderMap,
 }
 
 #[derive(Debug, PartialEq)]
@@ -97,7 +97,7 @@ pub trait Executable {
 
         let result = GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
-            .headers(self.headers(&request.headers))
+            .headers(self.headers(request.headers))
             .body(Value::Object(request_body).to_string())
             .send()
             .await
@@ -237,7 +237,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
         let expected_request_body = json!({
             "variables": { "arg1": "foobar" },
@@ -280,7 +280,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
         let expected_request_body = json!({
             "variables": "mock_variables",
@@ -324,7 +324,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
 
         // when
@@ -354,7 +354,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
 
         server
@@ -393,7 +393,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
 
         server
@@ -428,7 +428,7 @@ mod test {
         let mock_request = Request {
             input: json!({}),
             endpoint: &url,
-            headers: HeaderMap::new(),
+            headers: &HeaderMap::new(),
         };
 
         server

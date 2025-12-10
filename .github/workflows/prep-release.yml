@@ -99,8 +99,8 @@ jobs:
         id: prep_branch
         run: |
           set -e
-          git fetch origin develop
-          git switch -c "release/${{ steps.bump.outputs.new_version }}" "origin/develop"
+          git fetch origin main
+          git switch -c "release/${{ steps.bump.outputs.new_version }}" "origin/main"
           echo "release_branch=release/${{ steps.bump.outputs.new_version }}" >> "$GITHUB_OUTPUT"
 
       - name: Update Cargo version

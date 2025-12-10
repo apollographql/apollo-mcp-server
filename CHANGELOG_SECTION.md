@@ -1,74 +1,49 @@
-# [1.1.0] - 2025-10-16
-
-## ❗ BREAKING ❗
-
-### Change default port from 5000 to 8000 - @DaleSeo PR #417
-
-The default server port has been changed from `5000` to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services).
-
-**Migration**: If you were relying on the default port 5000, you can continue using it by explicitly setting the port in your configuration file or command line arguments.
-
-- Before 
-
-```yaml
-transport:
-  type: streamable_http
-```
-
-- After
-
-```yaml
-transport:
-  type: streamable_http
-  port: 5000
-```
+# [1.2.1] - 2025-11-18
 
 ## 🚀 Features
 
-### feat: Add configuration option for metric temporality - @swcollard PR #413
+### feat: adding a debug print out for the entire parsed configuration - @alocay PR #496
 
-Creates a new configuration option for telemetry to set the Metric temporality to either Cumulative (default) or Delta.
+Adding a debug print out to display the entire parsed configuration at the start of the server.
 
-* Cumulative - The metric value will be the overall value since the start of the measurement.
-* Delta - The metric will be the difference in the measurement since the last time it was reported.
-
-Some observability  vendors require that one is used over the other so we want to support the configuration in the MCP Server.
-
-### Add support for forwarding headers from MCP clients to GraphQL APIs - @DaleSeo PR #428
-
-Adds opt-in support for dynamic header forwarding, which enables metadata for A/B testing, feature flagging, geo information from CDNs, or internal instrumentation to be sent from MCP clients to downstream GraphQL APIs. It automatically blocks hop-by-hop headers according to the guidelines in [RFC 7230, section 6.1](https://datatracker.ietf.org/doc/html/rfc7230#section-6.1), and it only works with the Streamable HTTP transport.
-
-You can configure using the `forward_headers` setting:
-
-```yaml
-forward_headers:
-  - x-tenant-id
-  - x-experiment-id
-  - x-geo-country
+Example output:
 ```
-
-Please note that this feature is not intended for passing through credentials as documented in the best practices page.
-
-### feat: Add mcp-session-id header to HTTP request trace attributes - @swcollard PR #421
-
-Includes the value of the [Mcp-Session-Id](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management) HTTP header as an attribute of the trace for HTTP requests to the MCP Server
+2025-11-18T16:12:29.253985Z  INFO Apollo MCP Server v1.2.0 // (c) Apollo Graph, Inc. // Licensed under MIT
+2025-11-18T16:12:29.254074Z DEBUG Configuration: Config {
+    cors: CorsConfig {
+        enabled: true,
+        origins: [],
+        match_origins: [],
+        allow_any_origin: true,
+        allow_credentials: false,
+        allow_methods: [
+            "GET",
+            "POST",
+            "DELETE",
+        ],
+        allow_headers: [
+            "content-type",
+            "mcp-protocol-version",
+            "mcp-session-id",
+            "traceparent",
+            "tracestate",
+        ],
+        ...
+```
 
 ## 🐛 Fixes
 
-### Fix compatibility issue with VSCode/Copilot - @DaleSeo PR #447
+### Fix fragment field validation in schema tree shaking - @DaleSeo PR #471
 
-This updates Apollo MCP Server’s tool schemas from [Draft 2020-12](https://json-schema.org/draft/2020-12) to [Draft‑07](https://json-schema.org/draft-07) which is more widely supported across different validators. VSCode/Copilot still validate against Draft‑07, so rejects Apollo MCP Server’s tools. Our JSON schemas don’t rely on newer features, so downgrading improves compatibility across MCP clients with no practical impact.
+Fixed "field not found" errors that occurred when loading operations containing GraphQL fragments (inline fragments or fragment spreads) on union types or interfaces. The schema tree shaking algorithm now correctly handles fragments by evaluating them against their specific type conditions.
 
-## 🛠 Maintenance
+### Implement deduplication of operations - @DaleSeo PR #491
 
-### Update rmcp sdk to version 0.8.x - @swcollard PR #433 
+Fixed an issue where specifying both a directory and an explicit file path within that directory in the `operations.paths` configuration would create duplicate tools.
+The server now automatically deduplicates operations based on their canonical file paths, ensuring that only one tool is created per unique operation file, regardless of how the paths are specified in the configuration.
 
-Bumping the Rust MCP SDK version used in this server up to 0.8.x
+### Index fields from interface implementing types - @DaleSeo PR #494
 
-### chore: Only initialize a single HTTP client for graphql requests - @swcollard PR #412
-
-Currently the MCP Server spins up a new HTTP client every time it wants to make a request to the downstream graphql endpoint. This change creates a static reqwest client that gets initialized using LazyLock and reused on each graphql request.
-
-This change is based on the suggestion from the reqwest [documentation](https://docs.rs/reqwest/latest/reqwest/struct.Client.html)
-> "The Client holds a connection pool internally, so it is advised that you create one and reuse it."
+Fixed an issue where the search tool would not return results for fields that only exist on types implementing an interface. 
+Now when a query returns an interface type, the search tool correctly indexes and searches all fields from implementing types, making implementation-specific fields discoverable even when accessed through interface types.
 

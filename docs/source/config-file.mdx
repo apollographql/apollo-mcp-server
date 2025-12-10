@@ -165,17 +165,17 @@ These fields are under the top-level `logging` key.
 These fields are under the top-level `operations` key. The available fields depend on the value of the nested `source` key.
 The default value for `source` is `"infer"`. Learn more about [defining tools as operations](/apollo-mcp-server/define-tools).
 
-| Source             | Option   | Type             | Default | Description                                                                                                                                             |
-| :----------------- | :------- | :--------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| GraphOS Collection | `source` | `"collection"`   |         | Load operations from a GraphOS collection                                                                                                               |
-| GraphOS Collection | `id`     | `string`         |         | The collection ID to use in GraphOS. Use `default` for the default collection. [Learn more](/apollo-mcp-server/define-tools#from-operation-collection). |
-| Introspection      | `source` | `"introspect"`   |         | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                                     |
-| Local              | `source` | `"local"`        |         | Load operations from local GraphQL files or directories                                                                                                 |
-| Local              | `paths`  | `List<FilePath>` |         | Paths to GraphQL files or directories to search. Note: These paths are relative to the location from which you are running Apollo MCP Server.           |
-| Manifest           | `source` | `"manifest"`     |         | Load operations from a persisted queries manifest file                                                                                                  |
-| Manifest           | `path`   | `FilePath`       |         | The path to the persisted query manifest                                                                                                                |
-| Uplink             | `source` | `"uplink"`       |         | Load operations from an uplink manifest. Note: This source requires an Apollo key and graph reference                                                   |
-| Infer              | `source` | `"infer"`        | \*      | Infer where to load operations based on other configuration options.                                                                                    |
+| Source             | Option   | Type             | Description                                                                                                                                             |
+| :----------------- | :------- | :--------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| GraphOS Collection | `source` | `"collection"`   | Load operations from a GraphOS collection                                                                                                               |
+| GraphOS Collection | `id`     | `string`         | The collection ID to use in GraphOS. Use `default` for the default collection. [Learn more](/apollo-mcp-server/define-tools#from-operation-collection). |
+| Introspection      | `source` | `"introspect"`   | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                                     |
+| Local              | `source` | `"local"`        | Load operations from local GraphQL files or directories                                                                                                 |
+| Local              | `paths`  | `List<FilePath>` | Paths to GraphQL files or directories to search. Note: These paths are relative to the location from which you are running Apollo MCP Server.           |
+| Manifest           | `source` | `"manifest"`     | Load operations from a persisted queries manifest file                                                                                                  |
+| Manifest           | `path`   | `FilePath`       | The path to the persisted query manifest                                                                                                                |
+| Uplink             | `source` | `"uplink"`       | Load operations from an uplink manifest. Note: This source requires an Apollo key and graph reference                                                   |
+| Infer              | `source` | `"infer"`        | Infer where to load operations based on other configuration options.                                                                                    |
 
 ### Overrides
 
@@ -193,51 +193,49 @@ These fields are under the top-level `overrides` key.
 These fields are under the top-level `schema` key. The available fields depend on the value of the nested `source` key.
 The default value for `source` is `"uplink"`.
 
-| Source | Option   | Type       | Default | Description                                                                         |
-| :----- | :------- | :--------- | :------ | :---------------------------------------------------------------------------------- |
-| Local  | `source` | `"local"`  |         | Load schema from local file                                                         |
-| Local  | `path`   | `FilePath` |         | Path to the GraphQL schema                                                          |
-| Uplink | `source` | `"uplink"` | \*      | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference |
+| Source | Option   | Type       | Description                                                                         |
+| :----- | :------- | :--------- | :---------------------------------------------------------------------------------- |
+| Local  | `source` | `"local"`  | Load schema from local file                                                         |
+| Local  | `path`   | `FilePath` | Path to the GraphQL schema                                                          |
+| Uplink | `source` | `"uplink"` | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference |
 
 ### Transport
 
 These fields are under the top-level `transport` key, to configure running the MCP Server in different environments - stdio, Streamable HTTP or SSE (deprecated).
 
-```
+```yaml
 transport:
-  type: stdio
+  type: streamable_http
+  address: 127.0.0.1
+  port: 5000
+  stateful_mode: true
 ```
 
-The available fields depend on the value of the nested `type` key:
+##### Type
 
-##### stdio (default)
+The available fields depend on the value of the nested `type` key. The default type is `stdio`:
 
-| Option | Value     | Default Value | Description                                                     |
-| :----- | :-------- | :------------ | :-------------------------------------------------------------- |
-| `type` | `"stdio"` | \*            | Use standard IO for communication between the server and client |
+| Option                | Description                                                                                                      |
+| :-------------------- | :--------------------------------------------------------------------------------------------------------------- |
+| `"stdio"`             | Use standard IO for communication between the server and client                                                  |
+| `"streamable_http"`   | Host the MCP server on the configuration, using streamable HTTP messages                                         |
+| `"sse"`               | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
 
-##### Streamable HTTP
+##### Transport Type Specific options
 
-| Option          | Value                 | Value Type | Description                                                               |
-| :-------------- | :-------------------- | :--------- | :------------------------------------------------------------------------ |
-| `type`          | `"streamable_http"`   |            | Host the MCP server on the configuration, using streamable HTTP messages. |
-| `address`       | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                 |
-| `port`          | `8000` (default)      | `u16`      | The port to bind to                                                       |
-| `stateful_mode` | `true` (default)      | `bool`     | Flag to enable or disable stateful mode and session management.           |
+Some transport types support further configuration. For both `streamable_http` and `sse`, you can set the `address` and `port`. For `streamable_http`, you can also set `stateful_mode`.
+
+| Option          | Type       | Default     | Description                                                                          |
+| :-------------- | :--------- | :---------- | :----------------------------------------------------------------------------------- |
+| `address`       | `IpAddr`   | `127.0.0.1` | The IP address to bind to                                                            |
+| `port`          | `u16`      | `8000`      | The port to bind to                                                                  |
+| `stateful_mode` | `bool`     | `true`      | Flag to enable or disable stateful mode and session management. Not supported by SSE |
 
 <Note>
 
 For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services). 
 
 </Note>
-
-##### SSE (Deprecated, use StreamableHTTP)
-
-| Option    | Value                 | Value Type | Description                                                                                                      |
-| :-------- | :-------------------- | :--------- | :--------------------------------------------------------------------------------------------------------------- |
-| `type`    | `"sse"`               |            | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
-| `address` | `127.0.0.1` (default) | `IpAddr`   | The IP address to bind to                                                                                        |
-| `port`    | `8000` (default)      | `u16`      | The port to bind to                                                                                              |
 
 ### Auth
 
@@ -310,11 +308,52 @@ transport:
 
 #### OTLP Metrics Exporter
 
-| Option        | Type                                     | Default                  | Description                                                                                                                                                                                             |
-| :---------    | :--------------------------------------- | :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `endpoint`    | `URL`                                    | `http://localhost:4317`  | URL to export data to. Requires full path.                                                                                                                                                              |
-| `protocol`    | `string`                                 | `grpc`                   | Protocol for export. Only `grpc` and `http/protobuf` are supported.                                                                                                                                     |
-| `temporality` | `MetricTemporality` | `Cumulative`             | Optional OTel property that refers to the way additive quantities are expressed, in relation to time, indicating whether reported values incorporate previous measurements (Cumulative) or not (Delta). |
+| Option        | Type                                           | Default                 | Description                                                                                                                                                                                                 |
+|:--------------|:-----------------------------------------------|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `endpoint`    | `URL`                                          | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                                                                  |
+| `protocol`    | `string`                                       | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.                                                                                                                             |
+| `temporality` | `MetricTemporality`                            | `Cumulative`            | Specifies how additive quantities are expressed over time. `Cumulative` means reported values include previous measurements, and `Delta` means they don't.                                                  |
+| `metadata`   | Key-value pairs                                |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.                                                                                                                            |
+| `headers`    | Key-value pairs                                |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`.                                                                                                    |
+
+<ExpansionPanel title="Metrics telemetry config example using gRPC">
+
+The following example configures metrics telemetry to use the `grpc` protocol and sends data to the `http://localhost:4317` endpoint. It includes metadata with each request.
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    metrics:
+      otlp:
+        endpoint: http://localhost:4317
+        protocol: grpc
+        temporality: cumulative
+        metadata:
+          key-name: some-value
+          key-two: another-value
+```
+
+For observability platforms that prefer delta temporality (such as New Relic), configure the temporality and pass your API key via metadata:
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    metrics:
+      otlp:
+        endpoint: https://otlp.nr-data.net:4317
+        protocol: grpc
+        temporality: delta
+        metadata:
+          api-key: <YOUR_API_KEY>
+```
+
+To use environment variables for sensitive values like API keys:
+
+```sh
+export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR_API_KEY}"
+```
+
+</ExpansionPanel>
 
 #### Traces
 
@@ -326,10 +365,38 @@ transport:
 
 #### OTLP Trace Exporter
 
-| Option      | Type      | Default                     | Description                                                      |
-| :---------  | :-------- | :-------------------------- | :--------------------------------------------------------------- |
-| `endpoint`  | `URL`     | `http://localhost:4317`     | URL to export data to. Requires full path.                       |
-| `protocol`  | `string`  | `grpc`                      | Protocol for export. `grpc` and `http/protobuf` are supported.   |
+| Option       | Type                                         | Default                 | Description                                                                              |
+|:-------------|:---------------------------------------------|:------------------------|:-----------------------------------------------------------------------------------------|
+| `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                                               |
+| `protocol`   | `string`                                     | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.          |
+| `metadata`   | Key-value pairs                              |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.         |
+| `headers`    | Key-value pairs                              |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`. |
+
+<ExpansionPanel title="Tracing telemetry config example using HTTP/Protobuf">
+
+The following example section configures tracing telemetry to use the `http/protobuf` protocol and sends data to the `http://localhost:4317` endpoint. It also includes headers with each request.
+
+```yaml config.yaml
+telemetry:
+  exporters:
+    tracing:
+      otlp:
+        endpoint: http://localhost:4317
+        protocol: http/protobuf
+        headers:
+          key-name: some-value
+          key-two: another-value
+```
+
+</ExpansionPanel>
+
+#### MetricTemporality
+
+| Option       | Type        | Description                    |
+|:-------------|:------------|:-------------------------------|
+| `cumulative` | `string`    | Cumulative temporality option. |
+| `delta`      | `string`    | Delta temporality option.      |
+| `lowmemory`  | `string`    | Low memory temporality option. |
 
 #### SamplerOption
 
@@ -339,11 +406,11 @@ transport:
 | `always_off` | `string`  | Sampling is turned off, no traces will be exported.      |
 | `0.0-1.0`    | `f64`     | Percentage of traces to export.                          |
 
-## Example config file
+## Example config files
 
 The following example file sets your endpoint to `localhost:4001`, configures transport over Streamable HTTP, enables introspection, and provides two local MCP operations for the server to expose.
 
-```yaml config.yaml
+```yaml title="config.yaml"
 endpoint: http://localhost:4001/
 transport:
   type: streamable_http
@@ -355,6 +422,18 @@ operations:
   paths:
     - relative/path/to/your/operations/userDetails.graphql
     - relative/path/to/your/operations/listing.graphql
+```
+
+This configuration file will set up Streamable HTTP transport, enables introspection, and makes all operations derive from introspection:
+
+```yaml title="config.yaml"
+transport:
+  type: streamable_http
+introspection:
+  introspect:
+    enabled: true
+operations:
+  source: introspect
 ```
 
 ## Override configuration options using environment variables

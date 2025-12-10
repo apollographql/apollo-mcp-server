@@ -13,10 +13,10 @@ use super::{MutationMode, operation::Operation};
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
-    pub(super) source_text: String,
+    pub(crate) source_text: String,
     pub(super) persisted_query_id: Option<String>,
     pub(super) headers: Option<HeaderMap<HeaderValue>>,
-    pub(super) variables: Option<HashMap<String, Value>>,
+    pub(crate) variables: Option<HashMap<String, Value>>,
     pub(super) source_path: Option<String>,
 }
 

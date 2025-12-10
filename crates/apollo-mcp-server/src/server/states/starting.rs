@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
@@ -11,7 +12,7 @@ use rmcp::{
     transport::{SseServer, sse_server::SseServerConfig, stdio},
 };
 use serde_json::json;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument as _, debug, error, info, trace};
 
@@ -93,7 +94,20 @@ impl Starting {
                     .flatten()
             })
             .flatten();
-        let schema = Arc::new(Mutex::new(self.schema));
+        let apps = if cfg!(feature = "apps") {
+            crate::apps::load_from_path(
+                Path::new("apps"),
+                &self.schema,
+                self.config.custom_scalar_map.as_ref(),
+                self.config.mutation_mode,
+                self.config.disable_type_description,
+                self.config.disable_schema_description,
+            )
+            .map_err(ServerError::Apps)?
+        } else {
+            Vec::new()
+        };
+        let schema = Arc::new(RwLock::new(self.schema));
         let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
                 schema.clone(),
@@ -138,7 +152,8 @@ impl Starting {
 
         let running = Running {
             schema,
-            operations: Arc::new(Mutex::new(operations)),
+            operations: Arc::new(RwLock::new(operations)),
+            apps,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
             endpoint: self.config.endpoint,

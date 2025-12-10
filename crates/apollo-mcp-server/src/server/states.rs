@@ -106,7 +106,10 @@ impl StateMachine {
                             State::OperationsConfigured(operations_configured) => {
                                 operations_configured.set_schema(schema).await.into()
                             }
-                            State::Running(running) => running.update_schema(schema).await.into(),
+                            State::Running(running) => {
+                                running.update_schema(schema).await;
+                                running.into()
+                            }
                             other => other,
                         }
                     }
@@ -128,7 +131,10 @@ impl StateMachine {
                         .set_operations(operations)
                         .await
                         .into(),
-                    State::Running(running) => running.update_operations(operations).await.into(),
+                    State::Running(running) => {
+                        running.update_operations(operations).await;
+                        running.into()
+                    }
                     other => other,
                 },
                 ServerEvent::OperationError(e, _) => {

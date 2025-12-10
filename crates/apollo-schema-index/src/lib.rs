@@ -552,4 +552,50 @@ mod tests {
                 .join("\n")
         );
     }
+
+    #[rstest]
+    fn test_search_interface_implementer_fields(schema: Valid<Schema>) {
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
+
+        let results = search
+            .search(vec!["username".to_string()], Options::default())
+            .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "Should find results for 'username' field"
+        );
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        let found_user = paths.iter().any(|p| p.contains("User"));
+
+        assert!(
+            found_user,
+            "Should find User type when searching for username field (User implements Node).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+
+        let results = search
+            .search(vec!["analytics".to_string()], Options::default())
+            .unwrap();
+
+        assert!(
+            !results.is_empty(),
+            "Should find results for 'analytics' field"
+        );
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        let found_post = paths.iter().any(|p| p.contains("Post"));
+
+        assert!(
+            found_post,
+            "Should find Post type when searching for 'analytics' field (which only exists on Post, not on Node/Content interfaces).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+    }
 }

@@ -46,9 +46,9 @@ Please refer to our [code of conduct policy](https://github.com/apollographql/ro
 ---
 
 ### Branching strategy
-The Apollo MCP Server project follows a pseudo [GitFlow](https://docs.aws.amazon.com/prescriptive-guidance/latest/choosing-git-branch-approach/gitflow-branching-strategy.html) branch strategy.
+The Apollo MCP Server project follows a trunk-based branch strategy.
 
-1. All feature/bug fix/patch work should branch off the `develop` branch.
+1. All feature/bug fix/patch work should branch off the `main` branch.
 
 ### Code review guidelines
 It’s important that every piece of code in Apollo packages is reviewed by at least one core contributor familiar with that codebase. Here are some things we look for:
