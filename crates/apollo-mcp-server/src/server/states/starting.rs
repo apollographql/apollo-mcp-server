@@ -1,14 +1,9 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
-use axum::extract::Request;
-use axum::middleware::Next;
-use axum::response::Response;
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
 use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
-use opentelemetry::propagation::Extractor;
-use opentelemetry::{Context as OtelContext, global};
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
@@ -18,10 +13,9 @@ use rmcp::{
 use serde_json::json;
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
-use tower_http::trace::TraceLayer;
 use tracing::{Instrument as _, debug, error, info, trace};
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     errors::ServerError,
     explorer::Explorer,
@@ -219,49 +213,9 @@ impl Starting {
                 .layer(HttpMetricsLayerBuilder::new().build())
                 // include trace context as header into the response
                 .layer(OtelInResponseLayer)
-                //start OpenTelemetry trace on incoming request
-                .layer(OtelAxumLayer::default())
+                // start OpenTelemetry trace on incoming request
                 .layer(axum::middleware::from_fn(otel_context_middleware))
-                // Add tower-http tracing layer for additional HTTP-level tracing
-                .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(|request: &axum::http::Request<_>| {
-                            // Retrieve the context from extensions (already stored by middleware)
-                            let parent_cx = request
-                                .extensions()
-                                .get::<OtelContext>()
-                                .cloned()
-                                .unwrap_or_else(OtelContext::current);
-
-                            let span = tracing::info_span!(
-                                "mcp_server",
-                                method = %request.method(),
-                                uri = %request.uri(),
-                                session_id = tracing::field::Empty,
-                                status_code = tracing::field::Empty,
-                            );
-
-                            span.set_parent(parent_cx);
-                            span
-                        })
-                        .on_response(
-                            |response: &axum::http::Response<_>,
-                             _latency: std::time::Duration,
-                             span: &tracing::Span| {
-                                span.record(
-                                    "status_code",
-                                    tracing::field::display(response.status()),
-                                );
-                                if let Some(session_id) = response
-                                    .headers()
-                                    .get("mcp-session-id")
-                                    .and_then(|v| v.to_str().ok())
-                                {
-                                    span.record("session_id", tracing::field::display(session_id));
-                                }
-                            },
-                        ),
-                );
+                .layer(OtelAxumLayer::default());
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -410,30 +364,4 @@ mod tests {
         let running = starting.start();
         assert!(running.await.is_ok());
     }
-}
-
-struct HeaderExtractor<'a>(&'a axum::http::HeaderMap);
-
-impl<'a> Extractor for HeaderExtractor<'a> {
-    fn get(&self, key: &str) -> Option<&str> {
-        self.0.get(key).and_then(|v| v.to_str().ok())
-    }
-
-    fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(|k| k.as_str()).collect()
-    }
-}
-
-/// Middleware that extracts and stores OpenTelemetry context in request extensions
-pub async fn otel_context_middleware(mut request: Request, next: Next) -> Response {
-    // Extract parent context from headers
-    let parent_cx = global::get_text_map_propagator(|propagator| {
-        propagator.extract(&HeaderExtractor(request.headers()))
-    });
-
-    // Store context in request extensions
-    request.extensions_mut().insert(parent_cx);
-
-    // Continue processing
-    next.run(request).await
 }

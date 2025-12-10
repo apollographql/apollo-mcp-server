@@ -21,6 +21,7 @@ mod operations_configured;
 mod running;
 mod schema_configured;
 mod starting;
+mod telemetry;
 
 use configuring::Configuring;
 use operations_configured::OperationsConfigured;

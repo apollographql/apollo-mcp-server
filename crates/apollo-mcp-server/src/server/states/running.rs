@@ -1,5 +1,23 @@
 use std::sync::Arc;
 
+use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
+use crate::meter;
+use crate::server::states::telemetry::get_parent_span;
+use crate::{
+    custom_scalar_map::CustomScalarMap,
+    errors::{McpError, ServerError},
+    explorer::{EXPLORER_TOOL_NAME, Explorer},
+    graphql::{self, Executable as _},
+    headers::{ForwardHeaders, build_request_headers},
+    health::HealthCheck,
+    introspection::tools::{
+        execute::{EXECUTE_TOOL_NAME, Execute},
+        introspect::{INTROSPECT_TOOL_NAME, Introspect},
+        search::{SEARCH_TOOL_NAME, Search},
+        validate::{VALIDATE_TOOL_NAME, Validate},
+    },
+    operations::{MutationMode, Operation, RawOperation},
+};
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::trace::FutureExt;
 use opentelemetry::{Context, KeyValue};
@@ -18,26 +36,6 @@ use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
-
-use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
-use crate::meter;
-use crate::{
-    custom_scalar_map::CustomScalarMap,
-    errors::{McpError, ServerError},
-    explorer::{EXPLORER_TOOL_NAME, Explorer},
-    graphql::{self, Executable as _},
-    headers::{ForwardHeaders, build_request_headers},
-    health::HealthCheck,
-    introspection::tools::{
-        execute::{EXECUTE_TOOL_NAME, Execute},
-        introspect::{INTROSPECT_TOOL_NAME, Introspect},
-        search::{SEARCH_TOOL_NAME, Search},
-        validate::{VALIDATE_TOOL_NAME, Validate},
-    },
-    operations::{MutationMode, Operation, RawOperation},
-};
-use opentelemetry::Context as OtelContext;
-use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 #[derive(Clone)]
 pub(super) struct Running {
@@ -177,7 +175,7 @@ impl Running {
 }
 
 impl ServerHandler for Running {
-    #[tracing::instrument(skip_all, fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
         request: InitializeRequestParam,
@@ -204,17 +202,12 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
-            && let Some(otel_cx) = parts.extensions.get::<OtelContext>()
-        {
-            tracing::Span::current().set_parent(otel_cx.clone());
-        }
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
@@ -329,17 +322,17 @@ impl ServerHandler for Running {
         result
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        if let Some(parts) = context.extensions.get::<axum::http::request::Parts>()
-            && let Some(otel_cx) = parts.extensions.get::<OtelContext>()
-        {
-            tracing::Span::current().set_parent(otel_cx.clone());
-        }
+        // let parent_cx = get_otel_parent_context(&context);
+        // let span = tracing::info_span!("list_tool");
+        // span.set_parent(parent_cx);
+
+        // let _enter = span.enter();
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
