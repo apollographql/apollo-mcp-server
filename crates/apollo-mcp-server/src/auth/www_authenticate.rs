@@ -8,7 +8,10 @@ use tracing::warn;
 use url::Url;
 
 pub(super) enum WwwAuthenticate {
-    Bearer { resource_metadata: Url },
+    Bearer {
+        resource_metadata: Url,
+        scope: Option<String>,
+    },
 }
 
 impl Header for WwwAuthenticate {
@@ -27,10 +30,19 @@ impl Header for WwwAuthenticate {
 
     fn encode<E: Extend<http::HeaderValue>>(&self, values: &mut E) {
         let encoded = match &self {
-            WwwAuthenticate::Bearer { resource_metadata } => format!(
-                r#"Bearer resource_metadata="{}""#,
-                resource_metadata.as_str()
-            ),
+            WwwAuthenticate::Bearer {
+                resource_metadata,
+                scope,
+            } => {
+                let mut header = format!(
+                    r#"Bearer resource_metadata="{}""#,
+                    resource_metadata.as_str()
+                );
+                if let Some(scope) = scope {
+                    header.push_str(&format!(r#", scope="{}""#, scope));
+                }
+                header
+            }
         };
 
         // TODO: This shouldn't error, but it can so we might need to do something else here
@@ -38,5 +50,66 @@ impl Header for WwwAuthenticate {
             Ok(value) => values.extend(std::iter::once(value)),
             Err(e) => warn!("could not construct WWW-AUTHENTICATE header: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use headers::Header;
+
+    fn encode_header(header: &WwwAuthenticate) -> String {
+        let mut values = Vec::new();
+        header.encode(&mut values);
+        values
+            .first()
+            .map(|v| v.to_str().unwrap().to_string())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn encode_bearer_without_scope() {
+        let header = WwwAuthenticate::Bearer {
+            resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
+                .unwrap(),
+            scope: None,
+        };
+
+        let encoded = encode_header(&header);
+        assert_eq!(
+            encoded,
+            r#"Bearer resource_metadata="https://test.com/.well-known/oauth-protected-resource""#
+        );
+    }
+
+    #[test]
+    fn encode_bearer_with_single_scope() {
+        let header = WwwAuthenticate::Bearer {
+            resource_metadata: Url::parse(
+                "https://mcp.test.com/.well-known/oauth-protected-resource",
+            )
+            .unwrap(),
+            scope: Some("read".to_string()),
+        };
+
+        let encoded = encode_header(&header);
+        assert!(encoded.contains("Bearer"));
+        assert!(encoded.contains("resource_metadata="));
+        assert!(encoded.contains(r#"scope="read""#));
+    }
+
+    #[test]
+    fn encode_bearer_with_multiple_scopes() {
+        let header = WwwAuthenticate::Bearer {
+            resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
+                .unwrap(),
+            scope: Some("read write".to_string()),
+        };
+
+        let encoded = encode_header(&header);
+        assert_eq!(
+            encoded,
+            r#"Bearer resource_metadata="https://test.com/.well-known/oauth-protected-resource", scope="read write""#
+        );
     }
 }
