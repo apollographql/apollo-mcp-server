@@ -885,6 +885,7 @@ mod tests {
         let result = running.list_tools_impl(extensions).await.unwrap();
 
         assert_eq!(result.tools.len(), 1);
+        assert_eq!(result.tools[0].name, "GetId");
         assert_eq!(result.next_cursor, None);
     }
 
