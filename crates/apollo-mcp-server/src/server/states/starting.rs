@@ -14,9 +14,9 @@ use rmcp::{
 use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tower_http::trace::TraceLayer;
 use tracing::{Instrument as _, debug, error, info, trace};
 
+use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     errors::ServerError,
     explorer::Explorer,
@@ -228,38 +228,9 @@ impl Starting {
                 .layer(HttpMetricsLayerBuilder::new().build())
                 // include trace context as header into the response
                 .layer(OtelInResponseLayer)
-                //start OpenTelemetry trace on incoming request
-                .layer(OtelAxumLayer::default())
-                // Add tower-http tracing layer for additional HTTP-level tracing
-                .layer(
-                    TraceLayer::new_for_http()
-                        .make_span_with(|request: &axum::http::Request<_>| {
-                            tracing::info_span!(
-                                "mcp_server",
-                                method = %request.method(),
-                                uri = %request.uri(),
-                                session_id = tracing::field::Empty,
-                                status_code = tracing::field::Empty,
-                            )
-                        })
-                        .on_response(
-                            |response: &axum::http::Response<_>,
-                             _latency: std::time::Duration,
-                             span: &tracing::Span| {
-                                span.record(
-                                    "status_code",
-                                    tracing::field::display(response.status()),
-                                );
-                                if let Some(session_id) = response
-                                    .headers()
-                                    .get("mcp-session-id")
-                                    .and_then(|v| v.to_str().ok())
-                                {
-                                    span.record("session_id", tracing::field::display(session_id));
-                                }
-                            },
-                        ),
-                );
+                // start OpenTelemetry trace on incoming request
+                .layer(axum::middleware::from_fn(otel_context_middleware))
+                .layer(OtelAxumLayer::default());
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -361,7 +332,10 @@ async fn health_endpoint(
 
 #[cfg(test)]
 mod tests {
+    use axum::{body::Body, http::Request};
     use http::HeaderMap;
+    use tower::ServiceExt;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
     use url::Url;
 
     use crate::health::HealthCheckConfig;
@@ -407,5 +381,53 @@ mod tests {
         };
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_otel_context_middleware_does_not_break_requests() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Initialize tracing for test
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .try_init();
+
+        // Create a simple router with the middleware
+        let app = axum::Router::new()
+            .route("/test", axum::routing::get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(otel_context_middleware));
+
+        // Valid W3C traceparent header
+        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+        let span_id = "00f067aa0ba902b7";
+        let traceparent = format!("00-{}-{}-01", trace_id, span_id);
+
+        let request = Request::builder()
+            .uri("/test")
+            .header("traceparent", traceparent)
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // If we got a response, the middleware worked
+        assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn test_otel_context_middleware_works_without_traceparent() {
+        let _ = tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .try_init();
+
+        let app = axum::Router::new()
+            .route("/test", axum::routing::get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(otel_context_middleware));
+
+        let request = Request::builder().uri("/test").body(Body::empty()).unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), 200);
     }
 }
