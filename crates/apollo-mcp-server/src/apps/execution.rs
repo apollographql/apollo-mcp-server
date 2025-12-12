@@ -17,16 +17,17 @@ use super::{App, AppTool};
 
 pub(crate) async fn find_and_execute_app(
     apps: &[App],
+    app_name: &str,
     tool_name: &str,
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
 ) -> Option<Result<CallToolResult, McpError>> {
-    for app in apps {
-        for tool in &app.tools {
-            if tool.tool.name == tool_name {
-                return Some(execute_app(app, tool, headers, arguments, endpoint).await);
-            }
+    let app = apps.iter().find(|app| app.name == app_name)?;
+
+    for tool in &app.tools {
+        if tool.tool.name == tool_name {
+            return Some(execute_app(app, tool, headers, arguments, endpoint).await);
         }
     }
     None
@@ -296,5 +297,130 @@ mod tests {
             secondary_data.is_empty(),
             "Primary result should not be duplicated in secondary data"
         );
+    }
+
+    #[tokio::test]
+    async fn find_and_execute_app_with_valid_app_name() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let app = App {
+            name: "MyApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            uri: "ui://MyApp".parse().unwrap(),
+            tools: vec![AppTool {
+                operation: Arc::new(
+                    RawOperation::from(("query GetId { id }".to_string(), None))
+                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .unwrap()
+                        .unwrap(),
+                ),
+                tool: Tool::new("GetId", "a description", JsonObject::new()),
+            }],
+            prefetch_operations: vec![],
+        };
+
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("POST", "/")
+            .with_body(r#"{"data": {"id": "123"}}"#)
+            .with_header("Content-Type", "application/json")
+            .expect(1)
+            .create_async()
+            .await;
+
+        let result = find_and_execute_app(
+            &[app],
+            "MyApp",
+            "GetId",
+            &HeaderMap::new(),
+            None,
+            &server.url().parse().unwrap(),
+        )
+        .await;
+
+        mock.assert();
+        assert!(result.is_some());
+    }
+
+    #[tokio::test]
+    async fn find_and_execute_app_with_invalid_app_name() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let app = App {
+            name: "MyApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            uri: "ui://MyApp".parse().unwrap(),
+            tools: vec![AppTool {
+                operation: Arc::new(
+                    RawOperation::from(("query GetId { id }".to_string(), None))
+                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .unwrap()
+                        .unwrap(),
+                ),
+                tool: Tool::new("GetId", "a description", JsonObject::new()),
+            }],
+            prefetch_operations: vec![],
+        };
+
+        let server = mockito::Server::new_async().await;
+
+        let result = find_and_execute_app(
+            &[app],
+            "InvalidApp",
+            "GetId",
+            &HeaderMap::new(),
+            None,
+            &server.url().parse().unwrap(),
+        )
+        .await;
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn find_and_execute_app_with_valid_app_but_invalid_tool() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let app = App {
+            name: "MyApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            uri: "ui://MyApp".parse().unwrap(),
+            tools: vec![AppTool {
+                operation: Arc::new(
+                    RawOperation::from(("query GetId { id }".to_string(), None))
+                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .unwrap()
+                        .unwrap(),
+                ),
+                tool: Tool::new("GetId", "a description", JsonObject::new()),
+            }],
+            prefetch_operations: vec![],
+        };
+
+        let server = mockito::Server::new_async().await;
+
+        let result = find_and_execute_app(
+            &[app],
+            "MyApp",
+            "InvalidTool",
+            &HeaderMap::new(),
+            None,
+            &server.url().parse().unwrap(),
+        )
+        .await;
+
+        assert!(result.is_none());
     }
 }
