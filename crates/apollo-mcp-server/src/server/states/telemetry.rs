@@ -57,7 +57,6 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
 }
 
 // Helper function to retrieve the parent span from the request context
-#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
     context
         .extensions
@@ -71,6 +70,7 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
 mod tests {
     use super::*;
     use axum::{Router, body::Body, http::Request, routing::get};
+    use http::HeaderName;
     use opentelemetry::Context as OtelContext;
     use opentelemetry::trace::TraceContextExt;
     use tower::ServiceExt;
@@ -143,5 +143,30 @@ mod tests {
         assert_eq!(extractor.get("traceparent"), Some("test-value"));
         assert_eq!(extractor.get("x-custom"), Some("custom-value"));
         assert_eq!(extractor.get("missing"), None);
+    }
+
+    #[test]
+    fn test_header_extractor_keys() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("traceparent", "test-value".parse().unwrap());
+        headers.insert("x-custom", "custom-value".parse().unwrap());
+
+        let extractor = HeaderExtractor(&headers);
+
+        let mut keys = extractor
+            .keys()
+            .into_iter()
+            .map(|k| HeaderName::from_bytes(k.as_bytes()).unwrap())
+            .collect::<Vec<_>>();
+
+        let mut expected = vec![
+            HeaderName::from_static("traceparent"),
+            HeaderName::from_static("x-custom"),
+        ];
+
+        keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+        expected.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
+        assert_eq!(keys, expected);
     }
 }
