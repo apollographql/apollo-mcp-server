@@ -57,13 +57,14 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
 }
 
 // Helper function to retrieve the parent span from the request context
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
     context
         .extensions
         .get::<axum::http::request::Parts>()
         .and_then(|parts| parts.extensions.get::<tracing::Span>())
         .cloned()
-        .unwrap_or_else(tracing::Span::current)
+        .unwrap_or_else(tracing::Span::none)
 }
 
 #[cfg(test)]
