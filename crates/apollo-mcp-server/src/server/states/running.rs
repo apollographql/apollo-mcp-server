@@ -26,6 +26,7 @@ use crate::apps::find_and_execute_app;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::server::states::telemetry::get_parent_span;
 use crate::{
     apps::AppResource,
     custom_scalar_map::CustomScalarMap,
@@ -337,7 +338,7 @@ impl Running {
 }
 
 impl ServerHandler for Running {
-    #[tracing::instrument(skip_all, fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
         request: InitializeRequestParam,
@@ -364,7 +365,7 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
         request: CallToolRequestParam,
@@ -489,7 +490,7 @@ impl ServerHandler for Running {
         result
     }
 
-    #[tracing::instrument(skip_all)]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParam>,
