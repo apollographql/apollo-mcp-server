@@ -332,10 +332,7 @@ async fn health_endpoint(
 
 #[cfg(test)]
 mod tests {
-    use axum::{body::Body, http::Request};
     use http::HeaderMap;
-    use tower::ServiceExt;
-    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
     use url::Url;
 
     use crate::health::HealthCheckConfig;
