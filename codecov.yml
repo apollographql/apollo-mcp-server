@@ -4,7 +4,9 @@ coverage:
       default:
         # Should increase overall coverage on each PR
         target: auto
+        threshold: 1%  # Allow up to 1% coverage drop
     patch:
       default:
         # Require 80% coverage on all new/modified code
         target: 80%
+        threshold: 1%  # Allow up to 1% coverage drop

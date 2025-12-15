@@ -5,7 +5,7 @@ use opentelemetry::KeyValue;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    Implementation, ListResourcesResult, Meta, ReadResourceResult, ResourceContents,
+    Extensions, Implementation, ListResourcesResult, Meta, ReadResourceResult, ResourceContents,
     ResourcesCapability, ToolsCapability,
 };
 use rmcp::{
@@ -189,6 +189,74 @@ impl Running {
         *peers = retained_peers;
     }
 
+    async fn list_tools_impl(&self, extensions: Extensions) -> Result<ListToolsResult, McpError> {
+        let meter = &meter::METER;
+        meter
+            .u64_counter(TelemetryMetric::ListToolsCount.as_str())
+            .build()
+            .add(1, &[]);
+
+        // Access the "app" query parameter from the HTTP request
+        let app_param = extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.uri.query())
+            .and_then(|query| {
+                url::form_urlencoded::parse(query.as_bytes())
+                    .find(|(key, _)| key == "app")
+                    .map(|(_, value)| value.into_owned())
+            });
+
+        // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
+        if let Some(app_name) = app_param {
+            let app = self.apps.iter().find(|app| app.name == app_name);
+
+            match app {
+                Some(app) => {
+                    return Ok(ListToolsResult {
+                        next_cursor: None,
+                        tools: self
+                            .operations
+                            .read()
+                            .await
+                            .iter()
+                            .map(|op| op.as_ref().clone())
+                            .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                            .chain(
+                                app.tools
+                                    .iter()
+                                    .map(|tool| tool.tool.clone())
+                                    .collect::<Vec<_>>(),
+                            )
+                            .collect(),
+                    });
+                }
+                None => {
+                    return Err(McpError::new(
+                        ErrorCode::INVALID_REQUEST,
+                        format!("App {app_name} not found"),
+                        None,
+                    ));
+                }
+            }
+        }
+
+        Ok(ListToolsResult {
+            next_cursor: None,
+            tools: self
+                .operations
+                .read()
+                .await
+                .iter()
+                .map(|op| op.as_ref().clone())
+                .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
+                .collect(),
+        })
+    }
+
     fn list_resources_impl(&self) -> ListResourcesResult {
         ListResourcesResult {
             resources: self.apps.iter().map(|app| app.resource()).collect(),
@@ -359,6 +427,17 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
+            // Access the "app" query parameter from the HTTP request
+            let app_param = context
+                .extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|parts| parts.uri.query())
+                .and_then(|query| {
+                    url::form_urlencoded::parse(query.as_bytes())
+                        .find(|(key, _)| key == "app")
+                        .map(|(_, value)| value.into_owned())
+                });
+
             if let Some(res) = find_and_execute_operation(
                 &self.operations.read().await,
                 &tool_name,
@@ -369,14 +448,16 @@ impl ServerHandler for Running {
             .await
             {
                 res
-            } else if let Some(res) = find_and_execute_app(
-                &self.apps,
-                &tool_name,
-                &headers,
-                request.arguments.as_ref(),
-                &self.endpoint,
-            )
-            .await
+            } else if let Some(app_name) = app_param
+                && let Some(res) = find_and_execute_app(
+                    &self.apps,
+                    &app_name,
+                    &tool_name,
+                    &headers,
+                    request.arguments.as_ref(),
+                    &self.endpoint,
+                )
+                .await
             {
                 res
             } else {
@@ -415,32 +496,7 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParam>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let meter = &meter::METER;
-        meter
-            .u64_counter(TelemetryMetric::ListToolsCount.as_str())
-            .build()
-            .add(1, &[]);
-
-        Ok(ListToolsResult {
-            next_cursor: None,
-            tools: self
-                .operations
-                .read()
-                .await
-                .iter()
-                .map(|op| op.as_ref().clone())
-                .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(
-                    self.apps
-                        .iter()
-                        .flat_map(|app| app.tools.iter().map(|tool| tool.tool.clone())),
-                )
-                .collect(),
-        })
+        self.list_tools_impl(context.extensions).await
     }
 
     #[tracing::instrument(skip_all)]
@@ -803,5 +859,51 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(returned_connect_domains, &connect_domains);
+    }
+
+    #[tokio::test]
+    async fn list_tools_without_app_parameter() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+
+        let result = running.list_tools_impl(Extensions::new()).await.unwrap();
+
+        assert_eq!(result.tools.len(), 0);
+        assert_eq!(result.next_cursor, None);
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_valid_app_parameter() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await.unwrap();
+
+        assert_eq!(result.tools.len(), 1);
+        assert_eq!(result.tools[0].name, "GetId");
+        assert_eq!(result.next_cursor, None);
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_nonexistent_app_parameter() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=NonExistent")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await;
+
+        assert!(result.is_err());
     }
 }
