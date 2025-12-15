@@ -4,7 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
-use axum_tracing_opentelemetry::middleware::{OtelAxumLayer, OtelInResponseLayer};
+use axum_tracing_opentelemetry::middleware::OtelInResponseLayer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{
@@ -229,8 +229,7 @@ impl Starting {
                 // include trace context as header into the response
                 .layer(OtelInResponseLayer)
                 // start OpenTelemetry trace on incoming request
-                .layer(axum::middleware::from_fn(otel_context_middleware))
-                .layer(OtelAxumLayer::default());
+                .layer(axum::middleware::from_fn(otel_context_middleware));
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
