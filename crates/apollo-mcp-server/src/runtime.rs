@@ -286,6 +286,7 @@ mod test {
                 overrides: Overrides {
                     disable_type_description: false,
                     disable_schema_description: false,
+                    enable_output_schema: false,
                     enable_explorer: false,
                     mutation_mode: None,
                 },
