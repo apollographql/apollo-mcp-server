@@ -163,7 +163,7 @@ mod tests {
                 "query Primary($apples: Int) { apples(first: $apples) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true)
+            .into_operation(&schema, None, MutationMode::All, true, true, true)
             .unwrap()
             .unwrap(),
         );
@@ -174,7 +174,7 @@ mod tests {
                 "query FirstPrefetch($bananas: Int) { bananas(first: $bananas) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true)
+            .into_operation(&schema, None, MutationMode::All, true, true, true)
             .unwrap()
             .unwrap(),
         );
@@ -183,7 +183,7 @@ mod tests {
                 "query SecondPrefetch($oranges: Int) { oranges(first: $oranges) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true)
+            .into_operation(&schema, None, MutationMode::All, true, true, true)
             .unwrap()
             .unwrap(),
         );
@@ -314,7 +314,7 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .into_operation(&schema, None, MutationMode::All, false, false, true)
                         .unwrap()
                         .unwrap(),
                 ),
@@ -361,7 +361,7 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .into_operation(&schema, None, MutationMode::All, false, false, true)
                         .unwrap()
                         .unwrap(),
                 ),
@@ -400,7 +400,7 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .into_operation(&schema, None, MutationMode::All, false, false, true)
                         .unwrap()
                         .unwrap(),
                 ),

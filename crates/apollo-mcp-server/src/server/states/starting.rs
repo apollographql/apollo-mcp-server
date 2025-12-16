@@ -51,6 +51,7 @@ impl Starting {
                         self.config.mutation_mode,
                         self.config.disable_type_description,
                         self.config.disable_schema_description,
+                        self.config.enable_output_schema,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -102,6 +103,7 @@ impl Starting {
                 self.config.mutation_mode,
                 self.config.disable_type_description,
                 self.config.disable_schema_description,
+                self.config.enable_output_schema,
             )
             .map_err(ServerError::Apps)?
         } else {
@@ -168,6 +170,7 @@ impl Starting {
             mutation_mode: self.config.mutation_mode,
             disable_type_description: self.config.disable_type_description,
             disable_schema_description: self.config.disable_schema_description,
+            enable_output_schema: self.config.enable_output_schema,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
         };
@@ -362,6 +365,7 @@ mod tests {
                 custom_scalar_map: None,
                 disable_type_description: false,
                 disable_schema_description: false,
+                enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 search_leaf_depth: 5,
                 index_memory_bytes: 1024 * 1024 * 1024,

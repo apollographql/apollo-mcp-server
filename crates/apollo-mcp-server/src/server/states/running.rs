@@ -62,6 +62,7 @@ pub(super) struct Running {
     pub(super) mutation_mode: MutationMode,
     pub(super) disable_type_description: bool,
     pub(super) disable_schema_description: bool,
+    pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) health_check: Option<HealthCheck>,
 }
@@ -90,6 +91,7 @@ impl Running {
                         self.mutation_mode,
                         self.disable_type_description,
                         self.disable_schema_description,
+                        self.enable_output_schema,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -138,6 +140,7 @@ impl Running {
                             self.mutation_mode,
                             self.disable_type_description,
                             self.disable_schema_description,
+                            self.enable_output_schema,
                         )
                         .unwrap_or_else(|error| {
                             error!("Invalid operation: {}", error);
@@ -598,6 +601,7 @@ mod tests {
             mutation_mode: MutationMode::None,
             disable_type_description: false,
             disable_schema_description: false,
+            enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
         };
@@ -656,6 +660,7 @@ mod tests {
             mutation_mode: MutationMode::None,
             disable_type_description: false,
             disable_schema_description: false,
+            enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
         };
@@ -695,7 +700,7 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false)
+                        .into_operation(&schema, None, MutationMode::All, false, false, true)
                         .unwrap()
                         .unwrap(),
                 ),
@@ -725,6 +730,7 @@ mod tests {
             mutation_mode: MutationMode::None,
             disable_type_description: false,
             disable_schema_description: false,
+            enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
         }

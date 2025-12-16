@@ -56,6 +56,7 @@ impl Operation {
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
+        enable_output_schema: bool,
     ) -> Result<Option<Self>, OperationError> {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
@@ -111,37 +112,41 @@ impl Operation {
                 ));
             };
 
-            // Generate output schema from selection set
-            let output_schema = if let Some(root_type_name) =
-                graphql_schema.root_operation(operation.operation_type)
-            {
-                if let Some(root_type) = graphql_schema.types.get(root_type_name) {
-                    let named_fragments: HashMap<
-                        String,
-                        Node<apollo_compiler::ast::FragmentDefinition>,
-                    > = document
-                        .definitions
-                        .iter()
-                        .filter_map(|def| match def {
-                            Definition::FragmentDefinition(fragment_def) => {
-                                Some((fragment_def.name.to_string(), fragment_def.clone()))
-                            }
+            // Generate output schema from selection set (only if enabled)
+            let output_schema = if enable_output_schema {
+                if let Some(root_type_name) =
+                    graphql_schema.root_operation(operation.operation_type)
+                {
+                    if let Some(root_type) = graphql_schema.types.get(root_type_name) {
+                        let named_fragments: HashMap<
+                            String,
+                            Node<apollo_compiler::ast::FragmentDefinition>,
+                        > = document
+                            .definitions
+                            .iter()
+                            .filter_map(|def| match def {
+                                Definition::FragmentDefinition(fragment_def) => {
+                                    Some((fragment_def.name.to_string(), fragment_def.clone()))
+                                }
+                                _ => None,
+                            })
+                            .collect();
+
+                        serde_json::to_value(schema_walker::selection_set_to_schema(
+                            &operation.selection_set,
+                            root_type,
+                            graphql_schema,
+                            custom_scalar_map,
+                            &named_fragments,
+                        ))
+                        .ok()
+                        .and_then(|v| match v {
+                            Value::Object(obj) => Some(obj),
                             _ => None,
                         })
-                        .collect();
-
-                    serde_json::to_value(schema_walker::selection_set_to_schema(
-                        &operation.selection_set,
-                        root_type,
-                        graphql_schema,
-                        custom_scalar_map,
-                        &named_fragments,
-                    ))
-                    .ok()
-                    .and_then(|v| match v {
-                        Value::Object(obj) => Some(obj),
-                        _ => None,
-                    })
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
@@ -733,6 +738,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -868,6 +874,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1007,6 +1014,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1166,6 +1174,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1311,6 +1320,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1464,6 +1474,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1603,6 +1614,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1776,6 +1788,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -1917,6 +1930,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2053,6 +2067,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2082,6 +2097,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         );
         assert!(operation.unwrap().is_none());
 
@@ -2112,6 +2128,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2139,6 +2156,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         );
         insta::assert_debug_snapshot!(operation, @r"
         Err(
@@ -2165,6 +2183,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2297,6 +2316,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2436,6 +2456,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2581,6 +2602,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2837,6 +2859,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2924,6 +2947,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2957,6 +2981,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -2981,6 +3006,7 @@ mod tests {
             None,
             MutationMode::None,
             false,
+            true,
             true,
         )
         .unwrap()
@@ -3011,6 +3037,7 @@ mod tests {
             MutationMode::None,
             true,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3043,6 +3070,7 @@ mod tests {
             &SCHEMA,
             None,
             MutationMode::None,
+            true,
             true,
             true,
         )
@@ -3092,6 +3120,7 @@ mod tests {
             .unwrap(),
             None,
             MutationMode::None,
+            true,
             true,
             true,
         )
@@ -3237,6 +3266,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3361,6 +3391,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3395,6 +3426,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3433,6 +3465,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3465,10 +3498,17 @@ mod tests {
             variables: None,
             source_path: None,
         };
-        let operation =
-            Operation::from_document(raw_op, &SCHEMA, None, MutationMode::None, false, false)
-                .unwrap()
-                .unwrap();
+        let operation = Operation::from_document(
+            raw_op,
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+        )
+        .unwrap()
+        .unwrap();
 
         let op_details = operation.operation(Value::Null).unwrap();
         assert_eq!(op_details.operation_name, Some(String::from("GetUser")));
@@ -3485,10 +3525,17 @@ mod tests {
             variables: None,
             source_path: None,
         };
-        let operation =
-            Operation::from_document(raw_op, &SCHEMA, None, MutationMode::Explicit, false, false)
-                .unwrap()
-                .unwrap();
+        let operation = Operation::from_document(
+            raw_op,
+            &SCHEMA,
+            None,
+            MutationMode::Explicit,
+            false,
+            false,
+            true,
+        )
+        .unwrap()
+        .unwrap();
 
         let op_details = operation.operation(Value::Null).unwrap();
         assert_eq!(op_details.operation_name, Some(String::from("CreateUser")));
@@ -3509,6 +3556,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3543,6 +3591,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3577,6 +3626,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3611,6 +3661,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3649,6 +3700,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3678,6 +3730,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
             .unwrap()
             .unwrap();
@@ -3716,6 +3769,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3745,6 +3799,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -3936,6 +3991,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -4120,6 +4176,7 @@ mod tests {
                 MutationMode::None,
                 false,
                 false,
+                true,
             )
             .unwrap()
             .is_none()
@@ -4142,6 +4199,7 @@ mod tests {
                 MutationMode::None,
                 false,
                 false,
+                true,
             )
             .ok()
             .unwrap()
@@ -4164,6 +4222,7 @@ mod tests {
             MutationMode::Explicit,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -4292,6 +4351,7 @@ mod tests {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();
@@ -4420,6 +4480,7 @@ mod tests {
             MutationMode::None,
             false,
             false,
+            true,
         )
         .unwrap()
         .unwrap();

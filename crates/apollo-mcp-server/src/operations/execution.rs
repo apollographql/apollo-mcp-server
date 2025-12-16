@@ -54,7 +54,7 @@ mod tests {
             .validate()
             .unwrap();
         let operation = RawOperation::from(("query GetHello { hello }".to_string(), None))
-            .into_operation(&schema, None, MutationMode::All, true, true)
+            .into_operation(&schema, None, MutationMode::All, true, true, true)
             .unwrap()
             .unwrap();
 
@@ -78,11 +78,11 @@ mod tests {
             .unwrap();
         let operations = [
             RawOperation::from(("query GetHello { hello }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, true, true)
+                .into_operation(&schema, None, MutationMode::All, true, true, true)
                 .unwrap()
                 .unwrap(),
             RawOperation::from(("query GetWorld { hello }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, true, true)
+                .into_operation(&schema, None, MutationMode::All, true, true, true)
                 .unwrap()
                 .unwrap(),
         ];
