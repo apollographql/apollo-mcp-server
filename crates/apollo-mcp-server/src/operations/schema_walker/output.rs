@@ -419,6 +419,9 @@ fn named_type_to_output_schema(
             }
 
             // Enum types
+            // Note: We only include the enum's type description (not per-value descriptions)
+            // to avoid token bloat with large enums. The `enum` constraint already lists
+            // all valid values, which is sufficient for understanding output.
             Some(ExtendedType::Enum(enum_def)) => {
                 let values: Vec<Value> = enum_def
                     .values
@@ -426,40 +429,19 @@ fn named_type_to_output_schema(
                     .map(|(_, v)| serde_json::json!(v.value))
                     .collect();
 
-                let description = format!(
-                    "{}\n\nValues:\n{}",
-                    enum_def
-                        .description
-                        .as_ref()
-                        .map(|n| n.to_string())
-                        .unwrap_or_default(),
-                    enum_def
-                        .values
-                        .iter()
-                        .map(|(name, value)| {
-                            format!(
-                                "{}: {}",
-                                name,
-                                value
-                                    .description
-                                    .as_ref()
-                                    .map(|d| d.to_string())
-                                    .unwrap_or_default()
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                );
+                let mut enum_schema = json_schema!({
+                    "type": "string",
+                    "enum": values
+                });
 
-                definitions.insert(
-                    other.to_string(),
-                    json_schema!({
-                        "type": "string",
-                        "enum": values,
-                        "description": description
-                    })
-                    .into(),
-                );
+                // Only include the enum's type description, not per-value descriptions
+                if let Some(desc) = &enum_def.description {
+                    enum_schema
+                        .ensure_object()
+                        .insert("description".to_string(), desc.to_string().into());
+                }
+
+                definitions.insert(other.to_string(), enum_schema.into());
 
                 JSONSchema::new_ref(format!("#/definitions/{other}"))
             }
@@ -581,16 +563,7 @@ mod tests {
         let output_schema =
             selection_set_to_schema(&selection_set, query_type, &schema, None, &HashMap::new());
 
-        let output_json = serde_json::to_string_pretty(&output_schema).unwrap();
-        println!("{}", output_json);
-
-        // Verify structure
-        let obj = output_schema.as_object().unwrap();
-        assert!(obj.contains_key("properties"));
-
-        let props = obj.get("properties").unwrap().as_object().unwrap();
-        assert!(props.contains_key("data"));
-        assert!(props.contains_key("errors"));
+        insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
     }
 
     #[test]
@@ -631,12 +604,6 @@ mod tests {
         let output_schema =
             selection_set_to_schema(&selection_set, query_type, &schema, None, &HashMap::new());
 
-        let output_json = serde_json::to_string_pretty(&output_schema).unwrap();
-        println!("{}", output_json);
-
-        // Schema should include nested profile structure
-        assert!(output_json.contains("profile"));
-        assert!(output_json.contains("bio"));
-        assert!(output_json.contains("avatar"));
+        insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
     }
 }
