@@ -1,0 +1,108 @@
+---
+source: crates/apollo-mcp-server/src/operations/schema_walker/output.rs
+expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
+---
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "profile": {
+                  "type": "object",
+                  "properties": {
+                    "bio": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "avatar": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "avatar"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "profile"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "column": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "extensions": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    },
+    "extensions": {
+      "type": "object"
+    }
+  }
+}

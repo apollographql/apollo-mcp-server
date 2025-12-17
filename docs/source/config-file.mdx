@@ -185,6 +185,7 @@ These fields are under the top-level `overrides` key.
 | :--------------------------- | :---------------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------------------- |
 | `disable_type_description`   | `bool`                              | `false`  | Disable type descriptions to save on context-window space                                                                        |
 | `disable_schema_description` | `bool`                              | `false`  | Disable schema descriptions to save on context-window space                                                                      |
+| `enable_output_schema`       | `bool`                              | `false`  | Enable output schema generation for tools. Adds token overhead but helps LLMs understand response structure                      |
 | `enable_explorer`            | `bool`                              | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: This requires a GraphOS graph reference |
 | `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Defines the mutation access level for the MCP server                                                                             |
 

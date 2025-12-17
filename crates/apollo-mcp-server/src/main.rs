@@ -128,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
         .mutation_mode(config.overrides.mutation_mode)
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
+        .enable_output_schema(config.overrides.enable_output_schema)
         .disable_auth_token_passthrough(match transport {
             apollo_mcp_server::server::Transport::Stdio => false,
             apollo_mcp_server::server::Transport::SSE { auth, .. } => auth

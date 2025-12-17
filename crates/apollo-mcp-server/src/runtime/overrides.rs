@@ -12,6 +12,9 @@ pub struct Overrides {
     /// Disable schema descriptions to save on context-window space
     pub disable_schema_description: bool,
 
+    /// Enable output schema generation for tools (adds token overhead but helps LLMs understand response structure)
+    pub enable_output_schema: bool,
+
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     pub enable_explorer: bool,
 

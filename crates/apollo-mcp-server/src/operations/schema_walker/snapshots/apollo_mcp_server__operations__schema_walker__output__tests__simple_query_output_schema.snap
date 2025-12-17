@@ -1,0 +1,104 @@
+---
+source: crates/apollo-mcp-server/src/operations/schema_walker/output.rs
+expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
+---
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "user": {
+          "description": "Get a user by ID",
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "description": "The user's unique identifier",
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer"
+                    }
+                  ]
+                },
+                "name": {
+                  "description": "The user's display name",
+                  "type": "string"
+                },
+                "email": {
+                  "description": "The user's email address",
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "line": {
+                  "type": "integer"
+                },
+                "column": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "path": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            }
+          },
+          "extensions": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "message"
+        ]
+      }
+    },
+    "extensions": {
+      "type": "object"
+    }
+  }
+}

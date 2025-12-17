@@ -28,6 +28,7 @@ impl RawOperation {
         mutation_mode: MutationMode,
         disable_type_description: bool,
         disable_schema_description: bool,
+        enable_output_schema: bool,
     ) -> Result<Option<Operation>, OperationError> {
         Operation::from_document(
             self,
@@ -36,6 +37,7 @@ impl RawOperation {
             mutation_mode,
             disable_type_description,
             disable_schema_description,
+            enable_output_schema,
         )
     }
 }

@@ -86,6 +86,7 @@ pub(crate) fn load_from_path(
     mutation_mode: MutationMode,
     disable_type_description: bool,
     disable_schema_description: bool,
+    enable_output_schema: bool,
 ) -> Result<Vec<App>, String> {
     let Ok(apps_dir) = path.read_dir() else {
         return Ok(Vec::new());
@@ -146,6 +147,7 @@ pub(crate) fn load_from_path(
                 mutation_mode,
                 disable_type_description,
                 disable_schema_description,
+                enable_output_schema,
             ) {
                 Err(err) => {
                     return Err(format!(
@@ -393,6 +395,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .expect("Failed to load apps");
         assert_eq!(apps.len(), 1);
@@ -428,6 +431,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .expect("Failed to load apps");
         assert_eq!(apps.len(), 1);
@@ -477,6 +481,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .expect("Failed to load apps");
         assert_eq!(apps.len(), 1);
@@ -536,6 +541,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .expect("Failed to load apps");
         assert_eq!(apps.len(), 1);
@@ -592,6 +598,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         )
         .expect("Failed to load apps");
 
@@ -655,6 +662,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         );
 
         assert!(apps.is_err());
@@ -701,6 +709,7 @@ mod test_load_from_path {
             MutationMode::All,
             false,
             false,
+            true,
         );
 
         assert!(apps.is_err());
