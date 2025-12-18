@@ -37,7 +37,7 @@ cors:
 
 If you set `allow_any_origin` to `true` (the default is `false`), Apollo MCP Server will respond with `Access-Control-Allow-Origin: *` in all CORS responses. This means that _any_ website can initiate browser connections. 
 
-<Note>It is important to note that your client will not be able to authenticate to your MCP Server if you use this configuration.</Note>
+<Note>Clients will not be able to authenticate with your MCP Server if you set `allow_any_origin` to `true`.</Note>
 
 ### Origins
 
