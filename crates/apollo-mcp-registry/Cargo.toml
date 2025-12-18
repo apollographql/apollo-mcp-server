@@ -17,7 +17,6 @@ derive_more = { version = "2.0.1", default-features = false, features = [
 educe = "0.6.0"
 futures.workspace = true
 graphql_client = "0.14.0"
-insta.workspace = true
 notify = "8.0.0"
 reqwest.workspace = true
 secrecy.workspace = true
@@ -34,6 +33,7 @@ tracing-core.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 test-log = { version = "0.2.16", default-features = false, features = [
   "trace",
 ] }
