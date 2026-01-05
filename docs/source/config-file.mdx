@@ -245,7 +245,8 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | Option                           | Type           | Default | Description                                                                                        |
 | :------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
 | `servers`                        | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
-| `audiences`                      | `List<string>` |         | List of accepted audiences from upstream signed JWTs                                               |
+| `audiences`                      | `List<string>` |         | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)   |
+| `allow_any_audience`             | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                              |
 | `resource`                       | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
 | `resource_documentation`         | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
 | `scopes`                         | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
@@ -263,9 +264,13 @@ transport:
       - https://auth.example.com
 
     # List of accepted audiences from upstream signed JWTs
+    # (Ignored if allow_any_audience is set to true)
     # See: https://www.ory.sh/docs/hydra/guides/audiences
     audiences:
       - mcp.example.audience
+
+    # Set to true to skip audience validation (use with caution)
+    allow_any_audience: false
 
     # The externally available URL pointing to this MCP server. Can be `localhost`
     # when testing locally.
