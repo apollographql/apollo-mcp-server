@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -28,6 +30,43 @@ pub(crate) use valid_token::ValidToken;
 use valid_token::ValidateToken;
 use www_authenticate::WwwAuthenticate;
 
+impl TlsConfig {
+    /// Build a reqwest client configured with the TLS settings
+    pub fn build_client(&self) -> Result<reqwest::Client, reqwest::Error> {
+        let mut builder = reqwest::Client::builder();
+
+        // Add custom CA certificate if provided
+        if let Some(ca_cert_path) = &self.ca_cert {
+            if let Ok(cert_bytes) = std::fs::read(ca_cert_path) {
+                if let Ok(cert) = reqwest::Certificate::from_pem(&cert_bytes) {
+                    builder = builder.add_root_certificate(cert);
+                    tracing::debug!("Added custom CA certificate from {:?}", ca_cert_path);
+                } else {
+                    tracing::warn!(
+                        "Failed to parse CA certificate from {:?}, continuing without it",
+                        ca_cert_path
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    "Failed to read CA certificate from {:?}, continuing without it",
+                    ca_cert_path
+                );
+            }
+        }
+
+        // Accept invalid certs if configured (development only)
+        if self.danger_accept_invalid_certs {
+            tracing::warn!(
+                "TLS certificate validation is disabled. This is insecure and should only be used for development."
+            );
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        builder.build()
+    }
+}
+
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct Config {
@@ -56,6 +95,27 @@ pub struct Config {
     /// Whether to disable the auth token passthrough to upstream API
     #[serde(default)]
     pub disable_auth_token_passthrough: bool,
+
+    /// TLS configuration for connecting to OAuth servers
+    #[serde(default)]
+    pub tls: TlsConfig,
+}
+
+/// TLS configuration for OAuth server connections
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct TlsConfig {
+    /// Path to additional CA certificates to trust (PEM format).
+    /// Use this when your OAuth server uses a self-signed certificate
+    /// or a certificate signed by a private CA.
+    pub ca_cert: Option<PathBuf>,
+
+    /// Whether to accept invalid TLS certificates.
+    ///
+    /// **WARNING**: This is insecure and should only be used for development/testing.
+    /// When enabled, the server will accept any certificate, including self-signed
+    /// and expired certificates, without validation.
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
 }
 
 impl Config {
@@ -123,10 +183,19 @@ async fn oauth_validate(
         )
     };
 
+    // Build HTTP client with TLS configuration
+    let client = auth_config.tls.build_client().map_err(|e| {
+        tracing::error!("Failed to build HTTP client for OAuth validation: {e}");
+        tracing::Span::current().record("reason", "client_build_error");
+        tracing::Span::current().record("status_code", StatusCode::INTERNAL_SERVER_ERROR.as_u16());
+        unauthorized_error()
+    })?;
+
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
         &auth_config.servers,
+        &client,
     );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -172,6 +241,7 @@ mod tests {
             resource_documentation: None,
             scopes: vec!["read".to_string()],
             disable_auth_token_passthrough: false,
+            tls: TlsConfig::default(),
         }
     }
 
