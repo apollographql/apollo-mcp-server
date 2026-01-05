@@ -98,7 +98,14 @@ pub(super) trait ValidateToken {
                         continue;
                     }
                 });
-                val.set_audience(self.get_audiences());
+                // Only validate audience if audiences are configured.
+                // An empty audiences list means skip audience validation entirely.
+                let audiences = self.get_audiences();
+                if audiences.is_empty() {
+                    val.validate_aud = false;
+                } else {
+                    val.set_audience(audiences);
+                }
 
                 val
             };
@@ -390,6 +397,41 @@ mod test {
                 .validate(jwt)
                 .await
                 .expect("valid token")
+                .0
+                .token(),
+            token
+        );
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_empty_audiences_config() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: KeyAlgorithm::HS512,
+            decoding_key: decode_key,
+        };
+
+        let audience = "any-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience, in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // Empty audiences should skip audience validation entirely
+        let test_validator = TestTokenValidator {
+            audiences: vec![],
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        let token = jwt.token().to_string();
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token with empty audiences config")
                 .0
                 .token(),
             token
