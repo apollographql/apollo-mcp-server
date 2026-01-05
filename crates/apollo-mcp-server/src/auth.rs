@@ -36,6 +36,10 @@ pub struct Config {
     /// List of accepted audiences for the OAuth tokens
     pub audiences: Vec<String>,
 
+    /// Allow any audience (skip validation) - use with caution
+    #[serde(default)]
+    pub allow_any_audience: bool,
+
     /// The resource to protect.
     ///
     /// Note: This is usually the publicly accessible URL of this running MCP server
@@ -111,7 +115,11 @@ async fn oauth_validate(
         )
     };
 
-    let validator = NetworkedTokenValidator::new(&auth_config.audiences, &auth_config.servers);
+    let validator = NetworkedTokenValidator::new(
+        &auth_config.audiences,
+        auth_config.allow_any_audience,
+        &auth_config.servers,
+    );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
         tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
@@ -151,6 +159,7 @@ mod tests {
         Config {
             servers: vec![Url::parse("http://localhost:1234").unwrap()],
             audiences: vec!["test-audience".to_string()],
+            allow_any_audience: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
             scopes: vec!["read".to_string()],

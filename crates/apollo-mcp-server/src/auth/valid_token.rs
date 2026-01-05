@@ -24,8 +24,11 @@ impl Deref for ValidToken {
 
 /// Trait to handle validation of tokens
 pub(super) trait ValidateToken {
-    /// Get the intended audiences
-    fn get_audiences(&self) -> &Vec<String>;
+    /// Whether to skip audience validation (allow any audience)
+    fn allow_any_audience(&self) -> bool;
+
+    /// Get the list of allowed audiences
+    fn get_audiences(&self) -> &[String];
 
     /// Get the available upstream servers
     fn get_servers(&self) -> &Vec<Url>;
@@ -98,13 +101,10 @@ pub(super) trait ValidateToken {
                         continue;
                     }
                 });
-                // Only validate audience if audiences are configured.
-                // An empty audiences list means skip audience validation entirely.
-                let audiences = self.get_audiences();
-                if audiences.is_empty() {
+                if self.allow_any_audience() {
                     val.validate_aud = false;
                 } else {
-                    val.set_audience(audiences);
+                    val.set_audience(self.get_audiences());
                 }
 
                 val
@@ -138,12 +138,17 @@ mod test {
 
     struct TestTokenValidator {
         audiences: Vec<String>,
+        allow_any_audience: bool,
         key_pair: (String, Jwk),
         servers: Vec<Url>,
     }
 
     impl ValidateToken for TestTokenValidator {
-        fn get_audiences(&self) -> &Vec<String> {
+        fn allow_any_audience(&self) -> bool {
+            self.allow_any_audience
+        }
+
+        fn get_audiences(&self) -> &[String] {
             &self.audiences
         }
 
@@ -226,6 +231,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -267,6 +273,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -302,6 +309,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -338,6 +346,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -388,6 +397,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -404,7 +414,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn it_validates_jwt_with_empty_audiences_config() {
+    async fn it_validates_jwt_with_allow_any_audience() {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
@@ -419,23 +429,16 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        // Empty audiences should skip audience validation entirely
+        // allow_any_audience should skip audience validation entirely
         let test_validator = TestTokenValidator {
             audiences: vec![],
+            allow_any_audience: true,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
 
         let token = jwt.token().to_string();
-        assert_eq!(
-            test_validator
-                .validate(jwt)
-                .await
-                .expect("valid token with empty audiences config")
-                .0
-                .token(),
-            token
-        );
+        assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
     }
 
     #[traced_test]
@@ -473,6 +476,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![expected_audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };

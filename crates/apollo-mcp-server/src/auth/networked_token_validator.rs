@@ -7,14 +7,16 @@ use super::valid_token::ValidateToken;
 /// Implementation of the `ValidateToken` trait which fetches key information
 /// from the network.
 pub(super) struct NetworkedTokenValidator<'a> {
-    audiences: &'a Vec<String>,
+    audiences: &'a [String],
+    allow_any_audience: bool,
     upstreams: &'a Vec<Url>,
 }
 
 impl<'a> NetworkedTokenValidator<'a> {
-    pub fn new(audiences: &'a Vec<String>, upstreams: &'a Vec<Url>) -> Self {
+    pub fn new(audiences: &'a [String], allow_any_audience: bool, upstreams: &'a Vec<Url>) -> Self {
         Self {
             audiences,
+            allow_any_audience,
             upstreams,
         }
     }
@@ -32,7 +34,11 @@ fn build_oidc_url(oauth_server: &Url) -> Url {
 }
 
 impl ValidateToken for NetworkedTokenValidator<'_> {
-    fn get_audiences(&self) -> &Vec<String> {
+    fn allow_any_audience(&self) -> bool {
+        self.allow_any_audience
+    }
+
+    fn get_audiences(&self) -> &[String] {
         self.audiences
     }
 
