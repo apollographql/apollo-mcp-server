@@ -251,6 +251,8 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | `resource_documentation`         | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
 | `scopes`                         | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
 | `disable_auth_token_passthrough` | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                  |
+| `tls.ca_cert`                    | `string`       |         | Path to additional CA certificates to trust (PEM format). |
+| `tls.danger_accept_invalid_certs`| `bool`         | `false` | Accept invalid TLS certificates. **Warning**: Insecure—use only for development/testing.          |
 
 Below is an example configuration using `StreamableHTTP` transport with authentication:
 
@@ -286,6 +288,14 @@ transport:
       - read
       - mcp
       - profile
+
+    # Optional TLS configuration for connecting to OAuth servers
+    tls:
+      # Path to CA certificate for private CA or self-signed OAuth server certs
+      # Use when your OAuth server uses a self-signed certificate or a certificate signed by a private CA
+      ca_cert: /path/to/ca-certificate.pem
+      # Only set to true for development/testing (insecure!)
+      # danger_accept_invalid_certs: false
 ```
 
 ### Telemetry
