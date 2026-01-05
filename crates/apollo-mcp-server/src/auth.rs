@@ -30,29 +30,39 @@ pub(crate) use valid_token::ValidToken;
 use valid_token::ValidateToken;
 use www_authenticate::WwwAuthenticate;
 
+/// Errors that can occur when building a TLS-configured HTTP client
+#[derive(Debug, thiserror::Error)]
+pub enum TlsConfigError {
+    #[error("Failed to read CA certificate from {path}: {source}")]
+    CertificateRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Failed to parse CA certificate from {path}: invalid PEM format")]
+    CertificateParse { path: PathBuf },
+    #[error("Failed to build HTTP client: {0}")]
+    ClientBuild(#[from] reqwest::Error),
+}
+
 impl TlsConfig {
     /// Build a reqwest client configured with the TLS settings
-    pub fn build_client(&self) -> Result<reqwest::Client, reqwest::Error> {
+    pub fn build_client(&self) -> Result<reqwest::Client, TlsConfigError> {
         let mut builder = reqwest::Client::builder();
 
         // Add custom CA certificate if provided
         if let Some(ca_cert_path) = &self.ca_cert {
-            if let Ok(cert_bytes) = std::fs::read(ca_cert_path) {
-                if let Ok(cert) = reqwest::Certificate::from_pem(&cert_bytes) {
-                    builder = builder.add_root_certificate(cert);
-                    tracing::debug!("Added custom CA certificate from {:?}", ca_cert_path);
-                } else {
-                    tracing::warn!(
-                        "Failed to parse CA certificate from {:?}, continuing without it",
-                        ca_cert_path
-                    );
+            let cert_bytes =
+                std::fs::read(ca_cert_path).map_err(|e| TlsConfigError::CertificateRead {
+                    path: ca_cert_path.clone(),
+                    source: e,
+                })?;
+            let cert = reqwest::Certificate::from_pem(&cert_bytes).map_err(|_| {
+                TlsConfigError::CertificateParse {
+                    path: ca_cert_path.clone(),
                 }
-            } else {
-                tracing::warn!(
-                    "Failed to read CA certificate from {:?}, continuing without it",
-                    ca_cert_path
-                );
-            }
+            })?;
+            builder = builder.add_root_certificate(cert);
+            tracing::debug!("Added custom CA certificate from {:?}", ca_cert_path);
         }
 
         // Accept invalid certs if configured (development only)
@@ -63,7 +73,7 @@ impl TlsConfig {
             builder = builder.danger_accept_invalid_certs(true);
         }
 
-        builder.build()
+        Ok(builder.build()?)
     }
 }
 
@@ -307,5 +317,106 @@ mod tests {
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
         assert!(!www_auth.contains("scope="));
+    }
+
+    mod tls_config {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn default_config_builds_client() {
+            let config = TlsConfig::default();
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn danger_accept_invalid_certs_builds_client() {
+            let config = TlsConfig {
+                ca_cert: None,
+                danger_accept_invalid_certs: true,
+            };
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn valid_ca_cert_is_loaded() {
+            // Create a temporary file with a valid PEM certificate
+            // This is the ISRG Root X1 certificate (Let's Encrypt root CA)
+            let mut temp_file = NamedTempFile::new().unwrap();
+            let test_cert = r#"-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----"#;
+            temp_file.write_all(test_cert.as_bytes()).unwrap();
+
+            let config = TlsConfig {
+                ca_cert: Some(temp_file.path().to_path_buf()),
+                danger_accept_invalid_certs: false,
+            };
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn missing_ca_cert_file_returns_error() {
+            let config = TlsConfig {
+                ca_cert: Some("/nonexistent/path/to/cert.pem".into()),
+                danger_accept_invalid_certs: false,
+            };
+            let result = config.build_client();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::CertificateRead { .. }
+            ));
+        }
+
+        #[test]
+        fn invalid_pem_returns_error() {
+            // Create a temporary file with invalid PEM content
+            let mut temp_file = NamedTempFile::new().unwrap();
+            temp_file.write_all(b"not a valid certificate").unwrap();
+
+            let config = TlsConfig {
+                ca_cert: Some(temp_file.path().to_path_buf()),
+                danger_accept_invalid_certs: false,
+            };
+            let result = config.build_client();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::CertificateParse { .. }
+            ));
+        }
     }
 }

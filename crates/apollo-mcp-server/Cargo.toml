@@ -69,6 +69,7 @@ url.workspace = true
 
 [dev-dependencies]
 assert_fs = "1"
+tempfile = "3"
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
