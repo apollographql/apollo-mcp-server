@@ -128,8 +128,18 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
+/// Internal state for the auth middleware, containing both config and pre-built HTTP client
+#[derive(Clone)]
+struct AuthState {
+    config: Config,
+    client: reqwest::Client,
+}
+
 impl Config {
-    pub fn enable_middleware(&self, router: Router) -> Router {
+    /// Enable auth middleware on the router.
+    ///
+    /// Builds the HTTP client at startup to validate TLS configuration eagerly.
+    pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -138,9 +148,18 @@ impl Config {
 
         /// Simple handler to encode our config into the desired OAuth 2.1 protected
         /// resource format
-        async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
-            Json(auth_config.into())
+        async fn protected_resource(
+            State(auth_state): State<AuthState>,
+        ) -> Json<ProtectedResource> {
+            Json(auth_state.config.into())
         }
+
+        // Build HTTP client with TLS configuration
+        let client = self.tls.build_client()?;
+        let auth_state = AuthState {
+            config: self.clone(),
+            client,
+        };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
         // metadata information paths.
@@ -152,27 +171,26 @@ impl Config {
                 "/.well-known/oauth-protected-resource",
                 get(protected_resource),
             )
-            .with_state(self.clone())
+            .with_state(auth_state.clone())
             .layer(cors);
 
         // Merge with MCP server routes
-        Router::new()
-            .merge(auth_router)
-            .merge(router.layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                oauth_validate,
-            )))
+        Ok(Router::new().merge(auth_router).merge(router.layer(
+            axum::middleware::from_fn_with_state(auth_state, oauth_validate),
+        )))
     }
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
 #[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
-    State(auth_config): State<Config>,
+    State(auth_state): State<AuthState>,
     token: Option<TypedHeader<Authorization<Bearer>>>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
+    let auth_config = &auth_state.config;
+
     // Consolidated unauthorized error for use with any fallible step in this process
     let unauthorized_error = || {
         let mut resource = auth_config.resource.clone();
@@ -193,19 +211,11 @@ async fn oauth_validate(
         )
     };
 
-    // Build HTTP client with TLS configuration
-    let client = auth_config.tls.build_client().map_err(|e| {
-        tracing::error!("Failed to build HTTP client for OAuth validation: {e}");
-        tracing::Span::current().record("reason", "client_build_error");
-        tracing::Span::current().record("status_code", StatusCode::INTERNAL_SERVER_ERROR.as_u16());
-        unauthorized_error()
-    })?;
-
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
         &auth_config.servers,
-        &client,
+        &auth_state.client,
     );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -255,10 +265,17 @@ mod tests {
         }
     }
 
+    fn test_auth_state(config: Config) -> AuthState {
+        AuthState {
+            config,
+            client: reqwest::Client::new(),
+        }
+    }
+
     fn test_router(config: Config) -> Router {
         Router::new()
             .route("/test", get(|| async { "ok" }))
-            .layer(from_fn_with_state(config, oauth_validate))
+            .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
     }
 
     #[tokio::test]
