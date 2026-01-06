@@ -124,7 +124,10 @@ mod tests {
         let incoming_headers = HeaderMap::new();
 
         let mut extensions = Extensions::new();
-        let token = ValidToken(Authorization::bearer("test-token").unwrap());
+        let token = ValidToken {
+            token: Authorization::bearer("test-token").unwrap(),
+            scopes: vec![],
+        };
         extensions.insert(token);
 
         let result = build_request_headers(
@@ -146,7 +149,10 @@ mod tests {
         let incoming_headers = HeaderMap::new();
 
         let mut extensions = Extensions::new();
-        let token = ValidToken(Authorization::bearer("test-token").unwrap());
+        let token = ValidToken {
+            token: Authorization::bearer("test-token").unwrap(),
+            scopes: vec![],
+        };
         extensions.insert(token);
 
         let result = build_request_headers(
@@ -201,7 +207,10 @@ mod tests {
 
         // OAuth token
         let mut extensions = Extensions::new();
-        let token = ValidToken(Authorization::bearer("oauth-token").unwrap());
+        let token = ValidToken {
+            token: Authorization::bearer("oauth-token").unwrap(),
+            scopes: vec![],
+        };
         extensions.insert(token);
 
         let result = build_request_headers(
