@@ -1,4 +1,4 @@
-name: CI (new)
+name: CI
 on:
   push:
     # don't run on tags, run on commits
