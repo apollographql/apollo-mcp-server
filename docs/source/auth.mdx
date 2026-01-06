@@ -19,3 +19,41 @@ To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/
 Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/config-file#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
 For an example of how to configure Apollo MCP Server with Auth0, see [Authorization with Auth0](/apollo-mcp-server/guides/auth-auth0).
+
+## Configuring allowed audiences
+
+You can specify which JWT audiences are allowed to access your MCP Server.
+
+### Specific audiences
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    audiences:
+      - https://api.example.com
+      - https://mcp.example.com
+```
+
+Set `audiences` to a list of accepted audience values. The JWT's `aud` claim must match one of these values for the token to be considered valid.
+
+### Allow any audience
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    allow_any_audience: true
+```
+
+If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server will skip audience validation entirely. This means tokens with _any_ audience claim will be accepted.
+
+<Caution>
+
+Skipping audience validation reduces security. Only use `allow_any_audience: true` when you trust all tokens issued by your configured OAuth servers, regardless of their intended audience.
+
+</Caution>

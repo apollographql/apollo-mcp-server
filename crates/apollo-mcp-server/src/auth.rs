@@ -15,6 +15,7 @@ use networked_token_validator::NetworkedTokenValidator;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
+use tracing::warn;
 use url::Url;
 
 mod networked_token_validator;
@@ -34,7 +35,12 @@ pub struct Config {
     pub servers: Vec<Url>,
 
     /// List of accepted audiences for the OAuth tokens
+    #[serde(default)]
     pub audiences: Vec<String>,
+
+    /// Allow any audience (skip validation) - use with caution
+    #[serde(default)]
+    pub allow_any_audience: bool,
 
     /// The resource to protect.
     ///
@@ -54,6 +60,12 @@ pub struct Config {
 
 impl Config {
     pub fn enable_middleware(&self, router: Router) -> Router {
+        if self.allow_any_audience {
+            warn!(
+                "allow_any_audience is enabled - audience validation is disabled. This reduces security."
+            );
+        }
+
         /// Simple handler to encode our config into the desired OAuth 2.1 protected
         /// resource format
         async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
@@ -111,7 +123,11 @@ async fn oauth_validate(
         )
     };
 
-    let validator = NetworkedTokenValidator::new(&auth_config.audiences, &auth_config.servers);
+    let validator = NetworkedTokenValidator::new(
+        &auth_config.audiences,
+        auth_config.allow_any_audience,
+        &auth_config.servers,
+    );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
         tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
@@ -151,6 +167,7 @@ mod tests {
         Config {
             servers: vec![Url::parse("http://localhost:1234").unwrap()],
             audiences: vec!["test-audience".to_string()],
+            allow_any_audience: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
             scopes: vec!["read".to_string()],

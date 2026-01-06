@@ -24,8 +24,11 @@ impl Deref for ValidToken {
 
 /// Trait to handle validation of tokens
 pub(super) trait ValidateToken {
-    /// Get the intended audiences
-    fn get_audiences(&self) -> &Vec<String>;
+    /// Whether to skip audience validation (allow any audience)
+    fn allow_any_audience(&self) -> bool;
+
+    /// Get the list of allowed audiences
+    fn get_audiences(&self) -> &[String];
 
     /// Get the available upstream servers
     fn get_servers(&self) -> &Vec<Url>;
@@ -98,7 +101,11 @@ pub(super) trait ValidateToken {
                         continue;
                     }
                 });
-                val.set_audience(self.get_audiences());
+                if self.allow_any_audience() {
+                    val.validate_aud = false;
+                } else {
+                    val.set_audience(self.get_audiences());
+                }
 
                 val
             };
@@ -131,12 +138,17 @@ mod test {
 
     struct TestTokenValidator {
         audiences: Vec<String>,
+        allow_any_audience: bool,
         key_pair: (String, Jwk),
         servers: Vec<Url>,
     }
 
     impl ValidateToken for TestTokenValidator {
-        fn get_audiences(&self) -> &Vec<String> {
+        fn allow_any_audience(&self) -> bool {
+            self.allow_any_audience
+        }
+
+        fn get_audiences(&self) -> &[String] {
             &self.audiences
         }
 
@@ -219,6 +231,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -260,6 +273,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -295,6 +309,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -331,6 +346,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -381,6 +397,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
@@ -394,6 +411,34 @@ mod test {
                 .token(),
             token
         );
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_allow_any_audience() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: KeyAlgorithm::HS512,
+            decoding_key: decode_key,
+        };
+
+        let audience = "any-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience, in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // allow_any_audience should skip audience validation entirely
+        let test_validator = TestTokenValidator {
+            audiences: vec![],
+            allow_any_audience: true,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        let token = jwt.token().to_string();
+        assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
     }
 
     #[traced_test]
@@ -431,6 +476,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![expected_audience],
+            allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
         };
