@@ -25,12 +25,6 @@
     },
   ],
 
-  // Automating Nix upgrades is currently in beta and opt-in only.
-  // https://docs.renovatebot.com/modules/manager/nix/
-  nix: {
-    enabled: true,
-  },
-
   // Globally enable vulnerability alerts
   //
   // Note: This needs extra configuration at the repository level, which is described in the link

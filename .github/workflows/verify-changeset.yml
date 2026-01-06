@@ -3,14 +3,14 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
     paths-ignore:
-      - '.github/**'
-      - '.cargo/**'
-      - '.direnv/**'
-      - '.vscode/**'
-      - 'docs/**'
-      - 'Cargo.*'
-      - 'crates/**/Cargo.*'
-      - '*.md'
+      - ".github/**"
+      - ".cargo/**"
+      - ".direnv/**"
+      - ".vscode/**"
+      - "docs/**"
+      - "Cargo.*"
+      - "crates/**/Cargo.*"
+      - "*.md"
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const dir = '.changesets/';
+            const dir = '.changeset/';
             const pr = context.payload.pull_request;
             const files = await github.paginate(
               github.rest.pulls.listFiles,
@@ -56,6 +56,6 @@ jobs:
                 "❌ **Changeset file missing for PR**",
                 "",
                 "All changes should include an associated changeset file.",
-                "Please refer to [README](https://github.com/apollographql/apollo-mcp-server/blob/main/.changesets/README.md) for more information on generating changesets."
+                "Please use `knope document-change` to create a changeset. (installation instructions: https://knope.tech/installation/)"
               ].join("\n")
             });
