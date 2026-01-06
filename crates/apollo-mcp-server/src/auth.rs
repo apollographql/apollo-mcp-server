@@ -15,6 +15,7 @@ use networked_token_validator::NetworkedTokenValidator;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
+use tracing::warn;
 use url::Url;
 
 mod networked_token_validator;
@@ -34,6 +35,7 @@ pub struct Config {
     pub servers: Vec<Url>,
 
     /// List of accepted audiences for the OAuth tokens
+    #[serde(default)]
     pub audiences: Vec<String>,
 
     /// Allow any audience (skip validation) - use with caution
@@ -58,6 +60,12 @@ pub struct Config {
 
 impl Config {
     pub fn enable_middleware(&self, router: Router) -> Router {
+        if self.allow_any_audience {
+            warn!(
+                "allow_any_audience is enabled - audience validation is disabled. This reduces security."
+            );
+        }
+
         /// Simple handler to encode our config into the desired OAuth 2.1 protected
         /// resource format
         async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
