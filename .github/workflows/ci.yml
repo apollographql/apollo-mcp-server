@@ -1,4 +1,4 @@
-name: Nix CI
+name: CI (new)
 on:
   push:
     # don't run on tags, run on commits
@@ -10,135 +10,69 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  # We want the cache to be as full as possible, so we instruct nix to keep derivations
-  # and other related outputs around in its cache
-  nix_conf: |
-    keep-env-derivations = true
-    keep-outputs = true
-
 jobs:
-  # Cache the nix store so that subsequent runs are almost instantaneous
-  # See https://github.com/marketplace/actions/restore-and-save-nix-store#inputs
-  cache:
-    name: Cache nix store
-    runs-on: ubuntu-24.04
-    permissions:
-      actions: write
-      contents: read
+  clippy:
+    name: Run Clippy checks
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: nixbuild/nix-quick-install-action@v30
-        with:
-          nix_conf: ${{ env.nix_conf }}
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
-          restore-prefixes-first-match: build-${{ runner.os }}-
-          purge: true
-          purge-prefixes: build-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-          gc-max-store-size: 5G
-      - name: Save flake attributes from garbage collection
-        run: nix profile install .#saveFromGC
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo clippy --all-targets -- --deny warnings
 
-  check:
-    name: Run checks
-    runs-on: ubuntu-24.04
-    needs: cache
-    permissions:
-      actions: write
-      contents: read
+  doc:
+    name: Run Cargo Doc
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: nixbuild/nix-quick-install-action@v30
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo doc
+
+  fmt:
+    name: Run Cargo Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
         with:
-          nix_conf: ${{ env.nix_conf }}
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
-          purge: true
-          purge-prefixes: build-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-          gc-max-store-size: 5G
-      - name: Run checks
-        run: nix flake check
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo fmt --check
 
   build:
     name: Build
-    runs-on: ubuntu-24.04
-    needs: cache
-    permissions:
-      actions: write
-      contents: read
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: nixbuild/nix-quick-install-action@v30
-        with:
-          nix_conf: ${{ env.nix_conf }}
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
-          purge: true
-          purge-prefixes: build-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-          gc-max-store-size: 5G
-      - name: Build
-        run: nix build .#
-
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo build
   test:
     name: Run Tests
-    runs-on: ubuntu-24.04
-    needs: cache
-    permissions:
-      actions: write
-      contents: read
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-      - uses: nixbuild/nix-quick-install-action@v30
-        with:
-          nix_conf: ${{ env.nix_conf }}
-      - name: Restore and save Nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: build-${{ runner.os }}-${{ hashFiles('Cargo.lock', '**/Cargo.toml', 'flake.nix', 'flake.lock', 'rust-toolchain.toml') }}
-          purge: true
-          purge-prefixes: build-${{ runner.os }}-
-          purge-created: 0
-          purge-primary-key: never
-          gc-max-store-size: 5G
-      - name: Run Tests
-        run: 'nix develop --command bash -c "cargo test"'
-
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: cargo test
   coverage:
-    name: Run Coverage
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
+    name: Calculate Test Coverage
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate code coverage
         run: cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          token: ${{ secrets.CODECOV_TOKEN }} # not required for public repos
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: codecov.json
           fail_ci_if_error: true
