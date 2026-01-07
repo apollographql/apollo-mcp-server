@@ -5,6 +5,7 @@
 
 mod config;
 mod endpoint;
+mod env_expansion;
 mod filtering_exporter;
 mod graphos;
 mod introspection;
@@ -37,13 +38,29 @@ pub fn read_config_from_env() -> Result<Config, figment::Error> {
         .extract()
 }
 
-/// Read in a config from a YAML file, filling in any missing values from the environment
+/// Read in a config from a YAML file, filling in any missing values from the environment.
+///
+/// Environment variable references using `${env.VAR_NAME}` syntax are expanded
+/// before the YAML is parsed.
 #[allow(clippy::result_large_err)]
 pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error> {
+    // Read and expand environment variables in the config content
+    let content = std::fs::read_to_string(yaml_path.as_ref()).map_err(|e| {
+        figment::Error::from(format!(
+            "failed to read config file '{}': {}",
+            yaml_path.as_ref().display(),
+            e
+        ))
+    })?;
+
+    let expanded = env_expansion::expand_env_vars(&content).map_err(|e| {
+        figment::Error::from(e.to_string())
+    })?;
+
     Figment::new()
         .join(apollo_common_env())
         .join(Env::prefixed("APOLLO_MCP_").split(ENV_NESTED_SEPARATOR))
-        .join(Yaml::file(yaml_path))
+        .join(Yaml::string(&expanded))
         .extract()
 }
 
@@ -294,6 +311,45 @@ mod test {
                 transport: Stdio,
             }
             "#);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_expands_env_vars_in_config() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: ${env.TEST_EXPANDED_ENDPOINT}
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("TEST_EXPANDED_ENDPOINT", "https://expanded:4000/");
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.endpoint.as_str(), "https://expanded:4000/");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_prioritizes_apollo_mcp_env_over_expanded_vars() {
+        // APOLLO_MCP_* should still override expanded ${env.VAR} values
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: ${env.MY_ENDPOINT}
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("MY_ENDPOINT", "https://from_expansion:4000/");
+            jail.set_env("APOLLO_MCP_ENDPOINT", "https://from_apollo_mcp:5000/");
+
+            let config = read_config(path)?;
+
+            // APOLLO_MCP_ENDPOINT wins
+            assert_eq!(config.endpoint.as_str(), "https://from_apollo_mcp:5000/");
             Ok(())
         });
     }
