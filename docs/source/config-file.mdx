@@ -15,23 +15,22 @@ All fields are optional.
 
 ### Top-level options
 
-| Option           | Type                  | Default                  | Description                                                      |
-| :--------------- | :-------------------- | :----------------------- | :--------------------------------------------------------------- |
-| `cors`           | `Cors`                |                          | CORS configuration                                               |
-| `custom_scalars` | `FilePath`            |                          | Path to a [custom scalar map](/apollo-mcp-server/custom-scalars) |
-| `endpoint`       | `URL`                 | `http://localhost:4000/` | The target GraphQL endpoint                                      |
-| `forward_headers`| `List<string>`        | `[]`                     | Headers to forward from MCP clients to GraphQL API               |
-| `graphos`        | `GraphOS`             |                          | Apollo-specific credential overrides                             |
-| `headers`        | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
-| `health_check`   | `HealthCheck`         |                          | Health check configuration                                       |
-| `introspection`  | `Introspection`       |                          | Introspection configuration                                      |
-| `logging`        | `Logging`             |                          | Logging configuration                                            |
-| `operations`     | `OperationSource`     |                          | Operations configuration                                         |
-| `overrides`      | `Overrides`           |                          | Overrides for server behavior                                    |
-| `schema`         | `SchemaSource`        |                          | Schema configuration                                             |
-| `transport`      | `Transport`           |                          | The type of server transport to use                              |
-| `telemetry`      | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
-
+| Option            | Type                  | Default                  | Description                                                      |
+| :---------------- | :-------------------- | :----------------------- | :--------------------------------------------------------------- |
+| `cors`            | `Cors`                |                          | CORS configuration                                               |
+| `custom_scalars`  | `FilePath`            |                          | Path to a [custom scalar map](/apollo-mcp-server/custom-scalars) |
+| `endpoint`        | `URL`                 | `http://localhost:4000/` | The target GraphQL endpoint                                      |
+| `forward_headers` | `List<string>`        | `[]`                     | Headers to forward from MCP clients to GraphQL API               |
+| `graphos`         | `GraphOS`             |                          | Apollo-specific credential overrides                             |
+| `headers`         | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
+| `health_check`    | `HealthCheck`         |                          | Health check configuration                                       |
+| `introspection`   | `Introspection`       |                          | Introspection configuration                                      |
+| `logging`         | `Logging`             |                          | Logging configuration                                            |
+| `operations`      | `OperationSource`     |                          | Operations configuration                                         |
+| `overrides`       | `Overrides`           |                          | Overrides for server behavior                                    |
+| `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
+| `transport`       | `Transport`           |                          | The type of server transport to use                              |
+| `telemetry`       | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
 
 ### GraphOS
 
@@ -59,6 +58,7 @@ To forward dynamic header values from the client, use the [`forward_headers` opt
 The `forward_headers` option allows you to forward specific headers from incoming MCP client requests to your GraphQL API.
 
 This is useful for:
+
 - Multi-tenant applications (forwarding tenant IDs)
 - A/B testing (forwarding experiment IDs)
 - Geo information (forwarding country codes)
@@ -82,14 +82,15 @@ forward_headers:
 
 Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens.
 
-<br/><br/>
+<br />
+<br />
 
 According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction), token passthrough introduces serious security risks:
 
 - **Audience confusion**: If the MCP Server accepts tokens not intended for it, it can violate OAuth's trust boundaries.
 - **Confused deputy problem**: If an unvalidated token is passed downstream, a downstream API may incorrectly trust it as though it were validated by the MCP Server.
 
-<br/>
+<br />
 
 Apollo MCP Server supports OAuth 2.1 authentication that follows best practices and aligns with the MCP authorization model. See our [authorization guide](/apollo-mcp-server/auth) for implementation details and how to use the [auth configuration](#auth).
 
@@ -216,25 +217,25 @@ transport:
 
 The available fields depend on the value of the nested `type` key. The default type is `stdio`:
 
-| Option                | Description                                                                                                      |
-| :-------------------- | :--------------------------------------------------------------------------------------------------------------- |
-| `"stdio"`             | Use standard IO for communication between the server and client                                                  |
-| `"streamable_http"`   | Host the MCP server on the configuration, using streamable HTTP messages                                         |
-| `"sse"`               | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
+| Option              | Description                                                                                                      |
+| :------------------ | :--------------------------------------------------------------------------------------------------------------- |
+| `"stdio"`           | Use standard IO for communication between the server and client                                                  |
+| `"streamable_http"` | Host the MCP server on the configuration, using streamable HTTP messages                                         |
+| `"sse"`             | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
 
 ##### Transport Type Specific options
 
 Some transport types support further configuration. For both `streamable_http` and `sse`, you can set the `address` and `port`. For `streamable_http`, you can also set `stateful_mode`.
 
-| Option          | Type       | Default     | Description                                                                          |
-| :-------------- | :--------- | :---------- | :----------------------------------------------------------------------------------- |
-| `address`       | `IpAddr`   | `127.0.0.1` | The IP address to bind to                                                            |
-| `port`          | `u16`      | `8000`      | The port to bind to                                                                  |
-| `stateful_mode` | `bool`     | `true`      | Flag to enable or disable stateful mode and session management. Not supported by SSE |
+| Option          | Type     | Default     | Description                                                                          |
+| :-------------- | :------- | :---------- | :----------------------------------------------------------------------------------- |
+| `address`       | `IpAddr` | `127.0.0.1` | The IP address to bind to                                                            |
+| `port`          | `u16`    | `8000`      | The port to bind to                                                                  |
+| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management. Not supported by SSE |
 
 <Note>
 
-For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services). 
+For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services).
 
 </Note>
 
@@ -242,17 +243,17 @@ For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.
 
 These fields are under the top-level `transport` key, nested under the `auth` key. Learn more about [authorization and authentication](/apollo-mcp-server/auth).
 
-| Option                           | Type           | Default | Description                                                                                        |
-| :------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
-| `servers`                        | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
-| `audiences`                      | `List<string>` | `[]`    | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)   |
-| `allow_any_audience`             | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                              |
-| `resource`                       | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
-| `resource_documentation`         | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
-| `scopes`                         | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
-| `disable_auth_token_passthrough` | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                  |
-| `tls.ca_cert`                    | `string`       |         | Path to a CA certificate to trust (PEM format). |
-| `tls.danger_accept_invalid_certs`| `bool`         | `false` | Accept invalid TLS certificates. Warning: Insecure. Use only for development or testing.          |
+| Option                            | Type           | Default | Description                                                                                        |
+| :-------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
+| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
+| `audiences`                       | `List<string>` | `[]`    | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)   |
+| `allow_any_audience`              | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                              |
+| `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
+| `resource_documentation`          | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
+| `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
+| `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                  |
+| `tls.ca_cert`                     | `string`       |         | Path to a CA certificate to trust (PEM format).                                                    |
+| `tls.danger_accept_invalid_certs` | `bool`         | `false` | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.     |
 
 Below is an example configuration using `StreamableHTTP` transport with authentication:
 
@@ -300,37 +301,35 @@ transport:
 
 ### Telemetry
 
-| Option          | Type        | Default                     | Description                              |
-| :-------------- | :---------- | :-------------------------- | :--------------------------------------- |
-| `service_name`  | `string`    | "apollo-mcp-server"         | The service name in telemetry data.      |
-| `version`       | `string`    | Current crate version       | The service version in telemetry data.   |
-| `exporters`     | `Exporters` | `null` (Telemetry disabled) | Configuration for telemetry exporters.   |
+| Option         | Type        | Default                     | Description                            |
+| :------------- | :---------- | :-------------------------- | :------------------------------------- |
+| `service_name` | `string`    | "apollo-mcp-server"         | The service name in telemetry data.    |
+| `version`      | `string`    | Current crate version       | The service version in telemetry data. |
+| `exporters`    | `Exporters` | `null` (Telemetry disabled) | Configuration for telemetry exporters. |
 
 #### Exporters
 
-| Option     | Type        | Default                     | Description                              |
-| :--------- | :---------- | :-------------------------- | :--------------------------------------- |
-| `metrics`  | `Metrics`   | `null` (Metrics disabled)   | Configuration for exporting metrics.     |
-| `tracing`  | `Tracing`   | `null` (Tracing disabled)   | Configuration for exporting traces.      |
-
+| Option    | Type      | Default                   | Description                          |
+| :-------- | :-------- | :------------------------ | :----------------------------------- |
+| `metrics` | `Metrics` | `null` (Metrics disabled) | Configuration for exporting metrics. |
+| `tracing` | `Tracing` | `null` (Tracing disabled) | Configuration for exporting traces.  |
 
 #### Metrics
 
-| Option                | Type                    | Default                     | Description                                    |
-| :-------------------- | :---------------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Metric Exporter`  | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
-| `omitted_attributes`  | `List<String>`          |                             | List of attributes to be omitted from metrics. |
-
+| Option               | Type                   | Default                     | Description                                    |
+| :------------------- | :--------------------- | :-------------------------- | :--------------------------------------------- |
+| `otlp`               | `OTLP Metric Exporter` | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
+| `omitted_attributes` | `List<String>`         |                             | List of attributes to be omitted from metrics. |
 
 #### OTLP Metrics Exporter
 
-| Option        | Type                                           | Default                 | Description                                                                                                                                                                                                 |
-|:--------------|:-----------------------------------------------|:------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `endpoint`    | `URL`                                          | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                                                                  |
-| `protocol`    | `string`                                       | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.                                                                                                                             |
-| `temporality` | `MetricTemporality`                            | `Cumulative`            | Specifies how additive quantities are expressed over time. `Cumulative` means reported values include previous measurements, and `Delta` means they don't.                                                  |
-| `metadata`   | Key-value pairs                                |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.                                                                                                                            |
-| `headers`    | Key-value pairs                                |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`.                                                                                                    |
+| Option        | Type                | Default                 | Description                                                                                                                                                |
+| :------------ | :------------------ | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`    | `URL`               | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                 |
+| `protocol`    | `string`            | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.                                                                            |
+| `temporality` | `MetricTemporality` | `Cumulative`            | Specifies how additive quantities are expressed over time. `Cumulative` means reported values include previous measurements, and `Delta` means they don't. |
+| `metadata`    | Key-value pairs     |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.                                                                           |
+| `headers`     | Key-value pairs     |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`.                                                                   |
 
 <ExpansionPanel title="Metrics telemetry config example using gRPC">
 
@@ -373,20 +372,20 @@ export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR
 
 #### Traces
 
-| Option                | Type                   | Default                     | Description                                    |
-| :-------------------- | :--------------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`                | `OTLP Trace Exporter`  | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.   |
-| `sampler`             | `SamplerOption`        | `ALWAYS_ON`                 | Configuration to control sampling of traces.   |
-| `omitted_attributes`  | `List<String>`         |                             | List of attributes to be omitted from traces.  |
+| Option               | Type                  | Default                     | Description                                   |
+| :------------------- | :-------------------- | :-------------------------- | :-------------------------------------------- |
+| `otlp`               | `OTLP Trace Exporter` | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.  |
+| `sampler`            | `SamplerOption`       | `ALWAYS_ON`                 | Configuration to control sampling of traces.  |
+| `omitted_attributes` | `List<String>`        |                             | List of attributes to be omitted from traces. |
 
 #### OTLP Trace Exporter
 
-| Option       | Type                                         | Default                 | Description                                                                              |
-|:-------------|:---------------------------------------------|:------------------------|:-----------------------------------------------------------------------------------------|
-| `endpoint`   | `URL`                                        | `http://localhost:4317` | URL to export data to. Requires full path.                                               |
-| `protocol`   | `string`                                     | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.          |
-| `metadata`   | Key-value pairs                              |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.         |
-| `headers`    | Key-value pairs                              |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`. |
+| Option     | Type            | Default                 | Description                                                                              |
+| :--------- | :-------------- | :---------------------- | :--------------------------------------------------------------------------------------- |
+| `endpoint` | `URL`           | `http://localhost:4317` | URL to export data to. Requires full path.                                               |
+| `protocol` | `string`        | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.          |
+| `metadata` | Key-value pairs |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.         |
+| `headers`  | Key-value pairs |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`. |
 
 <ExpansionPanel title="Tracing telemetry config example using HTTP/Protobuf">
 
@@ -408,19 +407,19 @@ telemetry:
 
 #### MetricTemporality
 
-| Option       | Type        | Description                    |
-|:-------------|:------------|:-------------------------------|
-| `cumulative` | `string`    | Cumulative temporality option. |
-| `delta`      | `string`    | Delta temporality option.      |
-| `lowmemory`  | `string`    | Low memory temporality option. |
+| Option       | Type     | Description                    |
+| :----------- | :------- | :----------------------------- |
+| `cumulative` | `string` | Cumulative temporality option. |
+| `delta`      | `string` | Delta temporality option.      |
+| `lowmemory`  | `string` | Low memory temporality option. |
 
 #### SamplerOption
 
-| Option       | Type      | Description                                              |
-| :----------- | :-------- | :------------------------------------------------------- |
-| `always_on`  | `string`  | All traces will be exported.                             |
-| `always_off` | `string`  | Sampling is turned off, no traces will be exported.      |
-| `0.0-1.0`    | `f64`     | Percentage of traces to export.                          |
+| Option       | Type     | Description                                         |
+| :----------- | :------- | :-------------------------------------------------- |
+| `always_on`  | `string` | All traces will be exported.                        |
+| `always_off` | `string` | Sampling is turned off, no traces will be exported. |
+| `0.0-1.0`    | `f64`    | Percentage of traces to export.                     |
 
 ## Example config files
 
