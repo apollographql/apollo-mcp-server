@@ -33,7 +33,7 @@ jobs:
     outputs:
       version: ${{ steps.store-version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: knope-dev/action@v2.1.0
@@ -81,7 +81,7 @@ jobs:
       archive_name: artifact
       package_name: apollo-mcp-server
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -226,7 +226,7 @@ jobs:
       archive_name: artifact
       package_name: apollo-mcp-server
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
 
@@ -248,7 +248,7 @@ jobs:
     needs: [build-artifacts, generate-config-schema]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref || github.ref }}
       - uses: actions/download-artifact@v4.1.8
