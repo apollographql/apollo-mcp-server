@@ -15,5 +15,5 @@ transport:
       resource: https://mcp.example.com/mcp
       tls:
         ca_cert: /path/to/ca-certificate.pem
-        danger_accept_invalid_certs: false  # dev/testing only
+        danger_accept_invalid_certs: false  # Set this to true for development or testing purposes only
 ```
