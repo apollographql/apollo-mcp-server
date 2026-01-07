@@ -180,7 +180,13 @@ impl Starting {
             ($router:expr, $auth:ident) => {{
                 let mut router = $router;
                 if let Some(auth) = $auth {
-                    router = auth.enable_middleware(router);
+                    match auth.enable_middleware(router) {
+                        Ok(r) => router = r,
+                        Err(e) => {
+                            error!("Failed to enable auth middleware: {}", e);
+                            return Err(e.into());
+                        }
+                    }
                 }
 
                 router

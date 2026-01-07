@@ -10,14 +10,21 @@ pub(super) struct NetworkedTokenValidator<'a> {
     audiences: &'a [String],
     allow_any_audience: bool,
     upstreams: &'a Vec<Url>,
+    client: &'a reqwest::Client,
 }
 
 impl<'a> NetworkedTokenValidator<'a> {
-    pub fn new(audiences: &'a [String], allow_any_audience: bool, upstreams: &'a Vec<Url>) -> Self {
+    pub fn new(
+        audiences: &'a [String],
+        allow_any_audience: bool,
+        upstreams: &'a Vec<Url>,
+        client: &'a reqwest::Client,
+    ) -> Self {
         Self {
             audiences,
             allow_any_audience,
             upstreams,
+            client,
         }
     }
 }
@@ -49,7 +56,7 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
         let oidc_url = build_oidc_url(server);
 
-        let jwks = Jwks::from_oidc_url(oidc_url)
+        let jwks = Jwks::from_oidc_url_with_client(self.client, oidc_url.as_str())
             .await
             .inspect_err(|e| {
                 warn!("could not fetch OIDC information from {server}: {e}");
