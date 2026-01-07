@@ -15,9 +15,8 @@ jobs:
     name: Run Clippy checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo clippy --all-targets -- --deny warnings
 
@@ -25,9 +24,8 @@ jobs:
     name: Run Cargo Doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo doc
 
@@ -35,9 +33,8 @@ jobs:
     name: Run Cargo Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo fmt --check
 
@@ -45,27 +42,24 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build
   test:
     name: Run Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo test
   coverage:
     name: Calculate Test Coverage
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate code coverage
