@@ -53,9 +53,8 @@ pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error
         ))
     })?;
 
-    let expanded = env_expansion::expand_env_vars(&content).map_err(|e| {
-        figment::Error::from(e.to_string())
-    })?;
+    let expanded = env_expansion::expand_env_vars(&content)
+        .map_err(|e| figment::Error::from(e.to_string()))?;
 
     Figment::new()
         .join(apollo_common_env())

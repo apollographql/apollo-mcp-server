@@ -62,16 +62,14 @@ fn expand_placeholder(
     let body = read_placeholder_body(chars);
 
     // Extract var name: must be "env.<name>}" format
-    let Some(var_name) = body
-        .strip_prefix("env.")
-        .and_then(|s| s.strip_suffix('}'))
-    else {
+    let Some(var_name) = body.strip_prefix("env.").and_then(|s| s.strip_suffix('}')) else {
         result.push_str("${");
         result.push_str(&body);
         return Ok(());
     };
 
-    if !is_valid_var_name(var_name) {        // Invalid variable name, output literally
+    if !is_valid_var_name(var_name) {
+        // Invalid variable name, output literally
         result.push_str("${");
         result.push_str(&body);
         return Ok(());
