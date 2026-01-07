@@ -7,7 +7,7 @@ use std::env;
 use std::iter::Peekable;
 use std::str::Chars;
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, PartialEq, thiserror::Error)]
 pub enum EnvExpansionError {
     #[error("undefined environment variable '{name}' referenced in configuration")]
     UndefinedVariable { name: String },
@@ -27,12 +27,14 @@ pub fn expand_env_vars(content: &str) -> Result<String, EnvExpansionError> {
             continue;
         }
 
+        // Escape sequence: $$ followed by { becomes literal ${
+        // Standalone $$ is preserved literally
         if chars.peek() == Some(&'$') {
-            chars.next();
+            chars.next(); // consume second $
             if chars.peek() == Some(&'{') {
-                result.push('$');
+                result.push('$'); // convert $${ -> ${
             } else {
-                result.push_str("$$");
+                result.push_str("$$"); // convert$$<other> -> $$
             }
             continue;
         }
@@ -48,31 +50,35 @@ pub fn expand_env_vars(content: &str) -> Result<String, EnvExpansionError> {
     Ok(result)
 }
 
+/// Attempts to expand a `${env.VAR_NAME}` placeholder.
+///
+/// Called when we've seen `$` and the next char is `{`. Parses the placeholder
+/// body and either expands it (if valid) or outputs it literally.
 fn expand_placeholder(
     chars: &mut Peekable<Chars>,
     result: &mut String,
 ) -> Result<(), EnvExpansionError> {
-    let start_pos = result.len();
-    result.push_str("${");
-    chars.next();
+    chars.next(); // consume '{'
+    let body = read_placeholder_body(chars);
 
-    let var_content = collect_until_close(chars);
-
-    if !var_content.ends_with('}') || !var_content.starts_with("env.") {
-        result.push_str(&var_content);
+    // Extract var name: must be "env.<name>}" format
+    let Some(var_name) = body
+        .strip_prefix("env.")
+        .and_then(|s| s.strip_suffix('}'))
+    else {
+        result.push_str("${");
+        result.push_str(&body);
         return Ok(());
-    }
+    };
 
-    let var_name = &var_content[4..var_content.len() - 1];
-
-    if !is_valid_var_name(var_name) {
-        result.push_str(&var_content);
+    if !is_valid_var_name(var_name) {        // Invalid variable name, output literally
+        result.push_str("${");
+        result.push_str(&body);
         return Ok(());
     }
 
     match env::var(var_name) {
         Ok(value) => {
-            result.truncate(start_pos);
             result.push_str(&value);
             Ok(())
         }
@@ -85,17 +91,22 @@ fn expand_placeholder(
     }
 }
 
-fn collect_until_close(chars: &mut Peekable<Chars>) -> String {
-    let mut content = String::new();
+/// Reads characters until a closing `}` is found or until we reach the end of input.
+fn read_placeholder_body(chars: &mut Peekable<Chars>) -> String {
+    let mut body = String::new();
     for ch in chars.by_ref() {
-        content.push(ch);
+        body.push(ch);
         if ch == '}' {
             break;
         }
     }
-    content
+    body
 }
 
+/// Validates that a string is a valid environment variable name.
+///
+/// Valid names start with an ASCII letter or underscore, followed by
+/// zero or more ASCII alphanumeric characters or underscores.
 fn is_valid_var_name(name: &str) -> bool {
     let mut chars = name.chars();
 
@@ -145,12 +156,12 @@ mod tests {
     #[test]
     fn errors_on_undefined_env_var() {
         let result = expand_env_vars("val: ${env._NONEXISTENT_VAR_12345_}");
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(
-            err,
-            EnvExpansionError::UndefinedVariable { name } if name == "_NONEXISTENT_VAR_12345_"
-        ));
+        assert_eq!(
+            result.unwrap_err(),
+            EnvExpansionError::UndefinedVariable {
+                name: "_NONEXISTENT_VAR_12345_".into()
+            }
+        );
     }
 
     #[test]
