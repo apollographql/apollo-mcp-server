@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use axum::{
     Json, Router,
     extract::{Request, State},
@@ -28,6 +30,53 @@ pub(crate) use valid_token::ValidToken;
 use valid_token::ValidateToken;
 use www_authenticate::WwwAuthenticate;
 
+/// Errors that can occur when building a TLS-configured HTTP client
+#[derive(Debug, thiserror::Error)]
+pub enum TlsConfigError {
+    #[error("Failed to read CA certificate from {path}: {source}")]
+    CertificateRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("Failed to parse CA certificate from {path}: invalid PEM format")]
+    CertificateParse { path: PathBuf },
+    #[error("Failed to build HTTP client: {0}")]
+    ClientBuild(#[from] reqwest::Error),
+}
+
+impl TlsConfig {
+    /// Build a reqwest client configured with the TLS settings
+    pub fn build_client(&self) -> Result<reqwest::Client, TlsConfigError> {
+        let mut builder = reqwest::Client::builder();
+
+        // Add custom CA certificate if provided
+        if let Some(ca_cert_path) = &self.ca_cert {
+            let cert_bytes =
+                std::fs::read(ca_cert_path).map_err(|e| TlsConfigError::CertificateRead {
+                    path: ca_cert_path.clone(),
+                    source: e,
+                })?;
+            let cert = reqwest::Certificate::from_pem(&cert_bytes).map_err(|_| {
+                TlsConfigError::CertificateParse {
+                    path: ca_cert_path.clone(),
+                }
+            })?;
+            builder = builder.add_root_certificate(cert);
+            tracing::debug!("Added custom CA certificate from {:?}", ca_cert_path);
+        }
+
+        // Accept invalid certs if configured (development only)
+        if self.danger_accept_invalid_certs {
+            tracing::warn!(
+                "TLS certificate validation is disabled. This is insecure and should only be used for development."
+            );
+            builder = builder.danger_accept_invalid_certs(true);
+        }
+
+        Ok(builder.build()?)
+    }
+}
+
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct Config {
@@ -56,10 +105,41 @@ pub struct Config {
     /// Whether to disable the auth token passthrough to upstream API
     #[serde(default)]
     pub disable_auth_token_passthrough: bool,
+
+    /// TLS configuration for connecting to OAuth servers
+    #[serde(default)]
+    pub tls: TlsConfig,
+}
+
+/// TLS configuration for OAuth server connections
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct TlsConfig {
+    /// Path to additional CA certificates to trust (PEM format).
+    /// Use this when your OAuth server uses a self-signed certificate
+    /// or a certificate signed by a private CA.
+    pub ca_cert: Option<PathBuf>,
+
+    /// Whether to accept invalid TLS certificates.
+    ///
+    /// **WARNING**: This is insecure and should only be used for development/testing.
+    /// When enabled, the server will accept any certificate, including self-signed
+    /// and expired certificates, without validation.
+    #[serde(default)]
+    pub danger_accept_invalid_certs: bool,
+}
+
+/// Internal state for the auth middleware, containing both config and pre-built HTTP client
+#[derive(Clone)]
+struct AuthState {
+    config: Config,
+    client: reqwest::Client,
 }
 
 impl Config {
-    pub fn enable_middleware(&self, router: Router) -> Router {
+    /// Enable auth middleware on the router.
+    ///
+    /// Builds the HTTP client at startup to validate TLS configuration eagerly.
+    pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -68,9 +148,18 @@ impl Config {
 
         /// Simple handler to encode our config into the desired OAuth 2.1 protected
         /// resource format
-        async fn protected_resource(State(auth_config): State<Config>) -> Json<ProtectedResource> {
-            Json(auth_config.into())
+        async fn protected_resource(
+            State(auth_state): State<AuthState>,
+        ) -> Json<ProtectedResource> {
+            Json(auth_state.config.into())
         }
+
+        // Build HTTP client with TLS configuration
+        let client = self.tls.build_client()?;
+        let auth_state = AuthState {
+            config: self.clone(),
+            client,
+        };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
         // metadata information paths.
@@ -82,27 +171,26 @@ impl Config {
                 "/.well-known/oauth-protected-resource",
                 get(protected_resource),
             )
-            .with_state(self.clone())
+            .with_state(auth_state.clone())
             .layer(cors);
 
         // Merge with MCP server routes
-        Router::new()
-            .merge(auth_router)
-            .merge(router.layer(axum::middleware::from_fn_with_state(
-                self.clone(),
-                oauth_validate,
-            )))
+        Ok(Router::new().merge(auth_router).merge(router.layer(
+            axum::middleware::from_fn_with_state(auth_state, oauth_validate),
+        )))
     }
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
 #[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
-    State(auth_config): State<Config>,
+    State(auth_state): State<AuthState>,
     token: Option<TypedHeader<Authorization<Bearer>>>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
+    let auth_config = &auth_state.config;
+
     // Consolidated unauthorized error for use with any fallible step in this process
     let unauthorized_error = || {
         let mut resource = auth_config.resource.clone();
@@ -127,6 +215,7 @@ async fn oauth_validate(
         &auth_config.audiences,
         auth_config.allow_any_audience,
         &auth_config.servers,
+        &auth_state.client,
     );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -172,13 +261,21 @@ mod tests {
             resource_documentation: None,
             scopes: vec!["read".to_string()],
             disable_auth_token_passthrough: false,
+            tls: TlsConfig::default(),
+        }
+    }
+
+    fn test_auth_state(config: Config) -> AuthState {
+        AuthState {
+            config,
+            client: reqwest::Client::new(),
         }
     }
 
     fn test_router(config: Config) -> Router {
         Router::new()
             .route("/test", get(|| async { "ok" }))
-            .layer(from_fn_with_state(config, oauth_validate))
+            .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
     }
 
     #[tokio::test]
@@ -237,5 +334,106 @@ mod tests {
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
         assert!(!www_auth.contains("scope="));
+    }
+
+    mod tls_config {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        #[test]
+        fn default_config_builds_client() {
+            let config = TlsConfig::default();
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn danger_accept_invalid_certs_builds_client() {
+            let config = TlsConfig {
+                ca_cert: None,
+                danger_accept_invalid_certs: true,
+            };
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn valid_ca_cert_is_loaded() {
+            // Create a temporary file with a valid PEM certificate
+            // This is the ISRG Root X1 certificate (Let's Encrypt root CA)
+            let mut temp_file = NamedTempFile::new().unwrap();
+            let test_cert = r#"-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----"#;
+            temp_file.write_all(test_cert.as_bytes()).unwrap();
+
+            let config = TlsConfig {
+                ca_cert: Some(temp_file.path().to_path_buf()),
+                danger_accept_invalid_certs: false,
+            };
+            let client = config.build_client();
+            assert!(client.is_ok());
+        }
+
+        #[test]
+        fn missing_ca_cert_file_returns_error() {
+            let config = TlsConfig {
+                ca_cert: Some("/nonexistent/path/to/cert.pem".into()),
+                danger_accept_invalid_certs: false,
+            };
+            let result = config.build_client();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::CertificateRead { .. }
+            ));
+        }
+
+        #[test]
+        fn invalid_pem_returns_error() {
+            // Create a temporary file with invalid PEM content
+            let mut temp_file = NamedTempFile::new().unwrap();
+            temp_file.write_all(b"not a valid certificate").unwrap();
+
+            let config = TlsConfig {
+                ca_cert: Some(temp_file.path().to_path_buf()),
+                danger_accept_invalid_certs: false,
+            };
+            let result = config.build_client();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::CertificateParse { .. }
+            ));
+        }
     }
 }
