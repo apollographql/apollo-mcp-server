@@ -39,7 +39,7 @@ jobs:
       release_commit: ${{ steps.get-commit.outputs.commit_sha }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Configure Git
         run: |
@@ -81,7 +81,7 @@ jobs:
       contents: write
     if: always()
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Delete temporary branch
         run: |
