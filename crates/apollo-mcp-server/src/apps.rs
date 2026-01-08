@@ -135,6 +135,22 @@ pub(crate) fn load_from_path(
         meta.insert("openai/outputTemplate".to_string(), uri.to_string().into());
         meta.insert("openai/widgetAccessible".to_string(), true.into());
 
+        if let Some(labels) = manifest.labels {
+            if let Some(tool_invocation_invoking) = labels.tool_invocation_invoking {
+                meta.insert(
+                    "openai/toolInvocation/invoking".into(),
+                    tool_invocation_invoking.into(),
+                );
+            }
+
+            if let Some(tool_invocation_invoked) = labels.tool_invocation_invoked {
+                meta.insert(
+                    "openai/toolInvocation/invoked".into(),
+                    tool_invocation_invoked.into(),
+                );
+            }
+        }
+
         let mut prefetch_operations = Vec::new();
         let mut tools = Vec::new();
 
@@ -165,6 +181,25 @@ pub(crate) fn load_from_path(
             };
 
             for tool in operation_def.tools {
+                let mut meta = meta.clone();
+
+                // Allow overriding the labels per tool
+                if let Some(labels) = tool.labels {
+                    if let Some(tool_invocation_invoking) = labels.tool_invocation_invoking {
+                        meta.insert(
+                            "openai/toolInvocation/invoking".into(),
+                            tool_invocation_invoking.into(),
+                        );
+                    }
+
+                    if let Some(tool_invocation_invoked) = labels.tool_invocation_invoked {
+                        meta.insert(
+                            "openai/toolInvocation/invoked".into(),
+                            tool_invocation_invoked.into(),
+                        );
+                    }
+                }
+
                 let tool = Tool {
                     name: format!("{name}--{}", tool.name).into(),
                     meta: Some(meta.clone()),
@@ -284,6 +319,7 @@ struct Manifest {
     name: Option<String>,
     description: Option<String>,
     csp: Option<CSPSettings>,
+    labels: Option<AppLabels>,
     #[allow(dead_code)] // Only used to verify we recognize the file
     format: ManifestFormat,
     #[allow(dead_code)] // Only used to verify we recognize the version
@@ -303,6 +339,14 @@ enum ManifestVersion {
 }
 
 #[derive(Clone, Deserialize)]
+struct AppLabels {
+    #[serde(rename = "toolInvocation/invoking")]
+    tool_invocation_invoking: Option<String>,
+    #[serde(rename = "toolInvocation/invoked")]
+    tool_invocation_invoked: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
 struct OperationDefinition {
     /// The GraphQL operation itself
     body: String,
@@ -319,6 +363,7 @@ struct ToolDefinition {
     description: String,
     #[serde(rename = "extraInputs", default)]
     extra_inputs: Option<Vec<ExtraInputDefinition>>,
+    labels: Option<AppLabels>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -717,5 +762,332 @@ mod test_load_from_path {
             apps.err().unwrap(),
             "Extra input with name 'isAwesome' failed to process because another input with this name was already processed. Make sure your extra_input names are unique, both from each other and any graphql variables you may have."
         )
+    }
+
+    #[test]
+    fn should_not_have_tool_invocation_labels_when_not_specified() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("MyApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": "index.html",
+                            "operations": [
+                                {
+                                    "body": "query MyOperation { hello }", 
+                                    "tools": [
+                                        {"name": "Tool1", "description": "Description for Tool1" }
+                                    ]
+                                }
+                            ]}"#,
+            )
+            .unwrap();
+        let html = "<html>blelo</html>";
+        app_dir.child("index.html").write_str(html).unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        let tool = &app.tools[0];
+
+        assert!(
+            tool.tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .is_none()
+        );
+        assert!(
+            tool.tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn should_have_tool_invocation_labels_when_specified_in_manifest() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("MyApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": "index.html",
+                            "operations": [
+                                {
+                                    "body": "query MyOperation { hello }", 
+                                    "tools": [
+                                        {"name": "Tool1", "description": "Description for Tool1" },
+                                        {"name": "Tool2", "description": "Description for Tool2" }
+                                    ]
+                                }
+                            ],
+                            "labels": {
+                                "toolInvocation/invoking": "Store is invoking...",
+                                "toolInvocation/invoked": "Happy shopping!"
+                            }
+                        }"#,
+            )
+            .unwrap();
+        let html = "<html>blelo</html>";
+        app_dir.child("index.html").write_str(html).unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        let tool1 = &app.tools[0];
+        let tool2 = &app.tools[1];
+
+        assert_eq!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .unwrap(),
+            "Store is invoking..."
+        );
+        assert_eq!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .unwrap(),
+            "Happy shopping!"
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .unwrap(),
+            "Store is invoking..."
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .unwrap(),
+            "Happy shopping!"
+        );
+    }
+
+    #[test]
+    fn should_have_tool_invocation_labels_overridden_when_specified_by_tool() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("MyApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": "index.html",
+                            "operations": [
+                                {
+                                    "body": "query MyOperation { hello }", 
+                                    "tools": [
+                                        {"name": "Tool1", "description": "Description for Tool1" },
+                                        {"name": "Tool2", "description": "Description for Tool2", "labels": {
+                                                "toolInvocation/invoking": "Adding to cart...",
+                                                "toolInvocation/invoked": "Cart filled!"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ],
+                            "labels": {
+                                "toolInvocation/invoking": "Store is invoking...",
+                                "toolInvocation/invoked": "Happy shopping!"
+                            }
+                        }"#,
+            )
+            .unwrap();
+        let html = "<html>blelo</html>";
+        app_dir.child("index.html").write_str(html).unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        let tool1 = &app.tools[0];
+        let tool2 = &app.tools[1];
+
+        assert_eq!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .unwrap(),
+            "Store is invoking..."
+        );
+        assert_eq!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .unwrap(),
+            "Happy shopping!"
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .unwrap(),
+            "Adding to cart..."
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .unwrap(),
+            "Cart filled!"
+        );
+    }
+
+    #[test]
+    fn should_have_tool_invocation_labels_when_only_specified_by_tool() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("MyApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": "index.html",
+                            "operations": [
+                                {
+                                    "body": "query MyOperation { hello }", 
+                                    "tools": [
+                                        {"name": "Tool1", "description": "Description for Tool1" },
+                                        {"name": "Tool2", "description": "Description for Tool2", "labels": {
+                                                "toolInvocation/invoking": "Adding to cart...",
+                                                "toolInvocation/invoked": "Cart filled!"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        }"#,
+            )
+            .unwrap();
+        let html = "<html>blelo</html>";
+        app_dir.child("index.html").write_str(html).unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        let tool1 = &app.tools[0];
+        let tool2 = &app.tools[1];
+
+        assert!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .is_none()
+        );
+        assert!(
+            tool1
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .is_none(),
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoking")
+                .unwrap(),
+            "Adding to cart..."
+        );
+        assert_eq!(
+            tool2
+                .tool
+                .meta
+                .clone()
+                .unwrap()
+                .get("openai/toolInvocation/invoked")
+                .unwrap(),
+            "Cart filled!"
+        );
     }
 }
