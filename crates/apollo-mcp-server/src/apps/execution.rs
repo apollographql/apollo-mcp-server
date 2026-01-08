@@ -5,7 +5,7 @@ use futures::future::try_join_all;
 use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use rmcp::model::{CallToolResult, Content, JsonObject, Meta};
+use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Tool};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -134,6 +134,13 @@ fn filter_inputs_for_operation(
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect(),
     )
+}
+
+/// This makes the tool executable from the app but hidden from the LLM
+pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
+    let meta = tool.meta.get_or_insert_with(Meta::new);
+    meta.insert("openai/visibility".into(), "private".into());
+    tool
 }
 
 #[cfg(test)]
@@ -422,5 +429,40 @@ mod tests {
         .await;
 
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn make_tool_private_adds_meta_when_tool_has_no_meta() {
+        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
+        tool = make_tool_private(tool);
+
+        let meta = tool.meta.unwrap();
+
+        assert_eq!(meta.keys().len(), 1);
+        assert_eq!(
+            meta.get("openai/visibility").unwrap(),
+            &Value::from("private")
+        );
+    }
+
+    #[tokio::test]
+    async fn make_tool_private_modified_meta_when_tool_has_existing_meta() {
+        let mut existing_meta = Meta::new();
+        existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
+        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
+        tool.meta = Some(existing_meta);
+        tool = make_tool_private(tool);
+
+        let meta = tool.meta.unwrap();
+
+        assert_eq!(meta.keys().len(), 2);
+        assert_eq!(
+            meta.get("my-awesome-key").unwrap(),
+            &Value::from("my-awesome-value")
+        );
+        assert_eq!(
+            meta.get("openai/visibility").unwrap(),
+            &Value::from("private")
+        );
     }
 }
