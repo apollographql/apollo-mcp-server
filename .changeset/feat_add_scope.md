@@ -1,3 +1,7 @@
+---
+default: minor
+---
+
 ### Add scope parameter to WWW-Authenticate header - @DaleSeo PR #523
 
 Add support for optional `scope` parameter in the `WWW-Authenticate` header per [MCP Auth Spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#protected-resource-metadata-discovery-requirements).

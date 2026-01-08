@@ -1,256 +1,28 @@
-name: Prep release
+name: Prepare Release
 
-on:
-  workflow_dispatch:
-    inputs:
-      version_bump:
-        type: choice
-        description: "Type of version bump"
-        default: patch
-        required: true
-        options:
-          - major
-          - minor
-          - patch
-          - custom
-      custom_version:
-        type: string
-        required: false
-        description: "Custom version (ignored for other bump types)"
+on: workflow_dispatch
 
 permissions:
   contents: write
   pull-requests: write
-
-concurrency:
-  group: pre-release
-  cancel-in-progress: false
+  issues: write
+  id-token: write
 
 jobs:
-  validate:
+  prepare-release:
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce custom_version when bump=custom
+      - uses: actions/checkout@v6
+
+      - name: Configure Git
         run: |
-          if [[ "${{ inputs.version_bump }}" == "custom" ]]; then
-            if [[ -z "${{ inputs.custom_version }}" ]]; then
-              echo "::error title=Missing input::Set 'custom_version' when version_bump=custom"; exit 1
-            fi
-            if [[ ! "${{ inputs.custom_version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
-              echo "::error title=Invalid SemVer::Use x.y.z (can use optional pre-release/build identifiers)"; exit 1
-            fi
-          fi
-  prep-release:
-    runs-on: ubuntu-latest
+          git config --global user.name GitHub Actions
+          git config user.email github-actions@github.com
 
-    env:
-      GH_TOKEN: ${{ secrets.GH_PAT }}
-
-    steps:
-      - uses: actions/checkout@v5
+      - uses: knope-dev/action@v2.1.0
         with:
-          fetch-depth: 0
+          version: 0.21.7
 
-      - name: Configure git author
-        run: |
-          git config --local user.name "Apollo Bot"
-          git config --local user.email "svc-apollo-bot-2@apollographql.com"
-
-      - name: Retrieve current version from Cargo.toml
-        id: meta
-        run: |
-          set -eu
-          VERSION=$(cargo metadata --no-deps --format-version=1 | jq -er --arg NAME "apollo-mcp-server" '.packages[] | select(.name == $NAME) | .version')
-          [ -n "$VERSION" ] || { echo "::error::Could not determine version"; exit 1; }
-          echo "current_version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Bump the version
-        id: bump
-        shell: bash
+      - run: knope prepare-release --verbose
         env:
-          CURR: ${{ steps.meta.outputs.current_version }}
-          CUSTOM: ${{ inputs.custom_version }}
-          BUMP: ${{ inputs.version_bump }}
-        run: |
-          set -euo pipefail
-          
-          if [[ -n "${CUSTOM:-}" ]]; then
-            echo "new_version=$CUSTOM" >> "$GITHUB_OUTPUT"
-            echo "Custom Bumped: $CURR -> $CUSTOM"
-          else
-            # strip any pre-release / build metadata for arithmetic (e.g., -rc.1, +build.5)
-            BASE="${CURR%%[-+]*}"
-            
-            IFS=. read -r MA MI PA <<< "$BASE"
-            
-            case "$BUMP" in
-              major) MA=$((MA+1)); MI=0; PA=0 ;;
-              minor) MI=$((MI+1)); PA=0 ;;
-              patch) PA=$((PA+1)) ;;
-              *) echo "::error::Unknown bump '$BUMP'"; exit 1 ;;
-            esac
-            
-            NEW_VERSION="$MA.$MI.$PA"
-            echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-            echo "Bumped: $CURR -> $NEW_VERSION"
-          fi
-
-      - name: Prepare release branch
-        id: prep_branch
-        run: |
-          set -e
-          git fetch origin main
-          git switch -c "release/${{ steps.bump.outputs.new_version }}" "origin/main"
-          echo "release_branch=release/${{ steps.bump.outputs.new_version }}" >> "$GITHUB_OUTPUT"
-
-      - name: Update Cargo version
-        run: |
-          cargo install cargo-edit --locked
-          cargo set-version --workspace "${{ steps.bump.outputs.new_version }}"
-
-      - name: Replace versions in scripts and docs
-        env:
-          CURR_VERSION: ${{ steps.meta.outputs.current_version }}
-          NEW_VERSION: ${{ steps.bump.outputs.new_version }}
-        run: |
-          python3 - <<'PY'
-          try:
-            import os, re, sys, glob, pathlib
-            
-            current_version = os.environ["CURR_VERSION"]
-            new_version = os.environ["NEW_VERSION"]
-            
-            print(f"current={current_version} new={new_version}")
-          
-            # negative lookbehind (word,., or -) + optional 'v' + the escaped current version + negative lookahead (word or .)
-            # e.g. current version of 1.0.1 will match 1.0.1, v1.0.1, v1.0.1-rc.1
-            # e.g. current version of 1.0.1 will not match ver1.0.1, 1.0.1x, 1.0.11, 1.0.1.beta
-            pat = re.compile(rf'(?<![\w.-])(v?){re.escape(current_version)}(?![\w.])')
-  
-            def repl(m): # preserve 'v' prefix if it existed
-              return (m.group(1) or '') + new_version
-  
-            # Targets to update
-            targets = [
-              "scripts/nix/install.sh",                # nix shell script
-              "scripts/windows/install.ps1",           # PowerShell
-              *glob.glob("**/*.mdx", recursive=True),  # docs
-            ]
-  
-            print(targets)
-            print(f"Scanning {len(targets)} targets…")
-          
-            changed = 0
-            for path in targets:
-              p = pathlib.Path(path)
-              if not p.exists():
-                continue
-              txt = p.read_text(encoding="utf-8")
-              new_txt, n = pat.subn(repl, txt)
-              if n:
-                p.write_text(new_txt, encoding="utf-8")
-                print(f"Updated {path} ({n} occurrence{'s' if n!=1 else ''})")
-                changed += n
-  
-            if changed == 0:
-              print("::error::No occurrences of the current version were found.", file=sys.stderr)
-              sys.exit(1)
-          except Exception:
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-          PY
-
-      - name: Commit version bumps
-        id: commit_version_bumps
-        run: |
-          set -euo pipefail
-          git add -A || true
-          git commit -m "chore(release): bumping to version ${{ steps.bump.outputs.new_version }}" || echo "No version bump changes to commit"
-
-      - name: Update changelog via xtask
-        run: cargo xtask changeset changelog ${{ steps.bump.outputs.new_version }}
-
-      - name: Extract changelog section
-        id: changelog
-        shell: bash
-        env:
-          NEW: ${{ steps.bump.outputs.new_version }}
-          OLD: ${{ steps.meta.outputs.current_version }}
-        run: |
-          set -euo pipefail
-          # Write the extracted section to a file and also expose it as a multiline output "body"
-          python3 - <<'PY' > CHANGELOG_SECTION.md
-          try:
-            import os, re, sys, pathlib
-            new = os.environ["NEW"]
-            old = os.environ["OLD"]
-      
-            p = pathlib.Path("CHANGELOG.md")
-            if not p.exists():
-              raise FileNotFoundError("CHANGELOG.md not found at repo root")
-            text = p.read_text(encoding="utf-8")
-      
-            # Find header for the new version
-            start = re.search(rf'(?m)^# \[{re.escape(new)}\]', text)
-            if not start:
-              print(f"::error::Could not find changelog entry for {new}", file=sys.stderr)
-              sys.exit(1)
-      
-            # Prefer the *specific* previous version header if present; otherwise, next '# ['; else, EOF
-            segment = text[start.start():]
-            end_old = re.search(rf'(?m)^# \[{re.escape(old)}\]', segment)
-            if end_old:
-              segment = segment[:end_old.start()]
-            else:
-              nxt = re.search(r'(?m)^# \[', segment[len('# [' + new + ']'):])
-              if nxt:
-                # adjust to absolute end
-                segment = segment[: (len('# [' + new + ']') + nxt.start())]
-      
-            segment = segment.rstrip() + "\n"
-            print(segment)
-          except Exception:
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-          PY
-            
-            {
-              echo 'body<<EOF'
-              cat CHANGELOG_SECTION.md
-              echo 'EOF'
-            } >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push changelog updates
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add -A || true
-          git commit -m "chore(release): changelog for ${{ steps.bump.outputs.new_version }}" || echo "No changelog updates to commit"
-          git push origin HEAD
-
-      - name: Open/Update draft PR to main
-        env:
-          HEAD: release/${{ steps.bump.outputs.new_version }}
-          TITLE: Releasing ${{ steps.bump.outputs.new_version }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Try to create; if it already exists, update it
-          if ! gh pr create \
-            --base main \
-            --head "$HEAD" \
-            --title "$TITLE" \
-            --draft \
-            --body-file CHANGELOG_SECTION.md \
-            --label release
-          then
-            num=$(gh pr list --head "$HEAD" --base main --state open --json number -q '.[0].number' || true)
-            if [[ -n "$num" ]]; then
-              gh pr edit "$num" --title "$TITLE" --body-file CHANGELOG_SECTION.md --add-label release
-            else
-              echo "::error::Failed to create or find PR from $HEAD to main"
-              exit 1
-            fi
-          fi
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

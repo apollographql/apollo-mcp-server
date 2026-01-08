@@ -1,0 +1,84 @@
+[package]
+versioned_files = [
+    "Cargo.toml", 
+    { path = "Cargo.lock", dependency = "apollo-mcp-server" },
+    { path = "scripts/nix/install.sh", regex = "PACKAGE_VERSION=\"v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)\"" },
+    { path = "scripts/windows/install.ps1", regex = "\\$package_version = 'v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)'" },
+    { path = "docs/source/run.mdx", regex = "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)([^\\w.]|$)" }
+]
+changelog = "CHANGELOG.md"
+assets = "artifacts/*"
+
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+ignore_conventional_commits = true
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare release $version\""
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+[[workflows.steps]]
+type = "CreatePullRequest"
+base = "main"
+
+[workflows.steps.title]
+template = "chore: prepare release $version"
+
+[workflows.steps.body]
+template = "This PR was created by Knope. Merging it will create a new release\n\n$changelog"
+
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
+
+[[workflows]]
+name = "get-version"
+
+[[workflows.steps]]
+type = "Command"
+command = "echo \"$version\""
+
+[[workflows]]
+name = "prepare-experimental-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release-temp-$NEW_VERSION-$GIT_RUN_ID"
+shell=true
+
+[[workflows.steps]]
+type = "PrepareRelease"
+ignore_conventional_commits = true
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m \"chore: prepare experimental release $NEW_VERSION\""
+shell=true
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release-temp-$NEW_VERSION-$GIT_RUN_ID"
+shell=true
+
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[github]
+owner = "apollographql"
+repo = "apollo-mcp-server"

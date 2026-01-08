@@ -6,14 +6,14 @@ on:
     tags-ignore:
       - "**"
     paths-ignore:
-      - '.github/**'
-      - '.cargo/**'
-      - '.direnv/**'
-      - '.vscode/**'
-      - 'docs/**'
-      - 'Cargo.*'
-      - 'crates/**/Cargo.*'
-      - '*.md'
+      - ".github/**"
+      - ".cargo/**"
+      - ".direnv/**"
+      - ".vscode/**"
+      - "docs/**"
+      - "Cargo.*"
+      - "crates/**/Cargo.*"
+      - "*.md"
     branches:
       - main
   workflow_dispatch:
