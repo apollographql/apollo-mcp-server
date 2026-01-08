@@ -483,6 +483,55 @@ telemetry:
 
 When Apollo MCP Server loads the configuration, it expands these references to their values before parsing the YAML.
 
+### Default values
+
+You can provide a fallback value using the `${env.VAR_NAME:-default}` syntax. If the environment variable is not set, the default value is used instead:
+
+```yaml title="config.yaml"
+endpoint: ${env.GRAPHQL_ENDPOINT:-http://localhost:4000}
+```
+
+<Note>
+
+The default value is used when the variable is **unset or empty**. This matches bash and Apollo Router behavior.
+
+</Note>
+
+Default values can contain special characters, including colons, balanced braces, and even `:-`:
+
+```yaml title="config.yaml"
+# URLs with ports work fine
+endpoint: ${env.API_URL:-http://localhost:4000}
+
+# JSON-like defaults with balanced braces work
+metadata: "${env.DEFAULT_META:-{\"version\":\"1.0\"}}"
+
+# Multiple :- in default value (only the first one delimits)
+value: ${env.MY_VAR:-a:-b:-c}  # default is "a:-b:-c"
+```
+
+<Note>
+
+**Nested references are not expanded.** Default values are treated as literal text. If your default contains `${env.OTHER}`, it will appear literally in the output, not be expanded:
+
+```yaml
+# If MISSING is unset, this becomes literally: "prefix ${env.OTHER} suffix"
+value: ${env.MISSING:-prefix ${env.OTHER} suffix}
+```
+
+</Note>
+
+<Note>
+
+**Quotes don't escape closing braces.** Brace matching in default values is purely depth-based. A `}` inside quotes will still terminate the placeholder:
+
+```yaml
+# This does NOT work as expected - the } inside quotes ends the placeholder early
+value: ${env.VAR:-"}"} # Results in: ""}  (not "}") 
+```
+
+</Note>
+
 <Note>
 
 `APOLLO_MCP_*` environment variables still take precedence over expanded values in the config file. For example, if you set both `${env.MY_ENDPOINT}` in the config and `APOLLO_MCP_ENDPOINT` as an environment variable, `APOLLO_MCP_ENDPOINT` wins.

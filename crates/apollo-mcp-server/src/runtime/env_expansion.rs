@@ -1,7 +1,14 @@
 //! Environment variable expansion for configuration files.
 //!
-//! Supports `${env.VAR_NAME}` syntax. Use `$${env.VAR}` to escape.
-//! See config-file.mdx for full documentation.
+//! Supports `${env.VAR_NAME}` and `${env.VAR_NAME:-default}` syntax.
+//! Use `$${env.VAR}` to escape. See config-file.mdx for full documentation.
+//!
+//! ## Default value behavior
+//!
+//! - `${env.VAR:-default}` uses `default` if `VAR` is **unset or empty**
+//! - This matches bash and Apollo Router behavior
+//! - Default values are literal text — nested `${env.X}` references are NOT expanded
+//! - Default values may contain `}` if braces are balanced: `${env.VAR:-{"key":"val"}}`
 
 use std::env;
 use std::iter::Peekable;
@@ -50,7 +57,7 @@ pub fn expand_env_vars(content: &str) -> Result<String, EnvExpansionError> {
     Ok(result)
 }
 
-/// Attempts to expand a `${env.VAR_NAME}` placeholder.
+/// Attempts to expand a `${env.VAR_NAME}` or `${env.VAR_NAME:-default}` placeholder.
 ///
 /// Called when we've seen `$` and the next char is `{`. Parses the placeholder
 /// body and either expands it (if valid) or outputs it literally.
@@ -61,11 +68,24 @@ fn expand_placeholder(
     chars.next(); // consume '{'
     let body = read_placeholder_body(chars);
 
-    // Extract var name: must be "env.<name>}" format
-    let Some(var_name) = body.strip_prefix("env.").and_then(|s| s.strip_suffix('}')) else {
+    // Must start with "env." to be a valid placeholder
+    let Some(without_prefix) = body.strip_prefix("env.") else {
         result.push_str("${");
         result.push_str(&body);
         return Ok(());
+    };
+
+    let Some(inner) = without_prefix.strip_suffix('}') else {
+        result.push_str("${");
+        result.push_str(&body);
+        return Ok(());
+    };
+
+    // "":-" cannot appear in valid POSIX variable names, so the first
+    // occurrence always delimits var_name from default_value.
+    let (var_name, default_value) = match inner.split_once(":-") {
+        Some((name, default)) => (name, Some(default)),
+        None => (inner, None),
     };
 
     if !is_valid_var_name(var_name) {
@@ -76,26 +96,43 @@ fn expand_placeholder(
     }
 
     match env::var(var_name) {
-        Ok(value) => {
+        Ok(value) if !value.is_empty() => {
             result.push_str(&value);
             Ok(())
         }
-        Err(env::VarError::NotPresent) => Err(EnvExpansionError::UndefinedVariable {
-            name: var_name.to_string(),
-        }),
+        Ok(_) | Err(env::VarError::NotPresent) => {
+            if let Some(default) = default_value {
+                result.push_str(default);
+                Ok(())
+            } else {
+                Err(EnvExpansionError::UndefinedVariable {
+                    name: var_name.to_string(),
+                })
+            }
+        }
         Err(env::VarError::NotUnicode(_)) => Err(EnvExpansionError::NonUnicodeValue {
             name: var_name.to_string(),
         }),
     }
 }
 
-/// Reads characters until a closing `}` is found or until we reach the end of input.
+/// Reads characters until the matching closing `}` is found or EOF.
+///
+/// Tracks brace depth to handle nested braces in default values, e.g.,
+/// `${env.VAR:-{"key":"value"}}` correctly captures the entire default.
 fn read_placeholder_body(chars: &mut Peekable<Chars>) -> String {
-    let mut body = String::new();
+    let mut body = String::with_capacity(32);
+    let mut depth = 1;
+
     for ch in chars.by_ref() {
         body.push(ch);
-        if ch == '}' {
-            break;
+        if ch == '{' {
+            depth += 1;
+        } else if ch == '}' {
+            depth -= 1;
+            if depth == 0 {
+                break;
+            }
         }
     }
     body
@@ -178,11 +215,16 @@ mod tests {
     }
 
     #[test]
-    fn handles_empty_env_var_value() {
+    fn empty_var_without_default_errors() {
         figment::Jail::expect_with(|jail| {
             jail.set_env("EMPTY_VAR", "");
-            let result = expand_env_vars("val: ${env.EMPTY_VAR}").unwrap();
-            assert_eq!(result, "val: ");
+            let result = expand_env_vars("val: ${env.EMPTY_VAR}");
+            assert_eq!(
+                result.unwrap_err(),
+                EnvExpansionError::UndefinedVariable {
+                    name: "EMPTY_VAR".into()
+                }
+            );
             Ok(())
         });
     }
@@ -271,5 +313,175 @@ mod tests {
             assert_eq!(result, "${env.A}expanded");
             Ok(())
         });
+    }
+
+    #[test]
+    fn uses_default_when_var_undefined() {
+        let result = expand_env_vars("val: ${env.UNDEFINED_VAR_XYZ:-fallback}").unwrap();
+        assert_eq!(result, "val: fallback");
+    }
+
+    #[test]
+    fn ignores_default_when_var_defined() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("DEFINED_VAR", "actual_value");
+            let result = expand_env_vars("val: ${env.DEFINED_VAR:-fallback}").unwrap();
+            assert_eq!(result, "val: actual_value");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn uses_empty_default() {
+        let result = expand_env_vars("val: ${env.UNDEFINED_VAR_XYZ:-}").unwrap();
+        assert_eq!(result, "val: ");
+    }
+
+    #[test]
+    fn default_with_special_chars() {
+        let result =
+            expand_env_vars("url: ${env.UNDEFINED_VAR_XYZ:-http://localhost:4000}").unwrap();
+        assert_eq!(result, "url: http://localhost:4000");
+    }
+
+    #[test]
+    fn default_preserves_colons_in_value() {
+        let result = expand_env_vars("val: ${env.UNDEFINED_VAR_XYZ:-a:b:c}").unwrap();
+        assert_eq!(result, "val: a:b:c");
+    }
+
+    #[test]
+    fn multiple_vars_with_defaults() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("EXISTS", "real");
+            let result =
+                expand_env_vars("${env.EXISTS:-x} ${env.MISSING_VAR_XYZ:-default}").unwrap();
+            assert_eq!(result, "real default");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn default_with_nested_braces() {
+        let result = expand_env_vars(r#"val: ${env.UNDEFINED_VAR_XYZ:-{"key":"value"}}"#).unwrap();
+        assert_eq!(result, r#"val: {"key":"value"}"#);
+    }
+
+    #[test]
+    fn default_with_deeply_nested_braces() {
+        let result = expand_env_vars("val: ${env.UNDEFINED_VAR_XYZ:-{a:{b:{c:1}}}}").unwrap();
+        assert_eq!(result, "val: {a:{b:{c:1}}}");
+    }
+
+    #[test]
+    fn empty_var_uses_default() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("EMPTY_VAR", "");
+            let result = expand_env_vars("val: ${env.EMPTY_VAR:-fallback}").unwrap();
+            assert_eq!(result, "val: fallback");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn invalid_var_name_with_default_outputs_literally() {
+        let result = expand_env_vars("val: ${env.123VAR:-default}").unwrap();
+        assert_eq!(result, "val: ${env.123VAR:-default}");
+    }
+
+    #[test]
+    fn empty_var_name_with_default_outputs_literally() {
+        let result = expand_env_vars("val: ${env.:-default}").unwrap();
+        assert_eq!(result, "val: ${env.:-default}");
+    }
+
+    #[test]
+    fn default_after_nested_braces_continues_parsing() {
+        let result = expand_env_vars("${env.UNDEFINED_VAR_XYZ:-{}} more text").unwrap();
+        assert_eq!(result, "{} more text");
+    }
+
+    #[test]
+    fn unbalanced_braces_in_default_outputs_literal() {
+        let result = expand_env_vars("val: ${env.VAR:-{unclosed").unwrap();
+        assert_eq!(result, "val: ${env.VAR:-{unclosed");
+    }
+
+    #[test]
+    fn escape_in_default_not_processed() {
+        let result =
+            expand_env_vars("val: ${env.UNDEFINED_VAR_XYZ:-has $${env.X} inside}").unwrap();
+        assert_eq!(result, "val: has $${env.X} inside");
+    }
+
+    #[test]
+    fn triple_dollar_sign() {
+        let result = expand_env_vars("val: $$$").unwrap();
+        assert_eq!(result, "val: $$$");
+    }
+
+    #[test]
+    fn quadruple_dollar_before_placeholder() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("X", "value");
+            let result = expand_env_vars("val: $$$${env.X}").unwrap();
+            assert_eq!(result, "val: $$${env.X}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn triple_dollar_before_placeholder() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("X", "value");
+            let result = expand_env_vars("val: $$${env.X}").unwrap();
+            assert_eq!(result, "val: $$value");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn hyphen_in_var_name_treated_as_invalid() {
+        let result = expand_env_vars("val: ${env.FOO-BAR}").unwrap();
+        assert_eq!(result, "val: ${env.FOO-BAR}");
+    }
+
+    #[test]
+    fn nested_placeholder_syntax_in_default_is_literal() {
+        let result =
+            expand_env_vars("val: ${env.MISSING_XYZ:-prefix ${env.OTHER} suffix}").unwrap();
+        assert_eq!(result, "val: prefix ${env.OTHER} suffix");
+    }
+
+    #[test]
+    fn default_value_containing_colon_hyphen() {
+        let result = expand_env_vars("val: ${env.MISSING_XYZ:-a:-b:-c}").unwrap();
+        assert_eq!(result, "val: a:-b:-c");
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(expand_env_vars("").unwrap(), "");
+    }
+
+    #[test]
+    fn standalone_dollar() {
+        assert_eq!(expand_env_vars("$").unwrap(), "$");
+    }
+
+    #[test]
+    fn whitespace_around_delimiter_treated_as_literal() {
+        // Whitespace makes the var name invalid, so output literally
+        let result = expand_env_vars("val: ${env.VAR :- default}").unwrap();
+        assert_eq!(result, "val: ${env.VAR :- default}");
+    }
+
+    #[test]
+    fn quoted_brace_in_default_causes_early_termination() {
+        // Known limitation: quotes don't prevent brace matching
+        // The } inside quotes terminates the placeholder early
+        let result = expand_env_vars(r#"val: ${env.MISSING_XYZ:-"}"}"#).unwrap();
+        // Placeholder ends at first }, default is just ", remaining "} is literal
+        assert_eq!(result, r#"val: ""}"#);
     }
 }
