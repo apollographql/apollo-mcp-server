@@ -227,6 +227,7 @@ impl Running {
                                 self.execute_tool
                                     .as_ref()
                                     .iter()
+                                    // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
                                     .map(|e| make_tool_private(e.tool.clone())),
                             )
                             .chain(
