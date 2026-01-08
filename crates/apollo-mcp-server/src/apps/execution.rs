@@ -431,8 +431,8 @@ mod tests {
         assert!(result.is_none());
     }
 
-    #[tokio::test]
-    async fn make_tool_private_adds_meta_when_tool_has_no_meta() {
+    #[test]
+    fn make_tool_private_adds_meta_when_tool_has_no_meta() {
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
         tool = make_tool_private(tool);
 
@@ -445,8 +445,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn make_tool_private_modified_meta_when_tool_has_existing_meta() {
+    #[test]
+    fn make_tool_private_modified_meta_when_tool_has_existing_meta() {
         let mut existing_meta = Meta::new();
         existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
