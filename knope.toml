@@ -80,5 +80,5 @@ name = "document-change"
 type = "CreateChangeFile"
 
 [github]
-owner = "andrewmcgivery"
+owner = "apollographql"
 repo = "apollo-mcp-server"

@@ -39,7 +39,7 @@ jobs:
       - uses: knope-dev/action@v2.1.0
         if: ${{ !inputs.version }}
         with:
-          version: 0.21.5
+          version: 0.21.7
       - name: Store version
         id: store-version
         run: |
@@ -117,12 +117,12 @@ jobs:
         run: cargo build --release --target ${{ matrix.target }} ${{ inputs.features && format('--features {0}', inputs.features) || '' }}
 
       - name: Sign Apple Binary
-        if: ${{ matrix.os == 'macos-latest' }}
+        if: runner.os == 'macOS'
         run: |
           MACOS_CERT_BUNDLE_PASSWORD=${{ secrets.MACOS_CERT_BUNDLE_PASSWORD }}
           MACOS_CERT_BUNDLE_BASE64=${{ secrets.MACOS_CERT_BUNDLE_BASE64 }}
           MACOS_KEYCHAIN_PASSWORD=${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
-          MACOS_NOTARIZATION_PASSWORD=${{ secrets.MACOS_NOTARIZATION_PASSWORD }}
+          MACOS_NOTARIZATION_PASSWORD=${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
 
           APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}
           APPLE_USERNAME=${{ secrets.APPLE_USERNAME }}
@@ -196,11 +196,11 @@ jobs:
         run: mkdir ${{ env.archive_name }}
 
       - name: Copy Unix Artifact
-        if: ${{ matrix.os != 'windows-latest' }}
+        if: runner.os != 'Windows'
         run: cp target/${{ matrix.target }}/release/${{ env.package_name }} ${{ env.archive_name }}
 
       - name: Copy Windows Artifact
-        if: ${{ matrix.os == 'windows-latest' }}
+        if: runner.os == 'Windows'
         run: cp target/${{ matrix.target }}/release/${{ env.package_name }}.exe ${{ env.archive_name }}
 
       - name: Create Tar Archive
@@ -263,7 +263,7 @@ jobs:
 
       - uses: knope-dev/action@v2.1.0
         with:
-          version: 0.21.5
+          version: 0.21.7
 
       - run: knope release
         env:
