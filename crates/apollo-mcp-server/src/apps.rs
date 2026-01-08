@@ -17,7 +17,7 @@ use crate::{
 
 mod execution;
 
-pub(crate) use execution::find_and_execute_app;
+pub(crate) use execution::{find_and_execute_app, make_tool_private};
 
 /// An app, which consists of a tool and a resource to be used together.
 #[derive(Clone, Debug)]

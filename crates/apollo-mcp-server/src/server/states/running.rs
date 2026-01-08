@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
 
-use crate::apps::find_and_execute_app;
+use crate::apps::{find_and_execute_app, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
@@ -223,7 +223,13 @@ impl Running {
                             .await
                             .iter()
                             .map(|op| op.as_ref().clone())
-                            .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                            .chain(
+                                self.execute_tool
+                                    .as_ref()
+                                    .iter()
+                                    // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
+                                    .map(|e| make_tool_private(e.tool.clone())),
+                            )
                             .chain(
                                 app.tools
                                     .iter()
