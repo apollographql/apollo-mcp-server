@@ -21,6 +21,9 @@ RUN cargo build --release --package apollo-mcp-server --bin apollo-mcp-server
 # Using distroless/cc which includes glibc and CA certificates
 FROM gcr.io/distroless/cc-debian12
 
+# MCP Registry annotation for publishing
+LABEL io.modelcontextprotocol.server.name="io.github.apollographql/apollo-mcp-server"
+
 # Copy the binary
 COPY --from=builder /app/target/release/apollo-mcp-server /usr/local/bin/apollo-mcp-server
 
