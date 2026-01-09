@@ -1,12 +1,12 @@
 ### feat: add support for custom environment variable expansion - @gocamille PR #539
 
-## Summary
+#### Summary
 
 This PR adds support for `${env.VAR_NAME}` syntax in configuration files, allowing users to reference custom environment variables without being limited to the `APOLLO_MCP_*` naming convention.
 
 Closes #454.
 
-## Changes
+#### Changes
 
 - `runtime/env_expansion.rs` (new module) - parser for variable expansion
 - `runtime.rs` (modified) - integrates expansion into the `read_config()` function
