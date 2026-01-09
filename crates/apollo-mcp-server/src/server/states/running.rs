@@ -866,11 +866,15 @@ mod tests {
         let resource_content = "This is a test resource";
         let connect_domains = vec!["connect.example.com".to_string()];
         let resource_domains = vec!["resource.example.com".to_string()];
+        let frame_domains = vec!["frame.example.com".to_string()];
+        let redirect_domains = vec!["redirect.example.com".to_string()];
         let running = running_with_apps(
             AppResource::Local(resource_content.to_string()),
             Some(CSPSettings {
                 connect_domains: Some(connect_domains.clone()),
                 resource_domains: Some(resource_domains.clone()),
+                frame_domains: Some(frame_domains.clone()),
+                redirect_domains: Some(redirect_domains.clone()),
             }),
             None,
         );
@@ -901,6 +905,18 @@ mod tests {
             .as_array()
             .unwrap();
         assert_eq!(returned_connect_domains, &connect_domains);
+        let returned_frame_domains = csp_settings
+            .get("frame_domains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_frame_domains, &frame_domains);
+        let returned_redirect_domains = csp_settings
+            .get("redirect_domains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_redirect_domains, &redirect_domains);
     }
 
     #[tokio::test]
