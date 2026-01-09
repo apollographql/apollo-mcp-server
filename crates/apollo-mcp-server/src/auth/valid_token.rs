@@ -27,13 +27,9 @@ impl Deref for ValidToken {
 
 /// Extract scopes from JWT claims.
 ///
-/// Handles both standard OAuth `scope` claim and Azure AD `scp` claim.
-/// If both are present, `scope` takes precedence (standard OAuth).
 /// Scopes are expected as a space-separated string per RFC 6749.
-pub(super) fn extract_scopes(scope: Option<&str>, scp: Option<&str>) -> Vec<String> {
-    // Prefer "scope" (standard), fall back to "scp" (Azure AD)
+pub(super) fn extract_scopes(scope: Option<&str>) -> Vec<String> {
     scope
-        .or(scp)
         .map(|s| s.split_whitespace().map(String::from).collect())
         .unwrap_or_default()
 }
@@ -68,14 +64,9 @@ pub(super) trait ValidateToken {
             /// The user who owns this token
             pub sub: String,
 
-            /// OAuth scope claim (standard OAuth providers like Auth0, Okta)
-            /// Space-separated list of scopes
+            /// OAuth scope claim (space-separated list per RFC 6749)
             #[serde(default)]
             pub scope: Option<String>,
-
-            /// Microsoft/Azure AD uses "scp" instead of "scope"
-            #[serde(default)]
-            pub scp: Option<String>,
         }
 
         fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -137,10 +128,7 @@ pub(super) trait ValidateToken {
 
             match decode::<Claims>(jwt, &jwk.decoding_key, &validation) {
                 Ok(token_data) => {
-                    let scopes = extract_scopes(
-                        token_data.claims.scope.as_deref(),
-                        token_data.claims.scp.as_deref(),
-                    );
+                    let scopes = extract_scopes(token_data.claims.scope.as_deref());
                     return Some(ValidToken { token, scopes });
                 }
                 Err(e) => warn!("Token failed validation with error: {e}"),
@@ -527,49 +515,36 @@ mod test {
         use super::super::extract_scopes;
 
         #[test]
-        fn returns_empty_when_both_none() {
-            assert_eq!(extract_scopes(None, None), Vec::<String>::new());
+        fn returns_empty_when_none() {
+            assert_eq!(extract_scopes(None), Vec::<String>::new());
         }
 
         #[test]
         fn extracts_from_scope_claim() {
-            assert_eq!(
-                extract_scopes(Some("read write"), None),
-                vec!["read", "write"]
-            );
-        }
-
-        #[test]
-        fn extracts_from_scp_claim_when_scope_missing() {
-            assert_eq!(extract_scopes(None, Some("admin")), vec!["admin"]);
-        }
-
-        #[test]
-        fn prefers_scope_over_scp() {
-            assert_eq!(extract_scopes(Some("read"), Some("write")), vec!["read"]);
+            assert_eq!(extract_scopes(Some("read write")), vec!["read", "write"]);
         }
 
         #[test]
         fn handles_extra_whitespace() {
             assert_eq!(
-                extract_scopes(Some("  read   write  "), None),
+                extract_scopes(Some("  read   write  ")),
                 vec!["read", "write"]
             );
         }
 
         #[test]
         fn handles_empty_string() {
-            assert_eq!(extract_scopes(Some(""), None), Vec::<String>::new());
+            assert_eq!(extract_scopes(Some("")), Vec::<String>::new());
         }
 
         #[test]
         fn handles_whitespace_only() {
-            assert_eq!(extract_scopes(Some("   "), None), Vec::<String>::new());
+            assert_eq!(extract_scopes(Some("   ")), Vec::<String>::new());
         }
 
         #[test]
         fn handles_single_scope() {
-            assert_eq!(extract_scopes(Some("admin"), None), vec!["admin"]);
+            assert_eq!(extract_scopes(Some("admin")), vec!["admin"]);
         }
     }
 }
