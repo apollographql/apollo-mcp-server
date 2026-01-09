@@ -1,8 +1,7 @@
 {
-    "recommendations": [
-        "mkhl.direnv",
-        "vadimcn.vscode-lldb",
-        "streetsidesoftware.code-spell-checker",
-        "apollographql.vscode-apollo"
-    ]
+  "recommendations": [
+    "vadimcn.vscode-lldb",
+    "streetsidesoftware.code-spell-checker",
+    "apollographql.vscode-apollo"
+  ]
 }
