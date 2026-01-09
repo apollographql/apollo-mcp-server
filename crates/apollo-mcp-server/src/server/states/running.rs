@@ -328,19 +328,42 @@ impl Running {
             }
         };
 
+        let mut meta: Option<Meta> = None;
+        if let Some(csp) = &app.csp_settings {
+            meta.get_or_insert_with(Meta::new).insert(
+                "openai/widgetCSP".into(),
+                serde_json::to_value(csp).unwrap_or_default(),
+            );
+        }
+        if let Some(widget_settings) = &app.widget_settings {
+            if let Some(description) = &widget_settings.description {
+                meta.get_or_insert_with(Meta::new).insert(
+                    "openai/widgetDescription".into(),
+                    serde_json::to_value(description).unwrap_or_default(),
+                );
+            }
+
+            if let Some(domain) = &widget_settings.domain {
+                meta.get_or_insert_with(Meta::new).insert(
+                    "openai/widgetDomain".into(),
+                    serde_json::to_value(domain).unwrap_or_default(),
+                );
+            }
+
+            if let Some(prefers_border) = &widget_settings.prefers_border {
+                meta.get_or_insert_with(Meta::new).insert(
+                    "openai/widgetPrefersBorder".into(),
+                    serde_json::to_value(prefers_border).unwrap_or_default(),
+                );
+            }
+        }
+
         Ok(ReadResourceResult {
             contents: vec![ResourceContents::TextResourceContents {
                 uri: request.uri,
                 mime_type: Some("text/html+skybridge".to_string()),
                 text,
-                meta: app.csp_settings.as_ref().map(|csp| {
-                    let mut meta = Meta::new();
-                    meta.insert(
-                        "openai/widgetCSP".into(),
-                        serde_json::to_value(csp).unwrap_or_default(),
-                    );
-                    meta
-                }),
+                meta,
             }],
         })
     }
@@ -576,7 +599,7 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 mod tests {
     use rmcp::model::{JsonObject, ReadResourceRequestParam, Tool};
 
-    use crate::apps::{App, AppTool, CSPSettings};
+    use crate::apps::{App, AppTool, CSPSettings, WidgetSettings};
 
     use super::*;
 
@@ -695,7 +718,11 @@ mod tests {
 
     const RESOURCE_URI: &str = "http://localhost:4000/resource#1234";
 
-    fn running_with_apps(resource: AppResource, csp_settings: Option<CSPSettings>) -> Running {
+    fn running_with_apps(
+        resource: AppResource,
+        csp_settings: Option<CSPSettings>,
+        widget_settings: Option<WidgetSettings>,
+    ) -> Running {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -716,6 +743,7 @@ mod tests {
             uri: RESOURCE_URI.parse().unwrap(),
             prefetch_operations: vec![],
             csp_settings,
+            widget_settings,
         };
 
         Running {
@@ -744,7 +772,7 @@ mod tests {
 
     #[tokio::test]
     async fn resource_list_includes_app_resources() {
-        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None)
+        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
             .list_resources_impl()
             .resources;
 
@@ -755,7 +783,8 @@ mod tests {
     #[tokio::test]
     async fn getting_resource_from_running() {
         let resource_content = "This is a test resource";
-        let running = running_with_apps(AppResource::Local(resource_content.to_string()), None);
+        let running =
+            running_with_apps(AppResource::Local(resource_content.to_string()), None, None);
         let mut resource = running
             .read_resource_impl(ReadResourceRequestParam {
                 uri: "http://localhost:4000/resource#a_different_fragment"
@@ -782,7 +811,7 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_that_does_not_exist() {
-        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None);
+        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
             .read_resource_impl(ReadResourceRequestParam {
                 uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
@@ -793,7 +822,7 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_from_running_with_invalid_uri() {
-        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None);
+        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
             .read_resource_impl(ReadResourceRequestParam {
                 uri: "not a uri".parse().unwrap(),
@@ -815,7 +844,7 @@ mod tests {
             .await;
 
         let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
-        let running = running_with_apps(AppResource::Remote(url), None);
+        let running = running_with_apps(AppResource::Remote(url), None, None);
 
         let mut resource = running
             .read_resource_impl(ReadResourceRequestParam {
@@ -843,6 +872,7 @@ mod tests {
                 connect_domains: Some(connect_domains.clone()),
                 resource_domains: Some(resource_domains.clone()),
             }),
+            None,
         );
         let mut resource = running
             .read_resource_impl(ReadResourceRequestParam {
@@ -875,7 +905,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_without_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
 
         let result = running.list_tools_impl(Extensions::new()).await.unwrap();
 
@@ -885,7 +915,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_valid_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -904,7 +934,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_nonexistent_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None);
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -917,5 +947,92 @@ mod tests {
         let result = running.list_tools_impl(extensions).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn widget_settings_description_is_set_in_meta() {
+        let resource_content = "This is a test resource";
+        let running = running_with_apps(
+            AppResource::Local(resource_content.to_string()),
+            None,
+            Some(WidgetSettings {
+                description: Some("A custom description".to_string()),
+                domain: None,
+                prefers_border: None,
+            }),
+        );
+        let mut resource = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: "http://localhost:4000/resource".parse().unwrap(),
+            })
+            .await
+            .unwrap();
+        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+        else {
+            panic!("Expected TextResourceContents");
+        };
+        let meta = meta.expect("meta should be set");
+        let description = meta
+            .get("openai/widgetDescription")
+            .expect("widgetDescription not found");
+        assert_eq!(description.as_str().unwrap(), "A custom description");
+    }
+
+    #[tokio::test]
+    async fn widget_settings_domain_is_set_in_meta() {
+        let resource_content = "This is a test resource";
+        let running = running_with_apps(
+            AppResource::Local(resource_content.to_string()),
+            None,
+            Some(WidgetSettings {
+                description: None,
+                domain: Some("example.com".to_string()),
+                prefers_border: None,
+            }),
+        );
+        let mut resource = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: "http://localhost:4000/resource".parse().unwrap(),
+            })
+            .await
+            .unwrap();
+        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+        else {
+            panic!("Expected TextResourceContents");
+        };
+        let meta = meta.expect("meta should be set");
+        let domain = meta
+            .get("openai/widgetDomain")
+            .expect("widgetDomain not found");
+        assert_eq!(domain.as_str().unwrap(), "example.com");
+    }
+
+    #[tokio::test]
+    async fn widget_settings_prefers_border_is_set_in_meta() {
+        let resource_content = "This is a test resource";
+        let running = running_with_apps(
+            AppResource::Local(resource_content.to_string()),
+            None,
+            Some(WidgetSettings {
+                description: None,
+                domain: None,
+                prefers_border: Some(true),
+            }),
+        );
+        let mut resource = running
+            .read_resource_impl(ReadResourceRequestParam {
+                uri: "http://localhost:4000/resource".parse().unwrap(),
+            })
+            .await
+            .unwrap();
+        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+        else {
+            panic!("Expected TextResourceContents");
+        };
+        let meta = meta.expect("meta should be set");
+        let prefers_border = meta
+            .get("openai/widgetPrefersBorder")
+            .expect("widgetPrefersBorder not found");
+        assert!(prefers_border.as_bool().unwrap());
     }
 }
