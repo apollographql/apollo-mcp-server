@@ -251,9 +251,9 @@ items:
 
     #[test]
     fn coerce_float_to_number() {
-        let result = coerce("3.14");
+        let result = coerce("2.5");
         assert!(result.is_number());
-        assert!((result.as_f64().unwrap() - 3.14).abs() < 0.001);
+        assert!((result.as_f64().unwrap() - 2.5).abs() < 0.001);
     }
 
     #[test]
