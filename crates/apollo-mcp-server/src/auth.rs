@@ -405,11 +405,7 @@ mod tests {
         #[test]
         fn superset_of_scopes_succeeds() {
             let required = vec!["read".to_string()];
-            let present = vec![
-                "read".to_string(),
-                "write".to_string(),
-                "admin".to_string(),
-            ];
+            let present = vec!["read".to_string(), "write".to_string(), "admin".to_string()];
             assert!(scopes_are_sufficient(&required, &present));
         }
 
@@ -433,7 +429,10 @@ mod tests {
         #[test]
         fn forbidden_error_contains_insufficient_scope() {
             let header = WwwAuthenticate::Bearer {
-                resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource").unwrap(),
+                resource_metadata: Url::parse(
+                    "https://test.com/.well-known/oauth-protected-resource",
+                )
+                .unwrap(),
                 scope: Some("read write".to_string()),
                 error: Some(BearerError::InsufficientScope),
             };
