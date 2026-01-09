@@ -5,7 +5,6 @@
 
 mod config;
 mod endpoint;
-mod env_expansion;
 mod filtering_exporter;
 mod graphos;
 mod introspection;
@@ -53,7 +52,7 @@ pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error
         ))
     })?;
 
-    let expanded = env_expansion::expand_env_vars(&content)
+    let expanded = apollo_mcp_server::env_expansion::expand_yaml(&content)
         .map_err(|e| figment::Error::from(e.to_string()))?;
 
     Figment::new()

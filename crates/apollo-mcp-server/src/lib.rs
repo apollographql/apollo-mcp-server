@@ -4,6 +4,7 @@ pub(crate) mod apps;
 pub(crate) mod auth;
 pub mod cors;
 pub mod custom_scalar_map;
+pub mod env_expansion;
 pub mod errors;
 pub(crate) mod event;
 mod explorer;
