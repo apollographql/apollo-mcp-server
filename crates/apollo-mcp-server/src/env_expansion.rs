@@ -5,7 +5,7 @@
 use serde_yaml::Value;
 
 #[derive(Debug, PartialEq, thiserror::Error)]
-pub(super) enum EnvExpansionError {
+pub enum EnvExpansionError {
     #[error("undefined environment variable '{name}' referenced in configuration")]
     UndefinedVariable { name: String },
 
