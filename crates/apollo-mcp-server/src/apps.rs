@@ -27,6 +27,8 @@ pub(crate) struct App {
     pub(crate) resource: AppResource,
     /// Any CSP settings to apply to the resource
     pub(crate) csp_settings: Option<CSPSettings>,
+    /// Various resource meta data
+    pub(crate) widget_settings: Option<WidgetSettings>,
     /// The URI of the app's resource
     pub(crate) uri: Url,
     /// Entrypoint tools for this app
@@ -260,6 +262,7 @@ pub(crate) fn load_from_path(
             uri,
             resource,
             csp_settings: manifest.csp,
+            widget_settings: manifest.widget_settings,
             tools,
             prefetch_operations,
         });
@@ -320,6 +323,8 @@ struct Manifest {
     description: Option<String>,
     csp: Option<CSPSettings>,
     labels: Option<AppLabels>,
+    #[serde(rename = "widgetSettings")]
+    widget_settings: Option<WidgetSettings>,
     #[allow(dead_code)] // Only used to verify we recognize the file
     format: ManifestFormat,
     #[allow(dead_code)] // Only used to verify we recognize the version
@@ -344,6 +349,14 @@ struct AppLabels {
     tool_invocation_invoking: Option<String>,
     #[serde(rename = "toolInvocation/invoked")]
     tool_invocation_invoked: Option<String>,
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub(crate) struct WidgetSettings {
+    pub(crate) description: Option<String>,
+    pub(crate) domain: Option<String>,
+    #[serde(rename = "prefersBorder")]
+    pub(crate) prefers_border: Option<bool>,
 }
 
 #[derive(Clone, Deserialize)]

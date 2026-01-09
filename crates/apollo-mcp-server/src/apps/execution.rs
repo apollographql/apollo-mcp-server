@@ -232,6 +232,7 @@ mod tests {
             name: "MyApp".to_string(),
             resource: AppResource::Local("blah".to_string()),
             csp_settings: None,
+            widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
             tools: vec![AppTool {
                 operation: primary_operation.clone(),
@@ -317,6 +318,7 @@ mod tests {
             name: "MyApp".to_string(),
             resource: AppResource::Local("test".to_string()),
             csp_settings: None,
+            widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
             tools: vec![AppTool {
                 operation: Arc::new(
@@ -364,6 +366,7 @@ mod tests {
             name: "MyApp".to_string(),
             resource: AppResource::Local("test".to_string()),
             csp_settings: None,
+            widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
             tools: vec![AppTool {
                 operation: Arc::new(
@@ -403,6 +406,7 @@ mod tests {
             name: "MyApp".to_string(),
             resource: AppResource::Local("test".to_string()),
             csp_settings: None,
+            widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
             tools: vec![AppTool {
                 operation: Arc::new(
