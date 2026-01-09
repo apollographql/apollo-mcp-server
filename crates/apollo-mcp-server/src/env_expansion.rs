@@ -84,7 +84,7 @@ pub fn coerce(s: &str) -> Value {
 }
 
 /// Expand all `${env.VAR_NAME}` references in the string.
-pub fn expand_env_vars(content: &str) -> Result<String, EnvExpansionError> {
+pub(super) fn expand_env_vars(content: &str) -> Result<String, EnvExpansionError> {
     shellexpand::env_with_context(content, context_fn)
         .map(|cow| cow.into_owned())
         .map_err(|e| e.cause)
