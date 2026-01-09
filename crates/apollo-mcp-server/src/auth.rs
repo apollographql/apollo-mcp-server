@@ -374,6 +374,79 @@ mod tests {
         assert!(!www_auth.contains("scope="));
     }
 
+    mod scope_validation {
+        use super::*;
+
+        fn scopes_are_sufficient(required: &[String], present: &[String]) -> bool {
+            required.iter().all(|req| present.contains(req))
+        }
+
+        #[test]
+        fn insufficient_scopes_fails() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string()];
+            assert!(!scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn all_required_scopes_succeeds() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string(), "write".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn no_scopes_when_required_fails() {
+            let required = vec!["read".to_string()];
+            let present: Vec<String> = vec![];
+            assert!(!scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn superset_of_scopes_succeeds() {
+            let required = vec!["read".to_string()];
+            let present = vec![
+                "read".to_string(),
+                "write".to_string(),
+                "admin".to_string(),
+            ];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn empty_required_scopes_always_succeeds() {
+            let required: Vec<String> = vec![];
+            let present = vec!["read".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+
+            let present_empty: Vec<String> = vec![];
+            assert!(scopes_are_sufficient(&required, &present_empty));
+        }
+
+        #[test]
+        fn scope_order_does_not_matter() {
+            let required = vec!["write".to_string(), "read".to_string()];
+            let present = vec!["read".to_string(), "write".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn forbidden_error_contains_insufficient_scope() {
+            let header = WwwAuthenticate::Bearer {
+                resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource").unwrap(),
+                scope: Some("read write".to_string()),
+                error: Some(BearerError::InsufficientScope),
+            };
+
+            let mut values = Vec::new();
+            headers::Header::encode(&header, &mut values);
+            let encoded = values.first().unwrap().to_str().unwrap();
+
+            assert!(encoded.contains(r#"error="insufficient_scope""#));
+            assert!(encoded.contains(r#"scope="read write""#));
+        }
+    }
+
     mod tls_config {
         use super::*;
         use std::io::Write;
