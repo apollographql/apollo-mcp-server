@@ -420,6 +420,10 @@ pub(crate) struct CSPSettings {
     pub(crate) connect_domains: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) resource_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) frame_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) redirect_domains: Option<Vec<String>>,
 }
 
 #[cfg(test)]
