@@ -12,14 +12,26 @@ use url::Url;
 /// Note: This is used as a marker to ensure that we have validated this
 /// separately from just reading the header itself.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct ValidToken(pub(crate) Authorization<Bearer>);
+pub(crate) struct ValidToken {
+    pub(crate) token: Authorization<Bearer>,
+    pub(crate) scopes: Vec<String>,
+}
 
 impl Deref for ValidToken {
     type Target = Authorization<Bearer>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.token
     }
+}
+
+/// Extract scopes from JWT claims.
+///
+/// Scopes are expected as a space-separated string per RFC 6749.
+pub(super) fn extract_scopes(scope: Option<&str>) -> Vec<String> {
+    scope
+        .map(|s| s.split_whitespace().map(String::from).collect())
+        .unwrap_or_default()
 }
 
 /// Trait to handle validation of tokens
@@ -51,6 +63,10 @@ pub(super) trait ValidateToken {
 
             /// The user who owns this token
             pub sub: String,
+
+            /// OAuth scope claim (space-separated list per RFC 6749)
+            #[serde(default)]
+            pub scope: Option<String>,
         }
 
         fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -111,8 +127,9 @@ pub(super) trait ValidateToken {
             };
 
             match decode::<Claims>(jwt, &jwk.decoding_key, &validation) {
-                Ok(_) => {
-                    return Some(ValidToken(token));
+                Ok(token_data) => {
+                    let scopes = extract_scopes(token_data.claims.scope.as_deref());
+                    return Some(ValidToken { token, scopes });
                 }
                 Err(e) => warn!("Token failed validation with error: {e}"),
             };
@@ -242,7 +259,7 @@ mod test {
                 .validate(jwt)
                 .await
                 .expect("valid token")
-                .0
+                .token
                 .token(),
             token
         );
@@ -407,7 +424,7 @@ mod test {
                 .validate(jwt)
                 .await
                 .expect("valid token")
-                .0
+                .token
                 .token(),
             token
         );
@@ -491,5 +508,43 @@ mod test {
                 .then_some(())
                 .ok_or("Expected warning for validation failure".to_string())
         });
+    }
+
+    // Tests for extract_scopes
+    mod extract_scopes_tests {
+        use super::super::extract_scopes;
+
+        #[test]
+        fn returns_empty_when_none() {
+            assert_eq!(extract_scopes(None), Vec::<String>::new());
+        }
+
+        #[test]
+        fn extracts_from_scope_claim() {
+            assert_eq!(extract_scopes(Some("read write")), vec!["read", "write"]);
+        }
+
+        #[test]
+        fn handles_extra_whitespace() {
+            assert_eq!(
+                extract_scopes(Some("  read   write  ")),
+                vec!["read", "write"]
+            );
+        }
+
+        #[test]
+        fn handles_empty_string() {
+            assert_eq!(extract_scopes(Some("")), Vec::<String>::new());
+        }
+
+        #[test]
+        fn handles_whitespace_only() {
+            assert_eq!(extract_scopes(Some("   ")), Vec::<String>::new());
+        }
+
+        #[test]
+        fn handles_single_scope() {
+            assert_eq!(extract_scopes(Some("admin")), vec!["admin"]);
+        }
     }
 }

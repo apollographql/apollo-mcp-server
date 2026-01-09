@@ -28,7 +28,7 @@ mod www_authenticate;
 use protected_resource::ProtectedResource;
 pub(crate) use valid_token::ValidToken;
 use valid_token::ValidateToken;
-use www_authenticate::WwwAuthenticate;
+use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Errors that can occur when building a TLS-configured HTTP client
 #[derive(Debug, thiserror::Error)]
@@ -191,11 +191,15 @@ async fn oauth_validate(
 ) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
     let auth_config = &auth_state.config;
 
-    // Consolidated unauthorized error for use with any fallible step in this process
-    let unauthorized_error = || {
-        let mut resource = auth_config.resource.clone();
-        resource.set_path("/.well-known/oauth-protected-resource");
+    // Helper to construct the resource metadata URL
+    let resource_metadata_url = || {
+        let mut url = auth_config.resource.clone();
+        url.set_path("/.well-known/oauth-protected-resource");
+        url
+    };
 
+    // Unauthorized error for missing or invalid tokens
+    let unauthorized_error = || {
         let scope = if auth_config.scopes.is_empty() {
             None
         } else {
@@ -205,8 +209,21 @@ async fn oauth_validate(
         (
             StatusCode::UNAUTHORIZED,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: resource,
+                resource_metadata: resource_metadata_url(),
                 scope,
+                error: None,
+            }),
+        )
+    };
+
+    // Forbidden error for valid tokens with insufficient scopes (RFC 6750 Section 3.1)
+    let forbidden_error = |required_scopes: &[String]| {
+        (
+            StatusCode::FORBIDDEN,
+            TypedHeader(WwwAuthenticate::Bearer {
+                resource_metadata: resource_metadata_url(),
+                scope: Some(required_scopes.join(" ")),
+                error: Some(BearerError::InsufficientScope),
             }),
         )
     };
@@ -228,6 +245,27 @@ async fn oauth_validate(
         tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
         unauthorized_error()
     })?;
+
+    // Check if token has required scopes (fail-closed: missing scope claim = insufficient)
+    if !auth_config.scopes.is_empty() {
+        let missing_scopes: Vec<_> = auth_config
+            .scopes
+            .iter()
+            .filter(|required| !valid_token.scopes.iter().any(|s| s == *required))
+            .collect();
+
+        if !missing_scopes.is_empty() {
+            tracing::warn!(
+                required = ?auth_config.scopes,
+                present = ?valid_token.scopes,
+                missing = ?missing_scopes,
+                "Token has insufficient scopes"
+            );
+            tracing::Span::current().record("reason", "insufficient_scope");
+            tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+            return Err(forbidden_error(&auth_config.scopes));
+        }
+    }
 
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
@@ -334,6 +372,78 @@ mod tests {
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
         assert!(!www_auth.contains("scope="));
+    }
+
+    mod scope_validation {
+        use super::*;
+
+        fn scopes_are_sufficient(required: &[String], present: &[String]) -> bool {
+            required.iter().all(|req| present.contains(req))
+        }
+
+        #[test]
+        fn insufficient_scopes_fails() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string()];
+            assert!(!scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn all_required_scopes_succeeds() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string(), "write".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn no_scopes_when_required_fails() {
+            let required = vec!["read".to_string()];
+            let present: Vec<String> = vec![];
+            assert!(!scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn superset_of_scopes_succeeds() {
+            let required = vec!["read".to_string()];
+            let present = vec!["read".to_string(), "write".to_string(), "admin".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn empty_required_scopes_always_succeeds() {
+            let required: Vec<String> = vec![];
+            let present = vec!["read".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+
+            let present_empty: Vec<String> = vec![];
+            assert!(scopes_are_sufficient(&required, &present_empty));
+        }
+
+        #[test]
+        fn scope_order_does_not_matter() {
+            let required = vec!["write".to_string(), "read".to_string()];
+            let present = vec!["read".to_string(), "write".to_string()];
+            assert!(scopes_are_sufficient(&required, &present));
+        }
+
+        #[test]
+        fn forbidden_error_contains_insufficient_scope() {
+            let header = WwwAuthenticate::Bearer {
+                resource_metadata: Url::parse(
+                    "https://test.com/.well-known/oauth-protected-resource",
+                )
+                .unwrap(),
+                scope: Some("read write".to_string()),
+                error: Some(BearerError::InsufficientScope),
+            };
+
+            let mut values = Vec::new();
+            headers::Header::encode(&header, &mut values);
+            let encoded = values.first().unwrap().to_str().unwrap();
+
+            assert!(encoded.contains(r#"error="insufficient_scope""#));
+            assert!(encoded.contains(r#"scope="read write""#));
+        }
     }
 
     mod tls_config {

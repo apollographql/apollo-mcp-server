@@ -11,7 +11,15 @@ pub(super) enum WwwAuthenticate {
     Bearer {
         resource_metadata: Url,
         scope: Option<String>,
+        error: Option<BearerError>,
     },
+}
+
+/// OAuth 2.0 Bearer Token error codes per RFC 6750 Section 3.1
+#[derive(Debug, Clone)]
+pub(super) enum BearerError {
+    /// The request requires higher privileges than provided by the access token.
+    InsufficientScope,
 }
 
 impl Header for WwwAuthenticate {
@@ -33,11 +41,19 @@ impl Header for WwwAuthenticate {
             WwwAuthenticate::Bearer {
                 resource_metadata,
                 scope,
+                error,
             } => {
                 let mut header = format!(
                     r#"Bearer resource_metadata="{}""#,
                     resource_metadata.as_str()
                 );
+                // Error must come before scope per RFC 6750 examples
+                if let Some(err) = error {
+                    let error_str = match err {
+                        BearerError::InsufficientScope => "insufficient_scope",
+                    };
+                    header.push_str(&format!(r#", error="{}""#, error_str));
+                }
                 if let Some(scope) = scope {
                     header.push_str(&format!(r#", scope="{}""#, scope));
                 }
@@ -73,6 +89,7 @@ mod tests {
             resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
                 .unwrap(),
             scope: None,
+            error: None,
         };
 
         let encoded = encode_header(&header);
@@ -90,6 +107,7 @@ mod tests {
             )
             .unwrap(),
             scope: Some("read".to_string()),
+            error: None,
         };
 
         let encoded = encode_header(&header);
@@ -104,12 +122,29 @@ mod tests {
             resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
                 .unwrap(),
             scope: Some("read write".to_string()),
+            error: None,
         };
 
         let encoded = encode_header(&header);
         assert_eq!(
             encoded,
             r#"Bearer resource_metadata="https://test.com/.well-known/oauth-protected-resource", scope="read write""#
+        );
+    }
+
+    #[test]
+    fn encode_bearer_with_insufficient_scope_error() {
+        let header = WwwAuthenticate::Bearer {
+            resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
+                .unwrap(),
+            scope: Some("read write".to_string()),
+            error: Some(BearerError::InsufficientScope),
+        };
+
+        let encoded = encode_header(&header);
+        assert_eq!(
+            encoded,
+            r#"Bearer resource_metadata="https://test.com/.well-known/oauth-protected-resource", error="insufficient_scope", scope="read write""#
         );
     }
 }
