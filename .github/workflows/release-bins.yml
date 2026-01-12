@@ -204,13 +204,13 @@ jobs:
         run: cp target/${{ matrix.target }}/release/${{ env.package_name }}.exe ${{ env.archive_name }}
 
       - name: Create Tar Archive
-        run: tar -czf ${{ env.package_name }}-${{ needs.get-version.outputs.version }}-${{ matrix.target }}.tgz ${{ env.archive_name }}
+        run: tar -czf ${{ env.package_name }}-${{ needs.get-version.outputs.version }}-${{ matrix.target }}.tar.gz ${{ env.archive_name }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4.4.0
         with:
           name: ${{ matrix.target }}
-          path: ${{ env.package_name }}-${{ needs.get-version.outputs.version }}-${{ matrix.target }}.tgz
+          path: ${{ env.package_name }}-${{ needs.get-version.outputs.version }}-${{ matrix.target }}.tar.gz
           if-no-files-found: error
 
   generate-config-schema:
