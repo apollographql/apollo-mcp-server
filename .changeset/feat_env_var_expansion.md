@@ -1,3 +1,7 @@
+---
+default: minor
+---
+
 ### feat: add support for custom environment variable expansion - @gocamille PR #539
 
 #### Summary
