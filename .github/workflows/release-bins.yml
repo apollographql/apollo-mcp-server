@@ -44,9 +44,9 @@ jobs:
         id: store-version
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            echo "version=v${{ inputs.version }}" >> $GITHUB_OUTPUT
           else
-            echo "version=$(knope get-version)" >> $GITHUB_OUTPUT
+            echo "version=v$(knope get-version)" >> $GITHUB_OUTPUT
           fi
 
   build-artifacts:
