@@ -5,6 +5,7 @@
 //! The health check is exposed via HTTP endpoints and can be used by load balancers, container orchestrators, and monitoring systems to determine server health.
 
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -12,11 +13,18 @@ use std::{
     time::Duration,
 };
 
-use axum::http::StatusCode;
+use axum::{
+    Router,
+    extract::{Query, State},
+    http::StatusCode,
+    response::Json,
+    routing::get,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// Health status enumeration
 #[derive(Debug, Serialize)]
@@ -203,6 +211,30 @@ impl HealthCheck {
         };
 
         (health, status_code)
+    }
+
+    /// Enable health check router.
+    ///
+    /// Creates a router with the health check endpoint and merges it with the provided router.
+    pub fn enable_router(&self, router: Router) -> Router {
+        /// Health check endpoint handler
+        async fn health_endpoint(
+            State(health_check): State<HealthCheck>,
+            Query(params): Query<HashMap<String, String>>,
+        ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+            let query = params.keys().next().map(|k| k.as_str());
+            let (health, status_code) = health_check.get_health_state(query);
+
+            trace!(?health, query = ?query, "health check");
+
+            Ok((status_code, Json(json!(health))))
+        }
+
+        let health_router = Router::new()
+            .route(&self.config.path, get(health_endpoint))
+            .with_state(self.clone());
+
+        router.merge(health_router)
     }
 }
 
