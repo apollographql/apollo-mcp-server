@@ -317,7 +317,6 @@ impl Starting {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use http::HeaderMap;
