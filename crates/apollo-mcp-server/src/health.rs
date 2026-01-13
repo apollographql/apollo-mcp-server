@@ -5,6 +5,7 @@
 //! The health check is exposed via HTTP endpoints and can be used by load balancers, container orchestrators, and monitoring systems to determine server health.
 
 use std::{
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -12,11 +13,18 @@ use std::{
     time::Duration,
 };
 
-use axum::http::StatusCode;
+use axum::{
+    Router,
+    extract::{Query, State},
+    http::StatusCode,
+    response::Json,
+    routing::get,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::time::Instant;
-use tracing::debug;
+use tracing::{debug, trace};
 
 /// Health status enumeration
 #[derive(Debug, Serialize)]
@@ -204,6 +212,30 @@ impl HealthCheck {
 
         (health, status_code)
     }
+
+    /// Enable health check router.
+    ///
+    /// Creates a router with the health check endpoint and merges it with the provided router.
+    pub fn enable_router(&self, router: Router) -> Router {
+        /// Health check endpoint handler
+        async fn health_endpoint(
+            State(health_check): State<HealthCheck>,
+            Query(params): Query<HashMap<String, String>>,
+        ) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+            let query = params.keys().next().map(|k| k.as_str());
+            let (health, status_code) = health_check.get_health_state(query);
+
+            trace!(?health, query = ?query, "health check");
+
+            Ok((status_code, Json(json!(health))))
+        }
+
+        let health_router = Router::new()
+            .route(&self.config.path, get(health_endpoint))
+            .with_state(self.clone());
+
+        router.merge(health_router)
+    }
 }
 
 impl Drop for HealthCheck {
@@ -251,5 +283,135 @@ mod tests {
         // Should be still live but unready now
         assert!(health_check.live.load(Ordering::SeqCst));
         assert!(!health_check.ready.load(Ordering::SeqCst));
+    }
+
+    mod enable_router {
+        use super::*;
+        use axum::{body::Body, http::Request};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        #[tokio::test]
+        async fn returns_up_status_by_default() {
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let app = health_check.enable_router(Router::new());
+
+            let req = Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "UP");
+        }
+
+        #[tokio::test]
+        async fn ready_query_returns_up_when_ready() {
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let app = health_check.enable_router(Router::new());
+
+            let req = Request::builder()
+                .uri("/health?ready")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "UP");
+        }
+
+        #[tokio::test]
+        async fn live_query_returns_up_when_live() {
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let app = health_check.enable_router(Router::new());
+
+            let req = Request::builder()
+                .uri("/health?live")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "UP");
+        }
+
+        #[tokio::test]
+        async fn ready_query_returns_down_when_unready() {
+            let mut config = HealthCheckConfig::default();
+            config.readiness.allowed = 0;
+            config.readiness.interval.sampling = Duration::from_millis(10);
+            config.readiness.interval.unready = Some(Duration::from_secs(10));
+
+            let health_check = HealthCheck::new(config);
+            health_check.record_rejection();
+
+            // Wait for ticker to mark as unready
+            sleep(Duration::from_millis(50)).await;
+
+            let app = health_check.enable_router(Router::new());
+            let req = Request::builder()
+                .uri("/health?ready")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "DOWN");
+        }
+
+        #[tokio::test]
+        async fn uses_configured_path() {
+            let config = HealthCheckConfig {
+                path: "/custom-health".to_string(),
+                ..Default::default()
+            };
+            let health_check = HealthCheck::new(config);
+            let app = health_check.enable_router(Router::new());
+
+            let req = Request::builder()
+                .uri("/custom-health")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn merges_with_existing_router() {
+            async fn existing_handler() -> &'static str {
+                "existing"
+            }
+
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let existing_router =
+                Router::new().route("/existing", axum::routing::get(existing_handler));
+            let app = health_check.enable_router(existing_router);
+
+            // Health endpoint should work
+            let req = Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+
+            // Existing endpoint should still work
+            let req = Request::builder()
+                .uri("/existing")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
     }
 }

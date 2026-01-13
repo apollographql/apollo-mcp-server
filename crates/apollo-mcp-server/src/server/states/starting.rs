@@ -2,7 +2,6 @@ use std::path::Path;
 use std::{net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
-use axum::{Router, extract::Query, http::StatusCode, response::Json, routing::get};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
 use axum_tracing_opentelemetry::middleware::OtelInResponseLayer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -11,10 +10,9 @@ use rmcp::{
     ServiceExt as _,
     transport::{SseServer, sse_server::SseServerConfig, stdio},
 };
-use serde_json::json;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument as _, debug, error, info, trace};
+use tracing::{Instrument as _, debug, error, info};
 
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
@@ -242,13 +240,7 @@ impl Starting {
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
-                    let health_router = with_cors!(
-                        Router::new()
-                            .route(&health_check.config().path, get(health_endpoint))
-                            .with_state(health_check.clone()),
-                        self.config.cors
-                    );
-                    router = router.merge(health_router);
+                    router = with_cors!(health_check.enable_router(router), self.config.cors);
                 }
 
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
@@ -323,19 +315,6 @@ impl Starting {
 
         Ok(running)
     }
-}
-
-/// Health check endpoint handler
-async fn health_endpoint(
-    axum::extract::State(health_check): axum::extract::State<HealthCheck>,
-    Query(params): Query<std::collections::HashMap<String, String>>,
-) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    let query = params.keys().next().map(|k| k.as_str());
-    let (health, status_code) = health_check.get_health_state(query);
-
-    trace!(?health, query = ?query, "health check");
-
-    Ok((status_code, Json(json!(health))))
 }
 
 #[cfg(test)]

@@ -219,6 +219,7 @@ dependencies = [
  "futures",
  "headers",
  "http",
+ "http-body-util",
  "humantime-serde",
  "insta",
  "jsonschema",
