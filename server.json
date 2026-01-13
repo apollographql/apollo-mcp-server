@@ -1,0 +1,71 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.apollographql/apollo-mcp-server",
+  "title": "Apollo MCP Server",
+  "description": "MCP server that exposes GraphQL operations as tools for AI models.",
+  "websiteUrl": "https://www.apollographql.com/docs/apollo-mcp-server/",
+  "repository": {
+    "url": "https://github.com/apollographql/apollo-mcp-server",
+    "source": "github"
+  },
+  "version": "1.3.0",
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/apollographql/apollo-mcp-server:v1.3.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeArguments": [
+        {
+          "type": "named",
+          "name": "--mount",
+          "description": "Mount your config file into the container",
+          "value": "type=bind,src={config_path},dst=/config.yaml,readonly",
+          "isRequired": true,
+          "variables": {
+            "config_path": {
+              "description": "Path to your Apollo MCP Server configuration file on the host",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "--mount",
+          "description": "Mount your project data directory into the container (for local schema and operations)",
+          "value": "type=bind,src={data_path},dst=/data",
+          "isRequired": false,
+          "variables": {
+            "data_path": {
+              "description": "Path to your project directory containing schema and operation files",
+              "format": "filepath",
+              "isRequired": true
+            }
+          }
+        },
+        {
+          "type": "named",
+          "name": "-p",
+          "description": "Expose the HTTP Streamable transport port",
+          "value": "8000:8000",
+          "isRequired": false
+        }
+      ],
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "/config.yaml"
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/apollographql/apollo-client-devtools/main/assets/apollo-wordmark.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": ["any"]
+    }
+  ]
+}
