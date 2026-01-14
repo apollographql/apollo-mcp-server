@@ -774,6 +774,7 @@ mod tests {
                 description: None,
                 icons: None,
                 size: None,
+                meta: None,
             },
             None,
         );
@@ -806,6 +807,7 @@ mod tests {
                 description: None,
                 icons: None,
                 size: None,
+                meta: None,
             },
             None,
         );
@@ -838,6 +840,7 @@ mod tests {
                 description: None,
                 icons: None,
                 size: None,
+                meta: None,
             },
             None,
         );
