@@ -12,7 +12,7 @@ edition = "2024"
 license-file = "LICENSE"
 repository = "https://github.com/apollographql/apollo-mcp-server"
 rust-version = "1.89.0"
-version = "1.3.0"
+version = "1.4.0"
 
 [workspace.dependencies]
 apollo-compiler = "1.27.0"

@@ -4,6 +4,109 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.0 (2026-01-14)
+
+### Features
+
+#### feat(auth): Add 403 Forbidden `insufficient_scope` support per MCP Auth Spec 2025-11-25 and RFC 6750 (Section 3.1) - @gocamille PR #537
+
+This adds HTTP 403 Forbidden responses with `error="insufficient_scope"` per [MCP Auth Spec 2025-11-25 Section 10: Error Handling](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#error-handling) and [RFC 6750 Section 3.1](https://www.rfc-editor.org/rfc/rfc6750.html#section-3.1).
+
+**Changes:**
+
+- `www_authenticate.rs`: Added `BearerError::InsufficientScope` enum and [error](crates/apollo-mcp-server/src/auth/www_authenticate.rs#L135-L149) field to `WWW-Authenticate` header
+- `valid_token.rs`: Extract [scope](crates/apollo-mcp-server/src/auth/valid_token.rs#L27-L38)/[scp](crates/apollo-mcp-server/src/auth/valid_token.rs#L503-L509) claims from JWTs (handles both standard OAuth and Azure AD)
+- `auth.rs`: Scope validation with fail-closed behaviour—valid tokens lacking required scopes get `403`
+- `headers.rs`: Updated tests for new `ValidToken` struct
+
+**Behavior:**
+
+- **401 Unauthorized**: Missing or invalid token
+- **403 Forbidden**: Valid token but insufficient scopes (includes `error="insufficient_scope"` in response)
+
+#### Add scope parameter to WWW-Authenticate header - @DaleSeo PR #523
+
+Add support for optional `scope` parameter in the `WWW-Authenticate` header per [MCP Auth Spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#protected-resource-metadata-discovery-requirements).
+
+When returning 401 Unauthorized responses, the server now includes the configured scopes to guide clients on appropriate scopes to request during authorization.
+
+This PR extends the `WwwAuthenticate::Bearer` variant with an optional scope field. When scopes are configured, they are space-separated and included in 401 responses. When no scopes are configured, the parameter is omitted.
+
+#### Allow opting out of audience validation - @DaleSeo PR #535
+
+Added an explicit `allow_any_audience` configuration option that follows the same pattern as CORS's `allow_any_origin`. When set to `true`, audience validation is skipped entirely.
+
+```yaml
+auth:
+  servers:
+    - https://auth.example.com
+
+  # Validate specific audiences (default)
+  audiences: ["my-api"]
+  allow_any_audience: false
+
+  # Or skip audience validation entirely
+  audiences: []
+  allow_any_audience: true## Changes
+```
+
+#### Server adds support for incoming distributed trace context propagation - @david-castaneda PR #484
+
+The MCP server now extracts W3C traceparent headers from incoming requests and uses this context for its own emitted traces, enabling handler spans to nest under parent traces for complete end-to-end observability.
+
+#### feat: add support for custom environment variable expansion - @gocamille PR #539
+
+##### Summary
+
+This PR adds support for `${env.VAR_NAME}` syntax in configuration files, allowing users to reference custom environment variables without being limited to the `APOLLO_MCP_*` naming convention.
+
+Closes #454.
+
+##### Changes
+
+- `runtime/env_expansion.rs` (new module) - parser for variable expansion
+- `runtime.rs` (modified) - integrates expansion into the `read_config()` function
+- `config-file.mdx` - updated docs with syntax, escaping, and special characters handling
+
+- **Note** The `APOLLO_MCP_*` environment variable(s) will still take precedence over expanded custom config values (no breaking change).
+
+#### Add outputSchema support - @DaleSeo PR #509
+
+This PR implements support for the MCP specification's [outputSchema](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#output-schema) field on tools, which allows tools to declare the expected structure of their output. This helps LLMs better understand and reason about GraphQL response data.
+
+This feature is opt-in to avoid additional token overhead. To enable it, add the following to your config:
+
+```yaml
+overrides:
+  enable_output_schema: true
+```
+
+#### Add TLS configuration options for auth - @DaleSeo PR #536
+
+Adds TLS configuration options for connecting to OAuth servers during token validation.
+
+When the MCP server validates OAuth tokens, it connects to upstream OAuth servers to fetch JWKS keys. Previously, this required those servers to have certificates trusted by the system's default CA bundle. This change allows users to trust custom CA certificates or disable validation for development environments.
+
+```yaml
+transport:
+  streamable_http:
+    auth:
+      servers:
+        - https://auth.example.com
+      audiences:
+        - my-audience
+      resource: https://mcp.example.com/mcp
+      tls:
+        ca_cert: /path/to/ca-certificate.pem
+        danger_accept_invalid_certs: false # Set this to true for development or testing purposes only
+```
+
+### Fixes
+
+#### Add server.json for MCP Registry publishing
+
+In preparation for publishing Apollo MCP Server to the official MCP Registry at `registry.modelcontextprotocol.io`, this PR adds `server.json` configuration file and adds the `io.modelcontextprotocol.server.name` label Dockerfile for registry verification.
+
 ## 1.3.0 (2025-12-10)
 
 ### 🚀 Features
