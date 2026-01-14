@@ -14,7 +14,7 @@ on:
 
 jobs:
   verify-changeset:
-    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-changeset') && !startsWith(github.head_ref, 'release/') && !startsWith(github.head_ref, 'conflict/') && !github.event.pull_request.draft }}
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-changeset') && github.head_ref != 'release' && !startsWith(github.head_ref, 'release/') && !startsWith(github.head_ref, 'conflict/') && !github.event.pull_request.draft }}
     name: Verify
     runs-on: ubuntu-24.04
     permissions:

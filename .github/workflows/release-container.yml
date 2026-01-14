@@ -1,4 +1,4 @@
-name: Build Release Container (New)
+name: Build Release Container
 
 on:
   pull_request:
