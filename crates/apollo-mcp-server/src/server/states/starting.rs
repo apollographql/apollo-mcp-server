@@ -6,13 +6,10 @@ use axum_otel_metrics::HttpMetricsLayerBuilder;
 use axum_tracing_opentelemetry::middleware::OtelInResponseLayer;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
 use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
-use rmcp::{
-    ServiceExt as _,
-    transport::{SseServer, sse_server::SseServerConfig, stdio},
-};
+use rmcp::{ServiceExt as _, transport::stdio};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{Instrument as _, debug, error, info};
+use tracing::{debug, error, info};
 
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
@@ -256,48 +253,16 @@ impl Starting {
                 });
             }
             Transport::SSE {
-                auth,
-                address,
-                port,
+                auth: _,
+                address: _,
+                port: _,
             } => {
-                info!(port = ?port, address = ?address, "Starting MCP server in SSE mode");
-                let running = running.clone();
-                let listen_address = SocketAddr::new(address, port);
-
-                let (server, router) = SseServer::new(SseServerConfig {
-                    bind: listen_address,
-                    sse_path: "/sse".to_string(),
-                    post_path: "/message".to_string(),
-                    ct: cancellation_token,
-                    sse_keep_alive: None,
-                });
-
-                // Optionally wrap the router with auth, if enabled
-                let router = with_auth!(router, auth);
-
-                // Start up the SSE server
-                // Note: Until RMCP consolidates SSE with the same tower system as StreamableHTTP,
-                // we need to basically copy the implementation of `SseServer::serve_with_config` here.
-                let listener = tokio::net::TcpListener::bind(server.config.bind).await?;
-                let ct = server.config.ct.child_token();
-                let axum_server =
-                    axum::serve(listener, router).with_graceful_shutdown(async move {
-                        ct.cancelled().await;
-                        tracing::info!("mcp server cancelled");
-                    });
-
-                tokio::spawn(
-                    async move {
-                        if let Err(e) = axum_server.await {
-                            tracing::error!(error = %e, "mcp shutdown with error");
-                        }
-                    }
-                    .instrument(
-                        tracing::info_span!("mcp-server", bind_address = %server.config.bind),
-                    ),
-                );
-
-                server.with_service(move || running.clone());
+                // SSE transport has been removed in rmcp 0.11+
+                // Users should migrate to streamable_http transport
+                return Err(ServerError::UnsupportedTransport(
+                    "SSE transport is no longer supported. Please use streamable_http transport instead. \
+                     Update your config to use `transport: { type: streamable_http }`.".to_string()
+                ));
             }
             Transport::Stdio => {
                 info!("Starting MCP server in stdio mode");
