@@ -72,6 +72,17 @@ The MCP server works with any OTLP-compatible backend. Consult your provider's d
 - [Jaeger](https://www.jaegertracing.io/docs/1.50/deployment/) - Self-hosted tracing
 - [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/deployment/) - Self-hosted with flexible routing
 
+#### Pre-built dashboard templates
+
+Apollo provides ready-to-use dashboard templates for monitoring your Apollo MCP Server. These templates are available in the [apollographql/apm-templates](https://github.com/apollographql/apm-templates) repository and include visualizations for tool calls, HTTP server metrics, and request lifecycle events.
+
+| Platform | Template Location                                                              |
+| -------- | ------------------------------------------------------------------------------ |
+| Grafana  | [`grafana/`](https://github.com/apollographql/apm-templates/tree/main/grafana) |
+| Datadog  | [`datadog/`](https://github.com/apollographql/apm-templates/tree/main/datadog) |
+
+Import these templates into your observability platform to get started quickly with pre-configured graphs and alerts.
+
 #### Production configuration best practices
 
 ##### Environment and security
