@@ -239,6 +239,7 @@ impl Running {
                                     .collect::<Vec<_>>(),
                             )
                             .collect(),
+                        meta: None,
                     });
                 }
                 None => {
@@ -265,6 +266,7 @@ impl Running {
                 .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
                 .collect(),
+            meta: None,
         })
     }
 
@@ -278,6 +280,7 @@ impl Running {
                 .map(|app| attach_resource_mime_type(app.resource(), &app_target))
                 .collect(),
             next_cursor: None,
+            meta: None,
         })
     }
 
