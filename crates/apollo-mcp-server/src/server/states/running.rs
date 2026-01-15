@@ -235,7 +235,7 @@ impl Running {
                             .chain(
                                 app.tools
                                     .iter()
-                                    .map(|tool| attach_tool_metadata(app, tool.clone()).tool)
+                                    .map(|tool| attach_tool_metadata(app, tool))
                                     .collect::<Vec<_>>(),
                             )
                             .collect(),

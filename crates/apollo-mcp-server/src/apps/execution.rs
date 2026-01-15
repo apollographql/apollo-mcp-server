@@ -146,8 +146,9 @@ pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
 }
 
 // Attach tool meta data when requested to allow swapping between app targets (Apps SDK, MCP Apps)
-pub(crate) fn attach_tool_metadata(app: &App, mut tool: AppTool) -> AppTool {
-    let meta = tool.tool.meta.get_or_insert_with(Meta::new);
+pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool) -> Tool {
+    let mut inner_tool = tool.tool.clone();
+    let meta = inner_tool.meta.get_or_insert_with(Meta::new);
     meta.insert(
         "openai/outputTemplate".to_string(),
         app.uri.to_string().into(),
@@ -168,7 +169,7 @@ pub(crate) fn attach_tool_metadata(app: &App, mut tool: AppTool) -> AppTool {
         );
     }
 
-    tool
+    inner_tool
 }
 
 // Attach resource mime type when requested to allow swapping between app targets (Apps SDK, MCP Apps)
@@ -625,9 +626,9 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, tool);
+        let result = attach_tool_metadata(&app, &tool);
 
-        let meta = result.tool.meta.unwrap();
+        let meta = result.meta.unwrap();
         assert_eq!(
             meta.get("openai/outputTemplate").unwrap(),
             "ui://widget/TestApp#hash123"
@@ -656,9 +657,9 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, tool);
+        let result = attach_tool_metadata(&app, &tool);
 
-        let meta = result.tool.meta.unwrap();
+        let meta = result.meta.unwrap();
         assert_eq!(
             meta.get("openai/toolInvocation/invoking").unwrap(),
             "Loading..."
@@ -684,9 +685,9 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, tool);
+        let result = attach_tool_metadata(&app, &tool);
 
-        let meta = result.tool.meta.unwrap();
+        let meta = result.meta.unwrap();
         assert!(meta.get("openai/toolInvocation/invoking").is_none());
         assert!(meta.get("openai/toolInvocation/invoked").is_none());
         // These should still be present
@@ -718,9 +719,9 @@ mod tests {
             tool: tool_def,
         };
 
-        let result = attach_tool_metadata(&app, tool);
+        let result = attach_tool_metadata(&app, &tool);
 
-        let meta = result.tool.meta.unwrap();
+        let meta = result.meta.unwrap();
         assert_eq!(meta.get("custom-key").unwrap(), "custom-value");
         assert!(meta.get("openai/outputTemplate").is_some());
     }
