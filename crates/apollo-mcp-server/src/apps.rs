@@ -4,7 +4,7 @@ use std::path::Path;
 use std::{fs::read_to_string, sync::Arc};
 
 use apollo_compiler::{Schema, validation::Valid};
-use rmcp::model::{Meta, RawResource, Resource, Tool};
+use rmcp::model::{RawResource, Resource, Tool};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tracing::debug;
@@ -17,7 +17,10 @@ use crate::{
 
 mod execution;
 
-pub(crate) use execution::{find_and_execute_app, make_tool_private};
+pub(crate) use execution::{
+    attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
+    make_tool_private,
+};
 
 /// An app, which consists of a tool and a resource to be used together.
 #[derive(Clone, Debug)]
@@ -48,6 +51,8 @@ pub(crate) enum AppResource {
 pub(crate) struct AppTool {
     /// The GraphQL operation that's executed when the tool is called. Its data is injected into the UI
     pub(crate) operation: Arc<Operation>,
+    // The labels for this tool
+    pub(crate) labels: AppLabels,
     /// The MCP tool definition
     pub(crate) tool: Tool,
 }
@@ -67,7 +72,7 @@ impl App {
             RawResource {
                 name: self.name.clone(),
                 uri: self.uri.to_string(),
-                mime_type: Some("text/html+skybridge".to_string()),
+                mime_type: None,
                 // TODO: load all this from a manifest file
                 title: None,
                 description: None,
@@ -133,26 +138,6 @@ pub(crate) fn load_from_path(
         let uri = Url::parse(&uri_string)
             .map_err(|err| format!("Failed to create a URI for resource {uri_string}: {err}",))?;
 
-        let mut meta = Meta::new();
-        meta.insert("openai/outputTemplate".to_string(), uri.to_string().into());
-        meta.insert("openai/widgetAccessible".to_string(), true.into());
-
-        if let Some(labels) = manifest.labels {
-            if let Some(tool_invocation_invoking) = labels.tool_invocation_invoking {
-                meta.insert(
-                    "openai/toolInvocation/invoking".into(),
-                    tool_invocation_invoking.into(),
-                );
-            }
-
-            if let Some(tool_invocation_invoked) = labels.tool_invocation_invoked {
-                meta.insert(
-                    "openai/toolInvocation/invoked".into(),
-                    tool_invocation_invoked.into(),
-                );
-            }
-        }
-
         let mut prefetch_operations = Vec::new();
         let mut tools = Vec::new();
 
@@ -183,28 +168,20 @@ pub(crate) fn load_from_path(
             };
 
             for tool in operation_def.tools {
-                let mut meta = meta.clone();
-
-                // Allow overriding the labels per tool
-                if let Some(labels) = tool.labels {
-                    if let Some(tool_invocation_invoking) = labels.tool_invocation_invoking {
-                        meta.insert(
-                            "openai/toolInvocation/invoking".into(),
-                            tool_invocation_invoking.into(),
-                        );
-                    }
-
-                    if let Some(tool_invocation_invoked) = labels.tool_invocation_invoked {
-                        meta.insert(
-                            "openai/toolInvocation/invoked".into(),
-                            tool_invocation_invoked.into(),
-                        );
-                    }
+                // Default to manifest-level labels, override with tool-specific labels if present
+                let mut labels = manifest.labels.clone().unwrap_or_default();
+                if let Some(tool_labels) = tool.labels {
+                    labels.tool_invocation_invoking = tool_labels
+                        .tool_invocation_invoking
+                        .or(labels.tool_invocation_invoking);
+                    labels.tool_invocation_invoked = tool_labels
+                        .tool_invocation_invoked
+                        .or(labels.tool_invocation_invoked);
                 }
 
                 let tool = Tool {
                     name: format!("{name}--{}", tool.name).into(),
-                    meta: Some(meta.clone()),
+                    meta: None,
                     description: Some(
                         if let Some(app_description) = manifest.description.clone() {
                             format!("{} {}", app_description, tool.description).into()
@@ -227,6 +204,7 @@ pub(crate) fn load_from_path(
 
                 tools.push(AppTool {
                     operation: operation.clone(),
+                    labels,
                     tool,
                 })
             }
@@ -343,8 +321,8 @@ enum ManifestVersion {
     V1,
 }
 
-#[derive(Clone, Deserialize)]
-struct AppLabels {
+#[derive(Clone, Debug, Deserialize, Default)]
+pub(crate) struct AppLabels {
     #[serde(rename = "toolInvocation/invoking")]
     tool_invocation_invoking: Option<String>,
     #[serde(rename = "toolInvocation/invoked")]
@@ -821,22 +799,8 @@ mod test_load_from_path {
         let app = &apps[0];
         let tool = &app.tools[0];
 
-        assert!(
-            tool.tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .is_none()
-        );
-        assert!(
-            tool.tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .is_none()
-        );
+        assert!(tool.labels.tool_invocation_invoking.is_none());
+        assert!(tool.labels.tool_invocation_invoked.is_none());
     }
 
     #[test]
@@ -887,44 +851,20 @@ mod test_load_from_path {
         let tool2 = &app.tools[1];
 
         assert_eq!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .unwrap(),
-            "Store is invoking..."
+            tool1.labels.tool_invocation_invoking,
+            Some("Store is invoking...".to_string())
         );
         assert_eq!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .unwrap(),
-            "Happy shopping!"
+            tool1.labels.tool_invocation_invoked,
+            Some("Happy shopping!".to_string())
         );
         assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .unwrap(),
-            "Store is invoking..."
+            tool2.labels.tool_invocation_invoking,
+            Some("Store is invoking...".to_string())
         );
         assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .unwrap(),
-            "Happy shopping!"
+            tool2.labels.tool_invocation_invoked,
+            Some("Happy shopping!".to_string())
         );
     }
 
@@ -980,44 +920,20 @@ mod test_load_from_path {
         let tool2 = &app.tools[1];
 
         assert_eq!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .unwrap(),
-            "Store is invoking..."
+            tool1.labels.tool_invocation_invoking,
+            Some("Store is invoking...".to_string())
         );
         assert_eq!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .unwrap(),
-            "Happy shopping!"
+            tool1.labels.tool_invocation_invoked,
+            Some("Happy shopping!".to_string())
         );
         assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .unwrap(),
-            "Adding to cart..."
+            tool2.labels.tool_invocation_invoking,
+            Some("Adding to cart...".to_string())
         );
         assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .unwrap(),
-            "Cart filled!"
+            tool2.labels.tool_invocation_invoked,
+            Some("Cart filled!".to_string())
         );
     }
 
@@ -1068,43 +984,15 @@ mod test_load_from_path {
         let tool1 = &app.tools[0];
         let tool2 = &app.tools[1];
 
-        assert!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .is_none()
-        );
-        assert!(
-            tool1
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .is_none(),
+        assert!(tool1.labels.tool_invocation_invoking.is_none());
+        assert!(tool1.labels.tool_invocation_invoked.is_none());
+        assert_eq!(
+            tool2.labels.tool_invocation_invoking,
+            Some("Adding to cart...".to_string())
         );
         assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoking")
-                .unwrap(),
-            "Adding to cart..."
-        );
-        assert_eq!(
-            tool2
-                .tool
-                .meta
-                .clone()
-                .unwrap()
-                .get("openai/toolInvocation/invoked")
-                .unwrap(),
-            "Cart filled!"
+            tool2.labels.tool_invocation_invoked,
+            Some("Cart filled!".to_string())
         );
     }
 }
