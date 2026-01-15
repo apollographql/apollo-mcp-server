@@ -5,8 +5,8 @@ use opentelemetry::KeyValue;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    Extensions, Implementation, ListResourcesResult, Meta, ReadResourceResult, ResourceContents,
-    ResourcesCapability, ToolsCapability,
+    Extensions, Implementation, ListResourcesResult, ReadResourceResult, ResourcesCapability,
+    ToolsCapability,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -22,13 +22,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
 
-use crate::apps::{find_and_execute_app, make_tool_private};
+use crate::apps::{
+    attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
+    make_tool_private,
+};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
 use crate::server::states::telemetry::get_parent_span;
 use crate::{
-    apps::AppResource,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -233,7 +235,7 @@ impl Running {
                             .chain(
                                 app.tools
                                     .iter()
-                                    .map(|tool| tool.tool.clone())
+                                    .map(|tool| attach_tool_metadata(app, tool.clone()).tool)
                                     .collect::<Vec<_>>(),
                             )
                             .collect(),
@@ -268,7 +270,11 @@ impl Running {
 
     fn list_resources_impl(&self) -> ListResourcesResult {
         ListResourcesResult {
-            resources: self.apps.iter().map(|app| app.resource()).collect(),
+            resources: self
+                .apps
+                .iter()
+                .map(|app| attach_resource_mime_type(app.resource()))
+                .collect(),
             next_cursor: None,
         }
     }
@@ -284,87 +290,10 @@ impl Running {
             )
         })?;
 
-        let Some(app) = self
-            .apps
-            .iter()
-            .find(|app| app.uri.path() == request_uri.path())
-        else {
-            return Err(ErrorData::resource_not_found(
-                format!("Resource not found for URI: {}", request.uri),
-                None,
-            ));
-        };
-        let text = match &app.resource {
-            AppResource::Local(contents) => contents.clone(),
-            AppResource::Remote(url) => {
-                let response = reqwest::Client::new()
-                    .get(url.clone())
-                    .send()
-                    .await
-                    .map_err(|err| {
-                        ErrorData::resource_not_found(
-                            format!("Failed to fetch resource from {}: {err}", url),
-                            None,
-                        )
-                    })?;
-
-                if !response.status().is_success() {
-                    return Err(ErrorData::resource_not_found(
-                        format!(
-                            "Failed to fetch resource from {}: received status {}",
-                            url,
-                            response.status()
-                        ),
-                        None,
-                    ));
-                }
-
-                response.text().await.map_err(|err| {
-                    ErrorData::resource_not_found(
-                        format!("Failed to read resource body from {}: {err}", url),
-                        None,
-                    )
-                })?
-            }
-        };
-
-        let mut meta: Option<Meta> = None;
-        if let Some(csp) = &app.csp_settings {
-            meta.get_or_insert_with(Meta::new).insert(
-                "openai/widgetCSP".into(),
-                serde_json::to_value(csp).unwrap_or_default(),
-            );
-        }
-        if let Some(widget_settings) = &app.widget_settings {
-            if let Some(description) = &widget_settings.description {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "openai/widgetDescription".into(),
-                    serde_json::to_value(description).unwrap_or_default(),
-                );
-            }
-
-            if let Some(domain) = &widget_settings.domain {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "openai/widgetDomain".into(),
-                    serde_json::to_value(domain).unwrap_or_default(),
-                );
-            }
-
-            if let Some(prefers_border) = &widget_settings.prefers_border {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "openai/widgetPrefersBorder".into(),
-                    serde_json::to_value(prefers_border).unwrap_or_default(),
-                );
-            }
-        }
+        let resource = get_app_resource(&self.apps, request, request_uri).await?;
 
         Ok(ReadResourceResult {
-            contents: vec![ResourceContents::TextResourceContents {
-                uri: request.uri,
-                mime_type: Some("text/html+skybridge".to_string()),
-                text,
-                meta,
-            }],
+            contents: vec![resource],
         })
     }
 }
@@ -597,9 +526,9 @@ fn convert_arguments<T: serde::de::DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::{JsonObject, ReadResourceRequestParam, Tool};
+    use rmcp::model::{JsonObject, ReadResourceRequestParam, ResourceContents, Tool};
 
-    use crate::apps::{App, AppTool, CSPSettings, WidgetSettings};
+    use crate::apps::{App, AppLabels, AppResource, AppTool, CSPSettings, WidgetSettings};
 
     use super::*;
 
@@ -737,6 +666,7 @@ mod tests {
                         .unwrap()
                         .unwrap(),
                 ),
+                labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
             }],
             resource,

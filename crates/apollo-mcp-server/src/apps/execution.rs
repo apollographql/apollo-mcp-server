@@ -5,10 +5,12 @@ use futures::future::try_join_all;
 use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Tool};
+use rmcp::ErrorData;
+use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Resource, ResourceContents, Tool};
 use serde_json::{Map, Value};
 use url::Url;
 
+use crate::apps::AppResource;
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::operations::Operation;
@@ -143,13 +145,131 @@ pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
     tool
 }
 
+// Attach tool meta data when requested to allow swapping between app targets (Apps SDK, MCP Apps)
+pub(crate) fn attach_tool_metadata(app: &App, mut tool: AppTool) -> AppTool {
+    let meta = tool.tool.meta.get_or_insert_with(Meta::new);
+    meta.insert(
+        "openai/outputTemplate".to_string(),
+        app.uri.to_string().into(),
+    );
+    meta.insert("openai/widgetAccessible".to_string(), true.into());
+
+    if let Some(tool_invocation_invoking) = &tool.labels.tool_invocation_invoking {
+        meta.insert(
+            "openai/toolInvocation/invoking".into(),
+            tool_invocation_invoking.clone().into(),
+        );
+    }
+
+    if let Some(tool_invocation_invoked) = &tool.labels.tool_invocation_invoked {
+        meta.insert(
+            "openai/toolInvocation/invoked".into(),
+            tool_invocation_invoked.clone().into(),
+        );
+    }
+
+    tool
+}
+
+// Attach resource mime type when requested to allow swapping between app targets (Apps SDK, MCP Apps)
+pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
+    resource.raw.mime_type = Some("text/html+skybridge".to_string());
+    resource
+}
+
+pub(crate) async fn get_app_resource(
+    apps: &[App],
+    request: rmcp::model::ReadResourceRequestParam,
+    request_uri: Url,
+) -> Result<ResourceContents, ErrorData> {
+    let Some(app) = apps.iter().find(|app| app.uri.path() == request_uri.path()) else {
+        return Err(ErrorData::resource_not_found(
+            format!("Resource not found for URI: {}", request.uri),
+            None,
+        ));
+    };
+
+    let text = match &app.resource {
+        AppResource::Local(contents) => contents.clone(),
+        AppResource::Remote(url) => {
+            let response = reqwest::Client::new()
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|err| {
+                    ErrorData::resource_not_found(
+                        format!("Failed to fetch resource from {}: {err}", url),
+                        None,
+                    )
+                })?;
+
+            if !response.status().is_success() {
+                return Err(ErrorData::resource_not_found(
+                    format!(
+                        "Failed to fetch resource from {}: received status {}",
+                        url,
+                        response.status()
+                    ),
+                    None,
+                ));
+            }
+
+            response.text().await.map_err(|err| {
+                ErrorData::resource_not_found(
+                    format!("Failed to read resource body from {}: {err}", url),
+                    None,
+                )
+            })?
+        }
+    };
+
+    let mut meta: Option<Meta> = None;
+    if let Some(csp) = &app.csp_settings {
+        meta.get_or_insert_with(Meta::new).insert(
+            "openai/widgetCSP".into(),
+            serde_json::to_value(csp).unwrap_or_default(),
+        );
+    }
+    if let Some(widget_settings) = &app.widget_settings {
+        if let Some(description) = &widget_settings.description {
+            meta.get_or_insert_with(Meta::new).insert(
+                "openai/widgetDescription".into(),
+                serde_json::to_value(description).unwrap_or_default(),
+            );
+        }
+
+        if let Some(domain) = &widget_settings.domain {
+            meta.get_or_insert_with(Meta::new).insert(
+                "openai/widgetDomain".into(),
+                serde_json::to_value(domain).unwrap_or_default(),
+            );
+        }
+
+        if let Some(prefers_border) = &widget_settings.prefers_border {
+            meta.get_or_insert_with(Meta::new).insert(
+                "openai/widgetPrefersBorder".into(),
+                serde_json::to_value(prefers_border).unwrap_or_default(),
+            );
+        }
+    }
+
+    Ok(ResourceContents::TextResourceContents {
+        uri: request.uri,
+        mime_type: Some("text/html+skybridge".to_string()),
+        text,
+        meta,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use apollo_compiler::Schema;
     use rmcp::{model::Tool, object};
 
+    use rmcp::model::RawResource;
+
     use crate::{
-        apps::{AppResource, PrefetchOperation},
+        apps::{AppLabels, AppResource, PrefetchOperation},
         operations::{MutationMode, RawOperation},
     };
 
@@ -237,6 +357,7 @@ mod tests {
             tools: vec![AppTool {
                 operation: primary_operation.clone(),
                 tool: Tool::new("ATool", "", JsonObject::new()),
+                labels: AppLabels::default(),
             }],
             prefetch_operations: vec![
                 PrefetchOperation {
@@ -327,6 +448,7 @@ mod tests {
                         .unwrap()
                         .unwrap(),
                 ),
+                labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
             }],
             prefetch_operations: vec![],
@@ -375,6 +497,7 @@ mod tests {
                         .unwrap()
                         .unwrap(),
                 ),
+                labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
             }],
             prefetch_operations: vec![],
@@ -415,6 +538,7 @@ mod tests {
                         .unwrap()
                         .unwrap(),
                 ),
+                labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
             }],
             prefetch_operations: vec![],
@@ -467,6 +591,160 @@ mod tests {
         assert_eq!(
             meta.get("openai/visibility").unwrap(),
             &Value::from("private")
+        );
+    }
+
+    fn create_test_operation() -> Arc<crate::operations::Operation> {
+        let schema = Schema::parse("type Query { hello: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        Arc::new(
+            RawOperation::from(("query TestOp { hello }".to_string(), None))
+                .into_operation(&schema, None, MutationMode::All, true, true, true)
+                .unwrap()
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn attach_tool_metadata_adds_output_template_and_widget_accessible() {
+        let app = App {
+            name: "TestApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, tool);
+
+        let meta = result.tool.meta.unwrap();
+        assert_eq!(
+            meta.get("openai/outputTemplate").unwrap(),
+            "ui://widget/TestApp#hash123"
+        );
+        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+    }
+
+    #[test]
+    fn attach_tool_metadata_adds_invocation_labels_when_present() {
+        let app = App {
+            name: "TestApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels {
+                tool_invocation_invoking: Some("Loading...".to_string()),
+                tool_invocation_invoked: Some("Done!".to_string()),
+            },
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, tool);
+
+        let meta = result.tool.meta.unwrap();
+        assert_eq!(
+            meta.get("openai/toolInvocation/invoking").unwrap(),
+            "Loading..."
+        );
+        assert_eq!(meta.get("openai/toolInvocation/invoked").unwrap(), "Done!");
+    }
+
+    #[test]
+    fn attach_tool_metadata_does_not_add_invocation_labels_when_none() {
+        let app = App {
+            name: "TestApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, tool);
+
+        let meta = result.tool.meta.unwrap();
+        assert!(meta.get("openai/toolInvocation/invoking").is_none());
+        assert!(meta.get("openai/toolInvocation/invoked").is_none());
+        // These should still be present
+        assert!(meta.get("openai/outputTemplate").is_some());
+        assert!(meta.get("openai/widgetAccessible").is_some());
+    }
+
+    #[test]
+    fn attach_tool_metadata_preserves_existing_meta() {
+        let app = App {
+            name: "TestApp".to_string(),
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let mut existing_meta = Meta::new();
+        existing_meta.insert("custom-key".into(), "custom-value".into());
+
+        let mut tool_def = Tool::new("TestTool", "description", JsonObject::new());
+        tool_def.meta = Some(existing_meta);
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: tool_def,
+        };
+
+        let result = attach_tool_metadata(&app, tool);
+
+        let meta = result.tool.meta.unwrap();
+        assert_eq!(meta.get("custom-key").unwrap(), "custom-value");
+        assert!(meta.get("openai/outputTemplate").is_some());
+    }
+
+    #[test]
+    fn attach_resource_mime_type_sets_correct_mime_type() {
+        let resource = Resource::new(
+            RawResource {
+                name: "TestResource".to_string(),
+                uri: "ui://test".to_string(),
+                mime_type: None,
+                title: None,
+                description: None,
+                icons: None,
+                size: None,
+            },
+            None,
+        );
+
+        let result = attach_resource_mime_type(resource);
+
+        assert_eq!(
+            result.raw.mime_type,
+            Some("text/html+skybridge".to_string())
         );
     }
 }
