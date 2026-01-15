@@ -4,11 +4,21 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.1 (2026-01-15)
+
+### Fixes
+
+#### Restore tarball directory structure for Rover compatibility - @DaleSeo PR #563
+
+Fixes a regression that broke Rover's ability to download and run the MCP server binary.
+
+When the release workflow was rewritten recently, the tarball directory structure was changed. The original NIX-based workflow packaged the binary at dist/, but the new workflow put it under artifact/ instead.
+
 ## 1.4.0 (2026-01-14)
 
 ### Features
 
-#### feat(auth): Add 403 Forbidden `insufficient_scope` support per MCP Auth Spec 2025-11-25 and RFC 6750 (Section 3.1) - @gocamille PR #537
+#### Add 403 Forbidden `insufficient_scope` support per MCP Auth Spec 2025-11-25 and RFC 6750 (Section 3.1) - @gocamille PR #537
 
 This adds HTTP 403 Forbidden responses with `error="insufficient_scope"` per [MCP Auth Spec 2025-11-25 Section 10: Error Handling](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#error-handling) and [RFC 6750 Section 3.1](https://www.rfc-editor.org/rfc/rfc6750.html#section-3.1).
 
@@ -103,7 +113,7 @@ transport:
 
 ### Fixes
 
-#### Add server.json for MCP Registry publishing
+#### Add server.json for MCP Registry publishing - @DaleSeo PR #540
 
 In preparation for publishing Apollo MCP Server to the official MCP Registry at `registry.modelcontextprotocol.io`, this PR adds `server.json` configuration file and adds the `io.modelcontextprotocol.server.name` label Dockerfile for registry verification.
 
