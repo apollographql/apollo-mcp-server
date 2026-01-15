@@ -1,20 +1,20 @@
 name: Canary Release
 on:
-  push:
-    # don't run on tags, run on commits
-    # https://github.com/orgs/community/discussions/25615
-    tags-ignore:
-      - "**"
-    paths-ignore:
-      - ".github/**"
-      - ".cargo/**"
-      - ".vscode/**"
-      - "docs/**"
-      - "Cargo.*"
-      - "crates/**/Cargo.*"
-      - "*.md"
-    branches:
-      - main
+  # push:
+  #   # don't run on tags, run on commits
+  #   # https://github.com/orgs/community/discussions/25615
+  #   tags-ignore:
+  #     - "**"
+  #   paths-ignore:
+  #     - ".github/**"
+  #     - ".cargo/**"
+  #     - ".vscode/**"
+  #     - "docs/**"
+  #     - "Cargo.*"
+  #     - "crates/**/Cargo.*"
+  #     - "*.md"
+  #   branches:
+  #     - main
   workflow_dispatch:
 
 permissions:
