@@ -146,3 +146,40 @@ jobs:
           if [[ ! "$VERSION" =~ (^canary|-[a-zA-Z]+\.[0-9]+$) ]]; then
             docker manifest push $FQDN:latest
           fi
+  publish-mcp-registry:
+    needs: [get-version, bundle]
+    # This should only trigger on an actual version release, not on a canary and not on an RC or experimental build
+    if: ${{ startsWith(needs.get-version.outputs.version, 'v') && !contains(needs.get-version.outputs.version, '-') }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # Required for OIDC authentication
+      contents: read
+
+    steps:
+      - name: Wait for container to be available
+        run: |
+          echo "Waiting for container ghcr.io/${{ github.repository }}:${{ needs.get-version.outputs.version }} to be available..."
+          for i in {1..30}; do
+            if docker manifest inspect "ghcr.io/${{ github.repository }}:${{ needs.get-version.outputs.version }}" > /dev/null 2>&1; then
+              echo "Container is available!"
+              exit 0
+            fi
+            echo "Attempt $i/30: Container not yet available, waiting 10 seconds..."
+            sleep 10
+          done
+          echo "Container did not become available within 5 minutes"
+          exit 1
+
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+      # server.json will have already been updated by knope in the prep-release.yml job (see knope.toml)
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish server to MCP Registry
+        run: ./mcp-publisher publish
