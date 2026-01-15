@@ -174,6 +174,16 @@ async fn backoff_sleep_with_shutdown(
     }
 }
 
+/// Creates the standard retry backoff configuration for initial collection fetches.
+fn create_retry_backoff() -> backoff::ExponentialBackoff {
+    backoff::ExponentialBackoff {
+        initial_interval: INITIAL_BACKOFF,
+        max_interval: MAX_BACKOFF,
+        max_elapsed_time: Some(MAX_ELAPSED_TIME),
+        ..Default::default()
+    }
+}
+
 #[derive(Clone)]
 pub struct OperationData {
     id: String,
@@ -328,15 +338,8 @@ impl CollectionSource {
             let mut previous_updated_at = HashMap::new();
             let mut has_fetched = false;
 
-            // Note: This retry loop pattern is shared with default_collection_stream.
-            // Shutdown sleep handling is deduplicated via backoff_sleep_with_shutdown helper.
             // Retry loop for initial fetch with exponential backoff
-            let mut backoff = backoff::ExponentialBackoff {
-                initial_interval: INITIAL_BACKOFF,
-                max_interval: MAX_BACKOFF,
-                max_elapsed_time: Some(MAX_ELAPSED_TIME),
-                ..Default::default()
-            };
+            let mut backoff = create_retry_backoff();
 
             loop {
                 // Check for shutdown before each attempt
@@ -497,12 +500,7 @@ impl CollectionSource {
             let mut has_fetched = false;
 
             // Retry loop for initial fetch with exponential backoff
-            let mut backoff = backoff::ExponentialBackoff {
-                initial_interval: INITIAL_BACKOFF,
-                max_interval: MAX_BACKOFF,
-                max_elapsed_time: Some(MAX_ELAPSED_TIME),
-                ..Default::default()
-            };
+            let mut backoff = create_retry_backoff();
 
             loop {
                 // Check for shutdown before each attempt
