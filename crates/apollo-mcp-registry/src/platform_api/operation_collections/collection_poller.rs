@@ -36,11 +36,9 @@ use operation_collection_query::{
 };
 
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
-
-/// Retry configuration for initial collection fetch
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
-const MAX_ELAPSED_TIME: Duration = Duration::from_secs(300); // 5 minutes
+const MAX_ELAPSED_TIME: Duration = Duration::from_secs(300);
 
 type Timestamp = String;
 
@@ -174,7 +172,6 @@ async fn backoff_sleep_with_shutdown(
     }
 }
 
-/// Creates the standard retry backoff configuration for initial collection fetches.
 fn create_retry_backoff() -> backoff::ExponentialBackoff {
     backoff::ExponentialBackoff {
         initial_interval: INITIAL_BACKOFF,
