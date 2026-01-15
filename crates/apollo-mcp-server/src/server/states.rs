@@ -143,6 +143,11 @@ impl StateMachine {
                     State::Error(ServerError::Operation(OperationError::File(e)))
                 }
                 ServerEvent::CollectionError(e) => {
+                    tracing::error!(
+                        event = "collection_fatal",
+                        error = %e,
+                        "Collection error caused server shutdown"
+                    );
                     State::Error(ServerError::Operation(OperationError::Collection(e)))
                 }
                 ServerEvent::Shutdown => match state {

@@ -26,6 +26,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tower = "0.5.2"
+backoff = { version = "0.4.0", features = ["tokio"] }
 tracing.workspace = true
 url.workspace = true
 uuid = { version = "1.16.0", features = ["serde", "v4"] }
