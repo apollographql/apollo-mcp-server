@@ -355,7 +355,8 @@ impl CollectionSource {
                     Ok(response) => match response.operation_collection {
                         OperationCollectionResult::NotFoundError(NotFoundError { message })
                         | OperationCollectionResult::PermissionError(PermissionError { message })
-                        | OperationCollectionResult::ValidationError(ValidationError { message }) => {
+                        | OperationCollectionResult::ValidationError(ValidationError { message }) =>
+                        {
                             if let Err(e) = sender
                                 .send(CollectionEvent::CollectionError(CollectionError::Response(
                                     message,
@@ -403,7 +404,9 @@ impl CollectionSource {
                                         retry_duration_secs = MAX_ELAPSED_TIME.as_secs(),
                                         "Initial collection fetch failed after retries, server will shutdown"
                                     );
-                                    if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                                    if let Err(e) =
+                                        sender.send(CollectionEvent::CollectionError(err)).await
+                                    {
                                         tracing::debug!(
                                             "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                                         );
@@ -415,7 +418,8 @@ impl CollectionSource {
                             tracing::error!(
                                 "Failed to fetch initial collection with permanent error: {err}"
                             );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
+                            {
                                 tracing::debug!(
                                     "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                                 );
@@ -592,7 +596,9 @@ impl CollectionSource {
                                         retry_duration_secs = MAX_ELAPSED_TIME.as_secs(),
                                         "Initial default collection fetch failed after retries, server will shutdown"
                                     );
-                                    if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                                    if let Err(e) =
+                                        sender.send(CollectionEvent::CollectionError(err)).await
+                                    {
                                         tracing::debug!(
                                             "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                                         );
@@ -604,7 +610,8 @@ impl CollectionSource {
                             tracing::error!(
                                 "Failed to fetch initial default collection with permanent error: {err}"
                             );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
+                            {
                                 tracing::debug!(
                                     "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                                 );
@@ -821,8 +828,14 @@ mod tests {
     #[test]
     fn test_backoff_constants_are_reasonable() {
         // Sanity checks for retry configuration
-        assert!(INITIAL_BACKOFF < MAX_BACKOFF, "initial should be less than max");
-        assert!(MAX_BACKOFF < MAX_ELAPSED_TIME, "max backoff should be less than total timeout");
+        assert!(
+            INITIAL_BACKOFF < MAX_BACKOFF,
+            "initial should be less than max"
+        );
+        assert!(
+            MAX_BACKOFF < MAX_ELAPSED_TIME,
+            "max backoff should be less than total timeout"
+        );
         assert!(
             MAX_ELAPSED_TIME >= Duration::from_secs(60),
             "should have at least 1 minute to retry"
@@ -852,4 +865,3 @@ mod tests {
         assert!(!result, "should return false when channel is closed");
     }
 }
-
