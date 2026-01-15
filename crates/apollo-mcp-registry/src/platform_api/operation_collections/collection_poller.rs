@@ -333,7 +333,6 @@ impl CollectionSource {
         let (sender, receiver) = channel(2);
         tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
-            let mut has_fetched = false;
 
             // Retry loop for initial fetch with exponential backoff
             let mut backoff = create_retry_backoff();
@@ -370,7 +369,6 @@ impl CollectionSource {
                             return;
                         }
                         OperationCollectionResult::OperationCollection(collection) => {
-                            has_fetched = true;
                             let should_poll = write_init_response(
                                 &sender,
                                 &mut previous_updated_at,
@@ -494,7 +492,6 @@ impl CollectionSource {
         let (sender, receiver) = channel(2);
         tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
-            let mut has_fetched = false;
 
             // Retry loop for initial fetch with exponential backoff
             let mut backoff = create_retry_backoff();
@@ -520,7 +517,6 @@ impl CollectionSource {
                         Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
                             match variant.mcp_default_collection {
                                 DefaultCollectionResult::OperationCollection(collection) => {
-                                    has_fetched = true;
                                     let should_poll = write_init_response(
                                         &sender,
                                         &mut previous_updated_at,
@@ -834,34 +830,26 @@ mod tests {
     }
 
     #[test]
-    fn test_backoff_produces_increasing_intervals() {
-        let mut backoff = backoff::ExponentialBackoff {
-            initial_interval: INITIAL_BACKOFF,
-            max_interval: MAX_BACKOFF,
-            max_elapsed_time: Some(MAX_ELAPSED_TIME),
-            // Disable randomization for predictable test
-            randomization_factor: 0.0,
-            ..Default::default()
-        };
+    fn test_create_retry_backoff_uses_correct_config() {
+        let backoff = create_retry_backoff();
+        assert_eq!(backoff.initial_interval, INITIAL_BACKOFF);
+        assert_eq!(backoff.max_interval, MAX_BACKOFF);
+        assert_eq!(backoff.max_elapsed_time, Some(MAX_ELAPSED_TIME));
+    }
 
-        let first = backoff.next_backoff().expect("should have first backoff");
-        let second = backoff.next_backoff().expect("should have second backoff");
-        let third = backoff.next_backoff().expect("should have third backoff");
+    #[tokio::test]
+    async fn test_backoff_sleep_with_shutdown_completes_normally() {
+        let (sender, _receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
+        let result = backoff_sleep_with_shutdown(Duration::from_millis(10), &sender).await;
+        assert!(result, "should return true when sleep completes normally");
+    }
 
-        // Without jitter, intervals should increase (multiplier is 1.5 by default)
-        assert!(second >= first, "second interval should be >= first");
-        assert!(third >= second, "third interval should be >= second");
-
-        // Should not exceed max interval
-        for _ in 0..20 {
-            if let Some(interval) = backoff.next_backoff() {
-                assert!(
-                    interval <= MAX_BACKOFF,
-                    "interval {:?} should not exceed max {:?}",
-                    interval,
-                    MAX_BACKOFF
-                );
-            }
-        }
+    #[tokio::test]
+    async fn test_backoff_sleep_with_shutdown_detects_closed_channel() {
+        let (sender, receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
+        drop(receiver); // Close the channel by dropping the receiver
+        let result = backoff_sleep_with_shutdown(Duration::from_secs(10), &sender).await;
+        assert!(!result, "should return false when channel is closed");
     }
 }
+
