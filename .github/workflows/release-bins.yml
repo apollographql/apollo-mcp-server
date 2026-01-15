@@ -78,7 +78,7 @@ jobs:
       attestations: write
       id-token: write
     env:
-      archive_name: artifact
+      archive_name: dist
       package_name: apollo-mcp-server
     steps:
       - uses: actions/checkout@v6
@@ -223,7 +223,7 @@ jobs:
       attestations: write
       id-token: write
     env:
-      archive_name: artifact
+      archive_name: dist
       package_name: apollo-mcp-server
     steps:
       - uses: actions/checkout@v6
