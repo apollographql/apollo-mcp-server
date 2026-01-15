@@ -24,7 +24,7 @@ use url::Url;
 
 use crate::apps::{
     attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
-    make_tool_private,
+    get_app_target, make_tool_private,
 };
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
@@ -268,15 +268,17 @@ impl Running {
         })
     }
 
-    fn list_resources_impl(&self) -> ListResourcesResult {
-        ListResourcesResult {
+    fn list_resources_impl(&self, extensions: Extensions) -> Result<ListResourcesResult, McpError> {
+        let app_target = get_app_target(extensions)?;
+
+        Ok(ListResourcesResult {
             resources: self
                 .apps
                 .iter()
-                .map(|app| attach_resource_mime_type(app.resource()))
+                .map(|app| attach_resource_mime_type(app.resource(), &app_target))
                 .collect(),
             next_cursor: None,
-        }
+        })
     }
 
     async fn read_resource_impl(
@@ -464,9 +466,9 @@ impl ServerHandler for Running {
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParam>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        Ok(self.list_resources_impl())
+        self.list_resources_impl(context.extensions)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -703,7 +705,8 @@ mod tests {
     #[tokio::test]
     async fn resource_list_includes_app_resources() {
         let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl()
+            .list_resources_impl(Extensions::new())
+            .unwrap()
             .resources;
 
         assert_eq!(resources.len(), 1);

@@ -6,7 +6,10 @@ use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
 use rmcp::ErrorData;
-use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Resource, ResourceContents, Tool};
+use rmcp::model::{
+    CallToolResult, Content, ErrorCode, Extensions, JsonObject, Meta, Resource, ResourceContents,
+    Tool,
+};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -173,8 +176,14 @@ pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool) -> Tool {
 }
 
 // Attach resource mime type when requested to allow swapping between app targets (Apps SDK, MCP Apps)
-pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
-    resource.raw.mime_type = Some("text/html+skybridge".to_string());
+pub(crate) fn attach_resource_mime_type(
+    mut resource: Resource,
+    app_target: &AppTarget,
+) -> Resource {
+    resource.raw.mime_type = match app_target {
+        AppTarget::AppsSDK => Some("text/html+skybridge".to_string()),
+        AppTarget::MCPApps => Some("text/html;profile=mcp-app".to_string()),
+    };
     resource
 }
 
@@ -260,6 +269,34 @@ pub(crate) async fn get_app_resource(
         text,
         meta,
     })
+}
+
+pub(crate) enum AppTarget {
+    AppsSDK,
+    MCPApps,
+}
+
+pub(crate) fn get_app_target(extensions: Extensions) -> Result<AppTarget, McpError> {
+    let app_target_param = extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.uri.query())
+        .and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find(|(key, _)| key == "appTarget")
+                .map(|(_, value)| value.into_owned())
+        });
+
+    match app_target_param {
+        Some(app_target) if app_target.to_lowercase() == "openai" => Ok(AppTarget::AppsSDK),
+        Some(app_target) if app_target.to_lowercase() == "mcp" => Ok(AppTarget::MCPApps),
+        Some(app_target) => Err(McpError::new(
+            ErrorCode::INVALID_REQUEST,
+            format!("App target {app_target} not recognized."),
+            None,
+        )),
+        // TODO: In the future, once host capabilities are advertised, we should try auto detection before defaulting to apps sdk
+        None => Ok(AppTarget::AppsSDK),
+    }
 }
 
 #[cfg(test)]
@@ -727,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_resource_mime_type_sets_correct_mime_type() {
+    fn attach_correct_mime_type_when_open_ai() {
         let resource = Resource::new(
             RawResource {
                 name: "TestResource".to_string(),
@@ -741,11 +778,102 @@ mod tests {
             None,
         );
 
-        let result = attach_resource_mime_type(resource);
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?appTarget=openai")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+        let app_target = get_app_target(extensions).unwrap();
+
+        let result = attach_resource_mime_type(resource, &app_target);
 
         assert_eq!(
             result.raw.mime_type,
             Some("text/html+skybridge".to_string())
         );
+    }
+
+    #[test]
+    fn attach_correct_mime_type_when_mcp_apps() {
+        let resource = Resource::new(
+            RawResource {
+                name: "TestResource".to_string(),
+                uri: "ui://test".to_string(),
+                mime_type: None,
+                title: None,
+                description: None,
+                icons: None,
+                size: None,
+            },
+            None,
+        );
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?appTarget=mcp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+        let app_target = get_app_target(extensions).unwrap();
+
+        let result = attach_resource_mime_type(resource, &app_target);
+
+        assert_eq!(
+            result.raw.mime_type,
+            Some("text/html;profile=mcp-app".to_string())
+        );
+    }
+
+    #[test]
+    fn attach_correct_mime_type_when_not_provided() {
+        let resource = Resource::new(
+            RawResource {
+                name: "TestResource".to_string(),
+                uri: "ui://test".to_string(),
+                mime_type: None,
+                title: None,
+                description: None,
+                icons: None,
+                size: None,
+            },
+            None,
+        );
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+        let app_target = get_app_target(extensions).unwrap();
+
+        let result = attach_resource_mime_type(resource, &app_target);
+
+        assert_eq!(
+            result.raw.mime_type,
+            Some("text/html+skybridge".to_string())
+        );
+    }
+
+    #[test]
+    fn errors_when_invalid_target_provided() {
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?appTarget=lol")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+        let app_target = get_app_target(extensions);
+
+        assert!(app_target.is_err());
+        assert_eq!(
+            app_target.err().unwrap().message,
+            "App target lol not recognized."
+        )
     }
 }
