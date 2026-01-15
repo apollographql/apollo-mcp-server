@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.4.1 (2026-01-15)
+
+### Fixes
+
+#### Restore tarball directory structure for Rover compatibility - @DaleSeo PR #563
+
+Fixes a regression that broke Rover's ability to download and run the MCP server binary.
+
+When the release workflow was rewritten recently, the tarball directory structure was changed. The original NIX-based workflow packaged the binary at dist/, but the new workflow put it under artifact/ instead.
+
 ## 1.4.0 (2026-01-14)
 
 ### Features
