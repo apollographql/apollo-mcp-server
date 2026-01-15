@@ -1,4 +1,4 @@
-name: Build Release Binaries (new)
+name: Build Release Binaries
 
 on:
   pull_request:
