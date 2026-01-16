@@ -9,7 +9,7 @@ This guide walks you through the process of creating, running and configuring an
 
 ## Prerequisites
 
-- [Rover CLI](/rover/getting-started) v0.36 or later. We'll use Rover to initialize a project and run the MCP server. Follow the instructions for [installing](/rover/getting-started) and [authenticating](/rover/getting-started#connecting-to-graphos) Rover with a GraphOS account.
+- [Rover CLI](/rover/getting-started) v0.37 or later. We'll use Rover to initialize a project and run the MCP server. Follow the instructions for [installing](/rover/getting-started) and [authenticating](/rover/getting-started#connecting-to-graphos) Rover with a GraphOS account.
 - [Node.js](https://nodejs.org/) v18 or later (for `mcp-remote`)
 - [Claude Desktop](https://claude.ai/download) or another MCP-compatible client
 
@@ -46,7 +46,7 @@ You can start your MCP server locally with `rover dev`.
         <Tab label="Linux / MacOS">
         
         ```terminal showLineNumbers=false
-        set -a && source .env && set +a && rover dev --supergraph-config supergraph.yaml --mcp .apollo/mcp.local.yaml
+        rover dev --supergraph-config supergraph.yaml --mcp .apollo/mcp.local.yaml
         ```
 
         </Tab>
