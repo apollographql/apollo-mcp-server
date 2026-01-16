@@ -873,7 +873,7 @@ mod tests {
         assert!(app_target.is_err());
         assert_eq!(
             app_target.err().unwrap().message,
-            "App target lol not recognized."
+            "App target lol not recognized. Valid values are 'openai' or 'mcp'."
         )
     }
 }
