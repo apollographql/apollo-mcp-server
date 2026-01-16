@@ -146,6 +146,7 @@ jobs:
           if [[ ! "$VERSION" =~ (^canary|-[a-zA-Z]+\.[0-9]+$) ]]; then
             docker manifest push $FQDN:latest
           fi
+
   publish-mcp-registry:
     needs: [get-version, bundle]
     # This should only trigger on an actual version release, not on a canary and not on an RC or experimental build
