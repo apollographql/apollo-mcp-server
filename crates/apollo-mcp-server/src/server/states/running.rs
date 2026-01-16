@@ -284,6 +284,7 @@ impl Running {
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParam,
+        extensions: Extensions,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -291,8 +292,9 @@ impl Running {
                 None,
             )
         })?;
+        let app_target = get_app_target(extensions)?;
 
-        let resource = get_app_resource(&self.apps, request, request_uri).await?;
+        let resource = get_app_resource(&self.apps, request, request_uri, &app_target).await?;
 
         Ok(ReadResourceResult {
             contents: vec![resource],
@@ -477,7 +479,7 @@ impl ServerHandler for Running {
         request: rmcp::model::ReadResourceRequestParam,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        self.read_resource_impl(request).await
+        self.read_resource_impl(request, context.extensions).await
     }
 
     fn get_info(&self) -> ServerInfo {
@@ -661,6 +663,7 @@ mod tests {
 
         let app = App {
             name: "MyApp".to_string(),
+            description: None,
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
@@ -799,11 +802,14 @@ mod tests {
         let running =
             running_with_apps(AppResource::Local(resource_content.to_string()), None, None);
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/resource#a_different_fragment"
-                    .parse()
-                    .unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource#a_different_fragment"
+                        .parse()
+                        .unwrap(),
+                },
+                Extensions::new(),
+            )
             .await
             .unwrap();
         assert_eq!(resource.contents.len(), 1);
@@ -826,9 +832,12 @@ mod tests {
     async fn getting_resource_that_does_not_exist() {
         let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await;
         assert!(result.is_err());
     }
@@ -837,9 +846,12 @@ mod tests {
     async fn getting_resource_from_running_with_invalid_uri() {
         let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "not a uri".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "not a uri".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await;
         assert!(result.is_err());
     }
@@ -860,9 +872,12 @@ mod tests {
         let running = running_with_apps(AppResource::Remote(url), None, None);
 
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: RESOURCE_URI.to_string(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: RESOURCE_URI.to_string(),
+                },
+                Extensions::new(),
+            )
             .await
             .expect("resource fetch failed");
 
@@ -881,6 +896,7 @@ mod tests {
         let resource_domains = vec!["resource.example.com".to_string()];
         let frame_domains = vec!["frame.example.com".to_string()];
         let redirect_domains = vec!["redirect.example.com".to_string()];
+        let base_uri_domains = vec!["base_uri.example.com".to_string()];
         let running = running_with_apps(
             AppResource::Local(resource_content.to_string()),
             Some(CSPSettings {
@@ -888,13 +904,17 @@ mod tests {
                 resource_domains: Some(resource_domains.clone()),
                 frame_domains: Some(frame_domains.clone()),
                 redirect_domains: Some(redirect_domains.clone()),
+                base_uri_domains: Some(base_uri_domains.clone()),
             }),
             None,
         );
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/resource".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await
             .unwrap();
         assert_eq!(resource.contents.len(), 1);
@@ -991,9 +1011,12 @@ mod tests {
             }),
         );
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/resource".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await
             .unwrap();
         let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
@@ -1020,9 +1043,12 @@ mod tests {
             }),
         );
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/resource".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await
             .unwrap();
         let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
@@ -1049,9 +1075,12 @@ mod tests {
             }),
         );
         let mut resource = running
-            .read_resource_impl(ReadResourceRequestParam {
-                uri: "http://localhost:4000/resource".parse().unwrap(),
-            })
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                Extensions::new(),
+            )
             .await
             .unwrap();
         let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
@@ -1063,5 +1092,89 @@ mod tests {
             .get("openai/widgetPrefersBorder")
             .expect("widgetPrefersBorder not found");
         assert!(prefers_border.as_bool().unwrap());
+    }
+
+    #[tokio::test]
+    async fn read_resource_impl_returns_mcp_format_when_target_is_mcp() {
+        let running = running_with_apps(
+            AppResource::Local("test content".to_string()),
+            Some(CSPSettings {
+                connect_domains: Some(vec!["connect.example.com".to_string()]),
+                resource_domains: Some(vec!["resource.example.com".to_string()]),
+                frame_domains: Some(vec!["frame.example.com".to_string()]),
+                redirect_domains: Some(vec!["redirect.example.com".to_string()]),
+                base_uri_domains: Some(vec!["base.example.com".to_string()]),
+            }),
+            Some(WidgetSettings {
+                description: Some("Test description".to_string()),
+                domain: Some("example.com".to_string()),
+                prefers_border: Some(true),
+            }),
+        );
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?appTarget=mcp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let mut resource = running
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                extensions,
+            )
+            .await
+            .unwrap();
+
+        let Some(ResourceContents::TextResourceContents {
+            mime_type, meta, ..
+        }) = resource.contents.pop()
+        else {
+            panic!("Expected TextResourceContents");
+        };
+        assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
+
+        let meta = meta.expect("meta should be set");
+        // MCPApps should have ui nesting
+        let ui_meta = meta.get("ui").expect("ui key should be set");
+        // MCPApps CSP uses camelCase keys and includes baseUriDomains (not redirectDomains)
+        let csp = ui_meta.get("csp").expect("CSP should be set");
+        assert!(csp.get("connectDomains").is_some());
+        assert!(csp.get("resourceDomains").is_some());
+        assert!(csp.get("frameDomains").is_some());
+        assert!(csp.get("baseUriDomains").is_some());
+        assert!(csp.get("redirectDomains").is_none());
+        assert!(ui_meta.get("domain").is_some());
+        assert!(ui_meta.get("prefersBorder").is_some());
+        // MCPApps should not have description
+        assert!(ui_meta.get("description").is_none());
+    }
+
+    #[tokio::test]
+    async fn read_resource_impl_returns_error_for_invalid_app_target() {
+        let running = running_with_apps(AppResource::Local("test content".to_string()), None, None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?appTarget=invalid")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running
+            .read_resource_impl(
+                ReadResourceRequestParam {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                },
+                extensions,
+            )
+            .await;
+
+        assert!(result.is_err());
     }
 }

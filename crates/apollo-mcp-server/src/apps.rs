@@ -26,6 +26,7 @@ pub(crate) use execution::{
 #[derive(Clone, Debug)]
 pub(crate) struct App {
     pub(crate) name: String,
+    pub(crate) description: Option<String>,
     /// The HTML resource that serves as the app's UI
     pub(crate) resource: AppResource,
     /// Any CSP settings to apply to the resource
@@ -75,7 +76,7 @@ impl App {
                 mime_type: None,
                 // TODO: load all this from a manifest file
                 title: None,
-                description: None,
+                description: self.description.clone(),
                 icons: None,
                 size: None,
             },
@@ -133,6 +134,7 @@ pub(crate) fn load_from_path(
         let name = manifest
             .name
             .unwrap_or_else(|| app_dir.file_name().to_string_lossy().to_string());
+        let description = manifest.description;
 
         let uri_string = format!("ui://widget/{name}#{}", manifest.hash);
         let uri = Url::parse(&uri_string)
@@ -182,13 +184,11 @@ pub(crate) fn load_from_path(
                 let tool = Tool {
                     name: format!("{name}--{}", tool.name).into(),
                     meta: None,
-                    description: Some(
-                        if let Some(app_description) = manifest.description.clone() {
-                            format!("{} {}", app_description, tool.description).into()
-                        } else {
-                            tool.description.into()
-                        },
-                    ),
+                    description: Some(if let Some(app_description) = description.clone() {
+                        format!("{} {}", app_description, tool.description).into()
+                    } else {
+                        tool.description.into()
+                    }),
                     input_schema: if let Some(extra_inputs) = tool.extra_inputs {
                         let mut merged = operation.tool.input_schema.as_ref().clone();
                         merge_inputs(&mut merged, extra_inputs)?;
@@ -237,6 +237,7 @@ pub(crate) fn load_from_path(
 
         apps.push(App {
             name,
+            description,
             uri,
             resource,
             csp_settings: manifest.csp,
@@ -402,6 +403,8 @@ pub(crate) struct CSPSettings {
     pub(crate) frame_domains: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) redirect_domains: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) base_uri_domains: Option<Vec<String>>,
 }
 
 #[cfg(test)]
