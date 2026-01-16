@@ -19,7 +19,7 @@ mod execution;
 
 pub(crate) use execution::{
     attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
-    make_tool_private,
+    get_app_target, make_tool_private,
 };
 
 /// An app, which consists of a tool and a resource to be used together.
