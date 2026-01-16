@@ -291,7 +291,7 @@ pub(crate) fn get_app_target(extensions: Extensions) -> Result<AppTarget, McpErr
         Some(app_target) if app_target.to_lowercase() == "mcp" => Ok(AppTarget::MCPApps),
         Some(app_target) => Err(McpError::new(
             ErrorCode::INVALID_REQUEST,
-            format!("App target {app_target} not recognized."),
+            format!("App target {app_target} not recognized. Valid values are 'openai' or 'mcp'."),
             None,
         )),
         // TODO: In the future, once host capabilities are advertised, we should try auto detection before defaulting to apps sdk
