@@ -84,3 +84,5 @@ type = "CreateChangeFile"
 [github]
 owner = "apollographql"
 repo = "apollo-mcp-server"
+
+# Need to actually update something that isn't markdown lol
