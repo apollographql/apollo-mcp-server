@@ -41,20 +41,113 @@ jobs:
               core.info(`Changeset found under ${dir}.`);
             }
             core.setOutput('ok', ok ? 'true' : 'false');
-      - name: Add changeset missing comment on failure
+      - name: Add or update changeset comment on failure
         uses: actions/github-script@v7
         if: failure()
         with:
           script: |
             const pr = context.payload.pull_request;
-            await github.rest.issues.createComment({
-             owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-              body: [
-                "❌ **Changeset file missing for PR**",
-                "",
-                "All changes should include an associated changeset file.",
-                "Please use `knope document-change` to create a changeset. (installation instructions: https://knope.tech/installation/)"
-              ].join("\n")
-            });
+            const marker = '<!-- changeset-bot-comment -->';
+            const body = [
+              marker,
+              "❌ **Changeset file missing for PR**",
+              "",
+              "All changes should include an associated changeset file.",
+              "Please use `knope document-change` to create a changeset. (installation instructions: https://knope.tech/installation/)"
+            ].join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number }
+            );
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: body
+              });
+            }
+
+      - name: Add or update changeset comment on success
+        uses: actions/github-script@v7
+        if: success()
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const marker = '<!-- changeset-bot-comment -->';
+            const body = [
+              marker,
+              "✅ **Changeset file added - thank you!**"
+            ].join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number }
+            );
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: body
+              });
+            }
+
+  handle-skip-label:
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'skip-changeset') && github.head_ref != 'release' && !startsWith(github.head_ref, 'release/') && !startsWith(github.head_ref, 'conflict/') && !github.event.pull_request.draft }}
+    name: Handle Skip Label
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Add or update comment to show skipped
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const marker = '<!-- changeset-bot-comment -->';
+            const body = [
+              marker,
+              "⏭️ **Changeset check skipped via label**"
+            ].join("\n");
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { owner: context.repo.owner, repo: context.repo.repo, issue_number: pr.number }
+            );
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: body
+              });
+            }
