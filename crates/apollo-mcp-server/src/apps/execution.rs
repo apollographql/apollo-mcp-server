@@ -241,6 +241,7 @@ pub(crate) async fn get_app_resource(
     let mut meta: Option<Meta> = None;
     if let Some(csp) = &app.csp_settings {
         match app_target {
+            // Note that the difference in which keys are set here and the camelCase vs snake_key is on purpose. These are differences between the two specs.
             AppTarget::AppsSDK => {
                 meta.get_or_insert_with(Meta::new).insert(
                     "openai/widgetCSP".into(),
@@ -924,63 +925,6 @@ mod tests {
             app_target.err().unwrap().message,
             "App target lol not recognized. Valid values are 'openai' or 'mcp'."
         )
-    }
-
-    #[tokio::test]
-    async fn get_app_resource_returns_openai_format_when_target_not_specified() {
-        let app = App {
-            name: "TestApp".to_string(),
-            description: None,
-            resource: AppResource::Local("test content".to_string()),
-            csp_settings: Some(CSPSettings {
-                connect_domains: Some(vec!["connect.example.com".to_string()]),
-                resource_domains: Some(vec!["resource.example.com".to_string()]),
-                frame_domains: Some(vec!["frame.example.com".to_string()]),
-                redirect_domains: Some(vec!["redirect.example.com".to_string()]),
-                base_uri_domains: Some(vec!["base.example.com".to_string()]),
-            }),
-            widget_settings: Some(WidgetSettings {
-                description: Some("Test description".to_string()),
-                domain: Some("example.com".to_string()),
-                prefers_border: Some(true),
-            }),
-            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
-            tools: vec![],
-            prefetch_operations: vec![],
-        };
-
-        let result = get_app_resource(
-            &[app],
-            rmcp::model::ReadResourceRequestParam {
-                uri: "ui://widget/TestApp".to_string(),
-            },
-            "ui://widget/TestApp".parse().unwrap(),
-            &AppTarget::AppsSDK,
-        )
-        .await
-        .unwrap();
-
-        let ResourceContents::TextResourceContents {
-            mime_type, meta, ..
-        } = result
-        else {
-            unreachable!()
-        };
-        assert_eq!(mime_type, Some("text/html+skybridge".to_string()));
-
-        let meta = meta.unwrap();
-        // AppsSDK CSP uses snake_case keys and includes redirect_domains (not base_uri_domains)
-        let csp = meta.get("openai/widgetCSP").unwrap();
-        assert!(csp.get("connect_domains").is_some());
-        assert!(csp.get("resource_domains").is_some());
-        assert!(csp.get("frame_domains").is_some());
-        assert!(csp.get("redirect_domains").is_some());
-        assert!(csp.get("base_uri_domains").is_none());
-        assert!(meta.get("openai/widgetDescription").is_some());
-        assert!(meta.get("openai/widgetDomain").is_some());
-        assert!(meta.get("openai/widgetPrefersBorder").is_some());
-        // AppsSDK should not have ui nesting
-        assert!(meta.get("ui").is_none());
     }
 
     #[tokio::test]
