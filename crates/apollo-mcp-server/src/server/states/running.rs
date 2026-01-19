@@ -210,6 +210,7 @@ impl Running {
                     .find(|(key, _)| key == "app")
                     .map(|(_, value)| value.into_owned())
             });
+        let app_target = get_app_target(extensions)?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         if let Some(app_name) = app_param {
@@ -230,12 +231,12 @@ impl Running {
                                     .as_ref()
                                     .iter()
                                     // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
-                                    .map(|e| make_tool_private(e.tool.clone())),
+                                    .map(|e| make_tool_private(e.tool.clone(), &app_target)),
                             )
                             .chain(
                                 app.tools
                                     .iter()
-                                    .map(|tool| attach_tool_metadata(app, tool))
+                                    .map(|tool| attach_tool_metadata(app, tool, &app_target))
                                     .collect::<Vec<_>>(),
                             )
                             .collect(),
@@ -991,6 +992,93 @@ mod tests {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?app=NonExistent")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_app_and_openai_target_has_correct_metadata() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp&appTarget=openai")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await.unwrap();
+        let meta = result.tools[0].meta.as_ref().unwrap();
+
+        assert_eq!(meta.get("openai/outputTemplate").unwrap(), RESOURCE_URI);
+        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_app_and_mcp_target_has_correct_metadata() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp&appTarget=mcp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await.unwrap();
+        let meta = result.tools[0].meta.as_ref().unwrap();
+
+        // Check nested ui metadata
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
+        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+        assert_eq!(
+            ui.get("visibility").unwrap(),
+            &serde_json::json!(["model", "app"])
+        );
+
+        // Check deprecated root-level ui/resourceUri for backwards compatibility
+        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+
+        // Ensure OpenAI-specific keys are NOT present
+        assert!(meta.get("openai/outputTemplate").is_none());
+        assert!(meta.get("openai/widgetAccessible").is_none());
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_app_defaults_to_openai_target() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running.list_tools_impl(extensions).await.unwrap();
+        let meta = result.tools[0].meta.as_ref().unwrap();
+
+        // Default should use OpenAI/AppsSDK metadata format
+        assert_eq!(meta.get("openai/outputTemplate").unwrap(), RESOURCE_URI);
+        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_invalid_app_target_returns_error() {
+        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp&appTarget=invalid")
             .body(())
             .unwrap();
         let (parts, _) = request.into_parts();

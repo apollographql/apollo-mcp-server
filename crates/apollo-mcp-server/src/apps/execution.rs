@@ -142,34 +142,63 @@ fn filter_inputs_for_operation(
 }
 
 /// This makes the tool executable from the app but hidden from the LLM
-pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
+pub(crate) fn make_tool_private(mut tool: Tool, app_target: &AppTarget) -> Tool {
     let meta = tool.meta.get_or_insert_with(Meta::new);
-    meta.insert("openai/visibility".into(), "private".into());
+    match app_target {
+        AppTarget::AppsSDK => meta.insert("openai/visibility".into(), "private".into()),
+        AppTarget::MCPApps => {
+            let mut ui = Meta::new();
+            ui.insert("visibility".into(), json!(["app"]));
+            meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default())
+        }
+    };
+
     tool
 }
 
 // Attach tool meta data when requested to allow swapping between app targets (Apps SDK, MCP Apps)
-pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool) -> Tool {
+pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTarget) -> Tool {
     let mut inner_tool = tool.tool.clone();
     let meta = inner_tool.meta.get_or_insert_with(Meta::new);
-    meta.insert(
-        "openai/outputTemplate".to_string(),
-        app.uri.to_string().into(),
-    );
-    meta.insert("openai/widgetAccessible".to_string(), true.into());
+    let mut ui = Meta::new();
 
-    if let Some(tool_invocation_invoking) = &tool.labels.tool_invocation_invoking {
+    match app_target {
+        AppTarget::AppsSDK => {
+            meta.insert(
+                "openai/outputTemplate".to_string(),
+                app.uri.to_string().into(),
+            );
+            meta.insert("openai/widgetAccessible".to_string(), true.into());
+        }
+        AppTarget::MCPApps => {
+            ui.insert("resourceUri".to_string(), app.uri.to_string().into());
+            ui.insert("visibility".to_string(), json!(["model", "app"]));
+            // Deprecated in favor of ui.resourceUri... keeping it here for clients who haven't yet moved to the new property
+            meta.insert("ui/resourceUri".to_string(), app.uri.to_string().into());
+        }
+    }
+
+    if matches!(app_target, AppTarget::AppsSDK)
+        && let Some(tool_invocation_invoking) = &tool.labels.tool_invocation_invoking
+    {
         meta.insert(
             "openai/toolInvocation/invoking".into(),
             tool_invocation_invoking.clone().into(),
         );
     }
 
-    if let Some(tool_invocation_invoked) = &tool.labels.tool_invocation_invoked {
+    if matches!(app_target, AppTarget::AppsSDK)
+        && let Some(tool_invocation_invoked) = &tool.labels.tool_invocation_invoked
+    {
         meta.insert(
             "openai/toolInvocation/invoked".into(),
             tool_invocation_invoked.clone().into(),
         );
+    }
+
+    // In the case of MCP Apps, the meta data is nested under `_meta.ui`
+    if matches!(app_target, AppTarget::MCPApps) {
+        meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
     }
 
     inner_tool
@@ -646,7 +675,7 @@ mod tests {
     #[test]
     fn make_tool_private_adds_meta_when_tool_has_no_meta() {
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
-        tool = make_tool_private(tool);
+        tool = make_tool_private(tool, &AppTarget::AppsSDK);
 
         let meta = tool.meta.unwrap();
 
@@ -663,7 +692,7 @@ mod tests {
         existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
         tool.meta = Some(existing_meta);
-        tool = make_tool_private(tool);
+        tool = make_tool_private(tool, &AppTarget::AppsSDK);
 
         let meta = tool.meta.unwrap();
 
@@ -676,6 +705,35 @@ mod tests {
             meta.get("openai/visibility").unwrap(),
             &Value::from("private")
         );
+    }
+
+    #[test]
+    fn make_tool_private_adds_ui_meta_for_mcp_apps_when_tool_has_no_meta() {
+        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
+        tool = make_tool_private(tool, &AppTarget::MCPApps);
+
+        let meta = tool.meta.unwrap();
+
+        assert_eq!(meta.keys().len(), 1);
+        assert_eq!(meta.get("ui").unwrap(), &json!({"visibility": ["app"]}));
+    }
+
+    #[test]
+    fn make_tool_private_adds_ui_meta_for_mcp_apps_when_tool_has_existing_meta() {
+        let mut existing_meta = Meta::new();
+        existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
+        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
+        tool.meta = Some(existing_meta);
+        tool = make_tool_private(tool, &AppTarget::MCPApps);
+
+        let meta = tool.meta.unwrap();
+
+        assert_eq!(meta.keys().len(), 2);
+        assert_eq!(
+            meta.get("my-awesome-key").unwrap(),
+            &Value::from("my-awesome-value")
+        );
+        assert_eq!(meta.get("ui").unwrap(), &json!({"visibility": ["app"]}));
     }
 
     fn create_test_operation() -> Arc<crate::operations::Operation> {
@@ -710,7 +768,7 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, &tool);
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
 
         let meta = result.meta.unwrap();
         assert_eq!(
@@ -742,7 +800,7 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, &tool);
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
 
         let meta = result.meta.unwrap();
         assert_eq!(
@@ -771,7 +829,7 @@ mod tests {
             tool: Tool::new("TestTool", "description", JsonObject::new()),
         };
 
-        let result = attach_tool_metadata(&app, &tool);
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
 
         let meta = result.meta.unwrap();
         assert!(meta.get("openai/toolInvocation/invoking").is_none());
@@ -806,11 +864,137 @@ mod tests {
             tool: tool_def,
         };
 
-        let result = attach_tool_metadata(&app, &tool);
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
 
         let meta = result.meta.unwrap();
         assert_eq!(meta.get("custom-key").unwrap(), "custom-value");
         assert!(meta.get("openai/outputTemplate").is_some());
+    }
+
+    #[test]
+    fn attach_tool_metadata_mcp_apps_adds_resource_uri_and_visibility() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
+
+        let meta = result.meta.unwrap();
+
+        // Check deprecated root-level ui/resourceUri
+        assert_eq!(
+            meta.get("ui/resourceUri").unwrap(),
+            "ui://widget/TestApp#hash123"
+        );
+
+        // Check nested ui metadata
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
+        assert_eq!(
+            ui.get("resourceUri").unwrap(),
+            "ui://widget/TestApp#hash123"
+        );
+        assert_eq!(ui.get("visibility").unwrap(), &json!(["model", "app"]));
+    }
+
+    #[test]
+    fn attach_tool_metadata_mcp_apps_does_not_add_invocation_labels() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels {
+                tool_invocation_invoking: Some("Loading...".to_string()),
+                tool_invocation_invoked: Some("Done!".to_string()),
+            },
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
+
+        let meta = result.meta.unwrap();
+        assert!(meta.get("openai/toolInvocation/invoking").is_none());
+        assert!(meta.get("openai/toolInvocation/invoked").is_none());
+    }
+
+    #[test]
+    fn attach_tool_metadata_mcp_apps_preserves_existing_meta() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let mut existing_meta = Meta::new();
+        existing_meta.insert("custom-key".into(), "custom-value".into());
+
+        let mut tool_def = Tool::new("TestTool", "description", JsonObject::new());
+        tool_def.meta = Some(existing_meta);
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: tool_def,
+        };
+
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
+
+        let meta = result.meta.unwrap();
+        assert_eq!(meta.get("custom-key").unwrap(), "custom-value");
+        assert!(meta.get("ui/resourceUri").is_some());
+        assert!(meta.get("ui").is_some());
+    }
+
+    #[test]
+    fn attach_tool_metadata_mcp_apps_does_not_add_openai_keys() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Local("test".to_string()),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let tool = AppTool {
+            operation: create_test_operation(),
+            labels: AppLabels::default(),
+            tool: Tool::new("TestTool", "description", JsonObject::new()),
+        };
+
+        let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
+
+        let meta = result.meta.unwrap();
+        assert!(meta.get("openai/outputTemplate").is_none());
+        assert!(meta.get("openai/widgetAccessible").is_none());
     }
 
     #[test]
