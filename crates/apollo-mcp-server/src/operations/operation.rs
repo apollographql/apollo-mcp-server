@@ -8,7 +8,7 @@ use apollo_compiler::{
 };
 use http::{HeaderMap, HeaderValue};
 use regex::Regex;
-use rmcp::model::{ErrorCode, Tool, ToolAnnotations};
+use rmcp::model::{Tool, ToolAnnotations};
 use schemars::{Schema, json_schema};
 use serde::Serialize;
 use serde_json::{Map, Value};
@@ -16,8 +16,8 @@ use tracing::{debug, info, warn};
 
 use crate::{
     custom_scalar_map::CustomScalarMap,
-    errors::{McpError, OperationError},
-    graphql::{self, OperationDetails},
+    errors::OperationError,
+    graphql::{self, OperationDetails, ValidationError},
     schema_tree_shake::{DepthLimit, SchemaTreeShaker},
 };
 
@@ -322,32 +322,28 @@ impl graphql::Executable for Operation {
         None
     }
 
-    fn operation(&self, _input: Value) -> Result<OperationDetails, McpError> {
+    fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
         Ok(OperationDetails {
             query: self.inner.source_text.clone(),
             operation_name: Some(self.operation_name.clone()),
         })
     }
 
-    fn variables(&self, input_variables: Value) -> Result<Value, McpError> {
+    fn variables(&self, input_variables: Value) -> Result<Value, ValidationError> {
         if let Some(raw_variables) = self.inner.variables.as_ref() {
             let mut variables = match input_variables {
                 Value::Null => Ok(serde_json::Map::new()),
                 Value::Object(obj) => Ok(obj.clone()),
-                _ => Err(McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "Invalid input".to_string(),
-                    None,
+                _ => Err(ValidationError(
+                    "Variables must be a JSON object or null".into(),
                 )),
             }?;
 
             raw_variables.iter().try_for_each(|(key, value)| {
                 if variables.contains_key(key) {
-                    Err(McpError::new(
-                        ErrorCode::INVALID_PARAMS,
-                        "No such parameter: {key}",
-                        None,
-                    ))
+                    Err(ValidationError(format!(
+                        "Parameter '{key}' conflicts with operation-defined variable"
+                    )))
                 } else {
                     variables.insert(key.clone(), value.clone());
                     Ok(())
