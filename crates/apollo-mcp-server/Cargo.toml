@@ -47,10 +47,9 @@ regex = "1.11.1"
 reqwest-middleware = "0.4.2"
 reqwest-tracing = { version = "0.5.8", features = ["opentelemetry_0_30"] }
 reqwest.workspace = true
-rmcp = { version = "0.9", features = [
+rmcp = { version = "0.12", features = [
   "server",
   "transport-io",
-  "transport-sse-server",
   "transport-streamable-http-server",
 ] }
 schemars = { version = "1.0.1", features = ["url2"] }

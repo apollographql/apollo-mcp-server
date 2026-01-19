@@ -78,6 +78,7 @@ impl App {
                 description: None,
                 icons: None,
                 size: None,
+                meta: None,
             },
             None,
         )

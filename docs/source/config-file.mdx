@@ -203,7 +203,7 @@ The default value for `source` is `"uplink"`.
 
 ### Transport
 
-These fields are under the top-level `transport` key, to configure running the MCP Server in different environments - stdio, Streamable HTTP or SSE (deprecated).
+These fields are under the top-level `transport` key, to configure running the MCP Server in different environments - stdio or Streamable HTTP.
 
 ```yaml
 transport:
@@ -221,17 +221,16 @@ The available fields depend on the value of the nested `type` key. The default t
 | :------------------ | :--------------------------------------------------------------------------------------------------------------- |
 | `"stdio"`           | Use standard IO for communication between the server and client                                                  |
 | `"streamable_http"` | Host the MCP server on the configuration, using streamable HTTP messages                                         |
-| `"sse"`             | Host the MCP server on the supplied config, using SSE for communication. Deprecated in favor of `StreamableHTTP` |
 
 ##### Transport Type Specific options
 
-Some transport types support further configuration. For both `streamable_http` and `sse`, you can set the `address` and `port`. For `streamable_http`, you can also set `stateful_mode`.
+Some transport types support further configuration. For `streamable_http`, you can set the `address`, `port`, and `stateful_mode`.
 
 | Option          | Type     | Default     | Description                                                                          |
 | :-------------- | :------- | :---------- | :----------------------------------------------------------------------------------- |
 | `address`       | `IpAddr` | `127.0.0.1` | The IP address to bind to                                                            |
 | `port`          | `u16`    | `8000`      | The port to bind to                                                                  |
-| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management. Not supported by SSE |
+| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management                       |
 
 <Note>
 
@@ -277,8 +276,8 @@ transport:
 
     # The externally available URL pointing to this MCP server. Can be `localhost`
     # when testing locally.
-    # Note: Subpaths must be preserved here as well. So append `/mcp` if using
-    # Streamable HTTP or `/sse` is using SSE.
+    # Note: Subpaths must be preserved here as well. Append `/mcp` when using
+    # Streamable HTTP transport.
     resource: https://hosted.mcp.server/mcp
 
     # Optional link to more documentation relating to this MCP server.
