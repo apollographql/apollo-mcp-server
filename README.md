@@ -50,3 +50,5 @@ Refer to our [security policy](https://github.com/apollographql/.github/blob/mai
 
 > [!IMPORTANT]  
 > **Do not open up a GitHub issue if a found bug is a security vulnerability**, and instead to refer to our [security policy](https://github.com/apollographql/.github/blob/main/SECURITY.md).
+
+Ignore me!
