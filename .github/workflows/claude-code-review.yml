@@ -1,0 +1,23 @@
+name: Code Review
+on:
+    pull_request:
+        types: [opened, synchronize]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+    cancel-in-progress: true
+
+jobs:
+    review:
+        runs-on: ubuntu-latest
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') }}
+        steps:
+            - uses: anthropics/claude-code-action@v1
+              with:
+                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  # Use the "review" skill defined at .claude/skills/review/SKILL.md
+                  prompt: "/review"
+                  # Note: We default to sonnet for review but the user can "upgrade" to opus for a specific PR by adding a label
+                  claude_args: >-
+                      --max-turns 10
+                      --model ${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') && 'claude-opus-4-5-20251101' || 'claude-sonnet-4-5-20250929' }}

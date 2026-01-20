@@ -37,7 +37,7 @@ Before reviewing, familiarize yourself with Apollo's Rust best practices. Refere
 
 If a PR number or URL was provided as an argument, use it. Otherwise, default to the current branch's PR.
 
-Fetch PR information:
+Fetch PR information (run all in parallel within the same turn):
 ```bash
 # If argument provided (e.g., "577" or full URL):
 gh pr view <pr_number_or_url> --json number,title,body,author,baseRefName,headRefName
@@ -51,6 +51,15 @@ Get the PR diff:
 gh pr diff <pr_number_or_url>
 ```
 
+Fetch existing feedback (run in parallel with the diff):
+```bash
+# Inline review comments
+gh api repos/{owner}/{repo}/pulls/{pr_number}/comments
+
+# PR-level comments
+gh pr view <pr_number_or_url> --json comments
+```
+
 ## Important: Review Only
 
 **DO NOT:**
@@ -62,21 +71,26 @@ All automated checks (tests, linting, clippy, formatting) are handled by GitHub 
 
 ## Review Process
 
-1. **Understand the change**
-   - Run `gh pr diff` or `git diff` to see all changes
-   - Read the PR description and linked issues
-   - Identify the scope and intent
+**You have a maximum of 10 turns to complete this review.** Allocate turns strategically:
+- Turn 1: Gather all context (parallel commands)
+- Turns 2-4: Analysis and evaluation
+- Turns 5+: Post comments and summary
 
-2. **Check existing feedback**
-   - Run `gh pr view <pr> --comments` to see existing PR comments
-   - Run `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments` to see inline review comments
-   - Note feedback already given by other reviewers
-   - Note where feedback has been addressed or rejected in discussion
+1. **Gather all context** (single turn - run all commands in parallel)
+   - Fetch PR metadata, diff, and all existing comments
+   - This gives you complete information before starting analysis
+
+2. **Analyze the changes**
+   - Read the PR description and linked issues to understand intent
+   - Review the complete diff to identify the scope
+   - Review existing feedback to note what's already been raised
    - **Do not duplicate comments** that have already been made
+   - Consider context from existing discussions when evaluating code
 
 3. **Manual review** using the criteria below, referencing the best practices documents
+   - Focus on high-signal findings only
    - Skip issues already raised by other reviewers
-   - Consider context from existing discussions when evaluating code
+   - Batch findings into cohesive inline comments
 
 ## Review Criteria
 
@@ -223,3 +237,12 @@ One of:
 - **Skip the obvious**: Don't mention things clippy would catch (run it instead)
 - **Focus on this PR**: Don't request unrelated refactoring
 - **Acknowledge good work**: Note well-designed solutions briefly
+
+## Posting Review Comments
+
+**Batch all findings into a single turn:**
+1. Collect all inline comments (blocking, should-fix, and consider issues) during analysis
+2. Post all inline comments in one go using multiple `gh api` calls
+3. Post the summary comment as the final action
+
+This approach reduces turn count by avoiding iterative comment posting.
