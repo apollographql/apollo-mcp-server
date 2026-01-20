@@ -51,6 +51,15 @@ Get the PR diff:
 gh pr diff <pr_number_or_url>
 ```
 
+## Important: Review Only
+
+**DO NOT:**
+- Pull down the branch or checkout the code
+- Run tests, clippy, cargo build, or any other commands
+- Attempt to run or validate the code locally
+
+All automated checks (tests, linting, clippy, formatting) are handled by GitHub Actions. Focus exclusively on reviewing the code diffs.
+
 ## Review Process
 
 1. **Understand the change**
@@ -58,7 +67,16 @@ gh pr diff <pr_number_or_url>
    - Read the PR description and linked issues
    - Identify the scope and intent
 
-2. **Manual review** using the criteria below, referencing the best practices documents
+2. **Check existing feedback**
+   - Run `gh pr view <pr> --comments` to see existing PR comments
+   - Run `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments` to see inline review comments
+   - Note feedback already given by other reviewers
+   - Note where feedback has been addressed or rejected in discussion
+   - **Do not duplicate comments** that have already been made
+
+3. **Manual review** using the criteria below, referencing the best practices documents
+   - Skip issues already raised by other reviewers
+   - Consider context from existing discussions when evaluating code
 
 ## Review Criteria
 
