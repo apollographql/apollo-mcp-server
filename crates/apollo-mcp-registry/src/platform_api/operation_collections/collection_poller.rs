@@ -1,4 +1,3 @@
-
 use futures::Stream;
 use graphql_client::GraphQLQuery;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -155,7 +154,6 @@ fn is_collection_error_transient(error: &CollectionError) -> bool {
         _ => false,
     }
 }
-
 
 trait InitialCollectionFetcher: Send {
     type Operations: Send;
@@ -769,7 +767,10 @@ mod tests {
     impl InitialCollectionFetcher for MockFetcher {
         type Operations = String;
 
-        async fn fetch(&self, _config: &PlatformApiConfig) -> Result<Self::Operations, CollectionError> {
+        async fn fetch(
+            &self,
+            _config: &PlatformApiConfig,
+        ) -> Result<Self::Operations, CollectionError> {
             self.results.lock().unwrap().remove(0)
         }
 
@@ -794,7 +795,7 @@ mod tests {
         };
         let (sender, _receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
         let config = test_config();
-        
+
         let result = retry_initial_fetch(&fetcher, &sender, &config).await;
         assert_eq!(result, Some("data".to_string()));
     }
@@ -802,16 +803,16 @@ mod tests {
     #[tokio::test]
     async fn test_retry_initial_fetch_permanent_error_no_retry() {
         let fetcher = MockFetcher {
-            results: std::sync::Mutex::new(vec![
-                Err(CollectionError::Response("not found".to_string())),
-            ]),
+            results: std::sync::Mutex::new(vec![Err(CollectionError::Response(
+                "not found".to_string(),
+            ))]),
         };
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
         let config = test_config();
-        
+
         let result = retry_initial_fetch(&fetcher, &sender, &config).await;
         assert!(result.is_none());
-        
+
         // Should have sent a CollectionError
         let event = receiver.try_recv();
         assert!(matches!(event, Ok(CollectionEvent::CollectionError(_))));
