@@ -30,7 +30,7 @@ jobs:
       - uses: knope-dev/action@v2.1.0
         if: ${{ !inputs.version }}
         with:
-          version: 0.22.0
+          version: 0.22.1
       - name: Store version
         id: store-version
         run: |
