@@ -160,7 +160,7 @@ pub(crate) fn make_tool_private(mut tool: Tool, app_target: &AppTarget) -> Tool 
 pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTarget) -> Tool {
     let mut inner_tool = tool.tool.clone();
     let meta = inner_tool.meta.get_or_insert_with(Meta::new);
-    let mut ui = Meta::new();
+    let mut ui: Option<Meta> = None;
 
     match app_target {
         AppTarget::AppsSDK => {
@@ -171,8 +171,10 @@ pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTa
             meta.insert("openai/widgetAccessible".to_string(), true.into());
         }
         AppTarget::MCPApps => {
-            ui.insert("resourceUri".to_string(), app.uri.to_string().into());
-            ui.insert("visibility".to_string(), json!(["model", "app"]));
+            ui.get_or_insert_with(Meta::new)
+                .insert("resourceUri".to_string(), app.uri.to_string().into());
+            ui.get_or_insert_with(Meta::new)
+                .insert("visibility".to_string(), json!(["model", "app"]));
             // Deprecated in favor of ui.resourceUri... keeping it here for clients who haven't yet moved to the new property
             meta.insert("ui/resourceUri".to_string(), app.uri.to_string().into());
         }
