@@ -1,4 +1,4 @@
-use backoff::backoff::Backoff;
+
 use futures::Stream;
 use graphql_client::GraphQLQuery;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
@@ -36,9 +36,8 @@ use operation_collection_query::{
 };
 
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
-const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
-const MAX_BACKOFF: Duration = Duration::from_secs(30);
-const MAX_ELAPSED_TIME: Duration = Duration::from_secs(300);
+const RETRY_DELAY: Duration = Duration::from_secs(5);
+const MAX_RETRIES: u32 = 10;
 
 type Timestamp = String;
 
@@ -157,28 +156,146 @@ fn is_collection_error_transient(error: &CollectionError) -> bool {
     }
 }
 
-/// Sleep for the given duration, but return early if the sender is closed.
-/// Returns `true` to continue, `false` if shutdown was detected.
-async fn backoff_sleep_with_shutdown(
-    duration: Duration,
-    sender: &tokio::sync::mpsc::Sender<CollectionEvent>,
-) -> bool {
-    tokio::select! {
-        _ = tokio::time::sleep(duration) => true,
-        _ = sender.closed() => {
-            tracing::debug!("Shutdown detected during backoff sleep");
-            false
+
+trait InitialCollectionFetcher: Send {
+    type Operations: Send;
+
+    fn fetch(
+        &self,
+        config: &PlatformApiConfig,
+    ) -> impl std::future::Future<Output = Result<Self::Operations, CollectionError>> + Send;
+
+    fn description(&self) -> &'static str;
+}
+
+struct ByIdFetcher {
+    collection_id: String,
+}
+
+impl InitialCollectionFetcher for ByIdFetcher {
+    type Operations = Vec<OperationCollectionEntry>;
+
+    async fn fetch(&self, config: &PlatformApiConfig) -> Result<Self::Operations, CollectionError> {
+        let response = graphql_request::<OperationCollectionQuery>(
+            &OperationCollectionQuery::build_query(operation_collection_query::Variables {
+                operation_collection_id: self.collection_id.clone(),
+            }),
+            config,
+        )
+        .await?;
+
+        match response.operation_collection {
+            OperationCollectionResult::NotFoundError(NotFoundError { message })
+            | OperationCollectionResult::PermissionError(PermissionError { message })
+            | OperationCollectionResult::ValidationError(ValidationError { message }) => {
+                Err(CollectionError::Response(message))
+            }
+            OperationCollectionResult::OperationCollection(collection) => Ok(collection.operations),
         }
+    }
+
+    fn description(&self) -> &'static str {
+        "collection"
     }
 }
 
-fn create_retry_backoff() -> backoff::ExponentialBackoff {
-    backoff::ExponentialBackoff {
-        initial_interval: INITIAL_BACKOFF,
-        max_interval: MAX_BACKOFF,
-        max_elapsed_time: Some(MAX_ELAPSED_TIME),
-        ..Default::default()
+struct ByDefaultFetcher {
+    graph_ref: String,
+}
+
+impl InitialCollectionFetcher for ByDefaultFetcher {
+    type Operations = Vec<OperationCollectionDefaultEntry>;
+
+    async fn fetch(&self, config: &PlatformApiConfig) -> Result<Self::Operations, CollectionError> {
+        let response = graphql_request::<OperationCollectionDefaultQuery>(
+            &OperationCollectionDefaultQuery::build_query(
+                operation_collection_default_query::Variables {
+                    graph_ref: self.graph_ref.clone(),
+                },
+            ),
+            config,
+        )
+        .await?;
+
+        match response.variant {
+            Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
+                match variant.mcp_default_collection {
+                    DefaultCollectionResult::OperationCollection(collection) => {
+                        Ok(collection.operations)
+                    }
+                    DefaultCollectionResult::PermissionError(error) => {
+                        Err(CollectionError::Response(error.message))
+                    }
+                }
+            }
+            Some(OperationCollectionDefaultQueryVariant::InvalidRefFormat(err)) => {
+                Err(CollectionError::Response(err.message))
+            }
+            None => Err(CollectionError::Response(format!(
+                "{} not found",
+                self.graph_ref
+            ))),
+        }
     }
+
+    fn description(&self) -> &'static str {
+        "default collection"
+    }
+}
+
+async fn retry_initial_fetch<F: InitialCollectionFetcher>(
+    fetcher: &F,
+    sender: &tokio::sync::mpsc::Sender<CollectionEvent>,
+    config: &PlatformApiConfig,
+) -> Option<F::Operations> {
+    for attempt in 1..=MAX_RETRIES {
+        if sender.is_closed() {
+            tracing::debug!("Sender closed during startup retry, shutting down");
+            return None;
+        }
+
+        match fetcher.fetch(config).await {
+            Ok(operations) => return Some(operations),
+            Err(err) if is_collection_error_transient(&err) => {
+                if attempt == MAX_RETRIES {
+                    tracing::error!(
+                        event = "collection_startup_failed",
+                        error = %err,
+                        attempts = MAX_RETRIES,
+                        "Initial {} fetch failed after retries, server will shutdown",
+                        fetcher.description()
+                    );
+                    sender
+                        .send(CollectionEvent::CollectionError(err))
+                        .await
+                        .ok();
+                    return None;
+                }
+                tracing::warn!(
+                    attempt,
+                    max_retries = MAX_RETRIES,
+                    "Failed to fetch initial {} (transient error), retrying in {:?}: {}",
+                    fetcher.description(),
+                    RETRY_DELAY,
+                    err
+                );
+                tokio::time::sleep(RETRY_DELAY).await;
+            }
+            Err(err) => {
+                tracing::error!(
+                    "Failed to fetch initial {} with permanent error: {}",
+                    fetcher.description(),
+                    err
+                );
+                sender
+                    .send(CollectionEvent::CollectionError(err))
+                    .await
+                    .ok();
+                return None;
+            }
+        }
+    }
+    None
 }
 
 #[derive(Clone)]
@@ -334,100 +451,24 @@ impl CollectionSource {
         tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
 
-            // Retry loop for initial fetch with exponential backoff
-            let mut backoff = create_retry_backoff();
+            // Initial fetch with retry
+            let fetcher = ByIdFetcher {
+                collection_id: collection_id.clone(),
+            };
+            let Some(operations) =
+                retry_initial_fetch(&fetcher, &sender, &platform_api_config).await
+            else {
+                return;
+            };
 
-            loop {
-                // Check for shutdown before each attempt
-                if sender.is_closed() {
-                    tracing::debug!("Sender closed during startup retry, shutting down");
-                    return;
-                }
-
-                match graphql_request::<OperationCollectionQuery>(
-                    &OperationCollectionQuery::build_query(operation_collection_query::Variables {
-                        operation_collection_id: collection_id.clone(),
-                    }),
-                    &platform_api_config,
-                )
-                .await
-                {
-                    Ok(response) => match response.operation_collection {
-                        OperationCollectionResult::NotFoundError(NotFoundError { message })
-                        | OperationCollectionResult::PermissionError(PermissionError { message })
-                        | OperationCollectionResult::ValidationError(ValidationError { message }) =>
-                        {
-                            if let Err(e) = sender
-                                .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                    message,
-                                )))
-                                .await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
-                            return;
-                        }
-                        OperationCollectionResult::OperationCollection(collection) => {
-                            let should_poll = write_init_response(
-                                &sender,
-                                &mut previous_updated_at,
-                                collection.operations.iter().map(OperationData::from),
-                            )
-                            .await;
-                            if !should_poll {
-                                return;
-                            }
-                            break; // Success - exit retry loop and continue to polling
-                        }
-                    },
-                    Err(err) => {
-                        if is_collection_error_transient(&err) {
-                            match backoff.next_backoff() {
-                                Some(duration) => {
-                                    tracing::warn!(
-                                        "Failed to fetch initial collection (transient error), retrying in {:?}: {}",
-                                        duration,
-                                        err
-                                    );
-                                    if !backoff_sleep_with_shutdown(duration, &sender).await {
-                                        return;
-                                    }
-                                    continue;
-                                }
-                                None => {
-                                    // Backoff timeout exceeded
-                                    tracing::error!(
-                                        event = "collection_startup_failed",
-                                        error = %err,
-                                        retry_duration_secs = MAX_ELAPSED_TIME.as_secs(),
-                                        "Initial collection fetch failed after retries, server will shutdown"
-                                    );
-                                    if let Err(e) =
-                                        sender.send(CollectionEvent::CollectionError(err)).await
-                                    {
-                                        tracing::debug!(
-                                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                        );
-                                    }
-                                    return;
-                                }
-                            }
-                        } else {
-                            tracing::error!(
-                                "Failed to fetch initial collection with permanent error: {err}"
-                            );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
-                            return;
-                        }
-                    }
-                }
+            let should_poll = write_init_response(
+                &sender,
+                &mut previous_updated_at,
+                operations.iter().map(OperationData::from),
+            )
+            .await;
+            if !should_poll {
+                return;
             }
 
             // Polling loop
@@ -497,129 +538,24 @@ impl CollectionSource {
         tokio::task::spawn(async move {
             let mut previous_updated_at = HashMap::new();
 
-            // Retry loop for initial fetch with exponential backoff
-            let mut backoff = create_retry_backoff();
+            // Initial fetch with retry
+            let fetcher = ByDefaultFetcher {
+                graph_ref: graph_ref.clone(),
+            };
+            let Some(operations) =
+                retry_initial_fetch(&fetcher, &sender, &platform_api_config).await
+            else {
+                return;
+            };
 
-            loop {
-                // Check for shutdown before each attempt
-                if sender.is_closed() {
-                    tracing::debug!("Sender closed during startup retry, shutting down");
-                    return;
-                }
-
-                match graphql_request::<OperationCollectionDefaultQuery>(
-                    &OperationCollectionDefaultQuery::build_query(
-                        operation_collection_default_query::Variables {
-                            graph_ref: graph_ref.clone(),
-                        },
-                    ),
-                    &platform_api_config,
-                )
-                .await
-                {
-                    Ok(response) => match response.variant {
-                        Some(OperationCollectionDefaultQueryVariant::GraphVariant(variant)) => {
-                            match variant.mcp_default_collection {
-                                DefaultCollectionResult::OperationCollection(collection) => {
-                                    let should_poll = write_init_response(
-                                        &sender,
-                                        &mut previous_updated_at,
-                                        collection.operations.iter().map(OperationData::from),
-                                    )
-                                    .await;
-                                    if !should_poll {
-                                        return;
-                                    }
-                                    break; // Success - exit retry loop and continue to polling
-                                }
-                                DefaultCollectionResult::PermissionError(error) => {
-                                    if let Err(e) = sender
-                                        .send(CollectionEvent::CollectionError(
-                                            CollectionError::Response(error.message),
-                                        ))
-                                        .await
-                                    {
-                                        tracing::debug!(
-                                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                        );
-                                    }
-                                    return;
-                                }
-                            }
-                        }
-                        Some(OperationCollectionDefaultQueryVariant::InvalidRefFormat(err)) => {
-                            if let Err(e) = sender
-                                .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                    err.message,
-                                )))
-                                .await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
-                            return;
-                        }
-                        None => {
-                            if let Err(e) = sender
-                                .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                    format!("{graph_ref} not found"),
-                                )))
-                                .await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
-                            return;
-                        }
-                    },
-                    Err(err) => {
-                        if is_collection_error_transient(&err) {
-                            match backoff.next_backoff() {
-                                Some(duration) => {
-                                    tracing::warn!(
-                                        "Failed to fetch initial default collection (transient error), retrying in {:?}: {}",
-                                        duration,
-                                        err
-                                    );
-                                    if !backoff_sleep_with_shutdown(duration, &sender).await {
-                                        return;
-                                    }
-                                    continue;
-                                }
-                                None => {
-                                    // Backoff timeout exceeded
-                                    tracing::error!(
-                                        event = "collection_startup_failed",
-                                        error = %err,
-                                        retry_duration_secs = MAX_ELAPSED_TIME.as_secs(),
-                                        "Initial default collection fetch failed after retries, server will shutdown"
-                                    );
-                                    if let Err(e) =
-                                        sender.send(CollectionEvent::CollectionError(err)).await
-                                    {
-                                        tracing::debug!(
-                                            "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                        );
-                                    }
-                                    return;
-                                }
-                            }
-                        } else {
-                            tracing::error!(
-                                "Failed to fetch initial default collection with permanent error: {err}"
-                            );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
-                            return;
-                        }
-                    }
-                }
+            let should_poll = write_init_response(
+                &sender,
+                &mut previous_updated_at,
+                operations.iter().map(OperationData::from),
+            )
+            .await;
+            if !should_poll {
+                return;
             }
 
             // Polling loop
@@ -825,43 +761,59 @@ mod tests {
         assert!(!is_collection_error_transient(&err));
     }
 
-    #[test]
-    fn test_backoff_constants_are_reasonable() {
-        // Sanity checks for retry configuration
-        assert!(
-            INITIAL_BACKOFF < MAX_BACKOFF,
-            "initial should be less than max"
-        );
-        assert!(
-            MAX_BACKOFF < MAX_ELAPSED_TIME,
-            "max backoff should be less than total timeout"
-        );
-        assert!(
-            MAX_ELAPSED_TIME >= Duration::from_secs(60),
-            "should have at least 1 minute to retry"
-        );
+    // Mock fetcher for testing retry logic
+    struct MockFetcher {
+        results: std::sync::Mutex<Vec<Result<String, CollectionError>>>,
     }
 
-    #[test]
-    fn test_create_retry_backoff_uses_correct_config() {
-        let backoff = create_retry_backoff();
-        assert_eq!(backoff.initial_interval, INITIAL_BACKOFF);
-        assert_eq!(backoff.max_interval, MAX_BACKOFF);
-        assert_eq!(backoff.max_elapsed_time, Some(MAX_ELAPSED_TIME));
+    impl InitialCollectionFetcher for MockFetcher {
+        type Operations = String;
+
+        async fn fetch(&self, _config: &PlatformApiConfig) -> Result<Self::Operations, CollectionError> {
+            self.results.lock().unwrap().remove(0)
+        }
+
+        fn description(&self) -> &'static str {
+            "mock"
+        }
+    }
+
+    fn test_config() -> PlatformApiConfig {
+        PlatformApiConfig {
+            registry_url: "http://localhost".parse().unwrap(),
+            timeout: std::time::Duration::from_secs(5),
+            poll_interval: std::time::Duration::from_secs(10),
+            apollo_key: "test".to_string().into(),
+        }
     }
 
     #[tokio::test]
-    async fn test_backoff_sleep_with_shutdown_completes_normally() {
+    async fn test_retry_initial_fetch_success_first_try() {
+        let fetcher = MockFetcher {
+            results: std::sync::Mutex::new(vec![Ok("data".to_string())]),
+        };
         let (sender, _receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
-        let result = backoff_sleep_with_shutdown(Duration::from_millis(10), &sender).await;
-        assert!(result, "should return true when sleep completes normally");
+        let config = test_config();
+        
+        let result = retry_initial_fetch(&fetcher, &sender, &config).await;
+        assert_eq!(result, Some("data".to_string()));
     }
 
     #[tokio::test]
-    async fn test_backoff_sleep_with_shutdown_detects_closed_channel() {
-        let (sender, receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
-        drop(receiver); // Close the channel by dropping the receiver
-        let result = backoff_sleep_with_shutdown(Duration::from_secs(10), &sender).await;
-        assert!(!result, "should return false when channel is closed");
+    async fn test_retry_initial_fetch_permanent_error_no_retry() {
+        let fetcher = MockFetcher {
+            results: std::sync::Mutex::new(vec![
+                Err(CollectionError::Response("not found".to_string())),
+            ]),
+        };
+        let (sender, mut receiver) = tokio::sync::mpsc::channel::<CollectionEvent>(1);
+        let config = test_config();
+        
+        let result = retry_initial_fetch(&fetcher, &sender, &config).await;
+        assert!(result.is_none());
+        
+        // Should have sent a CollectionError
+        let event = receiver.try_recv();
+        assert!(matches!(event, Ok(CollectionEvent::CollectionError(_))));
     }
 }
