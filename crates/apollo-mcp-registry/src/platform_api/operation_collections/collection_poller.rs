@@ -7,7 +7,8 @@ use std::pin::Pin;
 use tokio::sync::mpsc::channel;
 use tokio_stream::wrappers::ReceiverStream;
 
-use super::{error::CollectionError, event::CollectionEvent};
+use super::error::CollectionError;
+use super::event::CollectionEvent;
 use crate::platform_api::PlatformApiConfig;
 use operation_collection_default_polling_query::{
     OperationCollectionDefaultPollingQueryVariant as PollingDefaultGraphVariant,
@@ -137,22 +138,7 @@ async fn handle_poll_result(
     Ok(Some(previous_updated_at.clone().into_values().collect()))
 }
 
-fn is_collection_error_transient(error: &CollectionError) -> bool {
-    match error {
-        CollectionError::Request(req_err) => {
-            // Check if the underlying reqwest error is transient
-            req_err.is_connect()
-                || req_err.is_timeout()
-                || req_err.is_request()
-                || req_err.status().is_some_and(|status| {
-                    status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                })
-        }
-        _ => false,
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OperationData {
     id: String,
     last_updated_at: String,
@@ -288,15 +274,15 @@ impl CollectionSource {
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         match self {
             CollectionSource::Id(ref id, ref platform_api_config) => {
-                self.collection_id_stream(id.clone(), platform_api_config.clone())
+                self.stream_collection_by_id(id.clone(), platform_api_config.clone())
             }
             CollectionSource::Default(ref graph_ref, ref platform_api_config) => {
-                self.default_collection_stream(graph_ref.clone(), platform_api_config.clone())
+                self.stream_default_collection(graph_ref.clone(), platform_api_config.clone())
             }
         }
     }
 
-    fn collection_id_stream(
+    fn stream_collection_by_id(
         &self,
         collection_id: String,
         platform_api_config: PlatformApiConfig,
@@ -341,22 +327,7 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if is_collection_error_transient(&err) {
-                        // Log transient errors but don't send CollectionError to prevent server restart
-                        tracing::warn!(
-                            "Failed to fetch initial operation collection (transient error), will retry on next poll in {}s: {}",
-                            platform_api_config.poll_interval.as_secs(),
-                            err
-                        );
-                    } else {
-                        tracing::error!(
-                            "Failed to fetch initial operation collection with permanent error: {err}"
-                        );
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                            );
-                        }
+                    if err.is_permanent(&sender).await {
                         return;
                     }
                 }
@@ -393,23 +364,7 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if is_collection_error_transient(&err) {
-                            // Log transient errors but don't send CollectionError to prevent server restart
-                            tracing::warn!(
-                                "Failed to poll operation collection (transient error), will retry on next poll in {}s: {}",
-                                platform_api_config.poll_interval.as_secs(),
-                                err
-                            );
-                        } else {
-                            tracing::error!(
-                                "Failed to poll operation collection with permanent error: {err}"
-                            );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
+                        if err.is_permanent(&sender).await {
                             break;
                         }
                     }
@@ -419,7 +374,7 @@ impl CollectionSource {
         Box::pin(ReceiverStream::new(receiver))
     }
 
-    pub fn default_collection_stream(
+    fn stream_default_collection(
         &self,
         graph_ref: String,
         platform_api_config: PlatformApiConfig,
@@ -494,22 +449,7 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if is_collection_error_transient(&err) {
-                        // Log transient errors but don't send CollectionError to prevent server restart
-                        tracing::warn!(
-                            "Failed to fetch initial operation collection (transient error), will retry on next poll in {}s: {}",
-                            platform_api_config.poll_interval.as_secs(),
-                            err
-                        );
-                    } else {
-                        tracing::error!(
-                            "Failed to fetch initial operation collection with permanent error: {err}"
-                        );
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                            );
-                        }
+                    if err.is_permanent(&sender).await {
                         return;
                     }
                 }
@@ -546,23 +486,7 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if is_collection_error_transient(&err) {
-                            // Log transient errors but don't send CollectionError to prevent server restart
-                            tracing::warn!(
-                                "Failed to poll operation collection (transient error), will retry on next poll in {}s: {}",
-                                platform_api_config.poll_interval.as_secs(),
-                                err
-                            );
-                        } else {
-                            tracing::error!(
-                                "Failed to poll operation collection with permanent error: {err}"
-                            );
-                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
-                            {
-                                tracing::debug!(
-                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                                );
-                            }
+                        if err.is_permanent(&sender).await {
                             break;
                         }
                     }
