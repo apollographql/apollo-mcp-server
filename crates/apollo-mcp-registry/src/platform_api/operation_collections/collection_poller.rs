@@ -393,10 +393,23 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                        if is_collection_error_transient(&err) {
+                            // Log transient errors but don't send CollectionError to prevent server restart
+                            tracing::warn!(
+                                "Failed to poll operation collection (transient error), will retry on next poll in {}s: {}",
+                                platform_api_config.poll_interval.as_secs(),
+                                err
                             );
+                        } else {
+                            tracing::error!(
+                                "Failed to poll operation collection with permanent error: {err}"
+                            );
+                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
+                            {
+                                tracing::debug!(
+                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                                );
+                            }
                             break;
                         }
                     }
@@ -533,10 +546,23 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
-                            tracing::debug!(
-                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                        if is_collection_error_transient(&err) {
+                            // Log transient errors but don't send CollectionError to prevent server restart
+                            tracing::warn!(
+                                "Failed to poll operation collection (transient error), will retry on next poll in {}s: {}",
+                                platform_api_config.poll_interval.as_secs(),
+                                err
                             );
+                        } else {
+                            tracing::error!(
+                                "Failed to poll operation collection with permanent error: {err}"
+                            );
+                            if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await
+                            {
+                                tracing::debug!(
+                                    "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                                );
+                            }
                             break;
                         }
                     }
