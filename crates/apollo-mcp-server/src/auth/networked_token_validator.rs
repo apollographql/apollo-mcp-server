@@ -308,7 +308,7 @@ mod tests {
         discovery_mock.assert();
         jwks_mock.assert();
         assert!(result.is_some(), "Expected successful discovery");
-        assert!(result.unwrap().keys.get("test-key").is_some());
+        assert!(result.unwrap().keys.contains_key("test-key"));
     }
 
     #[tokio::test]
@@ -363,7 +363,7 @@ mod tests {
         discovery_mock.assert();
         jwks_mock.assert();
         assert!(result.is_some(), "Expected fallback to second URL");
-        assert!(result.unwrap().keys.get("fallback-key").is_some());
+        assert!(result.unwrap().keys.contains_key("fallback-key"));
     }
 
     #[tokio::test]
