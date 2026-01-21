@@ -1,83 +1,42 @@
 ---
 name: review
-description: Review a GitHub pull request for a Rust codebase. Focuses on security, performance, test coverage, and Rust idioms. Use when reviewing PRs or evaluating proposed changes.
+description: Review a GitHub pull request for a Rust codebase. Focuses on security, performance, test coverage, and Rust idioms. Runs in GitHub Actions and posts comments directly to the PR.
 allowed-tools: Bash(gh:*), Bash(git diff*), Bash(git log*), Bash(git show*), Read, Grep, Glob
 ---
 
 # Rust Pull Request Review
 
-Review the specified PR with a focus on **high-signal, actionable feedback**. Avoid nitpicks and style preferences unless they impact correctness or maintainability.
+Review the current PR with a focus on **high-signal, actionable feedback**. Avoid nitpicks and style preferences unless they impact correctness or maintainability.
 
 ## Usage
 
 ```
-/review [pr_number_or_url] [--ci]
+/review
 ```
 
-Examples:
-
-- `/review` - reviews the current branch's PR (local output)
-- `/review 577` - reviews PR 577 (local output)
-- `/review https://github.com/apollographql/apollo-mcp-server/pull/577` - reviews via URL (local output)
-- `/review 577 --ci` - reviews PR 577 and posts comments to GitHub (CI mode)
-- `/review https://github.com/apollographql/apollo-mcp-server/pull/577 --ci` - reviews via URL and posts to GitHub (CI mode)
-
-### CI Mode (`--ci` flag)
-
-When running in CI (e.g., GitHub Actions), use the `--ci` flag to:
-
-- Post inline review comments directly to the PR
-- Use the CI output format (see "When running in GitHub Actions (CI environment)" below)
-- Generate a summary comment with the review result
-
-When running locally without `--ci`:
-
-- Output the review in a formatted text report
-- Use the local output format (see "When running locally" below)
+This skill runs in GitHub Actions and automatically reviews the current PR, posting inline comments and a summary directly to GitHub.
 
 ## Best Practices Reference
 
-Before reviewing, familiarize yourself with Apollo's Rust best practices. Reference these files when providing feedback:
+Before reviewing, familiarize yourself with Apollo's Rust best practices. Read ALL relevant chapters in the same turn in parallel. Reference these files when providing feedback:
 
-- [Chapter 1 - Coding Styles and Idioms](best-practices/chapter_01.md): Borrowing vs cloning, Copy trait, Option/Result handling, iterators, comments
-- [Chapter 2 - Clippy and Linting](best-practices/chapter_02.md): Important lints, fixing vs silencing warnings
-- [Chapter 3 - Performance Mindset](best-practices/chapter_03.md): Profiling, avoiding redundant clones, stack vs heap, zero-cost abstractions
-- [Chapter 4 - Error Handling](best-practices/chapter_04.md): Result vs panic, thiserror vs anyhow, error hierarchies
-- [Chapter 5 - Automated Testing](best-practices/chapter_05.md): Test naming, one assertion per test, snapshot testing
-- [Chapter 6 - Generics and Dispatch](best-practices/chapter_06.md): Static vs dynamic dispatch, trait objects
-- [Chapter 7 - Type State Pattern](best-practices/chapter_07.md): Compile-time state safety, when to use it
-- [Chapter 8 - Comments vs Documentation](best-practices/chapter_08.md): When to comment, doc comments, rustdoc
-- [Chapter 9 - Understanding Pointers](best-practices/chapter_09.md): Thread safety, Send/Sync, pointer types
+- [Chapter 1 - Coding Styles and Idioms](references/chapter_01.md): Borrowing vs cloning, Copy trait, Option/Result handling, iterators, comments
+- [Chapter 3 - Performance Mindset](references/chapter_03.md): Profiling, avoiding redundant clones, stack vs heap, zero-cost abstractions
+- [Chapter 4 - Error Handling](references/chapter_04.md): Result vs panic, thiserror vs anyhow, error hierarchies
+- [Chapter 5 - Automated Testing](references/chapter_05.md): Test naming, one assertion per test, snapshot testing
+- [Chapter 6 - Generics and Dispatch](references/chapter_06.md): Static vs dynamic dispatch, trait objects
+- [Chapter 7 - Type State Pattern](references/chapter_07.md): Compile-time state safety, when to use it
+- [Chapter 8 - Comments vs Documentation](references/chapter_08.md): When to comment, doc comments, rustdoc
+- [Chapter 9 - Understanding Pointers](references/chapter_09.md): Thread safety, Send/Sync, pointer types
 
-## Context
+## Pull Request Context
 
-If a PR number or URL was provided as an argument, use it. Otherwise, default to the current branch's PR.
+Fetch PR information:
 
-Fetch PR information (run all in parallel within the same turn):
-
-```bash
-# If argument provided (e.g., "577" or full URL):
-gh pr view <pr_number_or_url> --json number,title,body,author,baseRefName,headRefName
-
-# If no argument, use current branch:
-gh pr view --json number,title,body,author,baseRefName,headRefName
-```
-
-Get the PR diff:
-
-```bash
-gh pr diff <pr_number_or_url>
-```
-
-Fetch existing feedback (run in parallel with the diff):
-
-```bash
-# Inline review comments
-gh api repos/{owner}/{repo}/pulls/{pr_number}/comments
-
-# PR-level comments
-gh pr view <pr_number_or_url> --json comments
-```
+PR Metadata: !`gh pr view --json number,title,body,author,baseRefName,headRefName,commits,headRepository,headRepositoryOwner`
+PR Diff: !`gh pr diff`
+PR Level Comments: !`gh pr view --json comments`
+Get existing inline review comments: `gh api repos/{owner}/{repo}/pulls/{pr_number}/comments`
 
 ## Important: Review Only
 
@@ -98,12 +57,10 @@ All automated checks (tests, linting, clippy, formatting) are handled by GitHub 
 - Turns 5+: Post comments and summary
 
 1. **Gather all context** (single turn - run all commands in parallel)
-
    - Fetch PR metadata, diff, and all existing comments
    - This gives you complete information before starting analysis
 
 2. **Analyze the changes**
-
    - Read the PR description and linked issues to understand intent
    - Review the complete diff to identify the scope
    - Review existing feedback to note what's already been raised
@@ -193,8 +150,6 @@ Reference Chapter 8:
 
 ## Output Format
 
-### When running in GitHub Actions (CI environment)
-
 Post review comments directly on the PR using inline comments on specific lines of code:
 
 ```bash
@@ -222,49 +177,6 @@ After posting inline comments, add a summary comment with:
 - Test coverage assessment
 - Final recommendation (Approve / Approve with suggestions / Request changes)
 - Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
-
-### When running locally
-
-Structure your review as follows:
-
-#### Summary
-
-Brief description of what this PR does and its overall quality.
-
-#### Blocking Issues
-
-Issues that must be fixed before merge. Each item must include:
-
-- File and line reference: `src/foo.rs:42`
-- Clear explanation of the problem
-- Reference to relevant best practice chapter when applicable
-- Suggested fix
-
-#### Should Fix
-
-Strong recommendations that significantly improve the code. Same format as blocking.
-
-#### Consider
-
-Optional improvements. Keep this section minimal to reduce noise.
-
-#### Test Coverage Assessment
-
-- What's tested
-- What's missing
-- Suggested test cases
-
-#### Recommendation
-
-One of:
-
-- **Approve**: No blocking issues, tests adequate
-- **Approve with suggestions**: No blocking issues, but should-fix items exist
-- **Request changes**: Blocking issues present
-
-#### Sign-off
-
-End the review with: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Sonnet 4.5")
 
 ## Guidelines for High-Signal Reviews
 

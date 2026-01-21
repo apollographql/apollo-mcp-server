@@ -67,7 +67,7 @@ jobs:
               with:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
                   # Use the "review" skill defined at .claude/skills/review/SKILL.md
-                  prompt: "/review --ci"
+                  prompt: "/review"
                   # Model selected automatically based on PR complexity, or manually via label
                   claude_args: >-
                       --max-turns 10
