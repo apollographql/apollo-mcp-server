@@ -1,93 +1,95 @@
 name: Code Review
 on:
-    pull_request:
-        types: [opened, synchronize, ready_for_review]
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-    cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-    review:
-        runs-on: ubuntu-latest
-        permissions:
-            id-token: write
-            pull-requests: write
-            contents: read
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') && !github.event.pull_request.draft && github.event.pull_request.head.ref != 'release' && !startsWith(github.event.pull_request.head.ref, 'release/') }}
-        steps:
-            - name: Check if review should run
-              id: should_review
-              run: |
-                # Check if any .rs files were changed
-                HAS_RS_FILES=$(gh pr diff --name-only | grep -c '\.rs$' || true)
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pull-requests: write
+      contents: read
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') && !github.event.pull_request.draft && github.event.pull_request.head.ref != 'release' && !startsWith(github.event.pull_request.head.ref, 'release/') }}
+    steps:
+      - name: Check if review should run
+        id: should_review
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Check if any .rs files were changed
+          HAS_RS_FILES=$(gh pr diff --name-only | grep -c '\.rs$' || true)
 
-                if [ "$HAS_RS_FILES" -eq 0 ]; then
-                  echo "should_review=false" >> $GITHUB_OUTPUT
-                  echo "⏭️  No .rs files changed, skipping review"
-                  exit 0
-                fi
+          if [ "$HAS_RS_FILES" -eq 0 ]; then
+            echo "should_review=false" >> $GITHUB_OUTPUT
+            echo "⏭️  No .rs files changed, skipping review"
+            exit 0
+          fi
 
-                echo "should_review=true" >> $GITHUB_OUTPUT
+          echo "should_review=true" >> $GITHUB_OUTPUT
 
-            - name: Determine model to use
-              id: model_selection
-              if: steps.should_review.outputs.should_review == 'true'
-              run: |
-                  # Check if user has manually specified a model via label
-                  HAS_OPUS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') }}"
-                  HAS_SONNET_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-sonnet') }}"
+      - name: Determine model to use
+        id: model_selection
+        if: steps.should_review.outputs.should_review == 'true'
+        run: |
+          # Check if user has manually specified a model via label
+          HAS_OPUS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') }}"
+          HAS_SONNET_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-sonnet') }}"
 
-                  # If manual label is present, always use that
-                  if [ "$HAS_OPUS_LABEL" == "true" ]; then
-                    MODEL="claude-opus-4-5-20251101"
-                    echo "model=$MODEL" >> $GITHUB_OUTPUT
-                    echo "📊 Using Opus (manual override via label)"
-                    exit 0
-                  elif [ "$HAS_SONNET_LABEL" == "true" ]; then
-                    MODEL="claude-sonnet-4-5-20250929"
-                    echo "model=$MODEL" >> $GITHUB_OUTPUT
-                    echo "📊 Using Sonnet (manual override via label)"
-                    exit 0
-                  fi
+          # If manual label is present, always use that
+          if [ "$HAS_OPUS_LABEL" == "true" ]; then
+            MODEL="claude-opus-4-5-20251101"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 Using Opus (manual override via label)"
+            exit 0
+          elif [ "$HAS_SONNET_LABEL" == "true" ]; then
+            MODEL="claude-sonnet-4-5-20250929"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 Using Sonnet (manual override via label)"
+            exit 0
+          fi
 
-                  # No manual label - use automatic selection based on PR size
-                  ADDITIONS=${{ github.event.pull_request.additions }}
-                  DELETIONS=${{ github.event.pull_request.deletions }}
-                  TOTAL_LINES=$((ADDITIONS + DELETIONS))
+          # No manual label - use automatic selection based on PR size
+          ADDITIONS=${{ github.event.pull_request.additions }}
+          DELETIONS=${{ github.event.pull_request.deletions }}
+          TOTAL_LINES=$((ADDITIONS + DELETIONS))
 
-                  if [ $TOTAL_LINES -gt 500 ]; then
-                    MODEL="claude-opus-4-5-20251101"
-                    echo "model=$MODEL" >> $GITHUB_OUTPUT
-                    echo "📊 PR Size: $TOTAL_LINES lines changed - Using Opus (automatic)"
-                  else
-                    MODEL="claude-sonnet-4-5-20250929"
-                    echo "model=$MODEL" >> $GITHUB_OUTPUT
-                    echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
-                  fi
+          if [ $TOTAL_LINES -gt 500 ]; then
+            MODEL="claude-opus-4-5-20251101"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 PR Size: $TOTAL_LINES lines changed - Using Opus (automatic)"
+          else
+            MODEL="claude-sonnet-4-5-20250929"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
+          fi
 
-            - name: Claude Code Review
-              id: claude_review
-              uses: anthropics/claude-code-action@v1
-              continue-on-error: true
-              if: steps.should_review.outputs.should_review == 'true'
-              with:
-                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-                  # Use the "review" skill defined at .claude/skills/review/SKILL.md
-                  prompt: "/review"
-                  # Model selected automatically based on PR complexity, or manually via label
-                  claude_args: >-
-                      --max-turns 10
-                      --model ${{ steps.model_selection.outputs.model }}
+      - name: Claude Code Review
+        id: claude_review
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        if: steps.should_review.outputs.should_review == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the "review" skill defined at .claude/skills/review/SKILL.md
+          prompt: "/review"
+          # Model selected automatically based on PR complexity, or manually via label
+          claude_args: >-
+            --max-turns 10
+            --model ${{ steps.model_selection.outputs.model }}
 
-            - name: Post failure comment
-              if: steps.should_review.outputs.should_review == 'true' && failure() && steps.claude_review.outcome == 'failure'
-              uses: actions/github-script@v7
-              with:
-                  script: |
-                    github.rest.issues.createComment({
-                      issue_number: context.issue.number,
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      body: '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.'
-                    })
+      - name: Post failure comment
+        if: steps.should_review.outputs.should_review == 'true' && failure() && steps.claude_review.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.'
+            })
