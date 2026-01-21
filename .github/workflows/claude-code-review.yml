@@ -1,7 +1,7 @@
 name: Code Review
 on:
     pull_request:
-        types: [opened, synchronize]
+        types: [opened, synchronize, ready_for_review]
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -10,10 +10,25 @@ concurrency:
 jobs:
     review:
         runs-on: ubuntu-latest
-        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') }}
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') && !github.event.pull_request.draft && github.event.pull_request.head.ref != 'release' && !startsWith(github.event.pull_request.head.ref, 'release/') }}
         steps:
+            - name: Check if review should run
+              id: should_review
+              run: |
+                # Check if any .rs files were changed
+                HAS_RS_FILES=$(git diff --name-only origin/main HEAD 2>/dev/null | grep -c '\.rs$' || echo 0)
+
+                if [ "$HAS_RS_FILES" -eq 0 ]; then
+                  echo "should_review=false" >> $GITHUB_OUTPUT
+                  echo "⏭️  No .rs files changed, skipping review"
+                  exit 0
+                fi
+
+                echo "should_review=true" >> $GITHUB_OUTPUT
+
             - name: Determine model to use
               id: model_selection
+              if: steps.should_review.outputs.should_review == 'true'
               run: |
                   # Check if user has manually specified a model via label
                   HAS_OPUS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') }}"
@@ -48,6 +63,7 @@ jobs:
                   fi
 
             - uses: anthropics/claude-code-action@v1
+              if: steps.should_review.outputs.should_review == 'true'
               with:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
                   # Use the "review" skill defined at .claude/skills/review/SKILL.md
