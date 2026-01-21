@@ -25,7 +25,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Check if any .rs files were changed
-          HAS_RS_FILES=$(gh pr diff --name-only | grep -c '\.rs$' || true)
+          HAS_RS_FILES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | grep -c '\.rs$' || true)
 
           if [ "$HAS_RS_FILES" -eq 0 ]; then
             echo "should_review=false" >> $GITHUB_OUTPUT
