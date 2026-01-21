@@ -17,11 +17,15 @@ name = "prepare-release"
 
 [[workflows.steps]]
 type = "Command"
-command = "git switch -c release/$version"
+command = "git switch -c prepare-release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
 ignore_conventional_commits = true
+
+[[workflows.steps]]
+type = "Command"
+command = "git branch -m release/$version"
 
 [[workflows.steps]]
 type = "Command"
