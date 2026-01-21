@@ -17,13 +17,8 @@
     "github>Turbo87/renovate-config//rust/updateToolchain",
   ],
 
-  // Globally disable all automatic update PRs from renovate
-  packageRules: [
-    {
-      enabled: false,
-      matchPackageNames: ["*"],
-    },
-  ],
+  // Explicitly disable auto-merging - PRs will be created but require manual review
+  automerge: false,
 
   // Globally enable vulnerability alerts
   //
