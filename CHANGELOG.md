@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.5.0 (2026-01-21)
+
+### Features
+
+#### Remove SSE transport support - @DaleSeo PR #555
+
+The SSE transport has been removed following the upgrade to rmcp 0.12. SSE was previously deprecated in favor of Streamable HTTP transport.
+
+**Migration**: Update your configuration to use `streamable_http` transport instead of `sse`:
+
+- Before
+
+```yaml
+transport:
+  type: sse
+  address: 127.0.0.1
+  port: 8000
+```
+
+- After
+
+```yaml
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 8000
+```
+
+If you were using SSE transport, switch to `streamable_http` which provides the same HTTP-based communication with improved session handling and is the recommended transport in the MCP specification.
+
+### Fixes
+
+#### Fix transient error handling in collection polling loop - @DaleSeo PR #576
+
+The MCP server currently restarts when it encounters network errors while polling operation collections from GraphOS. This causes unnecessary server restarts during temporary connectivity issues.
+
+This PR applies the same transient error handling pattern to both polling loops (`collection_id_stream` and `default_collection_stream`). Transient errors are now logged as warnings and the server retries on the next poll interval (30 seconds), while permanent errors like permission denied or not found still trigger a restart.
+
 ## 1.4.1 (2026-01-15)
 
 ### Fixes
