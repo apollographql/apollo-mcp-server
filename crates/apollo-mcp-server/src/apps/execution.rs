@@ -19,7 +19,7 @@ use crate::graphql::{self, Executable};
 use crate::operations::Operation;
 
 use super::{App, AppTool};
-// test
+
 pub(crate) async fn find_and_execute_app(
     apps: &[App],
     app_name: &str,
