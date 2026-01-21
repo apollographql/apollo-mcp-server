@@ -82,10 +82,7 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
             origin, path_suffix
         ),
         // Priority 2: OIDC Discovery path-insertion
-        format!(
-            "{}/.well-known/openid-configuration{}",
-            origin, path_suffix
-        ),
+        format!("{}/.well-known/openid-configuration{}", origin, path_suffix),
     ];
 
     // Priority 3: OIDC Discovery legacy path-appending (only if there IS a path)
@@ -271,4 +268,3 @@ mod tests {
         );
     }
 }
-
