@@ -16,6 +16,9 @@ jobs:
       contents: read
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') && !github.event.pull_request.draft && github.event.pull_request.head.ref != 'release' && !startsWith(github.event.pull_request.head.ref, 'release/') }}
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
       - name: Check if review should run
         id: should_review
         env:
