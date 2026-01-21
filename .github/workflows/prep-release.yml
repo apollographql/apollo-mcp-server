@@ -26,3 +26,8 @@ jobs:
       - run: knope prepare-release --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Label release PR
+        run: gh pr edit --add-label release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
