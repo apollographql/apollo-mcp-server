@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use jwks::{Jwk, Jwks};
-use tracing::{debug, info, warn};
+use tracing::{info, trace, warn};
 use url::Url;
 
 use super::valid_token::ValidateToken;
@@ -53,7 +53,7 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .join("/");
 
     let Some(host) = normalized.host_str() else {
-        debug!(issuer = %issuer, "Issuer URL has no host, cannot build discovery URLs");
+        trace!(issuer = %issuer, "Issuer URL has no host, cannot build discovery URLs");
         return vec![];
     };
 
@@ -93,7 +93,7 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
     urls.into_iter()
         .filter_map(|s| {
             Url::parse(&s)
-                .inspect_err(|e| debug!(url = %s, error = %e, "Failed to parse discovery URL"))
+                .inspect_err(|e| trace!(url = %s, error = %e, "Failed to parse discovery URL"))
                 .ok()
         })
         .collect()
@@ -116,10 +116,10 @@ async fn discover_jwks(client: &reqwest::Client, issuer: &Url) -> Option<Jwks> {
                 return Some(jwks);
             }
             Ok(Err(e)) => {
-                debug!(url = %url, error = %e, "Discovery failed, trying next URL");
+                trace!(url = %url, error = %e, "Discovery failed, trying next URL");
             }
             Err(_) => {
-                debug!(url = %url, "Discovery timed out after 5s, trying next URL");
+                trace!(url = %url, "Discovery timed out after 5s, trying next URL");
             }
         }
     }
