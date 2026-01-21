@@ -251,4 +251,150 @@ mod tests {
             Some("https://auth.example.com/.well-known/oauth-authorization-server/tenant1")
         );
     }
+
+    #[test]
+    fn url_without_host_returns_empty() {
+        // file:// URLs don't have a host
+        let issuer = Url::parse("file:///some/path").expect("valid URL");
+        let urls = build_discovery_urls(&issuer);
+        assert!(urls.is_empty());
+    }
+
+    // Example RSA public key components from RFC 7517 Appendix A.1
+    // These are well-known test vectors - public key only, no private material
+    // https://datatracker.ietf.org/doc/html/rfc7517#appendix-A.1
+    const TEST_RSA_N: &str = "0vx7agoebGcQSuuPiLJXZptN9nndrQmbXEps2aiAFbWhM78LhWx4cbbfAAtVT86zwu1RK7aPFFxuhDR1L6tSoc_BJECPebWKRXjBZCiFV4n3oknjhMstn64tZ_2W-5JsGY4Hc5n9yBXArwl93lqt7_RN5w6Cf0h4QyQ5v-65YGjQR0_FDW2QvzqY368QQMicAtaSqzs8KJZgnYb9c7d0zgdAZHzu6qMQvRL5hajrn1n91CbOpbISD08qNLyrdkt-bFTWhAI4vMQFh6WeZu0fM4lFd2NcRwr3XPksINHaQ-G_xBniIqbw0Ls1jF44-csFCur-kEgU8awapJzKnqDKgw";
+    const TEST_RSA_E: &str = "AQAB";
+
+    #[tokio::test]
+    async fn discovers_jwks_from_first_url_on_success() {
+        // given
+        let mut server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"test-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
+            server.url(),
+            server.url()
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let issuer = Url::parse(&server.url()).expect("valid URL");
+
+        // when
+        let result = discover_jwks(&client, &issuer).await;
+
+        // then
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(result.is_some(), "Expected successful discovery");
+        assert!(result.unwrap().keys.get("test-key").is_some());
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_oidc_discovery_when_rfc8414_fails() {
+        // given
+        let mut server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"fallback-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
+            server.url(),
+            server.url()
+        );
+
+        // First URL (RFC 8414) fails with 404
+        let fail_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+
+        // Second URL (OIDC) succeeds
+        let discovery_mock = server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let issuer = Url::parse(&server.url()).expect("valid URL");
+
+        // when
+        let result = discover_jwks(&client, &issuer).await;
+
+        // then
+        fail_mock.assert();
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(result.is_some(), "Expected fallback to second URL");
+        assert!(result.unwrap().keys.get("fallback-key").is_some());
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_all_discovery_urls_fail() {
+        // given
+        let mut server = mockito::Server::new_async().await;
+
+        let fail_mock1 = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let fail_mock2 = server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let issuer = Url::parse(&server.url()).expect("valid URL");
+
+        // when
+        let result = discover_jwks(&client, &issuer).await;
+
+        // then
+        fail_mock1.assert();
+        fail_mock2.assert();
+        assert!(result.is_none());
+    }
 }
+
