@@ -33,16 +33,19 @@ static GRAPHQL_CLIENT: LazyLock<ClientWithMiddleware> = LazyLock::new(|| {
         .build()
 });
 
+#[derive(Debug, PartialEq)]
+pub struct ValidationError(pub String);
+
 /// Able to be executed as a GraphQL operation
 pub trait Executable {
     /// Get the persisted query ID to be executed, if any
     fn persisted_query_id(&self) -> Option<String>;
 
     /// Get the operation to execute and its name
-    fn operation(&self, input: Value) -> Result<OperationDetails, McpError>;
+    fn operation(&self, input: Value) -> Result<OperationDetails, ValidationError>;
 
     /// Get the variables to execute the operation with
-    fn variables(&self, input: Value) -> Result<Value, McpError>;
+    fn variables(&self, input: Value) -> Result<Value, ValidationError>;
 
     /// Get the headers to execute the operation with
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
@@ -58,10 +61,14 @@ pub trait Executable {
             "version": std::env!("CARGO_PKG_VERSION")
         });
 
-        let mut request_body = Map::from_iter([(
-            String::from("variables"),
-            self.variables(request.input.clone())?,
-        )]);
+        let variables = match self.variables(request.input.clone()) {
+            Ok(v) => v,
+            Err(ValidationError(msg)) => {
+                return Ok(CallToolResult::error(vec![Content::text(msg)]));
+            }
+        };
+
+        let mut request_body = Map::from_iter([(String::from("variables"), variables)]);
 
         if let Some(id) = self.persisted_query_id() {
             request_body.insert(
@@ -79,7 +86,12 @@ pub trait Executable {
             let OperationDetails {
                 query,
                 operation_name,
-            } = self.operation(request.input)?;
+            } = match self.operation(request.input) {
+                Ok(details) => details,
+                Err(ValidationError(msg)) => {
+                    return Ok(CallToolResult::error(vec![Content::text(msg)]));
+                }
+            };
 
             request_body.insert(String::from("query"), Value::String(query));
             request_body.insert(
@@ -165,9 +177,8 @@ pub trait Executable {
 
 #[cfg(test)]
 mod test {
-    use crate::errors::McpError;
     use crate::generated::telemetry::TelemetryMetric;
-    use crate::graphql::{Executable, OperationDetails, Request};
+    use crate::graphql::{Executable, OperationDetails, Request, ValidationError};
     use http::{HeaderMap, HeaderValue};
     use opentelemetry::global;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
@@ -184,14 +195,14 @@ mod test {
             None
         }
 
-        fn operation(&self, _input: Value) -> Result<OperationDetails, McpError> {
+        fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
             Ok(OperationDetails {
                 query: "query MockOp { mockOp { id } }".to_string(),
                 operation_name: Some("mock_operation".to_string()),
             })
         }
 
-        fn variables(&self, _input: Value) -> Result<Value, McpError> {
+        fn variables(&self, _input: Value) -> Result<Value, ValidationError> {
             let json = r#"{ "arg1": "foobar" }"#;
             let parsed_json = serde_json::from_str(json).expect("Failed to parse json");
             let json_map: Map<String, Value> = match parsed_json {
@@ -213,14 +224,14 @@ mod test {
             Some("4f059505-fe13-4043-819a-461dd82dd5ed".to_string())
         }
 
-        fn operation(&self, _input: Value) -> Result<OperationDetails, McpError> {
+        fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
             Ok(OperationDetails {
                 query: "query MockOp { mockOp { id } }".to_string(),
                 operation_name: Some("mock_operation".to_string()),
             })
         }
 
-        fn variables(&self, _input: Value) -> Result<Value, McpError> {
+        fn variables(&self, _input: Value) -> Result<Value, ValidationError> {
             Ok(Value::String("mock_variables".to_string()))
         }
 

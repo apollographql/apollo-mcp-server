@@ -1,4 +1,3 @@
-use crate::errors::McpError;
 use crate::operations::operation_defs;
 use crate::schema_from_type;
 use apollo_compiler::Schema;
@@ -6,7 +5,7 @@ use apollo_compiler::parser::Parser;
 use apollo_compiler::validation::Valid;
 use rmcp::model::CallToolResult;
 use rmcp::model::Content;
-use rmcp::model::{ErrorCode, Tool};
+use rmcp::model::Tool;
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -46,36 +45,34 @@ impl Validate {
 
     /// Validates the provided GraphQL query
     #[tracing::instrument(skip(self))]
-    pub async fn execute(&self, input: Value) -> Result<CallToolResult, McpError> {
-        let input = serde_json::from_value::<Input>(input).map_err(|_| {
-            McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
-        })?;
+    pub async fn execute(&self, input: Value) -> CallToolResult {
+        let input = match serde_json::from_value::<Input>(input) {
+            Ok(i) => i,
+            Err(e) => {
+                return CallToolResult::error(vec![Content::text(format!("Invalid input: {e}"))]);
+            }
+        };
 
-        operation_defs(&input.operation, true, None)
-            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?
-            .ok_or_else(|| {
-                McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "Invalid operation type".to_string(),
-                    None,
-                )
-            })?;
+        if let Err(e) = operation_defs(&input.operation, true, None) {
+            return CallToolResult::error(vec![Content::text(e.to_string())]);
+        }
+
+        if operation_defs(&input.operation, true, None)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            return CallToolResult::error(vec![Content::text("Invalid operation type")]);
+        }
 
         let schema_guard = self.schema.read().await;
-        Parser::new()
+        match Parser::new()
             .parse_executable(&schema_guard, input.operation.as_str(), "operation.graphql")
-            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?
-            .validate(&schema_guard)
-            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?;
-        Ok(CallToolResult {
-            content: vec![Content::text("Operation is valid")],
-            is_error: None,
-            meta: None,
-
-            // Note: We don't really return any meaningful content to the client here, so we can leave the
-            // structured content as none.
-            structured_content: None,
-        })
+            .and_then(|p| p.validate(&schema_guard))
+        {
+            Ok(_) => CallToolResult::success(vec![Content::text("Operation is valid")]),
+            Err(e) => CallToolResult::error(vec![Content::text(e.to_string())]),
+        }
     }
 }
 
@@ -101,7 +98,8 @@ mod tests {
         let input = json!({
             "operation": "query Test { id }"
         });
-        assert!(validate.execute(input).await.is_ok());
+        let result = validate.execute(input).await;
+        assert!(result.is_error.is_none() || !result.is_error.unwrap());
     }
 
     #[tokio::test]
@@ -110,7 +108,8 @@ mod tests {
         let input = json!({
             "operation": "query {"
         });
-        assert!(validate.execute(input).await.is_err());
+        let result = validate.execute(input).await;
+        assert!(result.is_error == Some(true));
     }
 
     #[tokio::test]
@@ -119,7 +118,8 @@ mod tests {
         let input = json!({
             "operation": "query { invalidField }"
         });
-        assert!(validate.execute(input).await.is_err());
+        let result = validate.execute(input).await;
+        assert!(result.is_error == Some(true));
     }
 
     #[tokio::test]
@@ -128,6 +128,7 @@ mod tests {
         let input = json!({
             "operation": "query { hello }"
         });
-        assert!(validate.execute(input).await.is_err());
+        let result = validate.execute(input).await;
+        assert!(result.is_error == Some(true));
     }
 }

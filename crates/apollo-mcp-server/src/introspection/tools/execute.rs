@@ -1,11 +1,10 @@
-use crate::errors::McpError;
 use crate::operations::{MutationMode, operation_defs, operation_name};
 use crate::{
-    graphql::{self, OperationDetails},
+    graphql::{self, OperationDetails, ValidationError},
     schema_from_type,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
-use rmcp::model::{ErrorCode, Tool};
+use rmcp::model::Tool;
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -49,21 +48,14 @@ impl graphql::Executable for Execute {
         None
     }
 
-    fn operation(&self, input: Value) -> Result<OperationDetails, McpError> {
-        let input = serde_json::from_value::<Input>(input).map_err(|_| {
-            McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
-        })?;
+    fn operation(&self, input: Value) -> Result<OperationDetails, ValidationError> {
+        let input = serde_json::from_value::<Input>(input)
+            .map_err(|e| ValidationError(format!("Invalid input: {e}")))?;
 
         let (_, operation_def, source_path) =
             operation_defs(&input.query, self.mutation_mode == MutationMode::All, None)
-                .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))?
-                .ok_or_else(|| {
-                    McpError::new(
-                        ErrorCode::INVALID_PARAMS,
-                        "Invalid operation type".to_string(),
-                        None,
-                    )
-                })?;
+                .map_err(|e| ValidationError(e.to_string()))?
+                .ok_or_else(|| ValidationError("Invalid operation type".into()))?;
 
         Ok(OperationDetails {
             query: input.query,
@@ -71,21 +63,17 @@ impl graphql::Executable for Execute {
         })
     }
 
-    fn variables(&self, input: Value) -> Result<Value, McpError> {
-        let input = serde_json::from_value::<Input>(input).map_err(|_| {
-            McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
-        })?;
+    fn variables(&self, input: Value) -> Result<Value, ValidationError> {
+        let input = serde_json::from_value::<Input>(input)
+            .map_err(|e| ValidationError(format!("Invalid input: {e}")))?;
         match input.variables {
             None => Ok(Value::Null),
             Some(Value::Null) => Ok(Value::Null),
-            Some(Value::String(s)) => serde_json::from_str(&s).map_err(|_| {
-                McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None)
-            }),
+            Some(Value::String(s)) => serde_json::from_str(&s)
+                .map_err(|e| ValidationError(format!("Invalid variables: {e}"))),
             Some(obj) if obj.is_object() => Ok(obj),
-            _ => Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Invalid input".to_string(),
-                None,
+            _ => Err(ValidationError(
+                "Variables must be a JSON object or string".into(),
             )),
         }
     }
@@ -97,11 +85,9 @@ impl graphql::Executable for Execute {
 
 #[cfg(test)]
 mod tests {
-    use crate::errors::McpError;
-    use crate::graphql::{Executable, OperationDetails};
+    use crate::graphql::{Executable, OperationDetails, ValidationError};
     use crate::introspection::tools::execute::Execute;
     use crate::operations::MutationMode;
-    use rmcp::model::ErrorCode;
     use rmcp::serde_json::{Value, json};
 
     #[test]
@@ -195,14 +181,8 @@ mod tests {
             "query": query,
         });
 
-        assert_eq!(
-            Executable::operation(&execute, input),
-            Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Invalid operation type".to_string(),
-                None
-            ))
-        );
+        let result = Executable::operation(&execute, input);
+        assert!(matches!(result, Err(ValidationError(msg)) if msg == "Invalid operation type"));
     }
 
     #[test]
@@ -236,14 +216,8 @@ mod tests {
                 "query": "subscription SubscriptionName { id }",
             });
 
-            assert_eq!(
-                Executable::operation(&execute, input),
-                Err(McpError::new(
-                    ErrorCode::INVALID_PARAMS,
-                    "Invalid operation type".to_string(),
-                    None
-                ))
-            );
+            let result = Executable::operation(&execute, input);
+            assert!(matches!(result, Err(ValidationError(msg)) if msg == "Invalid operation type"));
         }
     }
 
@@ -255,22 +229,11 @@ mod tests {
             "nonsense": "whatever",
         });
 
-        assert_eq!(
-            Executable::operation(&execute, input.clone()),
-            Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Invalid input".to_string(),
-                None
-            ))
-        );
-        assert_eq!(
-            Executable::variables(&execute, input),
-            Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Invalid input".to_string(),
-                None
-            ))
-        );
+        let op_result = Executable::operation(&execute, input.clone());
+        assert!(matches!(op_result, Err(ValidationError(msg)) if msg.contains("Invalid input")));
+
+        let var_result = Executable::variables(&execute, input);
+        assert!(matches!(var_result, Err(ValidationError(msg)) if msg.contains("Invalid input")));
     }
 
     #[test]
@@ -282,13 +245,7 @@ mod tests {
             "variables": "garbage",
         });
 
-        assert_eq!(
-            Executable::variables(&execute, input),
-            Err(McpError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Invalid input".to_string(),
-                None
-            ))
-        );
+        let result = Executable::variables(&execute, input);
+        assert!(matches!(result, Err(ValidationError(msg)) if msg.contains("Invalid variables")));
     }
 }

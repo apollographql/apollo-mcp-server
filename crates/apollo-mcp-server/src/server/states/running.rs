@@ -11,8 +11,8 @@ use rmcp::model::{
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
-        CallToolRequestParam, CallToolResult, ErrorCode, InitializeRequestParam, InitializeResult,
-        ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo,
+        CallToolRequestParam, CallToolResult, Content, ErrorCode, InitializeRequestParam,
+        InitializeResult, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
 };
@@ -346,15 +346,30 @@ impl ServerHandler for Running {
         let result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
         {
-            introspect_tool.execute(convert_arguments(request)?).await
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => introspect_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
         } else if tool_name == SEARCH_TOOL_NAME
             && let Some(search_tool) = &self.search_tool
         {
-            search_tool.execute(convert_arguments(request)?).await
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => search_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
         } else if tool_name == EXPLORER_TOOL_NAME
             && let Some(explorer_tool) = &self.explorer_tool
         {
-            explorer_tool.execute(convert_arguments(request)?).await
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => explorer_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
         } else if tool_name == EXECUTE_TOOL_NAME
             && let Some(execute_tool) = &self.execute_tool
         {
@@ -381,7 +396,12 @@ impl ServerHandler for Running {
         } else if tool_name == VALIDATE_TOOL_NAME
             && let Some(validate_tool) = &self.validate_tool
         {
-            validate_tool.execute(convert_arguments(request)?).await
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => Ok(validate_tool.execute(args).await),
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
         } else {
             let headers =
                 if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
@@ -523,13 +543,6 @@ fn tool_not_found(name: &str) -> McpError {
         format!("Tool {name} not found"),
         None,
     )
-}
-
-fn convert_arguments<T: serde::de::DeserializeOwned>(
-    arguments: CallToolRequestParam,
-) -> Result<T, McpError> {
-    serde_json::from_value(Value::from(arguments.arguments))
-        .map_err(|_| McpError::new(ErrorCode::INVALID_PARAMS, "Invalid input".to_string(), None))
 }
 
 #[cfg(test)]
