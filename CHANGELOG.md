@@ -6,7 +6,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## 1.5.0 (2026-01-21)
 
-### Features
+### ❗ BREAKING ❗
 
 #### Remove SSE transport support - @DaleSeo PR #555
 
