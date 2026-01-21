@@ -62,7 +62,10 @@ jobs:
                     echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
                   fi
 
-            - uses: anthropics/claude-code-action@v1
+            - name: Claude Code Review
+              id: claude_review
+              uses: anthropics/claude-code-action@v1
+              continue-on-error: true
               if: steps.should_review.outputs.should_review == 'true'
               with:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -72,3 +75,15 @@ jobs:
                   claude_args: >-
                       --max-turns 10
                       --model ${{ steps.model_selection.outputs.model }}
+
+            - name: Post failure comment
+              if: steps.should_review.outputs.should_review == 'true' && failure() && steps.claude_review.outcome == 'failure'
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                    github.rest.issues.createComment({
+                      issue_number: context.issue.number,
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      body: '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.'
+                    })
