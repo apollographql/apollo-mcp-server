@@ -31,9 +31,7 @@ impl<'a> NetworkedTokenValidator<'a> {
     }
 }
 
-/// Constructs discovery URLs per MCP Auth Spec 2025-11-25.
-///
-/// Returns URLs in priority order:
+/// Constructs discovery URLs. Returns URLs in priority order:
 /// 1. RFC 8414 (path-insertion): `/.well-known/oauth-authorization-server/{path}`
 /// 2. OIDC Discovery (path-insertion): `/.well-known/openid-configuration/{path}`
 /// 3. OIDC Discovery (legacy path-appending): `/{path}/.well-known/openid-configuration`
@@ -46,7 +44,6 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
     normalized.set_query(None);
     normalized.set_fragment(None);
 
-    // Normalize path: remove leading/trailing slashes, collapse empty segments
     let path = normalized
         .path()
         .trim_matches('/')
@@ -102,22 +99,11 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .collect()
 }
 
-/// Attempts discovery from multiple URLs sequentially, returning first success.
-///
-/// Uses per-URL timeouts to bound worst-case latency. Sequential is preferred over
-/// parallel because:
-/// - Happy path: 1 network request (most providers support at least one URL pattern)
-/// - 404s are fast (~50ms), so fallback is quick for unsupported patterns
-/// - Simpler to debug and reason about
-/// - Less server load (parallel would fire 3 requests even when URL #1 works)
-///
-/// Worst case: 3 × timeout = 15s (bounded). If this becomes a problem in production,
-/// we can revisit parallel approach based on telemetry.
+/// Attempts discovery from multiple URLs sequentially, returning first success
 async fn discover_jwks(client: &reqwest::Client, issuer: &Url) -> Option<Jwks> {
     let urls = build_discovery_urls(issuer);
 
     for url in &urls {
-        // Per-URL timeout prevents slow failures from blocking the entire flow
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             Jwks::from_oidc_url_with_client(client, url.as_str()),
@@ -130,11 +116,9 @@ async fn discover_jwks(client: &reqwest::Client, issuer: &Url) -> Option<Jwks> {
                 return Some(jwks);
             }
             Ok(Err(e)) => {
-                // Fast failure (404, connection refused, parse error) - try next
                 debug!(url = %url, error = %e, "Discovery failed, trying next URL");
             }
             Err(_) => {
-                // Slow failure (timeout) - try next
                 debug!(url = %url, "Discovery timed out after 5s, trying next URL");
             }
         }
