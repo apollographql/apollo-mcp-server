@@ -69,6 +69,16 @@ jobs:
             --max-turns 10
             --model ${{ steps.model_selection.outputs.model }}
 
+      - name: Output Claude execution log
+        if: always()
+        run: |
+          if [ -f /home/runner/work/_temp/claude-execution-output.json ]; then
+            echo "=== Claude Execution Log ==="
+            cat /home/runner/work/_temp/claude-execution-output.json
+          else
+            echo "No execution log found at /home/runner/work/_temp/claude-execution-output.json"
+          fi
+
       - name: Post failure comment
         if: failure() && steps.claude_review.outcome == 'failure'
         uses: actions/github-script@v7
