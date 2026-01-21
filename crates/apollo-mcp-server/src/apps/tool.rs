@@ -5,22 +5,18 @@ use futures::future::try_join_all;
 use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use rmcp::ErrorData;
-use rmcp::model::{
-    CallToolResult, Content, ErrorCode, Extensions, JsonObject, Meta, Resource, ResourceContents,
-    Tool,
-};
+use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Tool};
 use serde_json::{Map, Value, json};
 use url::Url;
 
-use crate::apps::AppResource;
+use crate::apps::app::{AppTarget, AppTool};
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::operations::Operation;
 
-use super::{App, AppTool};
+use super::App;
 
-pub(crate) async fn find_and_execute_app(
+pub(crate) async fn find_and_execute_app_tool(
     apps: &[App],
     app_name: &str,
     tool_name: &str,
@@ -32,13 +28,13 @@ pub(crate) async fn find_and_execute_app(
 
     for tool in &app.tools {
         if tool.tool.name == tool_name {
-            return Some(execute_app(app, tool, headers, arguments, endpoint).await);
+            return Some(execute_app_tool(app, tool, headers, arguments, endpoint).await);
         }
     }
     None
 }
 
-async fn execute_app(
+async fn execute_app_tool(
     app: &App,
     tool: &AppTool,
     headers: &HeaderMap,
@@ -206,183 +202,14 @@ pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTa
     inner_tool
 }
 
-pub(crate) fn get_mime_type(app_target: &AppTarget) -> String {
-    match app_target {
-        AppTarget::AppsSDK => "text/html+skybridge".to_string(),
-        AppTarget::MCPApps => "text/html;profile=mcp-app".to_string(),
-    }
-}
-
-// Attach resource mime type when requested to allow swapping between app targets (Apps SDK, MCP Apps)
-pub(crate) fn attach_resource_mime_type(
-    mut resource: Resource,
-    app_target: &AppTarget,
-) -> Resource {
-    resource.raw.mime_type = Some(get_mime_type(app_target));
-    resource
-}
-
-pub(crate) async fn get_app_resource(
-    apps: &[App],
-    request: rmcp::model::ReadResourceRequestParam,
-    request_uri: Url,
-    app_target: &AppTarget,
-) -> Result<ResourceContents, ErrorData> {
-    let Some(app) = apps.iter().find(|app| app.uri.path() == request_uri.path()) else {
-        return Err(ErrorData::resource_not_found(
-            format!("Resource not found for URI: {}", request.uri),
-            None,
-        ));
-    };
-
-    let text = match &app.resource {
-        AppResource::Local(contents) => contents.clone(),
-        AppResource::Remote(url) => {
-            let response = reqwest::Client::new()
-                .get(url.clone())
-                .send()
-                .await
-                .map_err(|err| {
-                    ErrorData::resource_not_found(
-                        format!("Failed to fetch resource from {}: {err}", url),
-                        None,
-                    )
-                })?;
-
-            if !response.status().is_success() {
-                return Err(ErrorData::resource_not_found(
-                    format!(
-                        "Failed to fetch resource from {}: received status {}",
-                        url,
-                        response.status()
-                    ),
-                    None,
-                ));
-            }
-
-            response.text().await.map_err(|err| {
-                ErrorData::resource_not_found(
-                    format!("Failed to read resource body from {}: {err}", url),
-                    None,
-                )
-            })?
-        }
-    };
-
-    let mut meta: Option<Meta> = None;
-    if let Some(csp) = &app.csp_settings {
-        match app_target {
-            // Note that the difference in which keys are set here and the camelCase vs snake_key is on purpose. These are differences between the two specs.
-            AppTarget::AppsSDK => {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "openai/widgetCSP".into(),
-                    json!({
-                        "connect_domains": csp.connect_domains,
-                        "resource_domains": csp.resource_domains,
-                        "frame_domains": csp.frame_domains,
-                        "redirect_domains": csp.redirect_domains
-                    }),
-                );
-            }
-            AppTarget::MCPApps => {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "csp".into(),
-                    json!({
-                        "connectDomains": csp.connect_domains,
-                        "resourceDomains": csp.resource_domains,
-                        "frameDomains": csp.frame_domains,
-                        "baseUriDomains": csp.base_uri_domains
-                    }),
-                );
-            }
-        }
-    }
-    if let Some(widget_settings) = &app.widget_settings {
-        if let Some(description) = &widget_settings.description
-            && matches!(app_target, AppTarget::AppsSDK)
-        {
-            meta.get_or_insert_with(Meta::new).insert(
-                "openai/widgetDescription".into(),
-                serde_json::to_value(description).unwrap_or_default(),
-            );
-        }
-
-        if let Some(domain) = &widget_settings.domain {
-            meta.get_or_insert_with(Meta::new).insert(
-                match app_target {
-                    AppTarget::AppsSDK => "openai/widgetDomain".into(),
-                    AppTarget::MCPApps => "domain".into(),
-                },
-                serde_json::to_value(domain).unwrap_or_default(),
-            );
-        }
-
-        if let Some(prefers_border) = &widget_settings.prefers_border {
-            meta.get_or_insert_with(Meta::new).insert(
-                match app_target {
-                    AppTarget::AppsSDK => "openai/widgetPrefersBorder".into(),
-                    AppTarget::MCPApps => "prefersBorder".into(),
-                },
-                serde_json::to_value(prefers_border).unwrap_or_default(),
-            );
-        }
-    }
-
-    // In the case of MCP Apps, the meta data is nested under `_meta.ui`
-    if matches!(app_target, AppTarget::MCPApps) {
-        let mut nested = Meta::new();
-        nested.insert("ui".into(), serde_json::to_value(meta).unwrap_or_default());
-        meta = Some(nested);
-    }
-
-    Ok(ResourceContents::TextResourceContents {
-        uri: request.uri,
-        mime_type: Some(get_mime_type(app_target)),
-        text,
-        meta,
-    })
-}
-
-pub(crate) enum AppTarget {
-    AppsSDK,
-    MCPApps,
-}
-
-pub(crate) fn get_app_target(extensions: Extensions) -> Result<AppTarget, McpError> {
-    let app_target_param = extensions
-        .get::<axum::http::request::Parts>()
-        .and_then(|parts| parts.uri.query())
-        .and_then(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .find(|(key, _)| key == "appTarget")
-                .map(|(_, value)| value.into_owned())
-        });
-
-    match app_target_param {
-        Some(app_target) if app_target.to_lowercase() == "openai" => Ok(AppTarget::AppsSDK),
-        Some(app_target) if app_target.to_lowercase() == "mcp" => Ok(AppTarget::MCPApps),
-        Some(app_target) => Err(McpError::new(
-            ErrorCode::INVALID_REQUEST,
-            format!("App target {app_target} not recognized. Valid values are 'openai' or 'mcp'."),
-            None,
-        )),
-        // TODO: In the future, once host capabilities are advertised, we should try auto detection before defaulting to apps sdk
-        None => Ok(AppTarget::AppsSDK),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use apollo_compiler::Schema;
     use rmcp::{model::Tool, object};
 
-    use crate::apps::{CSPSettings, WidgetSettings};
-    use rmcp::model::RawResource;
-
-    use crate::{
-        apps::{AppLabels, AppResource, PrefetchOperation},
-        operations::{MutationMode, RawOperation},
-    };
+    use crate::apps::app::{AppResource, PrefetchOperation};
+    use crate::apps::manifest::AppLabels;
+    use crate::operations::{MutationMode, RawOperation};
 
     use super::*;
 
@@ -483,7 +310,7 @@ mod tests {
             ],
         };
 
-        let response = execute_app(
+        let response = execute_app_tool(
             &app,
             &app.tools[0],
             &HeaderMap::new(),
@@ -541,7 +368,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_and_execute_app_with_valid_app_name() {
+    async fn find_and_execute_app_tool_with_valid_app_name() {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -576,7 +403,7 @@ mod tests {
             .create_async()
             .await;
 
-        let result = find_and_execute_app(
+        let result = find_and_execute_app_tool(
             &[app],
             "MyApp",
             "GetId",
@@ -591,7 +418,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_and_execute_app_with_invalid_app_name() {
+    async fn find_and_execute_app_tool_with_invalid_app_name() {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -619,7 +446,7 @@ mod tests {
 
         let server = mockito::Server::new_async().await;
 
-        let result = find_and_execute_app(
+        let result = find_and_execute_app_tool(
             &[app],
             "InvalidApp",
             "GetId",
@@ -633,7 +460,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_and_execute_app_with_valid_app_but_invalid_tool() {
+    async fn find_and_execute_app_tool_with_valid_app_but_invalid_tool() {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -661,7 +488,7 @@ mod tests {
 
         let server = mockito::Server::new_async().await;
 
-        let result = find_and_execute_app(
+        let result = find_and_execute_app_tool(
             &[app],
             "MyApp",
             "InvalidTool",
@@ -997,263 +824,5 @@ mod tests {
         let meta = result.meta.unwrap();
         assert!(meta.get("openai/outputTemplate").is_none());
         assert!(meta.get("openai/widgetAccessible").is_none());
-    }
-
-    #[test]
-    fn attach_correct_mime_type_when_open_ai() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=openai")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = get_app_target(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
-
-        assert_eq!(
-            result.raw.mime_type,
-            Some("text/html+skybridge".to_string())
-        );
-    }
-
-    #[test]
-    fn attach_correct_mime_type_when_mcp_apps() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=mcp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = get_app_target(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
-
-        assert_eq!(
-            result.raw.mime_type,
-            Some("text/html;profile=mcp-app".to_string())
-        );
-    }
-
-    #[test]
-    fn attach_correct_mime_type_when_not_provided() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = get_app_target(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
-
-        assert_eq!(
-            result.raw.mime_type,
-            Some("text/html+skybridge".to_string())
-        );
-    }
-
-    #[test]
-    fn errors_when_invalid_target_provided() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=lol")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = get_app_target(extensions);
-
-        assert!(app_target.is_err());
-        assert_eq!(
-            app_target.err().unwrap().message,
-            "App target lol not recognized. Valid values are 'openai' or 'mcp'."
-        )
-    }
-
-    #[tokio::test]
-    async fn get_app_resource_returns_openai_format_when_target_is_openai() {
-        let app = App {
-            name: "TestApp".to_string(),
-            description: None,
-            resource: AppResource::Local("test content".to_string()),
-            csp_settings: Some(CSPSettings {
-                connect_domains: Some(vec!["connect.example.com".to_string()]),
-                resource_domains: Some(vec!["resource.example.com".to_string()]),
-                frame_domains: Some(vec!["frame.example.com".to_string()]),
-                redirect_domains: Some(vec!["redirect.example.com".to_string()]),
-                base_uri_domains: Some(vec!["base.example.com".to_string()]),
-            }),
-            widget_settings: Some(WidgetSettings {
-                description: Some("Test description".to_string()),
-                domain: Some("example.com".to_string()),
-                prefers_border: Some(true),
-            }),
-            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
-            tools: vec![],
-            prefetch_operations: vec![],
-        };
-
-        let result = get_app_resource(
-            &[app],
-            rmcp::model::ReadResourceRequestParam {
-                uri: "ui://widget/TestApp".to_string(),
-            },
-            "ui://widget/TestApp".parse().unwrap(),
-            &AppTarget::AppsSDK,
-        )
-        .await
-        .unwrap();
-
-        let ResourceContents::TextResourceContents {
-            mime_type, meta, ..
-        } = result
-        else {
-            unreachable!()
-        };
-        assert_eq!(mime_type, Some("text/html+skybridge".to_string()));
-
-        let meta = meta.unwrap();
-        // AppsSDK CSP uses snake_case keys and includes redirect_domains (not base_uri_domains)
-        let csp = meta.get("openai/widgetCSP").unwrap();
-        assert!(csp.get("connect_domains").is_some());
-        assert!(csp.get("resource_domains").is_some());
-        assert!(csp.get("frame_domains").is_some());
-        assert!(csp.get("redirect_domains").is_some());
-        assert!(csp.get("base_uri_domains").is_none());
-        assert!(meta.get("openai/widgetDescription").is_some());
-        assert!(meta.get("openai/widgetDomain").is_some());
-        assert!(meta.get("openai/widgetPrefersBorder").is_some());
-        // AppsSDK should not have ui nesting
-        assert!(meta.get("ui").is_none());
-    }
-
-    #[tokio::test]
-    async fn get_app_resource_returns_mcp_format_when_target_is_mcp() {
-        let app = App {
-            name: "TestApp".to_string(),
-            description: None,
-            resource: AppResource::Local("test content".to_string()),
-            csp_settings: Some(CSPSettings {
-                connect_domains: Some(vec!["connect.example.com".to_string()]),
-                resource_domains: Some(vec!["resource.example.com".to_string()]),
-                frame_domains: Some(vec!["frame.example.com".to_string()]),
-                redirect_domains: Some(vec!["redirect.example.com".to_string()]),
-                base_uri_domains: Some(vec!["base.example.com".to_string()]),
-            }),
-            widget_settings: Some(WidgetSettings {
-                description: Some("Test description".to_string()),
-                domain: Some("example.com".to_string()),
-                prefers_border: Some(true),
-            }),
-            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
-            tools: vec![],
-            prefetch_operations: vec![],
-        };
-
-        let result = get_app_resource(
-            &[app],
-            rmcp::model::ReadResourceRequestParam {
-                uri: "ui://widget/TestApp".to_string(),
-            },
-            "ui://widget/TestApp".parse().unwrap(),
-            &AppTarget::MCPApps,
-        )
-        .await
-        .unwrap();
-
-        let ResourceContents::TextResourceContents {
-            mime_type, meta, ..
-        } = result
-        else {
-            unreachable!()
-        };
-        assert_eq!(mime_type, Some("text/html;profile=mcp-app".to_string()));
-
-        let meta = meta.unwrap();
-        // MCPApps should have ui nesting
-        let ui_meta = meta.get("ui").unwrap();
-        // MCPApps CSP uses camelCase keys and includes baseUriDomains (not redirectDomains)
-        let csp = ui_meta.get("csp").unwrap();
-        assert!(csp.get("connectDomains").is_some());
-        assert!(csp.get("resourceDomains").is_some());
-        assert!(csp.get("frameDomains").is_some());
-        assert!(csp.get("baseUriDomains").is_some());
-        assert!(csp.get("redirectDomains").is_none());
-        assert!(ui_meta.get("domain").is_some());
-        assert!(ui_meta.get("prefersBorder").is_some());
-        // MCPApps should not have description
-        assert!(ui_meta.get("description").is_none());
-    }
-
-    #[tokio::test]
-    async fn get_app_resource_returns_error_for_nonexistent_resource() {
-        let app = App {
-            name: "TestApp".to_string(),
-            description: None,
-            resource: AppResource::Local("test content".to_string()),
-            csp_settings: None,
-            widget_settings: None,
-            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
-            tools: vec![],
-            prefetch_operations: vec![],
-        };
-
-        let result = get_app_resource(
-            &[app],
-            rmcp::model::ReadResourceRequestParam {
-                uri: "ui://widget/NonExistent".to_string(),
-            },
-            "ui://widget/NonExistent".parse().unwrap(),
-            &AppTarget::AppsSDK,
-        )
-        .await;
-
-        assert!(result.is_err());
     }
 }

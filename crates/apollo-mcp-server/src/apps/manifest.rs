@@ -4,87 +4,17 @@ use std::path::Path;
 use std::{fs::read_to_string, sync::Arc};
 
 use apollo_compiler::{Schema, validation::Valid};
-use rmcp::model::{RawResource, Resource, Tool};
+use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tracing::debug;
 use url::Url;
 
+use crate::apps::app::{App, AppResource, AppTool, PrefetchOperation};
 use crate::{
     custom_scalar_map::CustomScalarMap,
     operations::{MutationMode, Operation, RawOperation},
 };
-
-mod execution;
-
-pub(crate) use execution::{
-    attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
-    get_app_target, make_tool_private,
-};
-
-/// An app, which consists of a tool and a resource to be used together.
-#[derive(Clone, Debug)]
-pub(crate) struct App {
-    pub(crate) name: String,
-    pub(crate) description: Option<String>,
-    /// The HTML resource that serves as the app's UI
-    pub(crate) resource: AppResource,
-    /// Any CSP settings to apply to the resource
-    pub(crate) csp_settings: Option<CSPSettings>,
-    /// Various resource meta data
-    pub(crate) widget_settings: Option<WidgetSettings>,
-    /// The URI of the app's resource
-    pub(crate) uri: Url,
-    /// Entrypoint tools for this app
-    pub(crate) tools: Vec<AppTool>,
-    /// Any operations that should _always_ be executed for any of the tools (after the initial tool operation)
-    pub(crate) prefetch_operations: Vec<PrefetchOperation>,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum AppResource {
-    Local(String),
-    Remote(Url),
-}
-
-/// An MCP tool which serves as an entrypoint for an app.
-#[derive(Clone, Debug)]
-pub(crate) struct AppTool {
-    /// The GraphQL operation that's executed when the tool is called. Its data is injected into the UI
-    pub(crate) operation: Arc<Operation>,
-    // The labels for this tool
-    pub(crate) labels: AppLabels,
-    /// The MCP tool definition
-    pub(crate) tool: Tool,
-}
-
-/// An operation that should be executed for every invocation of an app.
-#[derive(Clone, Debug)]
-pub(crate) struct PrefetchOperation {
-    /// The operation to execute
-    pub(crate) operation: Arc<Operation>,
-    /// A unique ID for the operation that the UI will use to look up its data
-    pub(crate) prefetch_id: String,
-}
-
-impl App {
-    pub(crate) fn resource(&self) -> Resource {
-        Resource::new(
-            RawResource {
-                name: self.name.clone(),
-                uri: self.uri.to_string(),
-                mime_type: None,
-                // TODO: load all this from a manifest file
-                title: None,
-                description: self.description.clone(),
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        )
-    }
-}
 
 const MANIFEST_FILE_NAME: &str = ".application-manifest.json";
 
@@ -326,9 +256,9 @@ enum ManifestVersion {
 #[derive(Clone, Debug, Deserialize, Default)]
 pub(crate) struct AppLabels {
     #[serde(rename = "toolInvocation/invoking")]
-    tool_invocation_invoking: Option<String>,
+    pub(crate) tool_invocation_invoking: Option<String>,
     #[serde(rename = "toolInvocation/invoked")]
-    tool_invocation_invoked: Option<String>,
+    pub(crate) tool_invocation_invoked: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Debug)]

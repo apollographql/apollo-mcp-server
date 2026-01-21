@@ -22,10 +22,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use url::Url;
 
-use crate::apps::{
-    attach_resource_mime_type, attach_tool_metadata, find_and_execute_app, get_app_resource,
-    get_app_target, make_tool_private,
-};
+use crate::apps::app::AppTarget;
+use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
+use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
@@ -210,7 +209,7 @@ impl Running {
                     .find(|(key, _)| key == "app")
                     .map(|(_, value)| value.into_owned())
             });
-        let app_target = get_app_target(extensions)?;
+        let app_target = AppTarget::try_from(extensions)?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         if let Some(app_name) = app_param {
@@ -272,7 +271,7 @@ impl Running {
     }
 
     fn list_resources_impl(&self, extensions: Extensions) -> Result<ListResourcesResult, McpError> {
-        let app_target = get_app_target(extensions)?;
+        let app_target = AppTarget::try_from(extensions)?;
 
         Ok(ListResourcesResult {
             resources: self
@@ -296,7 +295,7 @@ impl Running {
                 None,
             )
         })?;
-        let app_target = get_app_target(extensions)?;
+        let app_target = AppTarget::try_from(extensions)?;
 
         let resource = get_app_resource(&self.apps, request, request_uri, &app_target).await?;
 
@@ -438,7 +437,7 @@ impl ServerHandler for Running {
             {
                 res
             } else if let Some(app_name) = app_param
-                && let Some(res) = find_and_execute_app(
+                && let Some(res) = find_and_execute_app_tool(
                     &self.apps,
                     &app_name,
                     &tool_name,
@@ -549,7 +548,11 @@ fn tool_not_found(name: &str) -> McpError {
 mod tests {
     use rmcp::model::{JsonObject, ReadResourceRequestParam, ResourceContents, Tool};
 
-    use crate::apps::{App, AppLabels, AppResource, AppTool, CSPSettings, WidgetSettings};
+    use crate::apps::{
+        App,
+        app::{AppResource, AppTool},
+        manifest::{AppLabels, CSPSettings, WidgetSettings},
+    };
 
     use super::*;
 
