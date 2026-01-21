@@ -102,6 +102,7 @@ telemetry:
 
 ##### Performance considerations
 - **Protocol choice**: `http/protobuf` is often more reliable through firewalls and load balancers than `grpc`
+- **Export interval**: Metrics are exported every 30 seconds by default. Adjust with `export_interval` (e.g., `1m`, `2m`) to balance freshness vs. network overhead
 - **Batch export**: OpenTelemetry automatically batches telemetry data for efficiency
 - **Network timeouts**: Default timeouts are usually appropriate, but monitor for network issues
 

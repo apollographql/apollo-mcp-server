@@ -22,6 +22,7 @@ use opentelemetry_semantic_conventions::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -89,6 +90,10 @@ pub enum TraceTelemetryExporter {
 pub struct MetricsExporters {
     otlp: Option<MetricTelemetryExporter>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
+    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
+    #[serde(serialize_with = "humantime_serde::serialize")]
+    #[schemars(with = "Option<String>")]
+    export_interval: Option<Duration>,
 }
 
 #[derive(Debug, Default, JsonSchema, Serialize, PartialEq, Eq)]
@@ -259,6 +264,7 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
     };
 
     let omitted_attributes: HashSet<TelemetryAttribute> = metrics_exporters
+        .as_ref()
         .and_then(|exporters| exporters.omitted_attributes.clone())
         .unwrap_or_default();
     let included_attributes: Vec<Key> = TelemetryAttribute::included_attributes(omitted_attributes)
@@ -266,8 +272,13 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
         .map(|a| a.to_key())
         .collect();
 
+    let export_interval = metrics_exporters
+        .as_ref()
+        .and_then(|exporters| exporters.export_interval)
+        .unwrap_or(Duration::from_secs(30));
+
     let reader = PeriodicReader::builder(exporter)
-        .with_interval(std::time::Duration::from_secs(30))
+        .with_interval(export_interval)
         .build();
 
     let filtered_view = move |i: &Instrument| {
@@ -438,6 +449,7 @@ mod tests {
             Some(MetricsExporters {
                 otlp: Some(MetricTelemetryExporter::default()),
                 omitted_attributes: None,
+                export_interval: None,
             }),
             Some(TracingExporters {
                 otlp: Some(TraceTelemetryExporter::default()),
@@ -463,6 +475,7 @@ mod tests {
                     headers: HashMap::new(),
                 }),
                 omitted_attributes: None,
+                export_interval: None,
             }),
             None,
         );
@@ -649,5 +662,61 @@ mod tests {
                 panic!("unexpected protocol")
             }
         }
+    }
+
+    #[test]
+    fn yaml_deserialization_with_export_interval() {
+        let y = r#"
+          exporters:
+            metrics:
+              otlp:
+                protocol: grpc
+                endpoint: "http://127.0.0.1:4317"
+              export_interval: 1m
+        "#;
+
+        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let metrics_exporters = telemetry_config.exporters.unwrap().metrics.unwrap();
+
+        assert_eq!(
+            metrics_exporters.export_interval,
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn yaml_deserialization_without_export_interval_defaults_to_none() {
+        let y = r#"
+          exporters:
+            metrics:
+              otlp:
+                protocol: grpc
+                endpoint: "http://127.0.0.1:4317"
+        "#;
+
+        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let metrics_exporters = telemetry_config.exporters.unwrap().metrics.unwrap();
+
+        assert_eq!(metrics_exporters.export_interval, None);
+    }
+
+    #[test]
+    fn meter_provider_with_custom_export_interval() {
+        let config = test_config(
+            None,
+            None,
+            Some(MetricsExporters {
+                otlp: Some(MetricTelemetryExporter::HttpProtobuf {
+                    endpoint: "http://localhost:4318/v1/metrics".to_string(),
+                    temporality: MetricTemporality::Delta,
+                    headers: HashMap::new(),
+                }),
+                omitted_attributes: None,
+                export_interval: Some(Duration::from_secs(60)),
+            }),
+            None,
+        );
+        let result = init_meter_provider(&config.telemetry);
+        assert!(result.is_ok());
     }
 }
