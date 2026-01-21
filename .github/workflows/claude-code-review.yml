@@ -12,12 +12,47 @@ jobs:
         runs-on: ubuntu-latest
         if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') }}
         steps:
+            - name: Determine model to use
+              id: model_selection
+              run: |
+                  # Check if user has manually specified a model via label
+                  HAS_OPUS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') }}"
+                  HAS_SONNET_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-sonnet') }}"
+
+                  # If manual label is present, always use that
+                  if [ "$HAS_OPUS_LABEL" == "true" ]; then
+                    MODEL="claude-opus-4-5-20251101"
+                    echo "model=$MODEL" >> $GITHUB_OUTPUT
+                    echo "📊 Using Opus (manual override via label)"
+                    exit 0
+                  elif [ "$HAS_SONNET_LABEL" == "true" ]; then
+                    MODEL="claude-sonnet-4-5-20250929"
+                    echo "model=$MODEL" >> $GITHUB_OUTPUT
+                    echo "📊 Using Sonnet (manual override via label)"
+                    exit 0
+                  fi
+
+                  # No manual label - use automatic selection based on PR size
+                  ADDITIONS=${{ github.event.pull_request.additions }}
+                  DELETIONS=${{ github.event.pull_request.deletions }}
+                  TOTAL_LINES=$((ADDITIONS + DELETIONS))
+
+                  if [ $TOTAL_LINES -gt 500 ]; then
+                    MODEL="claude-opus-4-5-20251101"
+                    echo "model=$MODEL" >> $GITHUB_OUTPUT
+                    echo "📊 PR Size: $TOTAL_LINES lines changed - Using Opus (automatic)"
+                  else
+                    MODEL="claude-sonnet-4-5-20250929"
+                    echo "model=$MODEL" >> $GITHUB_OUTPUT
+                    echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
+                  fi
+
             - uses: anthropics/claude-code-action@v1
               with:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
                   # Use the "review" skill defined at .claude/skills/review/SKILL.md
-                  prompt: "/review"
-                  # Note: We default to sonnet for review but the user can "upgrade" to opus for a specific PR by adding a label
+                  prompt: "/review --ci"
+                  # Model selected automatically based on PR complexity, or manually via label
                   claude_args: >-
                       --max-turns 10
-                      --model ${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') && 'claude-opus-4-5-20251101' || 'claude-sonnet-4-5-20250929' }}
+                      --model ${{ steps.model_selection.outputs.model }}

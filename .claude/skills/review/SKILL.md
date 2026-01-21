@@ -11,13 +11,29 @@ Review the specified PR with a focus on **high-signal, actionable feedback**. Av
 ## Usage
 
 ```
-/review [pr_number_or_url]
+/review [pr_number_or_url] [--ci]
 ```
 
 Examples:
-- `/review` - reviews the current branch's PR
-- `/review 577`
-- `/review https://github.com/apollographql/apollo-mcp-server/pull/577`
+
+- `/review` - reviews the current branch's PR (local output)
+- `/review 577` - reviews PR 577 (local output)
+- `/review https://github.com/apollographql/apollo-mcp-server/pull/577` - reviews via URL (local output)
+- `/review 577 --ci` - reviews PR 577 and posts comments to GitHub (CI mode)
+- `/review https://github.com/apollographql/apollo-mcp-server/pull/577 --ci` - reviews via URL and posts to GitHub (CI mode)
+
+### CI Mode (`--ci` flag)
+
+When running in CI (e.g., GitHub Actions), use the `--ci` flag to:
+
+- Post inline review comments directly to the PR
+- Use the CI output format (see "When running in GitHub Actions (CI environment)" below)
+- Generate a summary comment with the review result
+
+When running locally without `--ci`:
+
+- Output the review in a formatted text report
+- Use the local output format (see "When running locally" below)
 
 ## Best Practices Reference
 
@@ -38,6 +54,7 @@ Before reviewing, familiarize yourself with Apollo's Rust best practices. Refere
 If a PR number or URL was provided as an argument, use it. Otherwise, default to the current branch's PR.
 
 Fetch PR information (run all in parallel within the same turn):
+
 ```bash
 # If argument provided (e.g., "577" or full URL):
 gh pr view <pr_number_or_url> --json number,title,body,author,baseRefName,headRefName
@@ -47,11 +64,13 @@ gh pr view --json number,title,body,author,baseRefName,headRefName
 ```
 
 Get the PR diff:
+
 ```bash
 gh pr diff <pr_number_or_url>
 ```
 
 Fetch existing feedback (run in parallel with the diff):
+
 ```bash
 # Inline review comments
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments
@@ -63,6 +82,7 @@ gh pr view <pr_number_or_url> --json comments
 ## Important: Review Only
 
 **DO NOT:**
+
 - Pull down the branch or checkout the code
 - Run tests, clippy, cargo build, or any other commands
 - Attempt to run or validate the code locally
@@ -72,15 +92,18 @@ All automated checks (tests, linting, clippy, formatting) are handled by GitHub 
 ## Review Process
 
 **You have a maximum of 10 turns to complete this review.** Allocate turns strategically:
+
 - Turn 1: Gather all context (parallel commands)
 - Turns 2-4: Analysis and evaluation
 - Turns 5+: Post comments and summary
 
 1. **Gather all context** (single turn - run all commands in parallel)
+
    - Fetch PR metadata, diff, and all existing comments
    - This gives you complete information before starting analysis
 
 2. **Analyze the changes**
+
    - Read the PR description and linked issues to understand intent
    - Review the complete diff to identify the scope
    - Review existing feedback to note what's already been raised
@@ -183,50 +206,65 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   -f line=42
 
 # For general PR comments (summary, test coverage assessment):
-gh pr comment {pr_number} --body "## Review Summary\n\n..."
+gh pr comment {pr_number} --body "## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
 ```
 
 Each inline comment should:
+
 - Start with severity: `**[Blocking]**`, `**[Should Fix]**`, or `**[Consider]**`
 - Explain the problem clearly
 - Reference the relevant best practice chapter when applicable
 - Suggest a fix
 
 After posting inline comments, add a summary comment with:
+
 - Overall assessment
 - Test coverage assessment
 - Final recommendation (Approve / Approve with suggestions / Request changes)
+- Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
 
 ### When running locally
 
 Structure your review as follows:
 
 #### Summary
+
 Brief description of what this PR does and its overall quality.
 
 #### Blocking Issues
+
 Issues that must be fixed before merge. Each item must include:
+
 - File and line reference: `src/foo.rs:42`
 - Clear explanation of the problem
 - Reference to relevant best practice chapter when applicable
 - Suggested fix
 
 #### Should Fix
+
 Strong recommendations that significantly improve the code. Same format as blocking.
 
 #### Consider
+
 Optional improvements. Keep this section minimal to reduce noise.
 
 #### Test Coverage Assessment
+
 - What's tested
 - What's missing
 - Suggested test cases
 
 #### Recommendation
+
 One of:
+
 - **Approve**: No blocking issues, tests adequate
 - **Approve with suggestions**: No blocking issues, but should-fix items exist
 - **Request changes**: Blocking issues present
+
+#### Sign-off
+
+End the review with: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Sonnet 4.5")
 
 ## Guidelines for High-Signal Reviews
 
@@ -241,6 +279,7 @@ One of:
 ## Posting Review Comments
 
 **Batch all findings into a single turn:**
+
 1. Collect all inline comments (blocking, should-fix, and consider issues) during analysis
 2. Post all inline comments in one go using multiple `gh api` calls
 3. Post the summary comment as the final action
