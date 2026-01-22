@@ -12,6 +12,7 @@ use crate::{
     headers::ForwardHeaders,
     health::HealthCheckConfig,
     operations::MutationMode,
+    server_info::ServerInfoConfig,
 };
 
 use super::{Server, ServerEvent, Transport};
@@ -54,6 +55,7 @@ struct Config {
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
     cors: CorsConfig,
+    server_info: ServerInfoConfig,
 }
 
 impl StateMachine {
@@ -90,6 +92,7 @@ impl StateMachine {
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
                 cors: server.cors,
+                server_info: server.server_info,
             },
         });
 

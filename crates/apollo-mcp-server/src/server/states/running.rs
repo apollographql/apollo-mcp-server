@@ -29,6 +29,7 @@ use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
 use crate::server::states::telemetry::get_parent_span;
+use crate::server_info::ServerInfoConfig;
 use crate::{
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
@@ -66,6 +67,7 @@ pub(super) struct Running {
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) health_check: Option<HealthCheck>,
+    pub(super) server_info: ServerInfoConfig,
 }
 
 impl Running {
@@ -522,13 +524,11 @@ impl ServerHandler for Running {
 
         ServerInfo {
             server_info: Implementation {
-                name: "Apollo MCP Server".to_string(),
+                name: self.server_info.name(),
                 icons: None,
-                title: Some("Apollo MCP Server".to_string()),
-                version: env!("CARGO_PKG_VERSION").to_string(),
-                website_url: Some(
-                    "https://www.apollographql.com/docs/apollo-mcp-server".to_string(),
-                ),
+                title: self.server_info.title(),
+                version: self.server_info.version(),
+                website_url: self.server_info.website_url(),
             },
             capabilities,
             ..Default::default()
@@ -586,6 +586,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
+            server_info: ServerInfoConfig::default(),
         };
 
         let new_operations = vec![
@@ -645,6 +646,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
+            server_info: ServerInfoConfig::default(),
         };
 
         let operations = vec![
@@ -722,6 +724,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             health_check: None,
+            server_info: ServerInfoConfig::default(),
         }
     }
 
@@ -1283,5 +1286,103 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn get_info_returns_default_server_metadata() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let running = Running {
+            schema: Arc::new(RwLock::new(schema)),
+            operations: Arc::new(RwLock::new(vec![])),
+            apps: vec![],
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            endpoint: "http://localhost:4000".parse().unwrap(),
+            execute_tool: None,
+            introspect_tool: None,
+            search_tool: None,
+            explorer_tool: None,
+            validate_tool: None,
+            custom_scalar_map: None,
+            peers: Arc::new(RwLock::new(vec![])),
+            cancellation_token: CancellationToken::new(),
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            enable_output_schema: false,
+            disable_auth_token_passthrough: false,
+            health_check: None,
+            server_info: ServerInfoConfig::default(),
+        };
+
+        let info = running.get_info();
+
+        assert_eq!(info.server_info.name, "Apollo MCP Server");
+        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            info.server_info.title,
+            Some("Apollo MCP Server".to_string())
+        );
+        assert_eq!(
+            info.server_info.website_url,
+            Some("https://www.apollographql.com/docs/apollo-mcp-server".to_string())
+        );
+        assert_eq!(info.server_info.icons, None);
+    }
+
+    #[test]
+    fn get_info_returns_custom_server_metadata() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let custom_config = ServerInfoConfig {
+            name: Some("My Custom Server".to_string()),
+            version: Some("3.0.0-beta".to_string()),
+            title: Some("Custom GraphQL Server".to_string()),
+            website_url: Some("https://my-server.example.com/docs".to_string()),
+        };
+
+        let running = Running {
+            schema: Arc::new(RwLock::new(schema)),
+            operations: Arc::new(RwLock::new(vec![])),
+            apps: vec![],
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            endpoint: "http://localhost:4000".parse().unwrap(),
+            execute_tool: None,
+            introspect_tool: None,
+            search_tool: None,
+            explorer_tool: None,
+            validate_tool: None,
+            custom_scalar_map: None,
+            peers: Arc::new(RwLock::new(vec![])),
+            cancellation_token: CancellationToken::new(),
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            enable_output_schema: false,
+            disable_auth_token_passthrough: false,
+            health_check: None,
+            server_info: custom_config,
+        };
+
+        let info = running.get_info();
+
+        assert_eq!(info.server_info.name, "My Custom Server");
+        assert_eq!(info.server_info.version, "3.0.0-beta");
+        assert_eq!(
+            info.server_info.title,
+            Some("Custom GraphQL Server".to_string())
+        );
+        assert_eq!(
+            info.server_info.website_url,
+            Some("https://my-server.example.com/docs".to_string())
+        );
     }
 }

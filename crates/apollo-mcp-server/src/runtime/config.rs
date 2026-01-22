@@ -8,6 +8,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use url::Url;
 
+use apollo_mcp_server::server_info::ServerInfoConfig;
+
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
     introspection::Introspection, logging::Logging, overrides::Overrides, telemetry::Telemetry,
@@ -19,6 +21,10 @@ use super::{
 pub struct Config {
     /// CORS configuration
     pub cors: CorsConfig,
+
+    /// Server metadata configuration
+    #[serde(default)]
+    pub server_info: ServerInfoConfig,
 
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,

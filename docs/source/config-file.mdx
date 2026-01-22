@@ -29,6 +29,7 @@ All fields are optional.
 | `operations`      | `OperationSource`     |                          | Operations configuration                                         |
 | `overrides`       | `Overrides`           |                          | Overrides for server behavior                                    |
 | `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
+| `server_info`     | `ServerInfo`          |                          | Server metadata configuration                                    |
 | `transport`       | `Transport`           |                          | The type of server transport to use                              |
 | `telemetry`       | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
 
@@ -217,20 +218,20 @@ transport:
 
 The available fields depend on the value of the nested `type` key. The default type is `stdio`:
 
-| Option              | Description                                                                                                      |
-| :------------------ | :--------------------------------------------------------------------------------------------------------------- |
-| `"stdio"`           | Use standard IO for communication between the server and client                                                  |
-| `"streamable_http"` | Host the MCP server on the configuration, using streamable HTTP messages                                         |
+| Option              | Description                                                              |
+| :------------------ | :----------------------------------------------------------------------- |
+| `"stdio"`           | Use standard IO for communication between the server and client          |
+| `"streamable_http"` | Host the MCP server on the configuration, using streamable HTTP messages |
 
 ##### Transport Type Specific options
 
 Some transport types support further configuration. For `streamable_http`, you can set the `address`, `port`, and `stateful_mode`.
 
-| Option          | Type     | Default     | Description                                                                          |
-| :-------------- | :------- | :---------- | :----------------------------------------------------------------------------------- |
-| `address`       | `IpAddr` | `127.0.0.1` | The IP address to bind to                                                            |
-| `port`          | `u16`    | `8000`      | The port to bind to                                                                  |
-| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management                       |
+| Option          | Type     | Default     | Description                                                    |
+| :-------------- | :------- | :---------- | :------------------------------------------------------------- |
+| `address`       | `IpAddr` | `127.0.0.1` | The IP address to bind to                                      |
+| `port`          | `u16`    | `8000`      | The port to bind to                                            |
+| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management |
 
 <Note>
 
@@ -420,6 +421,27 @@ telemetry:
 | `always_off` | `string` | Sampling is turned off, no traces will be exported. |
 | `0.0-1.0`    | `f64`    | Percentage of traces to export.                     |
 
+### Server info
+
+These fields are under the top-level `server_info` key and configure the server metadata returned in the MCP `initialize` response.
+
+| Option        | Type     | Default                                                  | Description                                  |
+| :------------ | :------- | :------------------------------------------------------- | :------------------------------------------- |
+| `name`        | `string` | `"Apollo MCP Server"`                                    | The name of the MCP server implementation    |
+| `version`     | `string` | Current crate version (e.g., `"1.5.0"`)                  | The version of the MCP server implementation |
+| `title`       | `string` | `"Apollo MCP Server"`                                    | Human-readable title for the server          |
+| `website_url` | `URL`    | `"https://www.apollographql.com/docs/apollo-mcp-server"` | URL to the server's website or documentation |
+
+All fields are optional. If not specified, sensible defaults are used. This is useful when wrapping Apollo MCP Server or branding it for specific use cases.
+
+```yaml title="config.yaml"
+server_info:
+  name: "Acme Corp GraphQL Server"
+  version: "2.0.0"
+  title: "Acme MCP Server"
+  website_url: "https://acme.com/mcp-docs"
+```
+
 ## Example config files
 
 The following example file sets your endpoint to `localhost:4001`, configures transport over Streamable HTTP, enables introspection, and provides two local MCP operations for the server to expose.
@@ -503,10 +525,10 @@ Default values can contain special characters, including colons, balanced braces
 endpoint: ${env.API_URL:-http://localhost:4000}
 
 # JSON-like defaults with balanced braces work
-metadata: "${env.DEFAULT_META:-{\"version\":\"1.0\"}}"
+metadata: '${env.DEFAULT_META:-{"version":"1.0"}}'
 
 # Multiple :- in default value (only the first one delimits)
-value: ${env.MY_VAR:-a:-b:-c}  # default is "a:-b:-c"
+value: ${env.MY_VAR:-a:-b:-c} # default is "a:-b:-c"
 ```
 
 <Note>
@@ -526,7 +548,7 @@ value: ${env.MISSING:-prefix ${env.OTHER} suffix}
 
 ```yaml
 # This does NOT work as expected - the } inside quotes ends the placeholder early
-value: ${env.VAR:-"}"} # Results in: ""}  (not "}") 
+value: ${env.VAR:-"}"} # Results in: ""}  (not "}")
 ```
 
 </Note>
@@ -562,4 +584,3 @@ If a referenced environment variable is not defined, Apollo MCP Server fails to 
 ```
 Error: undefined environment variable 'OTEL_EXPORTER_OTLP_ENDPOINT' referenced in configuration
 ```
-

@@ -15,6 +15,7 @@ use crate::event::Event as ServerEvent;
 use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::operations::{MutationMode, OperationSource};
+use crate::server_info::ServerInfoConfig;
 
 mod states;
 
@@ -45,6 +46,7 @@ pub struct Server {
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
     cors: CorsConfig,
+    server_info: ServerInfoConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -132,6 +134,7 @@ impl Server {
         index_memory_bytes: usize,
         health_check: HealthCheckConfig,
         cors: CorsConfig,
+        server_info: ServerInfoConfig,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -162,6 +165,7 @@ impl Server {
             index_memory_bytes,
             health_check,
             cors,
+            server_info,
         }
     }
 
