@@ -1,0 +1,96 @@
+name: Code Review
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - "**/*.rs"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      pull-requests: write
+      contents: read
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-ai-review') && !github.event.pull_request.draft && github.event.pull_request.head.ref != 'release' && !startsWith(github.event.pull_request.head.ref, 'release/') }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }} # We need a proper checkout for the commands the skill runs
+          repository: ${{ github.event.pull_request.head.repo.full_name }} # To properly handle forks
+          fetch-depth: 0 # Fetch full history for proper git operations
+
+      - name: Determine model to use
+        id: model_selection
+        run: |
+          # Check if user has manually specified a model via label
+          HAS_OPUS_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-opus') }}"
+          HAS_SONNET_LABEL="${{ contains(github.event.pull_request.labels.*.name, 'ai-review-model-sonnet') }}"
+
+          # If manual label is present, always use that
+          if [ "$HAS_OPUS_LABEL" == "true" ]; then
+            MODEL="claude-opus-4-5-20251101"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 Using Opus (manual override via label)"
+            exit 0
+          elif [ "$HAS_SONNET_LABEL" == "true" ]; then
+            MODEL="claude-sonnet-4-5-20250929"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 Using Sonnet (manual override via label)"
+            exit 0
+          fi
+
+          # No manual label - use automatic selection based on PR size
+          ADDITIONS=${{ github.event.pull_request.additions }}
+          DELETIONS=${{ github.event.pull_request.deletions }}
+          TOTAL_LINES=$((ADDITIONS + DELETIONS))
+
+          if [ $TOTAL_LINES -gt 500 ]; then
+            MODEL="claude-opus-4-5-20251101"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 PR Size: $TOTAL_LINES lines changed - Using Opus (automatic)"
+          else
+            MODEL="claude-sonnet-4-5-20250929"
+            echo "model=$MODEL" >> $GITHUB_OUTPUT
+            echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
+          fi
+
+      - name: Claude Code Review
+        id: claude_review
+        uses: anthropics/claude-code-action@v1
+        continue-on-error: true
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Use the "review" skill defined at .claude/skills/review/SKILL.md
+          prompt: "/review"
+          # Model selected automatically based on PR complexity, or manually via label
+          claude_args: >-
+            --max-turns 10
+            --model ${{ steps.model_selection.outputs.model }}
+
+      - name: Output Claude execution log
+        if: always()
+        run: |
+          if [ -f /home/runner/work/_temp/claude-execution-output.json ]; then
+            echo "=== Claude Execution Log ==="
+            cat /home/runner/work/_temp/claude-execution-output.json
+          else
+            echo "No execution log found at /home/runner/work/_temp/claude-execution-output.json"
+          fi
+
+      - name: Post failure comment
+        if: failure() && steps.claude_review.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.'
+            })
