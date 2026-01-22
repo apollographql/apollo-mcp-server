@@ -3,7 +3,7 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
     paths:
-      - '**/*.rs'
+      - "**/*.rs"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
@@ -20,6 +20,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.ref }} # We need a proper checkout for the commands the skill runs
+          repository: ${{ github.event.pull_request.head.repo.full_name }} # To properly handle forks
+          fetch-depth: 0 # Fetch full history for proper git operations
 
       - name: Determine model to use
         id: model_selection
