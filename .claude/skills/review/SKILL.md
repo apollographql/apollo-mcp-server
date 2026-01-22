@@ -173,9 +173,18 @@ Each inline comment should:
 
 After posting inline comments, add a summary comment with:
 
-- Overall assessment
+- Overall assessment (summary of the change, keep this to a couple of sentences maximum)
+- Findings (bullet point, concise summary of issues found)
 - Test coverage assessment
 - Final recommendation (Approve / Approve with suggestions / Request changes)
+- Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
+
+If you have already posted a summary comment on this PR previously, any follow up summary comments should be concise and focused on what changed:
+
+- Overall assessment (summary of the changes, keep this to a couple of sentences maximum)
+- Any new findings (if any, if none do not include this section)
+- Changes to test coverage assessment (if any, if none do not include this section)
+- Final recommendation
 - Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
 
 ## Guidelines for High-Signal Reviews
