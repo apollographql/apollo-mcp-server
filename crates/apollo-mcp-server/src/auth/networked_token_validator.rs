@@ -34,6 +34,13 @@ impl<'a> NetworkedTokenValidator<'a> {
     }
 }
 
+/// Error type for discovery URL construction failures.
+#[derive(Debug, thiserror::Error)]
+enum DiscoveryUrlError {
+    #[error("issuer URL has no host: {0}")]
+    MissingHost(Url),
+}
+
 /// Constructs discovery URLs. Returns URLs in priority order:
 /// 1. RFC 8414 (path-insertion): `/.well-known/oauth-authorization-server/{path}`
 /// 2. OIDC Discovery (path-insertion): `/.well-known/openid-configuration/{path}`
@@ -43,10 +50,9 @@ impl<'a> NetworkedTokenValidator<'a> {
 /// Query strings and fragments are stripped per RFC 8414 Section 3.1.
 /// The spec does not define behavior for these, and most implementations strip them.
 ///
-/// # Panics
-/// Panics if the issuer URL lacks a host. This should never occur in production
-/// as URLs are validated at startup in `Config::enable_middleware`.
-fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
+/// # Errors
+/// Returns `DiscoveryUrlError::MissingHost` if the issuer URL lacks a host.
+fn build_discovery_urls(issuer: &Url) -> Result<Vec<Url>, DiscoveryUrlError> {
     let mut normalized = issuer.clone();
     normalized.set_query(None);
     normalized.set_fragment(None);
@@ -60,7 +66,7 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .join("/");
 
     let Some(host) = normalized.host_str() else {
-        unreachable!("server URL must have a host (validated at startup)")
+        return Err(DiscoveryUrlError::MissingHost(issuer.clone()));
     };
 
     let origin = format!("{}://{}", normalized.scheme(), host);
@@ -96,18 +102,25 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         ));
     }
 
-    urls.into_iter()
+    Ok(urls
+        .into_iter()
         .filter_map(|s| {
             Url::parse(&s)
                 .inspect_err(|e| trace!(url = %s, error = %e, "Failed to parse discovery URL"))
                 .ok()
         })
-        .collect()
+        .collect())
 }
 
 /// Attempts discovery from multiple URLs sequentially, returning first success
 async fn discover_jwks(client: &reqwest::Client, issuer: &Url, timeout: Duration) -> Option<Jwks> {
-    let urls = build_discovery_urls(issuer);
+    let urls = match build_discovery_urls(issuer) {
+        Ok(urls) => urls,
+        Err(e) => {
+            warn!(error = %e, "Failed to build discovery URLs");
+            return None;
+        }
+    };
 
     for url in &urls {
         let result = tokio::time::timeout(
@@ -240,6 +253,7 @@ mod tests {
     fn test_build_discovery_urls(#[case] issuer: &str, #[case] expected: Vec<&str>) {
         let issuer_url = Url::parse(issuer).expect("valid test URL");
         let urls: Vec<String> = build_discovery_urls(&issuer_url)
+            .expect("should build discovery URLs")
             .iter()
             .map(|u| u.as_str().to_string())
             .collect();
@@ -249,13 +263,25 @@ mod tests {
     #[test]
     fn double_slashes_in_path_are_collapsed() {
         let issuer = Url::parse("https://auth.example.com//tenant1//").expect("valid URL");
-        let urls = build_discovery_urls(&issuer);
+        let urls = build_discovery_urls(&issuer).expect("should build discovery URLs");
 
         // Double slashes should be normalized to single path segment
         assert_eq!(
             urls.first().map(|u| u.as_str()),
             Some("https://auth.example.com/.well-known/oauth-authorization-server/tenant1")
         );
+    }
+
+    #[test]
+    fn build_discovery_urls_returns_error_for_missing_host() {
+        // A file:// URL typically has no host
+        let issuer = Url::parse("file:///path/to/something").expect("valid URL");
+        let result = build_discovery_urls(&issuer);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, DiscoveryUrlError::MissingHost(_)));
+        assert!(err.to_string().contains("issuer URL has no host"));
     }
 
     // Example RSA public key components from RFC 7517 Appendix A.1
