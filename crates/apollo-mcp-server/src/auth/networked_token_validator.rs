@@ -52,10 +52,8 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .collect::<Vec<_>>()
         .join("/");
 
-    let Some(host) = normalized.host_str() else {
-        trace!(issuer = %issuer, "Issuer URL has no host, cannot build discovery URLs");
-        return vec![];
-    };
+    // SAFETY: URLs are validated at startup in Config::enable_middleware
+    let host = normalized.host_str().expect("server URL must have a host (validated at startup)");
 
     let origin = format!("{}://{}", normalized.scheme(), host);
 
@@ -252,13 +250,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn url_without_host_returns_empty() {
-        // file:// URLs don't have a host
-        let issuer = Url::parse("file:///some/path").expect("valid URL");
-        let urls = build_discovery_urls(&issuer);
-        assert!(urls.is_empty());
-    }
 
     // Example RSA public key components from RFC 7517 Appendix A.1
     // These are well-known test vectors - public key only, no private material

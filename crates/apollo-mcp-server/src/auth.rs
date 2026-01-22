@@ -42,6 +42,12 @@ pub enum TlsConfigError {
     CertificateParse { path: PathBuf },
     #[error("Failed to build HTTP client: {0}")]
     ClientBuild(#[from] reqwest::Error),
+    #[error("Invalid auth server URL at index {index} ({url}): {reason}")]
+    InvalidServerUrl {
+        index: usize,
+        url: String,
+        reason: String,
+    },
 }
 
 impl TlsConfig {
@@ -140,6 +146,17 @@ impl Config {
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
     pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
+        // Validate server URLs have hosts (fail fast on config errors)
+        for (i, server) in self.servers.iter().enumerate() {
+            if server.host_str().is_none() {
+                return Err(TlsConfigError::InvalidServerUrl {
+                    index: i,
+                    url: server.to_string(),
+                    reason: "URL has no host".to_string(),
+                });
+            }
+        }
+
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -450,6 +467,22 @@ mod tests {
         use super::*;
         use std::io::Write;
         use tempfile::NamedTempFile;
+
+        #[test]
+        fn rejects_server_url_without_host() {
+            let mut config = test_config();
+            // file:// URLs have no host
+            config.servers = vec![Url::parse("file:///some/path").unwrap()];
+
+            let router = Router::new();
+            let result = config.enable_middleware(router);
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::InvalidServerUrl { index: 0, .. }
+            ));
+        }
 
         #[test]
         fn default_config_builds_client() {
