@@ -9,7 +9,7 @@ use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
-use rmcp::model::{CallToolResult, Content, ErrorCode};
+use rmcp::model::{CallToolResult, Content};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -107,29 +107,23 @@ pub trait Executable {
             }
         }
 
-        let result = GRAPHQL_CLIENT
+        let response = match GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
             .headers(self.headers(request.headers))
             .body(Value::Object(request_body).to_string())
             .send()
             .await
-            .map_err(|reqwest_error| {
-                McpError::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to send GraphQL request: {reqwest_error}"),
-                    None,
-                )
-            })?
-            .json::<Value>()
-            .await
-            .map_err(|reqwest_error| {
-                McpError::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to read GraphQL response body: {reqwest_error}"),
-                    None,
-                )
-            })
-            .map(|json| CallToolResult {
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Failed to send GraphQL request: {e}"
+                ))]));
+            }
+        };
+
+        let result = match response.json::<Value>().await {
+            Ok(json) => Ok(CallToolResult {
                 content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
                 is_error: Some(
                     json.get("errors")
@@ -142,7 +136,11 @@ pub trait Executable {
                 ),
                 meta: None,
                 structured_content: Some(json),
-            });
+            }),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                "Failed to read GraphQL response body: {e}"
+            ))])),
+        };
 
         // Record response metrics
         let attributes = vec![
@@ -185,6 +183,7 @@ mod test {
     use opentelemetry_sdk::metrics::{
         InMemoryMetricExporter, MeterProviderBuilder, PeriodicReader,
     };
+    use rmcp::model::RawContent;
     use serde_json::{Map, Value, json};
     use url::Url;
 
@@ -329,7 +328,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn results_in_mcp_error_when_gql_server_cannot_be_reached() {
+    async fn returns_tool_error_when_gql_server_cannot_be_reached() {
         // given
         let url = Url::parse("http://localhost/no-server").unwrap();
         let mock_request = Request {
@@ -340,25 +339,20 @@ mod test {
 
         // when
         let test_executable = TestExecutableWithPersistedQueryId {};
-        let result = test_executable.execute(mock_request).await;
+        let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
-        match result {
-            Err(e) => {
-                assert!(
-                    e.message
-                        .to_string()
-                        .starts_with("Failed to send GraphQL request")
-                );
-            }
-            _ => {
-                panic!("Expected MCP error");
-            }
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        if let RawContent::Text(text) = &content.raw {
+            assert!(text.text.starts_with("Failed to send GraphQL request"));
+        } else {
+            panic!("Expected text content");
         }
     }
 
     #[tokio::test]
-    async fn results_in_mcp_error_when_json_body_cannot_be_parsed() {
+    async fn returns_tool_error_when_json_body_cannot_be_parsed() {
         // given
         let mut server = mockito::Server::new_async().await;
         let url = Url::parse(server.url().as_str()).unwrap();
@@ -379,20 +373,18 @@ mod test {
 
         // when
         let test_executable = TestExecutableWithPersistedQueryId {};
-        let result = test_executable.execute(mock_request).await;
+        let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
-        match result {
-            Err(e) => {
-                assert!(
-                    e.message
-                        .to_string()
-                        .starts_with("Failed to read GraphQL response body")
-                );
-            }
-            _ => {
-                panic!("Expected MCP error");
-            }
+        assert_eq!(result.is_error, Some(true));
+        let content = &result.content[0];
+        if let RawContent::Text(text) = &content.raw {
+            assert!(
+                text.text
+                    .starts_with("Failed to read GraphQL response body")
+            );
+        } else {
+            panic!("Expected text content");
         }
     }
 
