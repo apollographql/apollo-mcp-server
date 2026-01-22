@@ -22,12 +22,9 @@ pub enum CollectionError {
 }
 
 impl CollectionError {
-    /// Returns `true` if the error is permanent and sends it to the collection stream.
-    /// Returns `false` if the error is transient (will be retried).
-    #[allow(clippy::wrong_self_convention)] // Intentionally consumes self to send over channel
-    pub(super) async fn is_permanent(self, sender: &Sender<CollectionEvent>) -> bool {
-        // Check if the underlying reqwest error is transient
-        if matches!(&self, CollectionError::Request(req_err) if
+    /// Returns `true` if the error is transient (will be retried), `false` otherwise.
+    pub(super) fn is_transient(&self) -> bool {
+        if matches!(self, CollectionError::Request(req_err) if
             req_err.is_connect()
             || req_err.is_timeout()
             || req_err.is_request()
@@ -38,15 +35,19 @@ impl CollectionError {
             tracing::warn!(
                 "Failed to fetch operation collection with transient error, will retry: {self}"
             );
-            false
+            true
         } else {
             tracing::error!("Failed to fetch operation collection with permanent error: {self}");
-            if let Err(e) = sender.send(CollectionEvent::CollectionError(self)).await {
-                tracing::debug!(
-                    "Failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-                );
-            }
-            true
+            false
+        }
+    }
+
+    /// Sends the error to the collection stream.
+    pub(super) async fn send_to_stream(self, sender: &Sender<CollectionEvent>) {
+        if let Err(e) = sender.send(CollectionEvent::CollectionError(self)).await {
+            tracing::debug!(
+                "Failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+            );
         }
     }
 }
@@ -58,40 +59,34 @@ mod tests {
     use wiremock::matchers::any;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[tokio::test]
-    async fn test_response_error_is_permanent() {
-        let (sender, _receiver) = channel(1);
+    #[test]
+    fn test_response_error_is_not_transient() {
         let error = CollectionError::Response("permission denied".to_string());
-        assert!(error.is_permanent(&sender).await);
+        assert!(!error.is_transient());
     }
 
-    #[tokio::test]
-    async fn test_header_name_error_is_permanent() {
-        let (sender, _receiver) = channel(1);
+    #[test]
+    fn test_header_name_error_is_not_transient() {
         let invalid_name = reqwest::header::HeaderName::from_bytes(b"\0invalid").unwrap_err();
         let error = CollectionError::HeaderName(invalid_name);
-        assert!(error.is_permanent(&sender).await);
+        assert!(!error.is_transient());
     }
 
-    #[tokio::test]
-    async fn test_header_value_error_is_permanent() {
-        let (sender, _receiver) = channel(1);
+    #[test]
+    fn test_header_value_error_is_not_transient() {
         let invalid_value = reqwest::header::HeaderValue::from_bytes(b"\0invalid").unwrap_err();
         let error = CollectionError::HeaderValue(invalid_value);
-        assert!(error.is_permanent(&sender).await);
+        assert!(!error.is_transient());
     }
 
-    #[tokio::test]
-    async fn test_invalid_variables_error_is_permanent() {
-        let (sender, _receiver) = channel(1);
+    #[test]
+    fn test_invalid_variables_error_is_not_transient() {
         let error = CollectionError::InvalidVariables("bad json".to_string());
-        assert!(error.is_permanent(&sender).await);
+        assert!(!error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_client_error_404_is_permanent() {
-        let (sender, _receiver) = channel(1);
-
+    async fn test_client_error_404_is_not_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(404))
@@ -102,21 +97,11 @@ mod tests {
         let reqwest_error = result.error_for_status().unwrap_err();
 
         let error = CollectionError::Request(reqwest_error);
-        assert!(error.is_permanent(&sender).await);
+        assert!(!error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_permanent_error_with_closed_channel() {
-        let (sender, receiver) = channel(1);
-        drop(receiver);
-
-        let error = CollectionError::Response("permission denied".to_string());
-        assert!(error.is_permanent(&sender).await);
-    }
-
-    #[tokio::test]
-    async fn test_connection_error_is_not_permanent() {
-        let (sender, _receiver) = channel(1);
+    async fn test_connection_error_is_transient() {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(1))
             .build()
@@ -126,13 +111,11 @@ mod tests {
         let reqwest_error = result.unwrap_err();
 
         let error = CollectionError::Request(reqwest_error);
-        assert!(!error.is_permanent(&sender).await);
+        assert!(error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_timeout_error_is_not_permanent() {
-        let (sender, _receiver) = channel(1);
-
+    async fn test_timeout_error_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(10)))
@@ -149,13 +132,11 @@ mod tests {
         assert!(reqwest_error.is_timeout());
 
         let error = CollectionError::Request(reqwest_error);
-        assert!(!error.is_permanent(&sender).await);
+        assert!(error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_server_error_is_not_permanent() {
-        let (sender, _receiver) = channel(1);
-
+    async fn test_server_error_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(500))
@@ -166,13 +147,11 @@ mod tests {
         let reqwest_error = result.error_for_status().unwrap_err();
 
         let error = CollectionError::Request(reqwest_error);
-        assert!(!error.is_permanent(&sender).await);
+        assert!(error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_rate_limit_429_is_not_permanent() {
-        let (sender, _receiver) = channel(1);
-
+    async fn test_rate_limit_429_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(429))
@@ -183,6 +162,16 @@ mod tests {
         let reqwest_error = result.error_for_status().unwrap_err();
 
         let error = CollectionError::Request(reqwest_error);
-        assert!(!error.is_permanent(&sender).await);
+        assert!(error.is_transient());
+    }
+
+    #[tokio::test]
+    async fn test_send_to_stream_with_closed_channel() {
+        let (sender, receiver) = channel(1);
+        drop(receiver);
+
+        let error = CollectionError::Response("permission denied".to_string());
+        // Should not panic even if channel is closed
+        error.send_to_stream(&sender).await;
     }
 }

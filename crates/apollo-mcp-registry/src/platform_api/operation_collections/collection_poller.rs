@@ -327,7 +327,8 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if err.is_permanent(&sender).await {
+                    if !err.is_transient() {
+                        err.send_to_stream(&sender).await;
                         return;
                     }
                 }
@@ -364,7 +365,8 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if err.is_permanent(&sender).await {
+                        if !err.is_transient() {
+                            err.send_to_stream(&sender).await;
                             break;
                         }
                     }
@@ -449,7 +451,8 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if err.is_permanent(&sender).await {
+                    if !err.is_transient() {
+                        err.send_to_stream(&sender).await;
                         return;
                     }
                 }
@@ -486,7 +489,8 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if err.is_permanent(&sender).await {
+                        if !err.is_transient() {
+                            err.send_to_stream(&sender).await;
                             break;
                         }
                     }
