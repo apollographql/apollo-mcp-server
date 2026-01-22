@@ -57,3 +57,27 @@ If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP S
 Skipping audience validation reduces security. Only use `allow_any_audience: true` when you trust all tokens issued by your configured OAuth servers, regardless of their intended audience.
 
 </Caution>
+
+## Performance considerations
+
+### Discovery timeout
+
+Authorization server metadata is discovered using OAuth 2.0 Authorization Server Metadata (RFC 8414) and OpenID Connect Discovery. The MCP Server tries multiple discovery URL patterns in sequence until one succeeds.
+
+The `discovery_timeout` setting controls how long to wait for each discovery URL attempt. The default is 5 seconds per URL.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    discovery_timeout: 10s  # Increase timeout for slower networks (default: 5s)
+```
+
+**Considerations:**
+- Discovery happens once at startup when validating the first JWT token
+- With multiple fallback URLs (RFC 8414, OIDC Discovery), the cumulative timeout can be 10-15 seconds if all URLs fail
+- Increase the timeout if your OAuth server is on a slow network or responds slowly
+- Decrease the timeout in high-performance environments where fast failure is preferred
+- Discovery results are cached by the underlying JWKS library, so subsequent token validations are fast

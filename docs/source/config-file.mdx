@@ -242,17 +242,18 @@ For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.
 
 These fields are under the top-level `transport` key, nested under the `auth` key. Learn more about [authorization and authentication](/apollo-mcp-server/auth).
 
-| Option                            | Type           | Default | Description                                                                                        |
-| :-------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------- |
-| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)           |
-| `audiences`                       | `List<string>` | `[]`    | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)   |
-| `allow_any_audience`              | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                              |
-| `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally. |
-| `resource_documentation`          | `string`       |         | Optional link to more documentation relating to this MCP server                                    |
-| `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                     |
-| `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                  |
-| `tls.ca_cert`                     | `string`       |         | Path to a CA certificate to trust (PEM format).                                                    |
-| `tls.danger_accept_invalid_certs` | `bool`         | `false` | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.     |
+| Option                            | Type           | Default | Description                                                                                                                                       |
+| :-------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support OIDC metadata discovery endpoint)                                                          |
+| `audiences`                       | `List<string>` | `[]`    | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                  |
+| `allow_any_audience`              | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                                                                             |
+| `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                |
+| `resource_documentation`          | `string`       |         | Optional link to more documentation relating to this MCP server                                                                                   |
+| `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                                                                    |
+| `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                                                                 |
+| `discovery_timeout`               | `Duration`     | `5s`    | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                       |
+| `tls.ca_cert`                     | `string`       |         | Path to a CA certificate to trust (PEM format).                                                                                                   |
+| `tls.danger_accept_invalid_certs` | `bool`         | `false` | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.                                                    |
 
 Below is an example configuration using `StreamableHTTP` transport with authentication:
 
@@ -288,6 +289,9 @@ transport:
       - read
       - mcp
       - profile
+
+    # Timeout for authorization server metadata discovery (default: 5s)
+    discovery_timeout: 5s
 
     # Optional TLS configuration for connecting to OAuth servers
     tls:
