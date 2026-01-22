@@ -72,6 +72,7 @@ jobs:
           claude_args: >-
             --max-turns 10
             --model ${{ steps.model_selection.outputs.model }}
+            --allowedTools "Bash(gh:*),Bash(git diff*),Bash(git log*),Bash(git show*),Read,Grep,Glob"
 
       - name: Output Claude execution log
         if: always()
