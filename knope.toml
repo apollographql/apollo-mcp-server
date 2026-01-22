@@ -45,6 +45,11 @@ template = "Release $version"
 [workflows.steps.body]
 template = "This PR was created by Knope. Merging it will create a new release\n\n$changelog"
 
+[[workflows.steps]]
+type = "Command"
+command = "gh pr edit --add-label release"
+shell = true
+
 [[workflows]]
 name = "release"
 
