@@ -90,6 +90,10 @@ pub enum TraceTelemetryExporter {
 pub struct MetricsExporters {
     otlp: Option<MetricTelemetryExporter>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
+    /// Interval at which metrics are exported.
+    ///
+    /// Accepts human-readable durations (e.g., "30s", "1m", "5m").
+    /// Defaults to 30 seconds when not specified.
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
     #[serde(serialize_with = "humantime_serde::serialize")]
     #[schemars(with = "Option<String>")]
