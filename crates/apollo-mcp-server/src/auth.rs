@@ -43,12 +43,8 @@ pub enum TlsConfigError {
     CertificateParse { path: PathBuf },
     #[error("Failed to build HTTP client: {0}")]
     ClientBuild(#[from] reqwest::Error),
-    #[error("Invalid auth server URL at index {index} ({url}): {reason}")]
-    InvalidServerUrl {
-        index: usize,
-        url: String,
-        reason: String,
-    },
+    #[error("Auth server URL at index {index} ({url}) has no host")]
+    ServerUrlMissingHost { index: usize, url: String },
 }
 
 impl TlsConfig {
@@ -159,10 +155,9 @@ impl Config {
         // Validate server URLs have hosts (fail fast on config errors)
         for (i, server) in self.servers.iter().enumerate() {
             if server.host_str().is_none() {
-                return Err(TlsConfigError::InvalidServerUrl {
+                return Err(TlsConfigError::ServerUrlMissingHost {
                     index: i,
                     url: server.to_string(),
-                    reason: "URL has no host".to_string(),
                 });
             }
         }
@@ -496,7 +491,7 @@ mod tests {
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),
-                TlsConfigError::InvalidServerUrl { index: 0, .. }
+                TlsConfigError::ServerUrlMissingHost { index: 0, .. }
             ));
         }
 
