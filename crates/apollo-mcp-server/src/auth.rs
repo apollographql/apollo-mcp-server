@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use axum::{
     Json, Router,
@@ -115,6 +116,15 @@ pub struct Config {
     /// TLS configuration for connecting to OAuth servers
     #[serde(default)]
     pub tls: TlsConfig,
+
+    /// Timeout for OIDC discovery requests.
+    ///
+    /// Accepts human-readable durations (e.g., "5s", "10s", "30s").
+    /// Defaults to 5 seconds when not specified.
+    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
+    #[serde(serialize_with = "humantime_serde::serialize")]
+    #[schemars(with = "Option<String>")]
+    pub discovery_timeout: Option<Duration>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -245,11 +255,16 @@ async fn oauth_validate(
         )
     };
 
+    let discovery_timeout = auth_config
+        .discovery_timeout
+        .unwrap_or(Duration::from_secs(5));
+
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
         &auth_config.servers,
         &auth_state.client,
+        discovery_timeout,
     );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -317,6 +332,7 @@ mod tests {
             scopes: vec!["read".to_string()],
             disable_auth_token_passthrough: false,
             tls: TlsConfig::default(),
+            discovery_timeout: None,
         }
     }
 
@@ -577,6 +593,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 result.unwrap_err(),
                 TlsConfigError::CertificateParse { .. }
             ));
+        }
+
+        #[test]
+        fn yaml_deserialization_with_discovery_timeout() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              discovery_timeout: 10s
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.discovery_timeout, Some(Duration::from_secs(10)));
+        }
+
+        #[test]
+        fn yaml_deserialization_without_discovery_timeout_defaults_to_none() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.discovery_timeout, None);
         }
     }
 }

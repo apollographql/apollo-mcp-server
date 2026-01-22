@@ -13,6 +13,7 @@ pub(super) struct NetworkedTokenValidator<'a> {
     allow_any_audience: bool,
     upstreams: &'a Vec<Url>,
     client: &'a reqwest::Client,
+    discovery_timeout: Duration,
 }
 
 impl<'a> NetworkedTokenValidator<'a> {
@@ -21,12 +22,14 @@ impl<'a> NetworkedTokenValidator<'a> {
         allow_any_audience: bool,
         upstreams: &'a Vec<Url>,
         client: &'a reqwest::Client,
+        discovery_timeout: Duration,
     ) -> Self {
         Self {
             audiences,
             allow_any_audience,
             upstreams,
             client,
+            discovery_timeout,
         }
     }
 }
@@ -98,15 +101,17 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
 }
 
 /// Attempts discovery from multiple URLs sequentially, returning first success
-async fn discover_jwks(client: &reqwest::Client, issuer: &Url) -> Option<Jwks> {
+async fn discover_jwks(
+    client: &reqwest::Client,
+    issuer: &Url,
+    timeout: Duration,
+) -> Option<Jwks> {
     let urls = build_discovery_urls(issuer);
 
     for url in &urls {
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            Jwks::from_oidc_url_with_client(client, url.as_str()),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(timeout, Jwks::from_oidc_url_with_client(client, url.as_str()))
+                .await;
 
         match result {
             Ok(Ok(jwks)) => {
@@ -117,7 +122,7 @@ async fn discover_jwks(client: &reqwest::Client, issuer: &Url) -> Option<Jwks> {
                 trace!(url = %url, error = %e, "Discovery failed, trying next URL");
             }
             Err(_) => {
-                trace!(url = %url, "Discovery timed out after 5s, trying next URL");
+                trace!(url = %url, timeout_secs = ?timeout.as_secs(), "Discovery timed out, trying next URL");
             }
         }
     }
@@ -140,7 +145,7 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
     }
 
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
-        let jwks = discover_jwks(self.client, server).await?;
+        let jwks = discover_jwks(self.client, server, self.discovery_timeout).await?;
         jwks.keys.get(key_id).cloned()
     }
 }
@@ -293,7 +298,7 @@ mod tests {
         let issuer = Url::parse(&server.url()).expect("valid URL");
 
         // when
-        let result = discover_jwks(&client, &issuer).await;
+        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
 
         // then
         discovery_mock.assert();
@@ -347,7 +352,7 @@ mod tests {
         let issuer = Url::parse(&server.url()).expect("valid URL");
 
         // when
-        let result = discover_jwks(&client, &issuer).await;
+        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
 
         // then
         fail_mock.assert();
@@ -380,7 +385,7 @@ mod tests {
         let issuer = Url::parse(&server.url()).expect("valid URL");
 
         // when
-        let result = discover_jwks(&client, &issuer).await;
+        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
 
         // then
         fail_mock1.assert();
