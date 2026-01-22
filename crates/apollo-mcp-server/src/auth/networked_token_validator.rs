@@ -262,7 +262,8 @@ mod tests {
 
     #[test]
     fn double_slashes_in_path_are_collapsed() {
-        let issuer = Url::parse("https://auth.example.com//tenant1//").expect("valid URL");
+        let issuer = Url::parse("https://auth.example.com//tenant1//")
+            .expect("test issuer URL should be valid");
         let urls = build_discovery_urls(&issuer).expect("should build discovery URLs");
 
         // Double slashes should be normalized to single path segment
@@ -275,7 +276,8 @@ mod tests {
     #[test]
     fn build_discovery_urls_returns_error_for_missing_host() {
         // A file:// URL typically has no host
-        let issuer = Url::parse("file:///path/to/something").expect("valid URL");
+        let issuer =
+            Url::parse("file:///path/to/something").expect("test file URL should be valid");
         let result = build_discovery_urls(&issuer);
 
         assert!(result.is_err());
@@ -323,7 +325,7 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let issuer = Url::parse(&server.url()).expect("valid URL");
+        let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
         // when
         let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
@@ -331,7 +333,7 @@ mod tests {
         // then
         discovery_mock.assert();
         jwks_mock.assert();
-        let jwks = result.expect("Expected successful discovery");
+        let jwks = result.expect("discover_jwks should return Some when first URL succeeds");
         assert!(
             jwks.keys.contains_key("test-key"),
             "Expected test-key in discovered JWKS"
@@ -380,7 +382,7 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let issuer = Url::parse(&server.url()).expect("valid URL");
+        let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
         // when
         let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
@@ -389,7 +391,7 @@ mod tests {
         fail_mock.assert();
         discovery_mock.assert();
         jwks_mock.assert();
-        let jwks = result.expect("Expected fallback to second URL");
+        let jwks = result.expect("discover_jwks should fallback to OIDC when RFC 8414 returns 404");
         assert!(
             jwks.keys.contains_key("fallback-key"),
             "Expected fallback-key in discovered JWKS"
@@ -416,7 +418,7 @@ mod tests {
             .await;
 
         let client = reqwest::Client::new();
-        let issuer = Url::parse(&server.url()).expect("valid URL");
+        let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
         // when
         let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
