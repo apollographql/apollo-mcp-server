@@ -56,7 +56,9 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .join("/");
 
     // SAFETY: URLs are validated at startup in Config::enable_middleware
-    let host = normalized.host_str().expect("server URL must have a host (validated at startup)");
+    let Some(host) = normalized.host_str() else {
+        unreachable!("server URL must have a host (validated at startup)")
+    };
 
     let origin = format!("{}://{}", normalized.scheme(), host);
 
@@ -101,17 +103,15 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
 }
 
 /// Attempts discovery from multiple URLs sequentially, returning first success
-async fn discover_jwks(
-    client: &reqwest::Client,
-    issuer: &Url,
-    timeout: Duration,
-) -> Option<Jwks> {
+async fn discover_jwks(client: &reqwest::Client, issuer: &Url, timeout: Duration) -> Option<Jwks> {
     let urls = build_discovery_urls(issuer);
 
     for url in &urls {
-        let result =
-            tokio::time::timeout(timeout, Jwks::from_oidc_url_with_client(client, url.as_str()))
-                .await;
+        let result = tokio::time::timeout(
+            timeout,
+            Jwks::from_oidc_url_with_client(client, url.as_str()),
+        )
+        .await;
 
         match result {
             Ok(Ok(jwks)) => {
@@ -254,7 +254,6 @@ mod tests {
             Some("https://auth.example.com/.well-known/oauth-authorization-server/tenant1")
         );
     }
-
 
     // Example RSA public key components from RFC 7517 Appendix A.1
     // These are well-known test vectors - public key only, no private material
