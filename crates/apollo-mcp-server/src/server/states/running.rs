@@ -524,11 +524,11 @@ impl ServerHandler for Running {
 
         ServerInfo {
             server_info: Implementation {
-                name: self.server_info.name(),
+                name: self.server_info.name().to_string(),
                 icons: None,
-                title: self.server_info.title(),
-                version: self.server_info.version(),
-                website_url: self.server_info.website_url(),
+                title: self.server_info.title().map(|s| s.to_string()),
+                version: self.server_info.version().to_string(),
+                website_url: self.server_info.website_url().map(|s| s.to_string()),
             },
             capabilities,
             ..Default::default()
@@ -1289,7 +1289,7 @@ mod tests {
     }
 
     #[test]
-    fn get_info_returns_default_server_metadata() {
+    fn get_info_should_use_default_metadata_when_config_is_empty() {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()
@@ -1335,7 +1335,7 @@ mod tests {
     }
 
     #[test]
-    fn get_info_returns_custom_server_metadata() {
+    fn get_info_should_use_custom_metadata_when_config_provided() {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
             .unwrap()
             .validate()

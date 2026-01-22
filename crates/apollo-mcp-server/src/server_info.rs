@@ -1,7 +1,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-/// Server metadata configuration
+/// Server metadata configuration returned in the MCP initialize response.
+/// All fields are optional and fall back to defaults if not provided.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ServerInfoConfig {
@@ -19,27 +20,21 @@ pub struct ServerInfoConfig {
 }
 
 impl ServerInfoConfig {
-    pub fn name(&self) -> String {
-        self.name
-            .clone()
-            .unwrap_or_else(|| "Apollo MCP Server".to_string())
+    pub fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or("Apollo MCP Server")
     }
 
-    pub fn version(&self) -> String {
-        self.version
-            .clone()
-            .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+    pub fn version(&self) -> &str {
+        self.version.as_deref().unwrap_or(env!("CARGO_PKG_VERSION"))
     }
 
-    pub fn title(&self) -> Option<String> {
-        self.title
-            .clone()
-            .or_else(|| Some("Apollo MCP Server".to_string()))
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref().or(Some("Apollo MCP Server"))
     }
 
-    pub fn website_url(&self) -> Option<String> {
+    pub fn website_url(&self) -> Option<&str> {
         self.website_url
-            .clone()
-            .or_else(|| Some("https://www.apollographql.com/docs/apollo-mcp-server".to_string()))
+            .as_deref()
+            .or(Some("https://www.apollographql.com/docs/apollo-mcp-server"))
     }
 }
