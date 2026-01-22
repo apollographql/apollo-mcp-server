@@ -42,6 +42,10 @@ impl<'a> NetworkedTokenValidator<'a> {
 /// # URL Normalization
 /// Query strings and fragments are stripped per RFC 8414 Section 3.1.
 /// The spec does not define behavior for these, and most implementations strip them.
+///
+/// # Panics
+/// Panics if the issuer URL lacks a host. This should never occur in production
+/// as URLs are validated at startup in `Config::enable_middleware`.
 fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
     let mut normalized = issuer.clone();
     normalized.set_query(None);
@@ -55,7 +59,6 @@ fn build_discovery_urls(issuer: &Url) -> Vec<Url> {
         .collect::<Vec<_>>()
         .join("/");
 
-    // SAFETY: URLs are validated at startup in Config::enable_middleware
     let Some(host) = normalized.host_str() else {
         unreachable!("server URL must have a host (validated at startup)")
     };
@@ -262,7 +265,7 @@ mod tests {
     const TEST_RSA_E: &str = "AQAB";
 
     #[tokio::test]
-    async fn discovers_jwks_from_first_url_on_success() {
+    async fn discover_jwks_should_return_jwks_when_first_url_succeeds() {
         // given
         let mut server = mockito::Server::new_async().await;
         let jwks_json = format!(
@@ -302,12 +305,15 @@ mod tests {
         // then
         discovery_mock.assert();
         jwks_mock.assert();
-        assert!(result.is_some(), "Expected successful discovery");
-        assert!(result.unwrap().keys.contains_key("test-key"));
+        let jwks = result.expect("Expected successful discovery");
+        assert!(
+            jwks.keys.contains_key("test-key"),
+            "Expected test-key in discovered JWKS"
+        );
     }
 
     #[tokio::test]
-    async fn falls_back_to_oidc_discovery_when_rfc8414_fails() {
+    async fn discover_jwks_should_fallback_to_oidc_when_rfc8414_returns_404() {
         // given
         let mut server = mockito::Server::new_async().await;
         let jwks_json = format!(
@@ -357,12 +363,15 @@ mod tests {
         fail_mock.assert();
         discovery_mock.assert();
         jwks_mock.assert();
-        assert!(result.is_some(), "Expected fallback to second URL");
-        assert!(result.unwrap().keys.contains_key("fallback-key"));
+        let jwks = result.expect("Expected fallback to second URL");
+        assert!(
+            jwks.keys.contains_key("fallback-key"),
+            "Expected fallback-key in discovered JWKS"
+        );
     }
 
     #[tokio::test]
-    async fn returns_none_when_all_discovery_urls_fail() {
+    async fn discover_jwks_should_return_none_when_all_urls_fail() {
         // given
         let mut server = mockito::Server::new_async().await;
 
