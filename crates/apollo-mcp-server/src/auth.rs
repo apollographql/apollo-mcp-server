@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use axum::{
     Json, Router,
@@ -42,6 +43,8 @@ pub enum TlsConfigError {
     CertificateParse { path: PathBuf },
     #[error("Failed to build HTTP client: {0}")]
     ClientBuild(#[from] reqwest::Error),
+    #[error("Auth server URL at index {index} ({url}) has no host")]
+    ServerUrlMissingHost { index: usize, url: String },
 }
 
 impl TlsConfig {
@@ -109,6 +112,15 @@ pub struct Config {
     /// TLS configuration for connecting to OAuth servers
     #[serde(default)]
     pub tls: TlsConfig,
+
+    /// Timeout for OIDC discovery requests.
+    ///
+    /// Accepts human-readable durations (e.g., "5s", "10s", "30s").
+    /// Defaults to 5 seconds when not specified.
+    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
+    #[serde(serialize_with = "humantime_serde::serialize")]
+    #[schemars(with = "Option<String>")]
+    pub discovery_timeout: Option<Duration>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -140,6 +152,16 @@ impl Config {
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
     pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
+        // Validate server URLs have hosts (fail fast on config errors)
+        for (i, server) in self.servers.iter().enumerate() {
+            if server.host_str().is_none() {
+                return Err(TlsConfigError::ServerUrlMissingHost {
+                    index: i,
+                    url: server.to_string(),
+                });
+            }
+        }
+
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -228,11 +250,16 @@ async fn oauth_validate(
         )
     };
 
+    let discovery_timeout = auth_config
+        .discovery_timeout
+        .unwrap_or(Duration::from_secs(5));
+
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
         &auth_config.servers,
         &auth_state.client,
+        discovery_timeout,
     );
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -300,6 +327,7 @@ mod tests {
             scopes: vec!["read".to_string()],
             disable_auth_token_passthrough: false,
             tls: TlsConfig::default(),
+            discovery_timeout: None,
         }
     }
 
@@ -452,6 +480,22 @@ mod tests {
         use tempfile::NamedTempFile;
 
         #[test]
+        fn rejects_server_url_without_host() {
+            let mut config = test_config();
+            // file:// URLs have no host
+            config.servers = vec![Url::parse("file:///some/path").unwrap()];
+
+            let router = Router::new();
+            let result = config.enable_middleware(router);
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::ServerUrlMissingHost { index: 0, .. }
+            ));
+        }
+
+        #[test]
         fn default_config_builds_client() {
             let config = TlsConfig::default();
             let client = config.build_client();
@@ -544,6 +588,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 result.unwrap_err(),
                 TlsConfigError::CertificateParse { .. }
             ));
+        }
+
+        #[test]
+        fn yaml_deserialization_with_discovery_timeout() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              discovery_timeout: 10s
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.discovery_timeout, Some(Duration::from_secs(10)));
+        }
+
+        #[test]
+        fn yaml_deserialization_without_discovery_timeout_defaults_to_none() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.discovery_timeout, None);
         }
     }
 }
