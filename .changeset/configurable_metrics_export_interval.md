@@ -10,5 +10,5 @@ You can now customize how frequently metrics are exported to your observability 
 telemetry:
   exporters:
     metrics:
-      export_interval: 1m # Supports: 30s, 1m, 2h, etc.
+      export_interval: 1m # Supports human-readable values such as: 30s, 1m, 1h, 1d
 ```
