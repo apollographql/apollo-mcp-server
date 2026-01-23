@@ -8,11 +8,11 @@
     "url": "https://github.com/apollographql/apollo-mcp-server",
     "source": "github"
   },
-  "version": "1.5.0",
+  "version": "1.6.0",
   "packages": [
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/apollographql/apollo-mcp-server:v1.5.0",
+      "identifier": "ghcr.io/apollographql/apollo-mcp-server:v1.6.0",
       "transport": {
         "type": "stdio"
       },
