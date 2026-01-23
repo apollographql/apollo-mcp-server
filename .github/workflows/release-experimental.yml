@@ -1,4 +1,4 @@
-name: Build Experimental Release Binaries
+name: Release Experimental Binaries
 on:
   workflow_dispatch:
     inputs:
