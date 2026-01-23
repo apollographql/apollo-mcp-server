@@ -148,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
         .cors(config.cors)
+        .server_info(config.server_info)
         .build()
         .start()
         .await?)

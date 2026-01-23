@@ -193,6 +193,12 @@ mod test {
                         7200,
                     ),
                 },
+                server_info: ServerInfoConfig {
+                    name: None,
+                    version: None,
+                    title: None,
+                    website_url: None,
+                },
                 custom_scalars: None,
                 endpoint: Endpoint(
                     Url {

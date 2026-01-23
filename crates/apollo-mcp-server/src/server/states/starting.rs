@@ -168,6 +168,7 @@ impl Starting {
             enable_output_schema: self.config.enable_output_schema,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
+            server_info: self.config.server_info.clone(),
         };
 
         // Helper to enable auth
@@ -324,6 +325,7 @@ mod tests {
                     ..Default::default()
                 },
                 cors: Default::default(),
+                server_info: Default::default(),
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
@@ -362,6 +364,7 @@ mod tests {
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig::default(),
                 cors: Default::default(),
+                server_info: Default::default(),
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
