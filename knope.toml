@@ -2,6 +2,8 @@
 versioned_files = [
     "Cargo.toml",
     { path = "Cargo.lock", dependency = "apollo-mcp-server" },
+    { path = "Cargo.lock", dependency = "apollo-mcp-registry" },
+    { path = "Cargo.lock", dependency = "apollo-schema-index" },
     { path = "scripts/nix/install.sh", regex = "PACKAGE_VERSION=\"v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)\"" },
     { path = "scripts/windows/install.ps1", regex = "\\$package_version = 'v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)'" },
     { path = "docs/source/run.mdx", regex = "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+)(-[a-zA-Z0-9.]+)?([^\\w.]|$)" },
@@ -15,7 +17,7 @@ name = "prepare-release"
 
 [[workflows.steps]]
 type = "Command"
-command = "git switch -c release"
+command = "git switch -c prepare-release"
 
 [[workflows.steps]]
 type = "PrepareRelease"
@@ -23,21 +25,30 @@ ignore_conventional_commits = true
 
 [[workflows.steps]]
 type = "Command"
+command = "git branch -m release/$version"
+
+[[workflows.steps]]
+type = "Command"
 command = "git commit -m \"chore: prepare release $version\""
 
 [[workflows.steps]]
 type = "Command"
-command = "git push --force --set-upstream origin release"
+command = "git push --set-upstream origin release/$version"
 
 [[workflows.steps]]
 type = "CreatePullRequest"
 base = "main"
 
 [workflows.steps.title]
-template = "chore: prepare release $version"
+template = "Release $version"
 
 [workflows.steps.body]
 template = "This PR was created by Knope. Merging it will create a new release\n\n$changelog"
+
+[[workflows.steps]]
+type = "Command"
+command = "gh pr edit --add-label release"
+shell = true
 
 [[workflows]]
 name = "release"
