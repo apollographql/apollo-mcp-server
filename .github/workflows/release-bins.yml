@@ -5,6 +5,12 @@ on:
     types: [closed]
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish (e.g., 1.6.0)
+        required: true
+        type: string
   workflow_call:
     inputs:
       version:
@@ -28,7 +34,7 @@ defaults:
 jobs:
   get-version:
     # Run on PR merge (original) or workflow_call (experimental)
-    if: (github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'release') || inputs.version
+    if: (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) || inputs.version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.store-version.outputs.version }}
@@ -215,7 +221,7 @@ jobs:
 
   generate-config-schema:
     # Run on PR merge (original) or workflow_call (experimental)
-    if: (github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'release') || inputs.version
+    if: (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) || inputs.version
     runs-on: ubuntu-latest
     permissions:
       contents: write
