@@ -319,10 +319,11 @@ transport:
 
 #### Metrics
 
-| Option               | Type                   | Default                     | Description                                    |
-| :------------------- | :--------------------- | :-------------------------- | :--------------------------------------------- |
-| `otlp`               | `OTLP Metric Exporter` | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.  |
-| `omitted_attributes` | `List<String>`         |                             | List of attributes to be omitted from metrics. |
+| Option               | Type                   | Default                     | Description                                                                |
+| :------------------- | :--------------------- | :-------------------------- | :------------------------------------------------------------------------- |
+| `otlp`               | `OTLP Metric Exporter` | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.                              |
+| `omitted_attributes` | `List<String>`         |                             | List of attributes to be omitted from metrics.                             |
+| `export_interval`    | `Duration`             | `30s`                       | Interval at which metrics are exported. Supports human-readable durations (e.g. `30s`, `1m`, `1h`, `1d`). |
 
 #### OTLP Metrics Exporter
 
@@ -349,6 +350,7 @@ telemetry:
         metadata:
           key-name: some-value
           key-two: another-value
+      export_interval: 1m  # Export metrics every minute (default: 30s)
 ```
 
 For observability platforms that prefer delta temporality (such as New Relic), configure the temporality and pass your API key via metadata:
