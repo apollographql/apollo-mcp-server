@@ -4,6 +4,28 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.6.0 (2026-01-23)
+
+### Features
+
+#### Support OAuth 2.0 and OpenID Connect metadata discovery - @gocamille PR #586
+
+Authorization server metadata discovery now supports both [OAuth 2.0 Authorization Server Metadata (RFC 8414)](https://www.rfc-editor.org/rfc/rfc8414) and [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html), per [MCP Auth Spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+
+#### Return API failures as Tool Execution Errors - @DaleSeo PR #589
+
+API failures are now returned as Tool Execution Errors per [MCP spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling).
+
+#### Return input validation errors as Tool Execution Errors - @DaleSeo PR #569
+
+Input validation errors are now returned as Tool Execution Errors per [MCP spec 2025-11-25](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling).
+
+### Fixes
+
+### Update binary compatibility on older Linux distributions - @gocamille PR #578
+
+Systems without GLIBC 2.38 (e.g., Debian Bookworm) now correctly fall back to the statically-linked `musl` binary, preventing "GLIBC_2.38 not found" errors at runtime.
+
 ## 1.5.0 (2026-01-21)
 
 ### ❗ BREAKING ❗
