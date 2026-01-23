@@ -19,7 +19,7 @@ env:
 jobs:
   get-version:
     # Run on PR merge from release branch, workflow_dispatch, or workflow_call
-    if: (github.event.pull_request.merged == true && github.event.pull_request.head.ref == 'release') || inputs.version
+    if: (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) || inputs.version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.store-version.outputs.version }}
