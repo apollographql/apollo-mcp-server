@@ -319,7 +319,7 @@ transport:
 | :------------------- | :--------------------- | :-------------------------- | :------------------------------------------------------------------------- |
 | `otlp`               | `OTLP Metric Exporter` | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.                              |
 | `omitted_attributes` | `List<String>`         |                             | List of attributes to be omitted from metrics.                             |
-| `export_interval`    | `Duration`             | `30s`                       | Interval at which metrics are exported. Supports human-readable values such as `30s`, `1m`, `2h`. |
+| `export_interval`    | `Duration`             | `30s`                       | Interval at which metrics are exported. Supports human-readable durations (e.g. `30s`, `1m`, `1h`, `1d`). |
 
 #### OTLP Metrics Exporter
 
