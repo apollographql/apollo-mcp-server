@@ -41,7 +41,12 @@ jobs:
         id: store-version
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+            VERSION="${{ inputs.version }}"
+            # Automatically prepend 'v' if missing
+            if [[ "$VERSION" != v* ]]; then
+              VERSION="v$VERSION"
+            fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
           else
             echo "version=v$(knope get-version)" >> $GITHUB_OUTPUT
           fi
