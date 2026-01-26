@@ -41,20 +41,28 @@ jobs:
         id: store-version
         run: |
           if [ -n "${{ inputs.version }}" ]; then
-            VERSION="${{ inputs.version }}"
-            # Automatically prepend 'v' if missing
-            if [[ "$VERSION" != v* ]]; then
-              VERSION="v$VERSION"
-            fi
-            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "version=v${{ inputs.version }}" >> $GITHUB_OUTPUT
           else
             echo "version=v$(knope get-version)" >> $GITHUB_OUTPUT
           fi
-
+  validate-version:
+    name: Validate version format
+    runs-on: ubuntu-24.04
+    if: ${{ inputs.version }}
+    steps:
+      - name: Validate version pattern
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z]+\.[0-9]+)?$'; then
+            echo "Error: Version must match pattern: X.Y.Z or X.Y.Z-prerelease.N"
+            echo "Examples: 1.2.1, 2.0.0"
+            echo "Do NOT include the 'v' prefix"
+            echo "Provided: ${{ inputs.version }}"
+            exit 1
+          fi
   # Build a container for x86_64 and aarch64 linux
   build:
     name: Release Container
-    needs: get-version
+    needs: [get-version, validate-version]
     strategy:
       matrix:
         include:
