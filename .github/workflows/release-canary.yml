@@ -1,4 +1,4 @@
-name: Canary Release
+name: Release Canary
 on:
   # push:
   #   # don't run on tags, run on commits
