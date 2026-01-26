@@ -11,8 +11,8 @@ use rmcp::model::{
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
-        CallToolRequestParam, CallToolResult, Content, ErrorCode, InitializeRequestParam,
-        InitializeResult, ListToolsResult, PaginatedRequestParam, ServerCapabilities, ServerInfo,
+        CallToolRequestParams, CallToolResult, Content, ErrorCode, InitializeRequestParams,
+        InitializeResult, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
 };
@@ -288,7 +288,7 @@ impl Running {
 
     async fn read_resource_impl(
         &self,
-        request: rmcp::model::ReadResourceRequestParam,
+        request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
@@ -311,7 +311,7 @@ impl ServerHandler for Running {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
-        request: InitializeRequestParam,
+        request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let meter = &meter::METER;
@@ -338,7 +338,7 @@ impl ServerHandler for Running {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
-        request: CallToolRequestParam,
+        request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
@@ -483,7 +483,7 @@ impl ServerHandler for Running {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         self.list_tools_impl(context.extensions).await
@@ -492,7 +492,7 @@ impl ServerHandler for Running {
     #[tracing::instrument(skip_all)]
     async fn list_resources(
         &self,
-        _request: Option<PaginatedRequestParam>,
+        _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
         self.list_resources_impl(context.extensions)
@@ -501,7 +501,7 @@ impl ServerHandler for Running {
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
     async fn read_resource(
         &self,
-        request: rmcp::model::ReadResourceRequestParam,
+        request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
         self.read_resource_impl(request, context.extensions).await
@@ -546,7 +546,7 @@ fn tool_not_found(name: &str) -> McpError {
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::{JsonObject, ReadResourceRequestParam, ResourceContents, Tool};
+    use rmcp::model::{JsonObject, ReadResourceRequestParams, ResourceContents, Tool};
 
     use crate::apps::{
         App,
@@ -826,10 +826,11 @@ mod tests {
             running_with_apps(AppResource::Local(resource_content.to_string()), None, None);
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource#a_different_fragment"
                         .parse()
                         .unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -856,8 +857,9 @@ mod tests {
         let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -870,8 +872,9 @@ mod tests {
         let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
         let result = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "not a uri".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -896,8 +899,9 @@ mod tests {
 
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: RESOURCE_URI.to_string(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -933,8 +937,9 @@ mod tests {
         );
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -1122,8 +1127,9 @@ mod tests {
         );
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -1154,8 +1160,9 @@ mod tests {
         );
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -1186,8 +1193,9 @@ mod tests {
         );
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 Extensions::new(),
             )
@@ -1232,8 +1240,9 @@ mod tests {
 
         let mut resource = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 extensions,
             )
@@ -1278,8 +1287,9 @@ mod tests {
 
         let result = running
             .read_resource_impl(
-                ReadResourceRequestParam {
+                ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
                 },
                 extensions,
             )
