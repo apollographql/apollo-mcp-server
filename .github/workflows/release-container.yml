@@ -5,12 +5,6 @@ on:
     types: [closed]
     branches:
       - main
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Version to publish (e.g., 1.6.0)
-        required: true
-        type: string
   workflow_call:
     inputs:
       version:
@@ -24,7 +18,7 @@ env:
 
 jobs:
   get-version:
-    # Run on PR merge from release branch, workflow_dispatch, or workflow_call
+    # Run on PR merge from release branch or workflow_call
     if: (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) || inputs.version
     runs-on: ubuntu-latest
     outputs:
@@ -45,7 +39,6 @@ jobs:
           else
             echo "version=v$(knope get-version)" >> $GITHUB_OUTPUT
           fi
-
   # Build a container for x86_64 and aarch64 linux
   build:
     name: Release Container
