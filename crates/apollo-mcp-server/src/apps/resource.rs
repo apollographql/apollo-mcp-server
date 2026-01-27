@@ -25,7 +25,7 @@ pub(crate) fn attach_resource_mime_type(
 
 pub(crate) async fn get_app_resource(
     apps: &[App],
-    request: rmcp::model::ReadResourceRequestParam,
+    request: rmcp::model::ReadResourceRequestParams,
     request_uri: Url,
     app_target: &AppTarget,
 ) -> Result<ResourceContents, ErrorData> {
@@ -294,8 +294,9 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParam {
+            rmcp::model::ReadResourceRequestParams {
                 uri: "ui://widget/TestApp".to_string(),
+                meta: None,
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
@@ -351,8 +352,9 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParam {
+            rmcp::model::ReadResourceRequestParams {
                 uri: "ui://widget/TestApp".to_string(),
+                meta: None,
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
@@ -399,8 +401,9 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParam {
+            rmcp::model::ReadResourceRequestParams {
                 uri: "ui://widget/NonExistent".to_string(),
+                meta: None,
             },
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
