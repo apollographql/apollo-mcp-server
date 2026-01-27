@@ -1451,8 +1451,22 @@ mod tests {
             )
         }
 
-        fn create_initialize_request() -> serde_json::Value {
-            json!({
+        fn create_stateful_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
@@ -1464,7 +1478,40 @@ mod tests {
                         "version": "1.0.0"
                     }
                 }
-            })
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_get_request(
+            session_id: Option<&str>,
+            last_event_id: Option<&str>,
+        ) -> Request<Body> {
+            let mut builder = Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("Accept", "text/event-stream");
+            if let Some(id) = session_id {
+                builder = builder.header("Mcp-Session-Id", id);
+            }
+            if let Some(event_id) = last_event_id {
+                builder = builder.header("Last-Event-ID", event_id);
+            }
+            builder.body(Body::empty()).unwrap()
+        }
+
+        fn build_delete_request(session_id: &str) -> Request<Body> {
+            Request::builder()
+                .method("DELETE")
+                .uri("/mcp")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::empty())
+                .unwrap()
         }
 
         async fn collect_sse_events<B>(response: http::Response<B>) -> Vec<String>
@@ -1486,23 +1533,13 @@ mod tests {
         #[tokio::test]
         async fn priming_event_contains_event_id() {
             let service = create_test_service(true);
-
-            let request = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(create_initialize_request().to_string()))
-                .unwrap();
-
-            let response = service.oneshot(request).await.unwrap();
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
 
             let content_type = response.headers().get("content-type").unwrap();
             assert!(content_type.to_str().unwrap().contains("text/event-stream"));
 
             let events = collect_sse_events(response).await;
-
             assert!(events.iter().any(|e| e.starts_with("id:")));
             assert!(events.iter().any(|e| e.starts_with("retry:")));
         }
@@ -1510,16 +1547,7 @@ mod tests {
         #[tokio::test]
         async fn session_id_returned_on_initialize() {
             let service = create_test_service(true);
-
-            let request = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(create_initialize_request().to_string()))
-                .unwrap();
-
-            let response = service.oneshot(request).await.unwrap();
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
 
             let session_id = response.headers().get("mcp-session-id");
@@ -1529,31 +1557,20 @@ mod tests {
         #[tokio::test]
         async fn get_request_requires_session_id() {
             let service = create_test_service(true);
-
-            let request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .body(Body::empty())
+            let response = service
+                .oneshot(build_get_request(None, None))
+                .await
                 .unwrap();
-
-            let response = service.oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
 
         #[tokio::test]
         async fn get_request_with_invalid_session_returns_unauthorized() {
             let service = create_test_service(true);
-
-            let request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .header("Mcp-Session-Id", "non-existent-session")
-                .body(Body::empty())
+            let response = service
+                .oneshot(build_get_request(Some("non-existent-session"), None))
+                .await
                 .unwrap();
-
-            let response = service.oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
 
@@ -1562,27 +1579,8 @@ mod tests {
             let running = create_test_running();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
-            let service = StreamableHttpService::new(
-                {
-                    let running = running.clone();
-                    move || Ok(running.clone())
-                },
-                Arc::clone(&session_manager),
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let init_request = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(create_initialize_request().to_string()))
-                .unwrap();
-
-            let init_response = service.oneshot(init_request).await.unwrap();
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
             assert_eq!(init_response.status(), StatusCode::OK);
 
             let session_id = init_response
@@ -1590,28 +1588,13 @@ mod tests {
                 .get("mcp-session-id")
                 .unwrap()
                 .to_str()
-                .unwrap()
-                .to_string();
-
-            let service2 = StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let reconnect_request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .header("Mcp-Session-Id", &session_id)
-                .header("Last-Event-ID", "0")
-                .body(Body::empty())
                 .unwrap();
 
-            let reconnect_response = service2.oneshot(reconnect_request).await.unwrap();
+            let service2 = create_stateful_service(running, session_manager);
+            let reconnect_response = service2
+                .oneshot(build_get_request(Some(session_id), Some("0")))
+                .await
+                .unwrap();
             assert_eq!(reconnect_response.status(), StatusCode::OK);
 
             let content_type = reconnect_response.headers().get("content-type").unwrap();
@@ -1621,29 +1604,10 @@ mod tests {
         #[tokio::test]
         async fn standalone_stream_can_be_established_via_get() {
             let running = create_test_running();
-            let session_manager = LocalSessionManager::default().into();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
-            let service = StreamableHttpService::new(
-                {
-                    let running = running.clone();
-                    move || Ok(running.clone())
-                },
-                Arc::clone(&session_manager),
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let init_request = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(create_initialize_request().to_string()))
-                .unwrap();
-
-            let init_response = service.oneshot(init_request).await.unwrap();
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
             assert_eq!(init_response.status(), StatusCode::OK);
 
             let session_id = init_response
@@ -1651,27 +1615,13 @@ mod tests {
                 .get("mcp-session-id")
                 .unwrap()
                 .to_str()
-                .unwrap()
-                .to_string();
-
-            let service2 = StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let get_request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .header("Mcp-Session-Id", &session_id)
-                .body(Body::empty())
                 .unwrap();
 
-            let get_response = service2.oneshot(get_request).await.unwrap();
+            let service2 = create_stateful_service(running, session_manager);
+            let get_response = service2
+                .oneshot(build_get_request(Some(session_id), None))
+                .await
+                .unwrap();
             assert_eq!(get_response.status(), StatusCode::OK);
 
             let content_type = get_response.headers().get("content-type").unwrap();
@@ -1681,29 +1631,10 @@ mod tests {
         #[tokio::test]
         async fn delete_request_closes_session() {
             let running = create_test_running();
-            let session_manager = LocalSessionManager::default().into();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
-            let service = StreamableHttpService::new(
-                {
-                    let running = running.clone();
-                    move || Ok(running.clone())
-                },
-                Arc::clone(&session_manager),
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let init_request = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(create_initialize_request().to_string()))
-                .unwrap();
-
-            let init_response = service.oneshot(init_request).await.unwrap();
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
             let session_id = init_response
                 .headers()
                 .get("mcp-session-id")
@@ -1712,61 +1643,28 @@ mod tests {
                 .unwrap()
                 .to_string();
 
-            let service2 = StreamableHttpService::new(
-                {
-                    let running = running.clone();
-                    move || Ok(running.clone())
-                },
-                Arc::clone(&session_manager),
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let delete_request = Request::builder()
-                .method("DELETE")
-                .uri("/mcp")
-                .header("Mcp-Session-Id", &session_id)
-                .body(Body::empty())
+            let service2 = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let delete_response = service2
+                .oneshot(build_delete_request(&session_id))
+                .await
                 .unwrap();
-
-            let delete_response = service2.oneshot(delete_request).await.unwrap();
             assert_eq!(delete_response.status(), StatusCode::ACCEPTED);
 
-            let service3 = StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            );
-
-            let get_request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .header("Mcp-Session-Id", &session_id)
-                .body(Body::empty())
+            let service3 = create_stateful_service(running, session_manager);
+            let get_response = service3
+                .oneshot(build_get_request(Some(&session_id), None))
+                .await
                 .unwrap();
-
-            let get_response = service3.oneshot(get_request).await.unwrap();
             assert_eq!(get_response.status(), StatusCode::UNAUTHORIZED);
         }
 
         #[tokio::test]
         async fn stateless_mode_disables_resumability() {
             let service = create_test_service(false);
-
-            let request = Request::builder()
-                .method("GET")
-                .uri("/mcp")
-                .header("Accept", "text/event-stream")
-                .body(Body::empty())
+            let response = service
+                .oneshot(build_get_request(None, None))
+                .await
                 .unwrap();
-
-            let response = service.oneshot(request).await.unwrap();
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         }
     }
