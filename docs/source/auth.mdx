@@ -76,8 +76,7 @@ transport:
 ```
 
 **Considerations:**
-- Discovery happens once at startup when validating the first JWT token
-- With multiple fallback URLs (RFC 8414, OIDC Discovery), the cumulative timeout can be 10-15 seconds if all URLs fail
-- Increase the timeout if your OAuth server is on a slow network or responds slowly
-- Decrease the timeout in high-performance environments where fast failure is preferred
-- Discovery results are cached by the underlying JWKS library, so subsequent token validations are fast
+- Discovery happens during token validation and can add latency to the first authorized request.
+- With multiple fallback URLs (RFC 8414, OIDC Discovery), the cumulative timeout can be 10-15 seconds if all URLs fail.
+- Increase the timeout if your OAuth server is on a slow network or responds slowly.
+- Decrease the timeout in high-performance environments where fast failure is preferred.
