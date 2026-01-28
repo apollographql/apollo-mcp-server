@@ -245,7 +245,7 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 
 | Option                            | Type           | Default | Description                                                                                                                                       |
 | :-------------------------------- | :------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint)                                               |
+| `servers`                         | `List<URL>`    |         | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint).                                              |
 | `audiences`                       | `List<string>` | `[]`    | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                  |
 | `allow_any_audience`              | `bool`         | `false` | Set to `true` to skip audience validation entirely (use with caution)                                                                             |
 | `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                |
@@ -263,7 +263,7 @@ transport:
   type: streamable_http
   auth:
     # List of upstream delegated OAuth servers
-    # Note: These need to support RFC 8414 or OIDC metadata discovery
+    # These must support RFC 8414 or OIDC metadata discovery.
     servers:
       - https://auth.example.com
 
