@@ -1395,4 +1395,277 @@ mod tests {
             Some("https://my-server.example.com/docs".to_string())
         );
     }
+
+    mod sse_resumability {
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+
+        fn create_test_running() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::All,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                health_check: None,
+                server_info: Default::default(),
+            }
+        }
+
+        fn create_test_service(
+            stateful_mode: bool,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            let running = create_test_running();
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                LocalSessionManager::default().into(),
+                StreamableHttpServerConfig {
+                    stateful_mode,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn create_stateful_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_get_request(
+            session_id: Option<&str>,
+            last_event_id: Option<&str>,
+        ) -> Request<Body> {
+            let mut builder = Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("Accept", "text/event-stream");
+            if let Some(id) = session_id {
+                builder = builder.header("Mcp-Session-Id", id);
+            }
+            if let Some(event_id) = last_event_id {
+                builder = builder.header("Last-Event-ID", event_id);
+            }
+            builder.body(Body::empty()).unwrap()
+        }
+
+        fn build_delete_request(session_id: &str) -> Request<Body> {
+            Request::builder()
+                .method("DELETE")
+                .uri("/mcp")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        async fn collect_sse_events<B>(response: http::Response<B>) -> Vec<String>
+        where
+            B: http_body_util::BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let body = response.into_body();
+            let bytes = body.collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+
+            body_str
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        }
+
+        #[tokio::test]
+        async fn priming_event_contains_event_id() {
+            let service = create_test_service(true);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let content_type = response.headers().get("content-type").unwrap();
+            assert!(content_type.to_str().unwrap().contains("text/event-stream"));
+
+            let events = collect_sse_events(response).await;
+            assert!(events.iter().any(|e| e.starts_with("id:")));
+            assert!(events.iter().any(|e| e.starts_with("retry:")));
+        }
+
+        #[tokio::test]
+        async fn session_id_returned_on_initialize() {
+            let service = create_test_service(true);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let session_id = response.headers().get("mcp-session-id");
+            assert!(!session_id.unwrap().is_empty());
+        }
+
+        #[tokio::test]
+        async fn get_request_requires_session_id() {
+            let service = create_test_service(true);
+            let response = service
+                .oneshot(build_get_request(None, None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn get_request_with_invalid_session_returns_unauthorized() {
+            let service = create_test_service(true);
+            let response = service
+                .oneshot(build_get_request(Some("non-existent-session"), None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn can_reconnect_with_last_event_id() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(init_response.status(), StatusCode::OK);
+
+            let session_id = init_response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap();
+
+            let service2 = create_stateful_service(running, session_manager);
+            let reconnect_response = service2
+                .oneshot(build_get_request(Some(session_id), Some("0")))
+                .await
+                .unwrap();
+            assert_eq!(reconnect_response.status(), StatusCode::OK);
+
+            let content_type = reconnect_response.headers().get("content-type").unwrap();
+            assert!(content_type.to_str().unwrap().contains("text/event-stream"));
+        }
+
+        #[tokio::test]
+        async fn standalone_stream_can_be_established_via_get() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(init_response.status(), StatusCode::OK);
+
+            let session_id = init_response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap();
+
+            let service2 = create_stateful_service(running, session_manager);
+            let get_response = service2
+                .oneshot(build_get_request(Some(session_id), None))
+                .await
+                .unwrap();
+            assert_eq!(get_response.status(), StatusCode::OK);
+
+            let content_type = get_response.headers().get("content-type").unwrap();
+            assert!(content_type.to_str().unwrap().contains("text/event-stream"));
+        }
+
+        #[tokio::test]
+        async fn delete_request_closes_session() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
+            let session_id = init_response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            let service2 = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            let delete_response = service2
+                .oneshot(build_delete_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(delete_response.status(), StatusCode::ACCEPTED);
+
+            let service3 = create_stateful_service(running, session_manager);
+            let get_response = service3
+                .oneshot(build_get_request(Some(&session_id), None))
+                .await
+                .unwrap();
+            assert_eq!(get_response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn stateless_mode_disables_resumability() {
+            let service = create_test_service(false);
+            let response = service
+                .oneshot(build_get_request(None, None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+    }
 }
