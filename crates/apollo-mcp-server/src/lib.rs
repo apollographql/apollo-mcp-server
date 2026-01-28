@@ -11,6 +11,7 @@ mod explorer;
 mod graphql;
 pub mod headers;
 pub mod health;
+pub mod host_validation;
 mod introspection;
 pub(crate) mod json_schema;
 pub(crate) mod meter;

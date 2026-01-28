@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use crate::host_validation::{HostValidationState, validate_host};
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     errors::ServerError,
@@ -135,15 +136,9 @@ impl Starting {
 
         // Create health check if enabled (only for StreamableHttp transport)
         let health_check = match (&self.config.transport, self.config.health_check.enabled) {
-            (
-                Transport::StreamableHttp {
-                    auth: _,
-                    address: _,
-                    port: _,
-                    stateful_mode: _,
-                },
-                true,
-            ) => Some(HealthCheck::new(self.config.health_check.clone())),
+            (Transport::StreamableHttp { .. }, true) => {
+                Some(HealthCheck::new(self.config.health_check.clone()))
+            }
             _ => None, // No health check for SSE, Stdio, or when disabled
         };
 
@@ -214,6 +209,7 @@ impl Starting {
                 address,
                 port,
                 stateful_mode,
+                host_validation,
             } => {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
@@ -234,7 +230,15 @@ impl Starting {
                 // include trace context as header into the response
                 .layer(OtelInResponseLayer)
                 // start OpenTelemetry trace on incoming request
-                .layer(axum::middleware::from_fn(otel_context_middleware));
+                .layer(axum::middleware::from_fn(otel_context_middleware))
+                // Host header validation to prevent DNS rebinding attacks
+                .layer(axum::middleware::from_fn_with_state(
+                    HostValidationState {
+                        config: Arc::new(host_validation),
+                        server_port: port,
+                    },
+                    validate_host,
+                ));
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -289,6 +293,7 @@ mod tests {
     use url::Url;
 
     use crate::health::HealthCheckConfig;
+    use crate::host_validation::HostValidationConfig;
 
     use super::*;
 
@@ -301,6 +306,7 @@ mod tests {
                     address: "127.0.0.1".parse().unwrap(),
                     port: 7799,
                     stateful_mode: false,
+                    host_validation: HostValidationConfig::default(),
                 },
                 endpoint: Url::parse("http://localhost:4000").expect("valid url"),
                 mutation_mode: MutationMode::All,

@@ -225,19 +225,45 @@ The available fields depend on the value of the nested `type` key. The default t
 
 ##### Transport Type Specific options
 
-Some transport types support further configuration. For `streamable_http`, you can set the `address`, `port`, and `stateful_mode`.
+Some transport types support further configuration. For `streamable_http`, you can set `address`, `port`, `stateful_mode`, and `host_validation`.
 
-| Option          | Type     | Default     | Description                                                    |
-| :-------------- | :------- | :---------- | :------------------------------------------------------------- |
-| `address`       | `IpAddr` | `127.0.0.1` | The IP address to bind to                                      |
-| `port`          | `u16`    | `8000`      | The port to bind to                                            |
-| `stateful_mode` | `bool`   | `true`      | Flag to enable or disable stateful mode and session management |
+| Option            | Type             | Default     | Description                                                    |
+| :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
+| `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
+| `port`            | `u16`            | `8000`      | The port to bind to                                            |
+| `stateful_mode`   | `bool`           | `true`      | Flag to enable or disable stateful mode and session management |
+| `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
 <Note>
 
 For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.0`, the default `port` option was changed to `8000` to avoid conflicts with common development tools and services that typically use port 5000 (such as macOS AirPlay, Flask development servers, and other local services).
 
 </Note>
+
+### Host Validation
+
+These fields are under the `host_validation` key within the `transport` configuration. Host validation prevents DNS rebinding attacks by rejecting requests with unexpected `Host` headers.
+
+| Option          | Type           | Default | Description                                                      |
+| :-------------- | :------------- | :------ | :--------------------------------------------------------------- |
+| `enabled`       | `bool`         | `true`  | Enable Host header validation to prevent DNS rebinding attacks   |
+| `allowed_hosts` | `List<string>` | `[]`    | Additional allowed hostnames beyond localhost (can include port) |
+
+<Note>
+
+Host validation is only available when using the `streamable_http` transport. Localhost addresses (`localhost`, `127.0.0.1`, `::1`, `0.0.0.0`) are always allowed when validation is enabled.
+
+</Note>
+
+For production deployments behind a reverse proxy, add your server's hostname:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  host_validation:
+    allowed_hosts:
+      - mcp.example.com
+```
 
 ### Auth
 

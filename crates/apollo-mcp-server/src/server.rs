@@ -14,6 +14,7 @@ use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
 use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
+use crate::host_validation::HostValidationConfig;
 use crate::operations::{MutationMode, OperationSource};
 use crate::server_info::ServerInfoConfig;
 
@@ -88,8 +89,13 @@ pub enum Transport {
         #[serde(default = "Transport::default_port")]
         port: u16,
 
+        /// Enable stateful mode for session management
         #[serde(default = "Transport::default_stateful_mode")]
         stateful_mode: bool,
+
+        /// Host header validation configuration for DNS rebinding protection.
+        #[serde(default)]
+        host_validation: HostValidationConfig,
     },
 }
 
