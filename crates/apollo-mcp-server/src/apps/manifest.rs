@@ -113,7 +113,7 @@ pub(crate) fn load_from_path(
                 }
 
                 let tool = Tool {
-                    name: format!("{name}--{}", tool.name).into(),
+                    name: tool.name.into(),
                     meta: None,
                     description: Some(if let Some(app_description) = description.clone() {
                         format!("{} {}", app_description, tool.description).into()
@@ -461,7 +461,7 @@ mod test_load_from_path {
         assert_eq!(apps.len(), 1);
         let app = &apps[0];
         assert_eq!(app.tools.len(), 3);
-        assert_eq!(app.tools[0].tool.name, "MultipleToolsApp--Tool1");
+        assert_eq!(app.tools[0].tool.name, "Tool1");
         assert_eq!(
             app.tools[0].tool.description.as_ref().unwrap(),
             "Description for Tool1"
@@ -470,12 +470,12 @@ mod test_load_from_path {
             app.tools[0].operation.inner.source_text,
             "query MyOperation { hello }"
         );
-        assert_eq!(app.tools[1].tool.name, "MultipleToolsApp--Tool2");
+        assert_eq!(app.tools[1].tool.name, "Tool2");
         assert_eq!(
             app.tools[1].tool.description.as_ref().unwrap(),
             "Description for Tool2"
         );
-        assert_eq!(app.tools[2].tool.name, "MultipleToolsApp--Tool3");
+        assert_eq!(app.tools[2].tool.name, "Tool3");
         assert_eq!(
             app.tools[2].tool.description.as_ref().unwrap(),
             "Description for Tool3"
