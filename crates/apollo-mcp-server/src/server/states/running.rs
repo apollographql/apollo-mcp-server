@@ -27,7 +27,7 @@ use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
-use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::operations::find_and_execute_operation;
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -387,8 +387,7 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            execute_operation(
-                execute_tool,
+            execute_tool.execute(
                 &headers,
                 request.arguments.as_ref(),
                 &self.endpoint,

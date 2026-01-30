@@ -55,7 +55,7 @@ impl Introspect {
         }
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), ret)]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
         let schema = self.schema.read().await;
         let type_name = input.type_name.as_str();
@@ -316,4 +316,6 @@ mod tests {
             "Should contain Mutation type definition"
         );
     }
+
+
 }

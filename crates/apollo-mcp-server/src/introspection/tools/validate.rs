@@ -44,7 +44,7 @@ impl Validate {
     }
 
     /// Validates the provided GraphQL query
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), ret)]
     pub async fn execute(&self, input: Value) -> CallToolResult {
         let input = match serde_json::from_value::<Input>(input) {
             Ok(i) => i,

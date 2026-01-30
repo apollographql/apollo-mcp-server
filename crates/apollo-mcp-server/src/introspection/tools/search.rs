@@ -87,7 +87,7 @@ impl Search {
         })
     }
 
-    #[tracing::instrument(skip(self))]
+    #[tracing::instrument(skip(self), ret)]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
         let mut root_paths = self
             .index

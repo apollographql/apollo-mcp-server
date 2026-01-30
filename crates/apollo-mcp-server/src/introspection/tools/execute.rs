@@ -1,14 +1,16 @@
-use crate::operations::{MutationMode, operation_defs, operation_name};
+use crate::operations::{MutationMode, execute_operation, operation_defs, operation_name};
 use crate::{
+    errors::McpError,
     graphql::{self, OperationDetails, ValidationError},
     schema_from_type,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
-use rmcp::model::Tool;
+use rmcp::model::{CallToolResult, JsonObject, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
+use url::Url;
 
 /// The name of the tool to execute an ad hoc GraphQL operation
 pub const EXECUTE_TOOL_NAME: &str = "execute";
@@ -40,6 +42,16 @@ impl Execute {
                 schema_from_type!(Input),
             ),
         }
+    }
+
+    #[tracing::instrument(skip(self, headers, endpoint), ret)]
+    pub async fn execute(
+        &self,
+        headers: &HeaderMap<HeaderValue>,
+        arguments: Option<&JsonObject>,
+        endpoint: &Url,
+    ) -> Result<CallToolResult, McpError> {
+        execute_operation(self, headers, arguments, endpoint).await
     }
 }
 
