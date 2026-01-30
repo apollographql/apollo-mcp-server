@@ -387,12 +387,9 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            execute_tool.execute(
-                &headers,
-                request.arguments.as_ref(),
-                &self.endpoint,
-            )
-            .await
+            execute_tool
+                .execute(&headers, request.arguments.as_ref(), &self.endpoint)
+                .await
         } else if tool_name == VALIDATE_TOOL_NAME
             && let Some(validate_tool) = &self.validate_tool
         {

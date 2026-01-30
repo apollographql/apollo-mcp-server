@@ -316,6 +316,4 @@ mod tests {
             "Should contain Mutation type definition"
         );
     }
-
-
 }
