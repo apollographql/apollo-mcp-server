@@ -13,6 +13,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::description::append_description_hint;
+
 /// The name of the tool to validate an ad hoc GraphQL operation
 pub const VALIDATE_TOOL_NAME: &str = "validate";
 
@@ -30,16 +32,14 @@ pub struct Input {
 }
 
 impl Validate {
-    pub fn new(schema: Arc<RwLock<Valid<Schema>>>) -> Self {
+    pub fn new(schema: Arc<RwLock<Valid<Schema>>>, description_hint: Option<&str>) -> Self {
+        let default_description = "Validates a GraphQL operation against the schema. \
+                Use the `introspect` tool first to get information about the GraphQL schema. \
+                Operations should be validated prior to calling the `execute` tool.";
+        let description = append_description_hint(default_description, description_hint);
         Self {
             schema,
-            tool: Tool::new(
-                VALIDATE_TOOL_NAME,
-                "Validates a GraphQL operation against the schema. \
-                Use the `introspect` tool first to get information about the GraphQL schema. \
-                Operations should be validated prior to calling the `execute` tool.",
-                schema_from_type!(Input),
-            ),
+            tool: Tool::new(VALIDATE_TOOL_NAME, description, schema_from_type!(Input)),
         }
     }
 
@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_valid_query() {
-        let validate = Validate::new(SCHEMA.clone());
+        let validate = Validate::new(SCHEMA.clone(), None);
         let input = json!({
             "operation": "query Test { id }"
         });
@@ -104,7 +104,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_invalid_graphql_query() {
-        let validate = Validate::new(SCHEMA.clone());
+        let validate = Validate::new(SCHEMA.clone(), None);
         let input = json!({
             "operation": "query {"
         });
@@ -114,7 +114,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_invalid_query_field() {
-        let validate = Validate::new(SCHEMA.clone());
+        let validate = Validate::new(SCHEMA.clone(), None);
         let input = json!({
             "operation": "query { invalidField }"
         });
@@ -124,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn validate_invalid_argument() {
-        let validate = Validate::new(SCHEMA.clone());
+        let validate = Validate::new(SCHEMA.clone(), None);
         let input = json!({
             "operation": "query { hello }"
         });

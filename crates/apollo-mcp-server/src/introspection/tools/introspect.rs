@@ -14,6 +14,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use super::description::append_description_hint;
+
 /// The name of the tool to get GraphQL schema type information
 pub const INTROSPECT_TOOL_NAME: &str = "introspect";
 
@@ -42,16 +44,19 @@ impl Introspect {
         root_query_type: Option<String>,
         root_mutation_type: Option<String>,
         minify: bool,
+        description_hint: Option<&str>,
     ) -> Self {
+        let default_description = tool_description(
+            root_query_type.as_deref(),
+            root_mutation_type.as_deref(),
+            minify,
+        );
+        let description = append_description_hint(&default_description, description_hint);
         Self {
             schema,
             allow_mutations: root_mutation_type.is_some(),
             minify,
-            tool: Tool::new(
-                INTROSPECT_TOOL_NAME,
-                tool_description(root_query_type, root_mutation_type, minify),
-                schema_from_type!(Input),
-            ),
+            tool: Tool::new(INTROSPECT_TOOL_NAME, description, schema_from_type!(Input)),
         }
     }
 
@@ -120,8 +125,8 @@ impl Introspect {
 }
 
 fn tool_description(
-    root_query_type: Option<String>,
-    root_mutation_type: Option<String>,
+    root_query_type: Option<&str>,
+    root_mutation_type: Option<&str>,
     minify: bool,
 ) -> String {
     if minify {
@@ -129,8 +134,8 @@ fn tool_description(
     } else {
         format!(
             "Get information about a given GraphQL type defined in the schema. Instructions: Use this tool to explore the schema by providing specific type names. Start with the root query ({}) or mutation ({}) types to discover available fields. If the search tool is also available, use this tool first to get the fields, then use the search tool with relevant field return types and argument input types (ignore default GraphQL scalars) as search terms.",
-            root_query_type.as_deref().unwrap_or("Query"),
-            root_mutation_type.as_deref().unwrap_or("Mutation")
+            root_query_type.unwrap_or("Query"),
+            root_mutation_type.unwrap_or("Mutation")
         )
     }
 }
@@ -164,7 +169,7 @@ mod tests {
     #[rstest]
     #[tokio::test]
     async fn test_introspect_tool_description_is_not_minified(schema: Arc<RwLock<Valid<Schema>>>) {
-        let introspect = Introspect::new(schema, None, None, false);
+        let introspect = Introspect::new(schema, None, None, false, None);
 
         let description = introspect.tool.description.unwrap();
 
@@ -184,7 +189,7 @@ mod tests {
     async fn test_introspect_tool_description_is_minified_with_an_appropriate_legend(
         schema: Arc<RwLock<Valid<Schema>>>,
     ) {
-        let introspect = Introspect::new(schema, None, None, true);
+        let introspect = Introspect::new(schema, None, None, true, None);
 
         let description = introspect.tool.description.unwrap();
 
@@ -201,6 +206,7 @@ mod tests {
             Some("Query".to_string()),
             Some("Mutation".to_string()),
             false,
+            None,
         );
 
         let result = introspect
@@ -239,6 +245,7 @@ mod tests {
             Some("Query".to_string()),
             Some("Mutation".to_string()),
             false,
+            None,
         );
 
         let result = introspect
@@ -281,7 +288,7 @@ mod tests {
         schema: Arc<RwLock<Valid<Schema>>>,
     ) {
         // This test verifies the fix: when mutations are not allowed, mutation introspection should still work
-        let introspect = Introspect::new(schema, Some("Query".to_string()), None, false);
+        let introspect = Introspect::new(schema, Some("Query".to_string()), None, false, None);
 
         let result = introspect
             .execute(Input {

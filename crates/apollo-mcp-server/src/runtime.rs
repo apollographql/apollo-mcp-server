@@ -276,19 +276,23 @@ mod test {
                 introspection: Introspection {
                     execute: ExecuteConfig {
                         enabled: false,
+                        description: None,
                     },
                     introspect: IntrospectConfig {
                         enabled: false,
                         minify: false,
+                        description: None,
                     },
                     search: SearchConfig {
                         enabled: false,
                         index_memory_bytes: 50000000,
                         leaf_depth: 1,
                         minify: false,
+                        description: None,
                     },
                     validate: ValidateConfig {
                         enabled: false,
+                        description: None,
                     },
                 },
                 logging: Logging {
