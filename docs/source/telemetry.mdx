@@ -125,7 +125,7 @@ telemetry:
 curl -v https://your-endpoint/v1/metrics
 
 # Monitor server logs for OpenTelemetry export errors
-./apollo-mcp-server --config config.yaml 2>&1 | grep -i "otel\|telemetry"
+./apollo-mcp-server config.yaml 2>&1 | grep -i "otel\|telemetry"
 ```
 
 ## Configuration Reference
@@ -138,7 +138,7 @@ The server emits the following metrics, which are invaluable for monitoring and 
 
 | Metric Name | Type | Description | Attributes |
 |---|---|---|---|
-| `apollo.mcp.initialize.count` | Counter | Incremented for each `initialize` request. | (none) |
+| `apollo.mcp.initialize.count` | Counter | Incremented for each `initialize` request. | `client_name`, `client_version` |
 | `apollo.mcp.list_tools.count` | Counter | Incremented for each `list_tools` request. | (none) |
 | `apollo.mcp.get_info.count` | Counter | Incremented for each `get_info` request. | (none) |
 | `apollo.mcp.tool.count` | Counter | Incremented for each tool call. | `tool_name`, `success` (bool) |
