@@ -29,6 +29,8 @@ Before reviewing, familiarize yourself with Apollo's Rust best practices. Read A
 - [Chapter 8 - Comments vs Documentation](references/chapter_08.md): When to comment, doc comments, rustdoc
 - [Chapter 9 - Understanding Pointers](references/chapter_09.md): Thread safety, Send/Sync, pointer types
 
+Additionally, you MUST ALWAYS read @.claude/MEMORIES.md which is a long term memory file of feedback you have been given on your reviews on previous PRs. You should utilize and consider these memories when determining what feedback to leave on the PR.
+
 ## Pull Request Context
 
 Fetch PR information:
@@ -66,6 +68,7 @@ All automated checks (tests, linting, clippy, formatting) are handled by GitHub 
    - Review existing feedback to note what's already been raised
    - **Do not duplicate comments** that have already been made
    - Consider context from existing discussions when evaluating code
+   - Important: If a user has responded to a comment/issue stating that they will not be following that suggestion, do not argue with the user, and do not bring up that suggestion again within this PR
 
 3. **Manual review** using the criteria below, referencing the best practices documents
    - Focus on high-signal findings only
@@ -170,6 +173,7 @@ Each inline comment should:
 - Explain the problem clearly
 - Reference the relevant best practice chapter when applicable
 - Suggest a fix
+- Important: For duplicate findings in multiple locations within a file (E.g. multiple tests have the same issue), leave a single online comment referencing the various places in the file it needs to be fixed instead of leaving several inline comments about the same issue.
 
 After posting inline comments, add a summary comment with:
 
@@ -196,6 +200,7 @@ If you have already posted a summary comment on this PR previously, any follow u
 - **Skip the obvious**: Don't mention things clippy would catch (run it instead)
 - **Focus on this PR**: Don't request unrelated refactoring
 - **Acknowledge good work**: Note well-designed solutions briefly
+- **Don't Overwhelm**: Stick to a maximum of the top 5 most important findings.
 
 ## Posting Review Comments
 
