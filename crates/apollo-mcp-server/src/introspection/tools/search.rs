@@ -18,6 +18,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::debug;
 
+use super::description::append_description_hint;
+
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
 
@@ -59,6 +61,7 @@ impl Search {
         leaf_depth: usize,
         index_memory_bytes: usize,
         minify: bool,
+        description_hint: Option<&str>,
     ) -> Result<Self, IndexingError> {
         let root_types = if allow_mutations {
             OperationType::Query | OperationType::Mutation
@@ -66,24 +69,23 @@ impl Search {
             OperationType::Query.into()
         };
         let locked = &schema.try_read()?;
+        let default_description = format!(
+            "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
+            if minify {
+                " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements"
+            } else {
+                ""
+            }
+        );
+        let description =
+            append_description_hint(&default_description, description_hint).into_owned();
         Ok(Self {
             schema: schema.clone(),
             index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
             allow_mutations,
             leaf_depth,
             minify,
-            tool: Tool::new(
-                SEARCH_TOOL_NAME,
-                format!(
-                    "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
-                    if minify {
-                        " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements"
-                    } else {
-                        ""
-                    }
-                ),
-                schema_from_type!(Input),
-            ),
+            tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
         })
     }
 
@@ -212,7 +214,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
 
         let result = search
@@ -230,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), true, 1, 15_000_000, false)
+        let search = Search::new(schema.clone(), true, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
 
         // Search for a type that should have references
@@ -252,7 +254,7 @@ mod tests {
     #[tokio::test]
     async fn test_search_tool_description_is_not_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, false)
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();
@@ -271,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn test_tool_description_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, true)
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, true, None)
             .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();

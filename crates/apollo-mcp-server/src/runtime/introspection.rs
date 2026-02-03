@@ -24,6 +24,8 @@ pub struct Introspection {
 pub struct ExecuteConfig {
     /// Enable introspection for execution
     pub enabled: bool,
+    /// Optional custom hint appended to the execute tool description
+    pub hint: Option<String>,
 }
 
 /// Introspect-specific introspection configuration
@@ -35,6 +37,8 @@ pub struct IntrospectConfig {
 
     /// Minify introspection results
     pub minify: bool,
+    /// Optional custom hint appended to the introspect tool description
+    pub hint: Option<String>,
 }
 
 /// Search tool configuration
@@ -54,6 +58,8 @@ pub struct SearchConfig {
 
     /// Minify search results
     pub minify: bool,
+    /// Optional custom hint appended to the search tool description
+    pub hint: Option<String>,
 }
 
 impl Default for SearchConfig {
@@ -63,6 +69,7 @@ impl Default for SearchConfig {
             index_memory_bytes: 50_000_000,
             leaf_depth: 1,
             minify: false,
+            hint: None,
         }
     }
 }
@@ -73,6 +80,8 @@ impl Default for SearchConfig {
 pub struct ValidateConfig {
     /// Enable validation tool
     pub enabled: bool,
+    /// Optional custom hint appended to the validate tool description
+    pub hint: Option<String>,
 }
 
 impl Introspection {

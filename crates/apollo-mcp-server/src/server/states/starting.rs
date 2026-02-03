@@ -62,10 +62,12 @@ impl Starting {
             serde_json::to_string_pretty(&operations)?
         );
 
-        let execute_tool = self
-            .config
-            .execute_introspection
-            .then(|| Execute::new(self.config.mutation_mode));
+        let execute_tool = self.config.execute_introspection.then(|| {
+            Execute::new(
+                self.config.mutation_mode,
+                self.config.execute_tool_hint.as_deref(),
+            )
+        });
 
         let root_query_type = self
             .config
@@ -112,12 +114,13 @@ impl Starting {
                 root_query_type,
                 root_mutation_type,
                 self.config.introspect_minify,
+                self.config.introspect_tool_hint.as_deref(),
             )
         });
         let validate_tool = self
             .config
             .validate_introspection
-            .then(|| Validate::new(schema.clone()));
+            .then(|| Validate::new(schema.clone(), self.config.validate_tool_hint.as_deref()));
         let search_tool = if self.config.search_introspection {
             Some(Search::new(
                 schema.clone(),
@@ -125,6 +128,7 @@ impl Starting {
                 self.config.search_leaf_depth,
                 self.config.index_memory_bytes,
                 self.config.search_minify,
+                self.config.search_tool_hint.as_deref(),
             )?)
         } else {
             None
@@ -318,6 +322,10 @@ mod tests {
                 search_introspection: true,
                 introspect_minify: false,
                 search_minify: false,
+                execute_tool_hint: None,
+                introspect_tool_hint: None,
+                search_tool_hint: None,
+                validate_tool_hint: None,
                 explorer_graph_ref: None,
                 custom_scalar_map: None,
                 disable_type_description: false,
@@ -360,6 +368,10 @@ mod tests {
                 search_introspection: true,
                 introspect_minify: false,
                 search_minify: false,
+                execute_tool_hint: None,
+                introspect_tool_hint: None,
+                search_tool_hint: None,
+                validate_tool_hint: None,
                 explorer_graph_ref: None,
                 custom_scalar_map: None,
                 disable_type_description: false,
