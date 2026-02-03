@@ -51,7 +51,8 @@ impl Introspect {
             root_mutation_type.as_deref(),
             minify,
         );
-        let description = append_description_hint(&default_description, description_hint);
+        let description =
+            append_description_hint(&default_description, description_hint).into_owned();
         Self {
             schema,
             allow_mutations: root_mutation_type.is_some(),

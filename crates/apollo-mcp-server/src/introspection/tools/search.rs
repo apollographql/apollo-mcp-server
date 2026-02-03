@@ -77,7 +77,8 @@ impl Search {
                 ""
             }
         );
-        let description = append_description_hint(&default_description, description_hint);
+        let description =
+            append_description_hint(&default_description, description_hint).into_owned();
         Ok(Self {
             schema: schema.clone(),
             index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,

@@ -1,10 +1,12 @@
-pub(crate) fn append_description_hint(default: &str, hint: Option<&str>) -> String {
+use std::borrow::Cow;
+
+pub(crate) fn append_description_hint<'a>(default: &'a str, hint: Option<&str>) -> Cow<'a, str> {
     match hint.and_then(|value| {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then_some(trimmed)
     }) {
-        Some(hint) => format!("{default}\nHint: {hint}"),
-        None => default.to_string(),
+        Some(hint) => Cow::Owned(format!("{default}\nHint: {hint}")),
+        None => Cow::Borrowed(default),
     }
 }
 
