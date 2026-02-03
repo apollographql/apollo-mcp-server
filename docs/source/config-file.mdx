@@ -141,20 +141,20 @@ These fields are under the top-level `introspection` key. Learn more about the M
 | :-------------------------- | :------- | :--------- | :-------------------------------------------------------------------- |
 | `execute`                   | `object` |            | Execution configuration for introspection                             |
 | `execute.enabled`           | `bool`   | `false`    | Enable introspection for execution                                    |
-| `execute.description`       | `string` |            | Append custom instructions to the `execute` tool description          |
+| `execute.hint`              | `string` |            | Append custom instructions to the `execute` tool description          |
 | `introspect`                | `object` |            | Introspection configuration for allowing clients to run introspection |
 | `introspect.enabled`        | `bool`   | `false`    | Enable introspection requests                                         |
 | `introspect.minify`         | `bool`   | `false`    | Minify introspection results to reduce context window usage           |
-| `introspect.description`    | `string` |            | Append custom instructions to the `introspect` tool description       |
+| `introspect.hint`           | `string` |            | Append custom instructions to the `introspect` tool description       |
 | `search`                    | `object` |            | Search tool configuration                                             |
 | `search.enabled`            | `bool`   | `false`    | Enable search tool                                                    |
 | `search.index_memory_bytes` | `number` | `50000000` | Amount of memory used for indexing (in bytes)                         |
 | `search.leaf_depth`         | `number` | `1`        | Depth of subtype information to include from matching types           |
 | `search.minify`             | `bool`   | `false`    | Minify search results to reduce context window usage                  |
-| `search.description`        | `string` |            | Append custom instructions to the `search` tool description           |
+| `search.hint`               | `string` |            | Append custom instructions to the `search` tool description           |
 | `validate`                  | `object` |            | Validation tool configuration                                         |
 | `validate.enabled`          | `bool`   | `false`    | Enable validation tool                                                |
-| `validate.description`      | `string` |            | Append custom instructions to the `validate` tool description         |
+| `validate.hint`             | `string` |            | Append custom instructions to the `validate` tool description         |
 
 ### Logging
 

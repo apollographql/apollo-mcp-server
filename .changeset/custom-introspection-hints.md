@@ -10,5 +10,5 @@ Apollo MCP Server now supports configurable hint text for the built-in introspec
 introspection:
   execute:
     enabled: true
-    description: "Use carts(where: { status: ACTIVE }) for active carts."
+    hint: "Use carts(where: { status: ACTIVE }) for active carts."
 ```
