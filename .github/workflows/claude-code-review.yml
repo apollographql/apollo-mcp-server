@@ -60,6 +60,9 @@ jobs:
             echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
           fi
 
+      - name: Install Skills
+        run: npx skills add apollographql/skills@rust-best-practices -a claude-code -y
+
       - name: Claude Code Review
         id: claude_review
         uses: anthropics/claude-code-action@v1
