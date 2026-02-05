@@ -30,10 +30,10 @@
     enabled: true,
   },
 
-  // Disable automatically updating lock files to latest versions once a week.
+  // Enable lockfile maintenance (periodic Cargo.lock refresh PRs).
   //
   // See: https://docs.renovatebot.com/configuration-options/#lockfilemaintenance
   lockFileMaintenance: {
-    enabled: false,
+    enabled: true,
   },
 }
