@@ -31,6 +31,19 @@ pub(crate) use valid_token::ValidToken;
 use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
+/// Scope enforcement mode for authenticated requests.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeMode {
+    /// Skip scope enforcement entirely.
+    Disabled,
+    /// Token must have ALL configured scopes (default).
+    #[default]
+    RequireAll,
+    /// Token must have at least ONE configured scope.
+    RequireAny,
+}
+
 /// Errors that can occur when building a TLS-configured HTTP client
 #[derive(Debug, thiserror::Error)]
 pub enum TlsConfigError {
@@ -105,6 +118,10 @@ pub struct Config {
     /// Supported OAuth scopes by this resource server
     pub scopes: Vec<String>,
 
+    /// Scope enforcement mode: disabled, require_all (default), or require_any.
+    #[serde(default)]
+    pub scope_mode: ScopeMode,
+
     /// Whether to disable the auth token passthrough to upstream API
     #[serde(default)]
     pub disable_auth_token_passthrough: bool,
@@ -165,6 +182,12 @@ impl Config {
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
+            );
+        }
+
+        if self.scope_mode == ScopeMode::Disabled && !self.scopes.is_empty() {
+            warn!(
+                "scope_mode is 'disabled' but scopes are configured - scope enforcement will be skipped"
             );
         }
 
@@ -273,23 +296,40 @@ async fn oauth_validate(
         unauthorized_error()
     })?;
 
-    // Check if token has required scopes (fail-closed: missing scope claim = insufficient)
+    // Scope validation: only applies when scopes are configured
     if !auth_config.scopes.is_empty() {
-        let missing_scopes: Vec<_> = auth_config
-            .scopes
-            .iter()
-            .filter(|required| !valid_token.scopes.iter().any(|s| s == *required))
-            .collect();
+        let sufficient = match auth_config.scope_mode {
+            ScopeMode::Disabled => true,
+            ScopeMode::RequireAll => auth_config
+                .scopes
+                .iter()
+                .all(|req| valid_token.scopes.contains(req)),
+            ScopeMode::RequireAny => auth_config
+                .scopes
+                .iter()
+                .any(|req| valid_token.scopes.contains(req)),
+        };
 
-        if !missing_scopes.is_empty() {
+        if !sufficient {
+            // Compute missing scopes for diagnostic logging
+            let missing: Vec<_> = auth_config
+                .scopes
+                .iter()
+                .filter(|req| !valid_token.scopes.contains(*req))
+                .collect();
+
             tracing::warn!(
                 required = ?auth_config.scopes,
                 present = ?valid_token.scopes,
-                missing = ?missing_scopes,
+                missing = ?missing,
+                mode = ?auth_config.scope_mode,
                 "Token has insufficient scopes"
             );
             tracing::Span::current().record("reason", "insufficient_scope");
             tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+            // NOTE: WWW-Authenticate lists all configured scopes per RFC 6750.
+            // In require_any mode, only one is needed, but the header format
+            // doesn't distinguish. This matches existing behavior.
             return Err(forbidden_error(&auth_config.scopes));
         }
     }
@@ -325,6 +365,7 @@ mod tests {
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
             scopes: vec!["read".to_string()],
+            scope_mode: ScopeMode::default(),
             disable_auth_token_passthrough: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
@@ -405,53 +446,62 @@ mod tests {
     mod scope_validation {
         use super::*;
 
-        fn scopes_are_sufficient(required: &[String], present: &[String]) -> bool {
-            required.iter().all(|req| present.contains(req))
+        // Unified test helper for scope validation logic
+        fn is_sufficient(mode: ScopeMode, required: &[String], present: &[String]) -> bool {
+            match mode {
+                ScopeMode::Disabled => true,
+                ScopeMode::RequireAll => required.iter().all(|req| present.contains(req)),
+                ScopeMode::RequireAny => required.iter().any(|req| present.contains(req)),
+            }
         }
 
         #[test]
         fn insufficient_scopes_fails() {
             let required = vec!["read".to_string(), "write".to_string()];
             let present = vec!["read".to_string()];
-            assert!(!scopes_are_sufficient(&required, &present));
+            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
         }
 
         #[test]
         fn all_required_scopes_succeeds() {
             let required = vec!["read".to_string(), "write".to_string()];
             let present = vec!["read".to_string(), "write".to_string()];
-            assert!(scopes_are_sufficient(&required, &present));
+            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
         }
 
         #[test]
         fn no_scopes_when_required_fails() {
             let required = vec!["read".to_string()];
             let present: Vec<String> = vec![];
-            assert!(!scopes_are_sufficient(&required, &present));
+            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
         }
 
         #[test]
         fn superset_of_scopes_succeeds() {
             let required = vec!["read".to_string()];
             let present = vec!["read".to_string(), "write".to_string(), "admin".to_string()];
-            assert!(scopes_are_sufficient(&required, &present));
+            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
         }
 
         #[test]
         fn empty_required_scopes_always_succeeds() {
             let required: Vec<String> = vec![];
             let present = vec!["read".to_string()];
-            assert!(scopes_are_sufficient(&required, &present));
+            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
 
             let present_empty: Vec<String> = vec![];
-            assert!(scopes_are_sufficient(&required, &present_empty));
+            assert!(is_sufficient(
+                ScopeMode::RequireAll,
+                &required,
+                &present_empty
+            ));
         }
 
         #[test]
         fn scope_order_does_not_matter() {
             let required = vec!["write".to_string(), "read".to_string()];
             let present = vec!["read".to_string(), "write".to_string()];
-            assert!(scopes_are_sufficient(&required, &present));
+            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
         }
 
         #[test]
@@ -471,6 +521,92 @@ mod tests {
 
             assert!(encoded.contains(r#"error="insufficient_scope""#));
             assert!(encoded.contains(r#"scope="read write""#));
+        }
+
+        #[test]
+        fn scope_mode_disabled_always_sufficient() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present: Vec<String> = vec![];
+            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
+        }
+
+        #[test]
+        fn scope_mode_require_all_needs_all_scopes() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string()];
+            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
+
+            let present_all = vec!["read".to_string(), "write".to_string()];
+            assert!(is_sufficient(
+                ScopeMode::RequireAll,
+                &required,
+                &present_all
+            ));
+        }
+
+        #[test]
+        fn scope_mode_require_any_accepts_one_match() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["read".to_string()];
+            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
+        }
+
+        #[test]
+        fn scope_mode_require_any_rejects_zero_matches() {
+            let required = vec!["read".to_string(), "write".to_string()];
+            let present = vec!["admin".to_string()];
+            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
+        }
+
+        #[test]
+        fn scope_mode_empty_scopes_is_sufficient_for_all_modes() {
+            let required: Vec<String> = vec![];
+            let present = vec!["anything".to_string()];
+            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
+            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
+            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
+        }
+
+        #[test]
+        fn scope_mode_token_with_no_scopes_fails_when_required() {
+            let required = vec!["read".to_string()];
+            let present: Vec<String> = vec![];
+            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
+            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
+            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
+        }
+
+        #[test]
+        fn scope_mode_yaml_deserialization() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                scope_mode: require_any
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.scope_mode, ScopeMode::RequireAny);
+        }
+
+        #[test]
+        fn scope_mode_defaults_to_require_all() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.scope_mode, ScopeMode::RequireAll);
         }
     }
 

@@ -58,6 +58,68 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 </Caution>
 
+## Configuring scope enforcement
+
+You can control how the MCP Server validates scopes from OAuth tokens using the `scope_mode` option.
+
+| Mode | Behavior |
+|------|----------|
+| `require_all` | Token must have **all** configured scopes (default) |
+| `require_any` | Token must have **at least one** of the configured scopes |
+| `disabled` | Skip scope checks entirely |
+
+### Require all scopes (default)
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    scopes:
+      - read
+      - write
+    scope_mode: require_all  # This is the default
+```
+
+The token must have **all** configured scopes. This is the most restrictive mode.
+
+### Require any scope
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    scopes:
+      - read
+      - write
+      - admin
+    scope_mode: require_any
+```
+
+The token must have **at least one** of the configured scopes. Useful when scopes represent alternative access levels.
+
+### Disable scope enforcement
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    scope_mode: disabled
+```
+
+Skip scope enforcement entirely. The server validates token authenticity (signature and audience) but not scopes.
+
+<Caution>
+
+Use `scope_mode: disabled` only when downstream services (e.g., subgraphs) handle authorization. Without scope enforcement, any valid token grants full access to the MCP Server.
+
+</Caution>
+
 ## Performance considerations
 
 ### Discovery timeout
