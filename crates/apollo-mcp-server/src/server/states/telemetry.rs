@@ -37,7 +37,7 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
         session_id = tracing::field::Empty,
         status_code = tracing::field::Empty,
     );
-    span.set_parent(parent_cx);
+    let _ = span.set_parent(parent_cx);
 
     request.extensions_mut().insert(span.clone()); // Store the span in request extensions
 

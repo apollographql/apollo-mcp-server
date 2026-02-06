@@ -19,7 +19,7 @@ apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
 axum-extra = { version = "0.12.0", features = ["typed-header"] }
 axum-otel-metrics = "0.12.0"
-axum-tracing-opentelemetry = "0.29.0"
+axum-tracing-opentelemetry = "0.33.0"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
@@ -60,10 +60,10 @@ shellexpand = { version = "3.1", default-features = false, features = ["base-0"]
 thiserror.workspace = true
 tokio.workspace = true
 tokio-util = "0.7.15"
-tonic = "0.13.1"
+tonic = "0.14"
 tower-http = { version = "0.6.6", features = ["cors", "trace"] }
 tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.31.0"
+tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
