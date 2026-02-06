@@ -94,6 +94,18 @@ pub struct Config {
     #[serde(default)]
     pub allow_any_audience: bool,
 
+    /// Allow clients providing their own Authorization header to bypass OAuth validation.
+    ///
+    /// When `true`, requests that include an `Authorization: Bearer <token>` header
+    /// will skip JWT validation and pass through directly. Requests without an
+    /// Authorization header will still go through the normal OAuth flow.
+    ///
+    /// **WARNING**: This is less secure because the server does not validate the token.
+    /// Only use this when the MCP server is behind a trusted proxy or gateway that
+    /// has already authenticated the client.
+    #[serde(default)]
+    pub allow_external_auth_header: bool,
+
     /// The resource to protect.
     ///
     /// Note: This is usually the publicly accessible URL of this running MCP server
@@ -165,6 +177,13 @@ impl Config {
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
+            );
+        }
+
+        if self.allow_external_auth_header {
+            warn!(
+                "allow_external_auth_header is enabled - requests with an Authorization header will bypass OAuth validation. \
+                 This reduces security. Only use this when clients are pre-authenticated by a trusted proxy."
             );
         }
 
@@ -254,6 +273,23 @@ async fn oauth_validate(
         .discovery_timeout
         .unwrap_or(Duration::from_secs(5));
 
+    // If allow_external_auth_header is enabled and a token is present,
+    // skip OAuth validation and pass through with the provided token.
+    // No token present — fall through to normal OAuth flow (returns 401)
+    if auth_config.allow_external_auth_header
+        && let Some(token) = token
+    {
+        tracing::info!("Bypassing OAuth validation for externally-provided auth header");
+        let valid_token = ValidToken {
+            token: token.0,
+            scopes: vec![],
+        };
+        request.extensions_mut().insert(valid_token);
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
+    }
+
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
@@ -322,6 +358,7 @@ mod tests {
             servers: vec![Url::parse("http://localhost:1234").unwrap()],
             audiences: vec!["test-audience".to_string()],
             allow_any_audience: false,
+            allow_external_auth_header: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
             scopes: vec!["read".to_string()],
@@ -400,6 +437,44 @@ mod tests {
         assert!(www_auth.contains("Bearer"));
         assert!(www_auth.contains("resource_metadata"));
         assert!(!www_auth.contains("scope="));
+    }
+
+    #[tokio::test]
+    async fn allow_external_auth_header_bypasses_validation() {
+        let mut config = test_config();
+        config.allow_external_auth_header = true;
+        let app = test_router(config);
+        let req = Request::builder()
+            .uri("/test")
+            .header(AUTHORIZATION, "Bearer some-external-token")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn allow_external_auth_header_without_token_returns_unauthorized() {
+        let mut config = test_config();
+        config.allow_external_auth_header = true;
+        let app = test_router(config);
+        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn allow_external_auth_header_disabled_rejects_invalid_token() {
+        let mut config = test_config();
+        config.allow_external_auth_header = false;
+        let app = test_router(config);
+        let req = Request::builder()
+            .uri("/test")
+            .header(AUTHORIZATION, "Bearer some-external-token")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
     mod scope_validation {
@@ -621,6 +696,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
+        }
+
+        #[test]
+        fn yaml_deserialization_with_allow_external_auth_header() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              allow_external_auth_header: true
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(config.allow_external_auth_header);
+        }
+
+        #[test]
+        fn yaml_deserialization_without_allow_external_auth_header_defaults_to_false() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(!config.allow_external_auth_header);
         }
     }
 }
