@@ -281,6 +281,7 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | `resource`                        | `string`       |         | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                |
 | `resource_documentation`          | `string`       |         | Optional link to more documentation relating to this MCP server                                                                                   |
 | `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                                                                    |
+| `scope_mode`                      | `string`       | `require_all` | Scope enforcement mode: `disabled`, `require_all`, or `require_any`                                                                         |
 | `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                                                                 |
 | `discovery_timeout`               | `Duration`     | `5s`    | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                       |
 | `tls.ca_cert`                     | `string`       |         | Path to a CA certificate to trust (PEM format).                                                                                                   |
