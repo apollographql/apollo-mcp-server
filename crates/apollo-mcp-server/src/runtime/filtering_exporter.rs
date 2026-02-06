@@ -64,8 +64,8 @@ mod tests {
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn create_mock_span_data() -> SpanData {
         let span_context: SpanContext = SpanContext::new(
-            TraceId::from_u128(1),
-            SpanId::from_u64(12345),
+            TraceId::from_bytes(1u128.to_be_bytes()),
+            SpanId::from_bytes(12345u64.to_be_bytes()),
             TraceFlags::default(),
             true, // is_remote
             TraceState::default(),
@@ -73,7 +73,8 @@ mod tests {
 
         SpanData {
             span_context,
-            parent_span_id: SpanId::from_u64(54321),
+            parent_span_id: SpanId::from_bytes(54321u64.to_be_bytes()),
+            parent_span_is_remote: false,
             span_kind: SpanKind::Internal,
             name: "test-span".into(),
             start_time: SystemTime::UNIX_EPOCH,
