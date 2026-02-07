@@ -24,7 +24,7 @@ jobs:
                   # Responds to @claude mentions in comments
                   claude_args: |
                       --append-system-prompt "Write to .claude/MEMORIES.md when a user asks you to remember something for the future."
-                      --max-turns 10
+                      --max-turns 20
                       --model claude-sonnet-4-5-20250929
             - name: Output Claude execution log
               if: always()

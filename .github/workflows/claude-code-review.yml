@@ -73,7 +73,7 @@ jobs:
           prompt: "/review"
           # Model selected automatically based on PR complexity, or manually via label
           claude_args: >-
-            --max-turns 10
+            --max-turns 20
             --model ${{ steps.model_selection.outputs.model }}
             --allowedTools "Bash(gh:*),Bash(git diff*),Bash(git log*),Bash(git show*),Read,Grep,Glob"
 
