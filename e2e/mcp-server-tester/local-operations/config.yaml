@@ -4,10 +4,10 @@ transport:
 operations:
   source: local
   paths:
-    - ./local-operations/operations
+    - <test-dir>/operations
 schema:
   source: local
-  path: ./local-operations/api.graphql
+  path: <test-dir>/api.graphql
 overrides:
   mutation_mode: all
 introspection:

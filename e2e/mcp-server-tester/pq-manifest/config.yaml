@@ -3,10 +3,10 @@ transport:
   type: stdio
 operations:
   source: manifest
-  path: ./pq-manifest/apollo.json
+  path: <test-dir>/apollo.json
 schema:
   source: local
-  path: ./pq-manifest/api.graphql
+  path: <test-dir>/api.graphql
 overrides:
   mutation_mode: all
 introspection:

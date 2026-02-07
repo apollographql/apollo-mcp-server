@@ -70,3 +70,24 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: codecov.json
           fail_ci_if_error: true
+
+  e2e:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run e2e tests (local-operations)
+        run: ./e2e/mcp-server-tester/run_tests.sh local-operations
+
+      - name: Run e2e tests (pq-manifest)
+        run: ./e2e/mcp-server-tester/run_tests.sh pq-manifest

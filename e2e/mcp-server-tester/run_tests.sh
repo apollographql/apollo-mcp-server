@@ -30,7 +30,6 @@ else
   TEST_DIR="$(cd -P -- "$SCRIPT_DIR/$RAW_DIR_ARG" && pwd)"
 fi
 
-TEST_DIR="${1%/}"  # strip trailing slash if present
 TESTS="$TEST_DIR/tool-tests.yaml"
 MCP_CONFIG="$TEST_DIR/config.yaml"
 
@@ -62,13 +61,21 @@ cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT INT TERM # cleanup before exiting
 GEN_CONFIG="$TMP_DIR/server-config.generated.json"
 
-# Safe replacement for <test-dir> with absolute path (handles /, &, and |)
+# Safe replacement for paths with absolute path (handles /, &, and |)
 safe_dir="${TEST_DIR//\\/\\\\}"
 safe_dir="${safe_dir//&/\\&}"
 safe_dir="${safe_dir//|/\\|}"
 
-# Replace the literal token "<test-dir>" everywhere
-sed "s|<test-dir>|$safe_dir|g" "$TEMPLATE_PATH" > "$GEN_CONFIG"
+safe_bin="${BIN_PATH//\\/\\\\}"
+safe_bin="${safe_bin//&/\\&}"
+safe_bin="${safe_bin//|/\\|}"
 
-# Run the command
-npx -y mcp-server-tester@1.4.0 tools "$TESTS" --server-config "$GEN_CONFIG"
+# Generate MCP config.yaml with absolute paths
+GEN_MCP_CONFIG="$TEST_DIR/config.generated.yaml"
+sed -e "s|<test-dir>|$safe_dir|g" "$MCP_CONFIG" > "$GEN_MCP_CONFIG"
+
+# Replace the literal tokens "<test-dir>" and "<bin-path>" in server config
+sed -e "s|<test-dir>|$safe_dir|g" -e "s|<bin-path>|$safe_bin|g" "$TEMPLATE_PATH" > "$GEN_CONFIG"
+
+# Run the command (ignore-scripts needed due to mcp-server-tester's postinstall requiring patch-package)
+npm_config_ignore_scripts=true npx -y mcp-server-tester@1.4.1 tools "$TESTS" --server-config "$GEN_CONFIG"
