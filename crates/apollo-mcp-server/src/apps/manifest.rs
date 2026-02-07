@@ -1,6 +1,6 @@
 use core::fmt;
 use std::fmt::Display;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{fs::read_to_string, sync::Arc};
 
 use apollo_compiler::{Schema, validation::Valid};
@@ -155,15 +155,15 @@ pub(crate) fn load_from_path(
             ManifestResource::Targeted(targets) => AppResource::Targeted(TargetedAppResource {
                 mcp: targets
                     .mcp
-                    .map(|resource| resource_source_from_string(resource, path.clone()))
+                    .map(|resource| resource_source_from_string(resource, &path))
                     .transpose()?,
                 openai: targets
                     .openai
-                    .map(|resource| resource_source_from_string(resource, path.clone()))
+                    .map(|resource| resource_source_from_string(resource, &path))
                     .transpose()?,
             }),
             ManifestResource::Single(resource) => {
-                AppResource::Single(resource_source_from_string(resource, path)?)
+                AppResource::Single(resource_source_from_string(resource, &path)?)
             }
         };
 
@@ -181,10 +181,7 @@ pub(crate) fn load_from_path(
     Ok(apps)
 }
 
-fn resource_source_from_string(
-    resource: String,
-    path: PathBuf,
-) -> Result<AppResourceSource, String> {
+fn resource_source_from_string(resource: String, path: &Path) -> Result<AppResourceSource, String> {
     if resource.starts_with("http://") || resource.starts_with("https://") {
         let url = Url::parse(&resource)
             .map_err(|err| format!("Failed to parse resource URL {}: {err}", resource))?;
