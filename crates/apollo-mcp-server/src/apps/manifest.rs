@@ -1,6 +1,6 @@
 use core::fmt;
 use std::fmt::Display;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::{fs::read_to_string, sync::Arc};
 
 use apollo_compiler::{Schema, validation::Valid};
@@ -10,7 +10,9 @@ use serde_json::{Map, Value, json};
 use tracing::debug;
 use url::Url;
 
-use crate::apps::app::{App, AppResource, AppTool, PrefetchOperation};
+use crate::apps::app::{
+    App, AppResource, AppResourceSource, AppTool, PrefetchOperation, TargetedAppResource,
+};
 use crate::{
     custom_scalar_map::CustomScalarMap,
     operations::{MutationMode, Operation, RawOperation},
@@ -148,22 +150,21 @@ pub(crate) fn load_from_path(
             }
         }
 
-        let resource = if manifest.resource.starts_with("http://")
-            || manifest.resource.starts_with("https://")
-        {
-            let url = Url::parse(&manifest.resource).map_err(|err| {
-                format!("Failed to parse resource URL {}: {err}", manifest.resource)
-            })?;
-            AppResource::Remote(url)
-        } else {
-            let resource_path = path.join(&manifest.resource);
-            let contents = read_to_string(&resource_path).map_err(|err| {
-                format!(
-                    "Failed to read resource from {resource_path}: {err}",
-                    resource_path = resource_path.to_string_lossy(),
-                )
-            })?;
-            AppResource::Local(contents)
+        // We may have a resource with just a single string OR an object specifying mcp + openai resources. Any of these could be file path or url.
+        let resource = match manifest.resource {
+            ManifestResource::Targeted(targets) => AppResource::Targeted(TargetedAppResource {
+                mcp: targets
+                    .mcp
+                    .map(|resource| resource_source_from_string(resource, path.clone()))
+                    .transpose()?,
+                openai: targets
+                    .openai
+                    .map(|resource| resource_source_from_string(resource, path.clone()))
+                    .transpose()?,
+            }),
+            ManifestResource::Single(resource) => {
+                AppResource::Single(resource_source_from_string(resource, path)?)
+            }
         };
 
         apps.push(App {
@@ -178,6 +179,26 @@ pub(crate) fn load_from_path(
         });
     }
     Ok(apps)
+}
+
+fn resource_source_from_string(
+    resource: String,
+    path: PathBuf,
+) -> Result<AppResourceSource, String> {
+    if resource.starts_with("http://") || resource.starts_with("https://") {
+        let url = Url::parse(&resource)
+            .map_err(|err| format!("Failed to parse resource URL {}: {err}", resource))?;
+        Ok(AppResourceSource::Remote(url))
+    } else {
+        let resource_path = path.join(&resource);
+        let contents = read_to_string(&resource_path).map_err(|err| {
+            format!(
+                "Failed to read resource from {resource_path}: {err}",
+                resource_path = resource_path.to_string_lossy(),
+            )
+        })?;
+        Ok(AppResourceSource::Local(contents))
+    }
 }
 
 fn merge_inputs(
@@ -228,7 +249,7 @@ fn merge_inputs(
 struct Manifest {
     hash: String,
     operations: Vec<OperationDefinition>,
-    resource: String,
+    resource: ManifestResource,
     name: Option<String>,
     description: Option<String>,
     csp: Option<CSPSettings>,
@@ -239,6 +260,19 @@ struct Manifest {
     format: ManifestFormat,
     #[allow(dead_code)] // Only used to verify we recognize the version
     version: ManifestVersion,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+enum ManifestResource {
+    Targeted(TargetedManifestResource),
+    Single(String),
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct TargetedManifestResource {
+    openai: Option<String>,
+    mcp: Option<String>,
 }
 
 #[derive(Clone, Copy, Deserialize)]

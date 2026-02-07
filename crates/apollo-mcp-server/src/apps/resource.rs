@@ -3,7 +3,7 @@ use rmcp::model::{Meta, Resource, ResourceContents};
 use serde_json::json;
 use url::Url;
 
-use crate::apps::app::{AppResource, AppTarget};
+use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
 
 use super::App;
 
@@ -36,9 +36,27 @@ pub(crate) async fn get_app_resource(
         ));
     };
 
-    let text = match &app.resource {
-        AppResource::Local(contents) => contents.clone(),
-        AppResource::Remote(url) => {
+    let resource_source = match &app.resource {
+        AppResource::Targeted(resource) => match app_target {
+            AppTarget::AppsSDK => resource.openai.as_ref().ok_or_else(|| {
+                ErrorData::resource_not_found(
+                    "Invalid apps target: no resource found for openai".to_string(),
+                    None,
+                )
+            })?,
+            AppTarget::MCPApps => resource.mcp.as_ref().ok_or_else(|| {
+                ErrorData::resource_not_found(
+                    "Invalid apps target: no resource found for mcp".to_string(),
+                    None,
+                )
+            })?,
+        },
+        AppResource::Single(app_resource_source) => app_resource_source,
+    };
+
+    let text = match resource_source {
+        AppResourceSource::Local(contents) => contents.clone(),
+        AppResourceSource::Remote(url) => {
             let response = reqwest::Client::new()
                 .get(url.clone())
                 .send()
