@@ -550,7 +550,7 @@ mod tests {
 
     use crate::apps::{
         App,
-        app::{AppResource, AppTool},
+        app::{AppResource, AppResourceSource, AppTool},
         manifest::{AppLabels, CSPSettings, WidgetSettings},
     };
 
@@ -730,10 +730,14 @@ mod tests {
 
     #[tokio::test]
     async fn resource_list_includes_app_resources() {
-        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl(Extensions::new())
-            .unwrap()
-            .resources;
+        let resources = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(Extensions::new())
+        .unwrap()
+        .resources;
 
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].uri, RESOURCE_URI);
@@ -749,10 +753,14 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl(extensions)
-            .unwrap()
-            .resources;
+        let resources = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(extensions)
+        .unwrap()
+        .resources;
 
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].mime_type, Some("text/html+skybridge".into()));
@@ -768,10 +776,14 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl(extensions)
-            .unwrap()
-            .resources;
+        let resources = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(extensions)
+        .unwrap()
+        .resources;
 
         assert_eq!(resources.len(), 1);
         assert_eq!(resources[0].mime_type, Some("text/html+skybridge".into()));
@@ -787,10 +799,14 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let resources = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl(extensions)
-            .unwrap()
-            .resources;
+        let resources = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(extensions)
+        .unwrap()
+        .resources;
 
         assert_eq!(resources.len(), 1);
         assert_eq!(
@@ -809,8 +825,12 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running_with_apps(AppResource::Local("abcdef".to_string()), None, None)
-            .list_resources_impl(extensions);
+        let result = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(extensions);
 
         assert!(result.is_err());
         assert_eq!(
@@ -822,8 +842,11 @@ mod tests {
     #[tokio::test]
     async fn getting_resource_from_running() {
         let resource_content = "This is a test resource";
-        let running =
-            running_with_apps(AppResource::Local(resource_content.to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+            None,
+            None,
+        );
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
@@ -854,7 +877,11 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_that_does_not_exist() {
-        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        );
         let result = running
             .read_resource_impl(
                 ReadResourceRequestParams {
@@ -869,7 +896,11 @@ mod tests {
 
     #[tokio::test]
     async fn getting_resource_from_running_with_invalid_uri() {
-        let running = running_with_apps(AppResource::Local("abcdef".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        );
         let result = running
             .read_resource_impl(
                 ReadResourceRequestParams {
@@ -895,7 +926,11 @@ mod tests {
             .await;
 
         let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
-        let running = running_with_apps(AppResource::Remote(url), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Remote(url)),
+            None,
+            None,
+        );
 
         let mut resource = running
             .read_resource_impl(
@@ -925,7 +960,7 @@ mod tests {
         let redirect_domains = vec!["redirect.example.com".to_string()];
         let base_uri_domains = vec!["base_uri.example.com".to_string()];
         let running = running_with_apps(
-            AppResource::Local(resource_content.to_string()),
+            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
             Some(CSPSettings {
                 connect_domains: Some(connect_domains.clone()),
                 resource_domains: Some(resource_domains.clone()),
@@ -982,7 +1017,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_without_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let result = running.list_tools_impl(Extensions::new()).await.unwrap();
 
@@ -992,7 +1031,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_valid_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1011,7 +1054,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_nonexistent_app_parameter() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1028,7 +1075,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_app_and_openai_target_has_correct_metadata() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1047,7 +1098,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_app_and_mcp_target_has_correct_metadata() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1078,7 +1133,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_app_defaults_to_openai_target() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1098,7 +1157,11 @@ mod tests {
 
     #[tokio::test]
     async fn list_tools_with_invalid_app_target_returns_error() {
-        let running = running_with_apps(AppResource::Local("test".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
@@ -1117,7 +1180,7 @@ mod tests {
     async fn widget_settings_description_is_set_in_meta() {
         let resource_content = "This is a test resource";
         let running = running_with_apps(
-            AppResource::Local(resource_content.to_string()),
+            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
             None,
             Some(WidgetSettings {
                 description: Some("A custom description".to_string()),
@@ -1150,7 +1213,7 @@ mod tests {
     async fn widget_settings_domain_is_set_in_meta() {
         let resource_content = "This is a test resource";
         let running = running_with_apps(
-            AppResource::Local(resource_content.to_string()),
+            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
             None,
             Some(WidgetSettings {
                 description: None,
@@ -1183,7 +1246,7 @@ mod tests {
     async fn widget_settings_prefers_border_is_set_in_meta() {
         let resource_content = "This is a test resource";
         let running = running_with_apps(
-            AppResource::Local(resource_content.to_string()),
+            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
             None,
             Some(WidgetSettings {
                 description: None,
@@ -1215,7 +1278,7 @@ mod tests {
     #[tokio::test]
     async fn read_resource_impl_returns_mcp_format_when_target_is_mcp() {
         let running = running_with_apps(
-            AppResource::Local("test content".to_string()),
+            AppResource::Single(AppResourceSource::Local("test content".to_string())),
             Some(CSPSettings {
                 connect_domains: Some(vec!["connect.example.com".to_string()]),
                 resource_domains: Some(vec!["resource.example.com".to_string()]),
@@ -1275,7 +1338,11 @@ mod tests {
 
     #[tokio::test]
     async fn read_resource_impl_returns_error_for_invalid_app_target() {
-        let running = running_with_apps(AppResource::Local("test content".to_string()), None, None);
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test content".to_string())),
+            None,
+            None,
+        );
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()

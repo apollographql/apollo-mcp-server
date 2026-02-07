@@ -28,6 +28,18 @@ pub(crate) struct App {
 
 #[derive(Clone, Debug)]
 pub(crate) enum AppResource {
+    Targeted(TargetedAppResource),
+    Single(AppResourceSource),
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct TargetedAppResource {
+    pub(crate) openai: Option<AppResourceSource>,
+    pub(crate) mcp: Option<AppResourceSource>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum AppResourceSource {
     Local(String),
     Remote(Url),
 }

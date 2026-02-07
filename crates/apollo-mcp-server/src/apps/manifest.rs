@@ -10,7 +10,9 @@ use serde_json::{Map, Value, json};
 use tracing::debug;
 use url::Url;
 
-use crate::apps::app::{App, AppResource, AppTool, PrefetchOperation};
+use crate::apps::app::{
+    App, AppResource, AppResourceSource, AppTool, PrefetchOperation, TargetedAppResource,
+};
 use crate::{
     custom_scalar_map::CustomScalarMap,
     operations::{MutationMode, Operation, RawOperation},
@@ -148,22 +150,21 @@ pub(crate) fn load_from_path(
             }
         }
 
-        let resource = if manifest.resource.starts_with("http://")
-            || manifest.resource.starts_with("https://")
-        {
-            let url = Url::parse(&manifest.resource).map_err(|err| {
-                format!("Failed to parse resource URL {}: {err}", manifest.resource)
-            })?;
-            AppResource::Remote(url)
-        } else {
-            let resource_path = path.join(&manifest.resource);
-            let contents = read_to_string(&resource_path).map_err(|err| {
-                format!(
-                    "Failed to read resource from {resource_path}: {err}",
-                    resource_path = resource_path.to_string_lossy(),
-                )
-            })?;
-            AppResource::Local(contents)
+        // We may have a resource with just a single string OR an object specifying mcp + openai resources. Any of these could be file path or url.
+        let resource = match manifest.resource {
+            ManifestResource::Targeted(targets) => AppResource::Targeted(TargetedAppResource {
+                mcp: targets
+                    .mcp
+                    .map(|resource| resource_source_from_string(resource, &path))
+                    .transpose()?,
+                openai: targets
+                    .openai
+                    .map(|resource| resource_source_from_string(resource, &path))
+                    .transpose()?,
+            }),
+            ManifestResource::Single(resource) => {
+                AppResource::Single(resource_source_from_string(resource, &path)?)
+            }
         };
 
         apps.push(App {
@@ -178,6 +179,23 @@ pub(crate) fn load_from_path(
         });
     }
     Ok(apps)
+}
+
+fn resource_source_from_string(resource: String, path: &Path) -> Result<AppResourceSource, String> {
+    if resource.starts_with("http://") || resource.starts_with("https://") {
+        let url = Url::parse(&resource)
+            .map_err(|err| format!("Failed to parse resource URL {}: {err}", resource))?;
+        Ok(AppResourceSource::Remote(url))
+    } else {
+        let resource_path = path.join(&resource);
+        let contents = read_to_string(&resource_path).map_err(|err| {
+            format!(
+                "Failed to read resource from {resource_path}: {err}",
+                resource_path = resource_path.to_string_lossy(),
+            )
+        })?;
+        Ok(AppResourceSource::Local(contents))
+    }
 }
 
 fn merge_inputs(
@@ -228,7 +246,7 @@ fn merge_inputs(
 struct Manifest {
     hash: String,
     operations: Vec<OperationDefinition>,
-    resource: String,
+    resource: ManifestResource,
     name: Option<String>,
     description: Option<String>,
     csp: Option<CSPSettings>,
@@ -239,6 +257,19 @@ struct Manifest {
     format: ManifestFormat,
     #[allow(dead_code)] // Only used to verify we recognize the version
     version: ManifestVersion,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(untagged)]
+enum ManifestResource {
+    Targeted(TargetedManifestResource),
+    Single(String),
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct TargetedManifestResource {
+    openai: Option<String>,
+    mcp: Option<String>,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -341,6 +372,7 @@ pub(crate) struct CSPSettings {
 #[cfg(test)]
 mod test_load_from_path {
     use super::*;
+    use crate::apps::app::AppResourceSource;
     use assert_fs::{TempDir, prelude::*};
 
     #[test]
@@ -375,8 +407,10 @@ mod test_load_from_path {
         assert_eq!(apps.len(), 1);
         let app = &apps[0];
         match &app.resource {
-            AppResource::Local(contents) => assert_eq!(contents, html),
-            AppResource::Remote(url) => panic!("unexpected remote resource {url}"),
+            AppResource::Single(AppResourceSource::Local(contents)) => {
+                assert_eq!(contents, html)
+            }
+            other => panic!("unexpected resource {other:?}"),
         }
         assert_eq!(app.uri, "ui://widget/MyApp#abcdef".parse().unwrap());
     }
@@ -411,11 +445,11 @@ mod test_load_from_path {
         assert_eq!(apps.len(), 1);
         let app = &apps[0];
         match &app.resource {
-            AppResource::Remote(url) => {
+            AppResource::Single(AppResourceSource::Remote(url)) => {
                 assert_eq!(url.as_str(), "https://example.com/widget/index.html")
             }
-            AppResource::Local(contents) => {
-                panic!("expected remote resource, found local: {contents}")
+            other => {
+                panic!("expected remote resource, found: {other:?}")
             }
         }
     }
@@ -928,5 +962,115 @@ mod test_load_from_path {
             tool2.labels.tool_invocation_invoked,
             Some("Cart filled!".to_string())
         );
+    }
+
+    #[test]
+    fn should_load_local_files_when_resource_is_targeted() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("TargetedApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": {
+                                "openai": "openai.html",
+                                "mcp": "mcp.html"
+                            },
+                            "operations": []}"#,
+            )
+            .unwrap();
+        let openai_html = "<html>openai</html>";
+        let mcp_html = "<html>mcp</html>";
+        app_dir.child("openai.html").write_str(openai_html).unwrap();
+        app_dir.child("mcp.html").write_str(mcp_html).unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        match &app.resource {
+            AppResource::Targeted(targeted) => {
+                match targeted
+                    .openai
+                    .as_ref()
+                    .expect("openai resource should exist")
+                {
+                    AppResourceSource::Local(contents) => assert_eq!(contents, openai_html),
+                    other => panic!("expected local openai resource, found: {other:?}"),
+                }
+                match targeted.mcp.as_ref().expect("mcp resource should exist") {
+                    AppResourceSource::Local(contents) => assert_eq!(contents, mcp_html),
+                    other => panic!("expected local mcp resource, found: {other:?}"),
+                }
+            }
+            other => panic!("expected targeted resource, found: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn should_load_remote_urls_when_resource_is_targeted() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("TargetedRemoteApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                            "version": "1",
+                            "hash": "abcdef",
+                            "resource": {
+                                "openai": "https://example.com/openai.html",
+                                "mcp": "https://example.com/mcp.html"
+                            },
+                            "operations": []}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+        assert_eq!(apps.len(), 1);
+        let app = &apps[0];
+        match &app.resource {
+            AppResource::Targeted(targeted) => {
+                match targeted
+                    .openai
+                    .as_ref()
+                    .expect("openai resource should exist")
+                {
+                    AppResourceSource::Remote(url) => {
+                        assert_eq!(url.as_str(), "https://example.com/openai.html")
+                    }
+                    other => panic!("expected remote openai resource, found: {other:?}"),
+                }
+                match targeted.mcp.as_ref().expect("mcp resource should exist") {
+                    AppResourceSource::Remote(url) => {
+                        assert_eq!(url.as_str(), "https://example.com/mcp.html")
+                    }
+                    other => panic!("expected remote mcp resource, found: {other:?}"),
+                }
+            }
+            other => panic!("expected targeted resource, found: {other:?}"),
+        }
     }
 }
