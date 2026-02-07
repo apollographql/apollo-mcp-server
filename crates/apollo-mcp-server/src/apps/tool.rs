@@ -207,7 +207,7 @@ mod tests {
     use apollo_compiler::Schema;
     use rmcp::{model::Tool, object};
 
-    use crate::apps::app::{AppResource, PrefetchOperation};
+    use crate::apps::app::{AppResource, AppResourceSource, PrefetchOperation};
     use crate::apps::manifest::AppLabels;
     use crate::operations::{MutationMode, RawOperation};
 
@@ -289,7 +289,7 @@ mod tests {
         let app = App {
             name: "MyApp".to_string(),
             description: None,
-            resource: AppResource::Local("blah".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("blah".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
@@ -377,7 +377,7 @@ mod tests {
         let app = App {
             name: "MyApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
@@ -427,7 +427,7 @@ mod tests {
         let app = App {
             name: "MyApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
@@ -469,7 +469,7 @@ mod tests {
         let app = App {
             name: "MyApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://MyApp".parse().unwrap(),
@@ -583,7 +583,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -612,7 +612,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -644,7 +644,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -673,7 +673,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -705,7 +705,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -743,7 +743,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -772,7 +772,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -805,7 +805,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),

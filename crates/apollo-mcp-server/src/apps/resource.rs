@@ -166,6 +166,7 @@ pub(crate) async fn get_app_resource(
 mod tests {
     use rmcp::model::{Extensions, RawResource};
 
+    use crate::apps::app::TargetedAppResource;
     use crate::apps::manifest::{CSPSettings, WidgetSettings};
 
     use super::*;
@@ -292,7 +293,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test content".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
             csp_settings: Some(CSPSettings {
                 connect_domains: Some(vec!["connect.example.com".to_string()]),
                 resource_domains: Some(vec!["resource.example.com".to_string()]),
@@ -350,7 +351,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test content".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
             csp_settings: Some(CSPSettings {
                 connect_domains: Some(vec!["connect.example.com".to_string()]),
                 resource_domains: Some(vec!["resource.example.com".to_string()]),
@@ -409,7 +410,7 @@ mod tests {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
-            resource: AppResource::Local("test content".to_string()),
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
             csp_settings: None,
             widget_settings: None,
             uri: "ui://widget/TestApp#hash123".parse().unwrap(),
@@ -425,6 +426,104 @@ mod tests {
             },
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn should_return_openai_content_when_targeted_resource_and_target_is_openai() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Targeted(TargetedAppResource {
+                openai: Some(AppResourceSource::Local("openai content".to_string())),
+                mcp: Some(AppResourceSource::Local("mcp content".to_string())),
+            }),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams {
+                uri: "ui://widget/TestApp".to_string(),
+                meta: None,
+            },
+            "ui://widget/TestApp".parse().unwrap(),
+            &AppTarget::AppsSDK,
+        )
+        .await
+        .unwrap();
+
+        let ResourceContents::TextResourceContents { text, .. } = result else {
+            unreachable!()
+        };
+        assert_eq!(text, "openai content");
+    }
+
+    #[tokio::test]
+    async fn should_return_mcp_content_when_targeted_resource_and_target_is_mcp() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Targeted(TargetedAppResource {
+                openai: Some(AppResourceSource::Local("openai content".to_string())),
+                mcp: Some(AppResourceSource::Local("mcp content".to_string())),
+            }),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams {
+                uri: "ui://widget/TestApp".to_string(),
+                meta: None,
+            },
+            "ui://widget/TestApp".parse().unwrap(),
+            &AppTarget::MCPApps,
+        )
+        .await
+        .unwrap();
+
+        let ResourceContents::TextResourceContents { text, .. } = result else {
+            unreachable!()
+        };
+        assert_eq!(text, "mcp content");
+    }
+
+    #[tokio::test]
+    async fn should_return_error_when_targeted_resource_missing_for_requested_target() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Targeted(TargetedAppResource {
+                openai: Some(AppResourceSource::Local("openai content".to_string())),
+                mcp: None,
+            }),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams {
+                uri: "ui://widget/TestApp".to_string(),
+                meta: None,
+            },
+            "ui://widget/TestApp".parse().unwrap(),
+            &AppTarget::MCPApps,
         )
         .await;
 
