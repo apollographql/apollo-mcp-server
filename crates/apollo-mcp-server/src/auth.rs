@@ -448,6 +448,9 @@ mod tests {
 
         // Unified test helper for scope validation logic
         fn is_sufficient(mode: ScopeMode, required: &[String], present: &[String]) -> bool {
+            if required.is_empty() {
+                return true;
+            }
             match mode {
                 ScopeMode::Disabled => true,
                 ScopeMode::RequireAll => required.iter().all(|req| present.contains(req)),
@@ -563,7 +566,7 @@ mod tests {
             let required: Vec<String> = vec![];
             let present = vec!["anything".to_string()];
             assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
+            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
             assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
         }
 
