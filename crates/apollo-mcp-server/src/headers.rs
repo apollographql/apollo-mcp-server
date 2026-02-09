@@ -4,6 +4,7 @@ use std::str::FromStr;
 use headers::HeaderMapExt;
 use http::Extensions;
 use reqwest::header::{HeaderMap, HeaderName};
+use tracing::warn;
 
 use crate::auth::ValidToken;
 
@@ -56,6 +57,15 @@ fn forward_headers(names: &[String], incoming: &HeaderMap, outgoing: &mut Header
                     | "content-length"
             )
         {
+            if matches!(
+                header_name.as_str(),
+                "authorization" | "cookie" | "proxy-authorization" | "x-api-key"
+            ) {
+                warn!(
+                    header = %header_name,
+                    "Forwarding sensitive header to upstream GraphQL API"
+                );
+            }
             outgoing.insert(header_name, value.clone());
         }
     }
@@ -67,6 +77,7 @@ mod tests {
     use headers::Authorization;
     use http::Extensions;
     use reqwest::header::HeaderValue;
+    use tracing_test::traced_test;
 
     use crate::auth::ValidToken;
 
@@ -301,5 +312,28 @@ mod tests {
         forward_headers(&names, &incoming, &mut outgoing);
 
         assert_eq!(outgoing.get("x-tenant-id").unwrap(), "tenant-123");
+    }
+
+    #[test]
+    #[traced_test]
+    fn test_forward_headers_warns_on_sensitive_headers() {
+        let names = vec![
+            "authorization".to_string(),
+            "cookie".to_string(),
+            "x-tenant-id".to_string(),
+        ];
+
+        let mut incoming = HeaderMap::new();
+        incoming.insert("authorization", HeaderValue::from_static("Bearer token"));
+        incoming.insert("cookie", HeaderValue::from_static("session=abc"));
+        incoming.insert("x-tenant-id", HeaderValue::from_static("tenant-123"));
+
+        let mut outgoing = HeaderMap::new();
+        forward_headers(&names, &incoming, &mut outgoing);
+
+        assert!(logs_contain("Forwarding sensitive header"));
+        assert!(logs_contain("authorization"));
+        assert!(logs_contain("cookie"));
+        assert!(!logs_contain("x-tenant-id"));
     }
 }
