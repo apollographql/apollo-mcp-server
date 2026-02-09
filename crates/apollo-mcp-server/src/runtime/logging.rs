@@ -19,6 +19,7 @@ use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Logging {
     /// The log level to use for tracing
     #[serde(

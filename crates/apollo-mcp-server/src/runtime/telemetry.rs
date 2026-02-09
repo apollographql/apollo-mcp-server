@@ -28,6 +28,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Telemetry related options
 #[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(deny_unknown_fields)]
 pub struct Telemetry {
     exporters: Option<Exporters>,
     service_name: Option<String>,
@@ -35,6 +36,7 @@ pub struct Telemetry {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Exporters {
     metrics: Option<MetricsExporters>,
     tracing: Option<TracingExporters>,
@@ -42,7 +44,7 @@ pub struct Exporters {
 
 /// Metric telemetry exporter options
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(tag = "protocol", rename_all = "lowercase")]
+#[serde(tag = "protocol", rename_all = "lowercase", deny_unknown_fields)]
 pub enum MetricTelemetryExporter {
     /// GRPC Exporter
     Grpc {
@@ -67,7 +69,7 @@ pub enum MetricTelemetryExporter {
 
 /// Trace telemetry exporter options
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(tag = "protocol", rename_all = "lowercase")]
+#[serde(tag = "protocol", rename_all = "lowercase", deny_unknown_fields)]
 pub enum TraceTelemetryExporter {
     /// GRPC Exporter
     Grpc {
@@ -87,6 +89,7 @@ pub enum TraceTelemetryExporter {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MetricsExporters {
     otlp: Option<MetricTelemetryExporter>,
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
@@ -149,6 +152,7 @@ impl Default for MetricTelemetryExporter {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TracingExporters {
     otlp: Option<TraceTelemetryExporter>,
     sampler: Option<SamplerOption>,

@@ -55,7 +55,7 @@ pub struct Server {
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Transport {
     /// Use standard IO for server <> client communication
     #[default]

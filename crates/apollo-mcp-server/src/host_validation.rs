@@ -15,7 +15,7 @@ use tracing::warn;
 
 /// Configuration for Host header validation to prevent DNS rebinding attacks.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct HostValidationConfig {
     /// Enable Host header validation (enabled by default for security)
     pub enabled: bool,

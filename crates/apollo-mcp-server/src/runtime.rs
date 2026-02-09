@@ -361,4 +361,49 @@ mod test {
             Ok(())
         });
     }
+
+    #[test]
+    fn it_rejects_unknown_fields_in_yaml() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                auth:
+                  servers:
+                    - https://auth-server.com
+                transport:
+                  type: streamable_http
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let result = read_config(path);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("unknown field"));
+            assert!(err.contains("auth"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_rejects_unknown_nested_fields_in_yaml() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+                overrides:
+                    unknown_flag: true
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let result = read_config(path);
+            assert!(result.is_err());
+
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("unknown field"));
+            Ok(())
+        });
+    }
 }

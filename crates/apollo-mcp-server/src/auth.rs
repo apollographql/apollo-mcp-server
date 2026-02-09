@@ -82,6 +82,7 @@ impl TlsConfig {
 
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     /// List of upstream OAuth servers to delegate auth
     pub servers: Vec<Url>,
@@ -125,6 +126,7 @@ pub struct Config {
 
 /// TLS configuration for OAuth server connections
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TlsConfig {
     /// Path to additional CA certificates to trust (PEM format).
     /// Use this when your OAuth server uses a self-signed certificate

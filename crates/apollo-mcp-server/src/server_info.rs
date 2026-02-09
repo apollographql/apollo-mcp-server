@@ -4,7 +4,7 @@ use serde::Deserialize;
 /// Server metadata configuration returned in the MCP initialize response.
 /// All fields are optional and fall back to defaults if not provided.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ServerInfoConfig {
     /// The name of the MCP server implementation
     pub name: Option<String>,
