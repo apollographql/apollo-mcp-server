@@ -81,7 +81,7 @@ forward_headers:
 
 <Caution>
 
-Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens.
+Don't use header forwarding to pass through sensitive credentials such as API keys or access tokens. The server logs a warning when sensitive headers like `Authorization`, `Cookie`, `Proxy-Authorization`, or `X-Api-Key` are forwarded to the upstream GraphQL API.
 
 <br />
 <br />
