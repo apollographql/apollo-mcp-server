@@ -2,6 +2,8 @@
 default: minor
 ---
 
+# Add host header validation
+
 Add Host header validation to prevent DNS rebinding attacks. Requests with invalid Host headers are now rejected with 403 Forbidden. Enabled by default for StreamableHttp transport.
 
 ```yaml
