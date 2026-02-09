@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 /// Introspection configuration
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Introspection {
     /// Execution configuration for introspection
     pub execute: ExecuteConfig,
@@ -20,7 +20,7 @@ pub struct Introspection {
 
 /// Execution-specific introspection configuration
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ExecuteConfig {
     /// Enable introspection for execution
     pub enabled: bool,
@@ -30,7 +30,7 @@ pub struct ExecuteConfig {
 
 /// Introspect-specific introspection configuration
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct IntrospectConfig {
     /// Enable introspection requests
     pub enabled: bool,
@@ -43,7 +43,7 @@ pub struct IntrospectConfig {
 
 /// Search tool configuration
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct SearchConfig {
     /// Enable search tool
     pub enabled: bool,
@@ -76,7 +76,7 @@ impl Default for SearchConfig {
 
 /// Validation tool configuration
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ValidateConfig {
     /// Enable validation tool
     pub enabled: bool,

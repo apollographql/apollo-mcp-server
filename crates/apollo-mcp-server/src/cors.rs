@@ -9,7 +9,7 @@ use crate::errors::ServerError;
 
 /// CORS configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct CorsConfig {
     /// Enable CORS support
     pub enabled: bool,

@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 /// Overridable flags
 #[derive(Debug, Deserialize, Default, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Overrides {
     /// Disable type descriptions to save on context-window space
     pub disable_type_description: bool,

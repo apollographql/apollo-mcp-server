@@ -17,7 +17,7 @@ use super::{
 
 /// Configuration for the MCP server
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// CORS configuration
     pub cors: CorsConfig,
@@ -137,5 +137,38 @@ mod test {
         let schema = schemars::schema_for!(Config).to_value().to_string();
 
         assert!(!schema.contains("__"))
+    }
+
+    #[test]
+    fn it_rejects_unknown_top_level_fields() {
+        let result = serde_json::from_str::<Config>(r#"{"auth": {}}"#);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown field"));
+        assert!(err.contains("auth"));
+    }
+
+    #[test]
+    fn it_rejects_unknown_nested_fields() {
+        let result = serde_json::from_str::<Config>(
+            r#"{"introspection": {"execute": {"unknown_option": true}}}"#,
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown field"));
+    }
+
+    #[test]
+    fn it_rejects_auth_at_top_level() {
+        // This is the exact scenario from the issue: auth placed at top level
+        // instead of nested under transport
+        let yaml = r#"
+            auth:
+              servers:
+                - https://auth-server.com
+            transport:
+              type: streamable_http
+        "#;
+        let result = serde_yaml::from_str::<Config>(yaml);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown field"));
     }
 }

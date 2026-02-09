@@ -620,3 +620,25 @@ If a referenced environment variable is not defined, Apollo MCP Server fails to 
 ```
 Error: undefined environment variable 'OTEL_EXPORTER_OTLP_ENDPOINT' referenced in configuration
 ```
+
+### Configuration validation
+
+Apollo MCP Server validates your configuration file at startup and rejects invalid options. This helps catch typos, misplaced fields, and other misconfigurations early — for example, placing `auth` at the top level instead of nesting it under `transport`:
+
+```yaml title="config.yaml"
+# ❌ Wrong — auth is not a top-level option
+auth:
+  servers:
+    - https://auth-server.com
+transport:
+  type: streamable_http
+```
+
+The server fails to start and tells you exactly which field is invalid and what the valid options are:
+
+```
+Error: unknown field: found `auth`, expected one of `cors`, `server_info`,
+`custom_scalars`, `endpoint`, `graphos`, `headers`, `forward_headers`,
+`health_check`, `introspection`, `logging`, `telemetry`, `operations`,
+`overrides`, `schema`, `transport`
+```

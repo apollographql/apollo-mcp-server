@@ -5,7 +5,7 @@ use serde::Deserialize;
 
 /// Source for loaded operations
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-#[serde(tag = "source", rename_all = "snake_case")]
+#[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OperationSource {
     /// Load operations from a GraphOS collection
     Collection {

@@ -43,7 +43,7 @@ where
 /// Credentials to use with GraphOS
 #[derive(Debug, Deserialize, Default, JsonSchema)]
 #[cfg_attr(test, derive(Serialize))]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct GraphOSConfig {
     /// The apollo key
     #[schemars(with = "Option<String>")]
