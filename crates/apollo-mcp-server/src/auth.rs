@@ -32,7 +32,7 @@ use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeMode {
     /// Skip scope enforcement entirely.
@@ -257,6 +257,7 @@ async fn oauth_validate(
                 resource_metadata: resource_metadata_url(),
                 scope,
                 error: None,
+                scope_mode: Some(auth_config.scope_mode.clone()),
             }),
         )
     };
@@ -269,6 +270,7 @@ async fn oauth_validate(
                 resource_metadata: resource_metadata_url(),
                 scope: Some(required_scopes.join(" ")),
                 error: Some(BearerError::InsufficientScope),
+                scope_mode: Some(auth_config.scope_mode.clone()),
             }),
         )
     };
@@ -516,6 +518,7 @@ mod tests {
                 .unwrap(),
                 scope: Some("read write".to_string()),
                 error: Some(BearerError::InsufficientScope),
+                scope_mode: None,
             };
 
             let mut values = Vec::new();

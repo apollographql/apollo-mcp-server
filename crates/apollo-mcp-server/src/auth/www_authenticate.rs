@@ -7,11 +7,14 @@ use http::header::WWW_AUTHENTICATE;
 use tracing::warn;
 use url::Url;
 
+use crate::auth::ScopeMode;
+
 pub(super) enum WwwAuthenticate {
     Bearer {
         resource_metadata: Url,
         scope: Option<String>,
         error: Option<BearerError>,
+        scope_mode: Option<ScopeMode>,
     },
 }
 
@@ -42,6 +45,7 @@ impl Header for WwwAuthenticate {
                 resource_metadata,
                 scope,
                 error,
+                scope_mode,
             } => {
                 let mut header = format!(
                     r#"Bearer resource_metadata="{}""#,
@@ -56,6 +60,13 @@ impl Header for WwwAuthenticate {
                 }
                 if let Some(scope) = scope {
                     header.push_str(&format!(r#", scope="{}""#, scope));
+                }
+                if let Some(scope_mode) = scope_mode {
+                    let mode_str = serde_json::to_string(&scope_mode)
+                        .unwrap_or_else(|_| "unknown".to_string())
+                        .trim_matches('"')
+                        .to_string();
+                    header.push_str(&format!(r#", scope_mode="{}""#, mode_str));
                 }
                 header
             }
@@ -90,6 +101,7 @@ mod tests {
                 .unwrap(),
             scope: None,
             error: None,
+            scope_mode: None,
         };
 
         let encoded = encode_header(&header);
@@ -108,6 +120,7 @@ mod tests {
             .unwrap(),
             scope: Some("read".to_string()),
             error: None,
+            scope_mode: None,
         };
 
         let encoded = encode_header(&header);
@@ -123,6 +136,7 @@ mod tests {
                 .unwrap(),
             scope: Some("read write".to_string()),
             error: None,
+            scope_mode: None,
         };
 
         let encoded = encode_header(&header);
@@ -139,6 +153,7 @@ mod tests {
                 .unwrap(),
             scope: Some("read write".to_string()),
             error: Some(BearerError::InsufficientScope),
+            scope_mode: None,
         };
 
         let encoded = encode_header(&header);
@@ -146,5 +161,19 @@ mod tests {
             encoded,
             r#"Bearer resource_metadata="https://test.com/.well-known/oauth-protected-resource", error="insufficient_scope", scope="read write""#
         );
+    }
+
+    #[test]
+    fn encode_bearer_with_scope_mode() {
+        let header = WwwAuthenticate::Bearer {
+            resource_metadata: Url::parse("https://test.com/.well-known/oauth-protected-resource")
+                .unwrap(),
+            scope: Some("read write".to_string()),
+            error: None,
+            scope_mode: Some(ScopeMode::RequireAny),
+        };
+
+        let encoded = encode_header(&header);
+        assert!(encoded.contains(r#"scope_mode="require_any""#));
     }
 }
