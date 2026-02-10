@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.7.0 (2026-02-10)
+
+### Features
+
+- Add configurable scope enforcement via `scope_mode` to support flexible matching strategies (`require_any`, `disabled`)
+
+#### Added configurable server metadata
+
+The MCP server now supports customizable metadata in the `initialize` response. Configure the server name, version, title, and website URL via the new `server_info` section in your configuration file. This is useful when wrapping or branding Apollo MCP Server for specific use cases.
+
+```yaml
+server_info:
+  name: "Acme Corp GraphQL Server"
+  version: "2.0.0"
+  title: "Acme MCP Server"
+  website_url: "https://acme.com/mcp-docs"
+```
+
+All fields are optional and fall back to sensible defaults.
+
+#### Configurable Metrics Export Interval
+
+You can now customize how frequently metrics are exported to your observability backend using the new `export_interval` configuration option. The default remains 30 seconds.
+
+```yaml
+telemetry:
+  exporters:
+    metrics:
+      export_interval: 1m # Supports human-readable values such as: 30s, 1m, 1h, 1d
+```
+
+#### Added configurable hints for introspection tools
+
+Apollo MCP Server now supports configurable hint text for the built-in introspection tools (`execute`, `introspect`, `search`, and `validate`). These hints are appended to the tool descriptions so you can guide query generation without changing schema descriptions.
+
+```yaml
+introspection:
+  execute:
+    enabled: true
+    hint: "Use carts(where: { status: ACTIVE }) for active carts."
+```
+
+#### Add host header validation
+
+Add Host header validation to prevent DNS rebinding attacks. Requests with invalid Host headers are now rejected with 403 Forbidden. Enabled by default for StreamableHttp transport.
+
+```yaml
+transport:
+  type: streamable_http
+  host_validation:
+    enabled: true # default
+    allowed_hosts:
+      - mcp.dev.example.com
+      - mcp.staging.example.com
+      - mcp.example.com
+```
+
+#### Validate configuration at startup
+
+Validate configuration at startup. Invalid or misplaced configuration options (e.g., `auth` at the top level instead of nested under `transport`) now cause the server to fail with a clear error message listing the valid options, instead of being silently ignored.
+
+### Fixes
+
+#### SSE Resumability Support
+
+Upgraded rmcp to 0.14, which adds support for MCP Spec 2025-11-25 SSE resumability. When using HTTP transport with `stateful_mode: true` (the default), clients can now reconnect to SSE streams after disconnection using the `Last-Event-ID` header. The server automatically sends priming events with event IDs and retry intervals to enable this behavior.
+
 ## 1.6.0 (2026-01-23)
 
 ### Features
