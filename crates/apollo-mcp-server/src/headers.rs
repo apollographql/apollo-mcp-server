@@ -43,19 +43,6 @@ fn forward_headers(names: &[String], incoming: &HeaderMap, outgoing: &mut Header
     for header in names {
         if let Ok(header_name) = HeaderName::from_str(header)
             && let Some(value) = incoming.get(&header_name)
-            // Hop-by-hop headers are blocked per RFC 7230: https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
-            && !matches!(
-                header_name.as_str().to_lowercase().as_str(),
-                "connection"
-                    | "keep-alive"
-                    | "proxy-authenticate"
-                    | "proxy-authorization"
-                    | "te"
-                    | "trailers"
-                    | "transfer-encoding"
-                    | "upgrade"
-                    | "content-length"
-            )
         {
             if matches!(
                 header_name.as_str(),
@@ -65,6 +52,21 @@ fn forward_headers(names: &[String], incoming: &HeaderMap, outgoing: &mut Header
                     header = %header_name,
                     "Forwarding sensitive header to upstream GraphQL API"
                 );
+            }
+            // Hop-by-hop headers are blocked per RFC 7230: https://datatracker.ietf.org/doc/html/rfc7230#section-6.1
+            if matches!(
+                header_name.as_str(),
+                "connection"
+                    | "keep-alive"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+                    | "te"
+                    | "trailers"
+                    | "transfer-encoding"
+                    | "upgrade"
+                    | "content-length"
+            ) {
+                continue;
             }
             outgoing.insert(header_name, value.clone());
         }
@@ -320,12 +322,17 @@ mod tests {
         let names = vec![
             "authorization".to_string(),
             "cookie".to_string(),
+            "proxy-authorization".to_string(),
             "x-tenant-id".to_string(),
         ];
 
         let mut incoming = HeaderMap::new();
         incoming.insert("authorization", HeaderValue::from_static("Bearer token"));
         incoming.insert("cookie", HeaderValue::from_static("session=abc"));
+        incoming.insert(
+            "proxy-authorization",
+            HeaderValue::from_static("Basic creds"),
+        );
         incoming.insert("x-tenant-id", HeaderValue::from_static("tenant-123"));
 
         let mut outgoing = HeaderMap::new();
@@ -334,6 +341,12 @@ mod tests {
         assert!(logs_contain("Forwarding sensitive header"));
         assert!(logs_contain("authorization"));
         assert!(logs_contain("cookie"));
+        // proxy-authorization is a hop-by-hop header so it's blocked from forwarding,
+        // but we still warn that it was configured as a forwarded header
+        assert!(logs_contain("proxy-authorization"));
         assert!(!logs_contain("x-tenant-id"));
+
+        // proxy-authorization should be blocked from the outgoing headers
+        assert!(outgoing.get("proxy-authorization").is_none());
     }
 }
