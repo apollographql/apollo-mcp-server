@@ -1,0 +1,75 @@
+---
+title: MCP Apps Reference
+subtitle: Key concepts and configuration
+---
+
+## App structure
+
+A ChatGPT app consists of a manifest file (`.application-manifest.json`), UI resources, and GraphQL operations. Apps are organized in directories under `apps/`, each containing a manifest and UI files.
+
+## App manifest
+
+The manifest defines:
+- GraphQL operations and their associated MCP tools
+- Resource path (local HTML, React app URL, or remote URL)
+- Configuration (CSP, widget settings, labels)
+
+Required fields: `format` (`"apollo-ai-app-manifest"`), `version` (`"1"`), `hash`, `resource`, and `operations`.
+
+## Resources
+
+Resources can be local HTML files, React apps (via the [template](https://github.com/apollographql/ai-apps-template)), or remote URLs.
+
+## Tools and operations
+
+Each app defines tools that ChatGPT can invoke. Tools are backed by GraphQL operations. Each operation includes:
+- `body`: The GraphQL query or mutation
+- `tools`: Array of tool definitions (name, description, optional extraInputs and labels)
+- `prefetchID` (optional): Runs as a prefetch for all tools
+
+## Accessing data in your UI
+
+Tool results are available via `window.toolResult`:
+- Main result: `window.toolResult.result.data`
+- Prefetch results: `window.toolResult.prefetch.prefetchID`
+
+## App query parameter
+
+Use the `app` query parameter to specify which app to load: `https://your-server.com/mcp?app=my-app`. The app name corresponds to the directory name in `apps/`.
+
+## App target
+
+Apollo MCP Server supports two targets: **AppsSDK** (default, for ChatGPT) and **MCPApps** (for MCP-compatible clients). Specify via `appTarget` query parameter.
+
+## Content Security Policy (CSP)
+
+CSP settings control external resource access. Configure in manifest:
+- `connect_domains`: Network requests (fetch, XHR, WebSocket)
+- `resource_domains`: Resources (images, scripts, stylesheets)
+- `frame_domains`: Iframe embeds
+- `redirect_domains`: Redirects (AppsSDK only)
+
+## Widget settings
+
+Control app appearance in ChatGPT: `description`, `domain`, `prefersBorder`.
+
+## Tool invocation labels
+
+Customize user-facing messages during tool execution via `toolInvocation/invoking` and `toolInvocation/invoked` labels. Set at app or tool level.
+
+## Configuration
+
+Configure the apps directory path in `mcp-config.yaml`:
+
+```yaml
+apps:
+  path: ./my-apps
+```
+
+Apps automatically reload when manifest or resource files change. Multiple apps can coexist in the `apps/` directory, each accessible via its own `?app=app-name` parameter.
+
+## Next steps
+
+- Follow the [Quickstart guide](/apollo-mcp-server/apps-sdk-quickstart) to build your first app
+- Check [Troubleshooting](/apollo-mcp-server/apps-sdk-troubleshooting) for common issues
+- Explore the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup

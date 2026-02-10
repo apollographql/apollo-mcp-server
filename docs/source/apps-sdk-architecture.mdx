@@ -1,0 +1,96 @@
+---
+title: MCP Apps Architecture
+subtitle: How MCP Apps work with Apollo MCP Server
+---
+
+MCP Apps combine GraphQL operations with custom UI resources to create interactive experiences inside ChatGPT. Apollo MCP Server bridges your GraphQL APIs to OpenAI's Apps SDK.
+
+## High-level flow
+
+```mermaid
+graph LR
+    ChatGPT["ChatGPT\nUser Interface"]
+    MCPServer["Apollo MCP Server"]
+    GraphQL["Your GraphQL API"]
+    App["App\nHTML + GraphQL"]
+    
+    ChatGPT -->|"1. User Request"| MCPServer
+    MCPServer -->|"2. Execute GraphQL"| GraphQL
+    GraphQL -->|"3. Return Data"| MCPServer
+    MCPServer -->|"4. Render in App UI"| App
+    App -->|"5. Display in ChatGPT"| ChatGPT
+    
+    style ChatGPT fill:#E3F2FD
+    style MCPServer fill:#1976D2,color:#fff
+    style GraphQL fill:#00ACC1,color:#fff
+    style App fill:#4CAF50,color:#fff
+```
+
+When ChatGPT invokes a tool, Apollo MCP Server executes the GraphQL operation, injects the results into your UI resource, and returns the rendered UI to ChatGPT.
+
+## App components
+
+An MCP App consists of:
+
+- **Tools**: GraphQL operations exposed as MCP tools that ChatGPT can invoke
+- **Resources**: UI files (HTML, React apps, or remote URLs) that render the data
+
+The app manifest (`.application-manifest.json`) defines the mapping between tools, operations, and resources.
+
+## App structure
+
+```mermaid
+graph TB
+    subgraph App["ChatGPT App"]
+        Tool["MCP Tool\nGraphQL Operation"]
+        Resource["HTML Resource\nCustom UI"]
+    end
+    
+    subgraph Manifest[".application-manifest.json"]
+        OpDef["Operation Definition"]
+        ToolDef["Tool Definition"]
+        ResourcePath["Resource Path"]
+    end
+    
+    Manifest --> Tool
+    Manifest --> Resource
+    Tool -->|"Executes"| GraphQL["GraphQL API"]
+    GraphQL -->|"Returns Data"| Resource
+    Resource -->|"Renders UI"| ChatGPT["ChatGPT Interface"]
+    
+    style App fill:#4CAF50,color:#fff
+    style Manifest fill:#FF9800,color:#fff
+    style GraphQL fill:#00ACC1,color:#fff
+    style ChatGPT fill:#E3F2FD
+```
+
+Apps are organized in directories under `apps/`, each containing a manifest file and UI resources. The manifest defines GraphQL operations, tool mappings, and resource paths.
+
+### Data access
+
+Tool results are available in your UI via `window.toolResult`:
+- Main result: `window.toolResult.result.data`
+- Prefetch results: `window.toolResult.prefetch.prefetchID`
+
+Prefetch operations run automatically when any tool in the app is invoked, useful for loading common data or user context.
+
+## Resource types
+
+Resources can be:
+- **Local HTML files**: Stored in your app directory
+- **React apps**: Built with Vite or other tools (recommended via [template](https://github.com/apollographql/ai-apps-template))
+- **Remote URLs**: Hosted elsewhere and referenced by URL
+
+## App target selection
+
+Apollo MCP Server supports two app targets:
+- **AppsSDK** (default): For OpenAI ChatGPT apps
+- **MCPApps**: For MCP-compatible clients
+
+The target determines MIME type, metadata format, and CSP format. For ChatGPT, use the default AppsSDK target.
+
+## Next steps
+
+- Review the [MCP Apps Overview](/apollo-mcp-server/apps-sdk) for key concepts
+- Follow the [Quickstart guide](/apollo-mcp-server/apps-sdk-quickstart) to build your first app
+- Explore the [MCP Apps Reference](/apollo-mcp-server/apps-sdk-reference) for detailed configuration

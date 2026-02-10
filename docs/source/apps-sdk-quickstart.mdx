@@ -1,0 +1,245 @@
+---
+title: MCP Apps Quickstart Guide
+subtitle: Create your first ChatGPT app in minutes
+---
+
+This guide walks you through creating your first ChatGPT app using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template). The template provides a complete setup with React, Vite, Apollo Client, and Apollo MCP Server integration.
+
+## Prerequisites
+
+Before starting, ensure you have all the [MCP Apps Prerequisites](/apollo-mcp-server/apps-sdk-prerequisites) in place, including:
+
+- Apollo MCP Server
+- A GraphQL API endpoint
+- ChatGPT with OpenAI Apps SDK access (Plus plan or higher)
+- Node.js v18 or later (for the template)
+- npm or yarn (for the template)
+- ngrok or similar tunneling tool (for accessing from ChatGPT)
+
+## Step 1: Create your app from template
+
+Use the Apollo AI Apps Template to scaffold your project:
+
+```bash
+npx tiged apollographql/ai-apps-template my-awesome-app
+```
+
+This creates a new directory `my-awesome-app` with all the necessary files and structure.
+
+## Step 2: Navigate and install
+
+Navigate to your new project directory and run the install script:
+
+```bash
+cd my-awesome-app
+./install.sh
+```
+
+The install script sets up all dependencies and configures your project.
+
+## Step 3: Understand the project structure
+
+The template creates a project with the following structure:
+
+```
+my-awesome-app/
+├── ecommerce-graph/          # Demo GraphQL API
+├── dev/
+│   └── the-store/            # Your React app (built with Vite)
+├── apps/                      # Apps directory for MCP Server
+├── mcp-config.yaml           # MCP Server configuration
+├── schema.graphql             # GraphQL schema
+└── start_mcp.sh              # Script to start MCP server
+```
+
+## Step 4: Start the services
+
+You'll need to run three services in separate terminal windows:
+
+### Terminal 1: Start the GraphQL API
+
+```bash
+cd ecommerce-graph
+npm run dev
+```
+
+This starts the demo e-commerce GraphQL API on `http://localhost:4000`.
+
+### Terminal 2: Start your React app
+
+For end-to-end testing with ChatGPT:
+
+```bash
+cd dev/the-store
+npm run dev:e2e
+```
+
+For local development and testing in an emulator:
+
+```bash
+cd dev/the-store
+npm run dev
+```
+
+This builds and serves your React app, which is accessible to the MCP server.
+
+### Terminal 3: Start the MCP server
+
+From the root of your project, run this command:
+
+```bash
+./start_mcp.sh
+```
+
+That command starts the Apollo MCP Server, which:
+- Loads your app from the `apps/` directory
+- Connects to your GraphQL API
+- Serves your React app as a resource
+- Exposes MCP tools to ChatGPT
+
+## Step 5: Set up tunneling (for ChatGPT access)
+
+To access your locally running MCP server from ChatGPT, create a tunnel using ngrok:
+
+```bash
+ngrok http 8000
+```
+
+That command creates a public URL (for example, `https://abc123.ngrok-free.app`) that tunnels to your local MCP server on port 8000.
+
+<Note>
+
+Make sure to note the HTTPS URL that ngrok provides. You'll need this in the next step.
+
+</Note>
+
+## Step 6: Connect to ChatGPT
+
+Follow the instructions in the [OpenAI documentation](https://developers.openai.com/apps-sdk) to add your app to ChatGPT.
+
+When adding your MCP server URL to ChatGPT or MCP Inspector, use this format:
+
+```
+https://your-ngrok-url.ngrok-free.app/mcp?app=the-store
+```
+
+**Important**: Include the `/mcp?app=the-store` query parameter. The `app` parameter tells the MCP server which app to load.
+
+## Step 7: Test your app
+
+Once connected to ChatGPT, test your app by asking ChatGPT to use your tools. For example:
+
+> "Show me the products available"
+
+ChatGPT should:
+1. Call your MCP tool
+2. Execute the GraphQL query against your API
+3. Display the results using your React app's UI
+
+## What you've built
+
+You've created a ChatGPT app that:
+
+- ✅ Uses React and Vite for a modern development experience
+- ✅ Integrates with Apollo Client for GraphQL
+- ✅ Executes GraphQL queries when invoked
+- ✅ Displays results in a custom React UI
+- ✅ Provides a richer experience than plain text
+- ✅ Can be extended with more features
+
+## Customizing your app
+
+### Modify the React app
+
+Edit files in `dev/the-store/` to customize your app's UI and behavior. The app uses:
+- **React** for the UI framework
+- **Vite** for building and bundling
+- **Apollo Client** for GraphQL integration
+- **Apollo MCP Server** for ChatGPT integration
+
+### Update GraphQL operations
+
+Modify the GraphQL operations in your app's manifest (located in `apps/`) to query different data or add new tools.
+
+### Change the GraphQL API
+
+Replace the demo `ecommerce-graph` with your own GraphQL API. Update the endpoint in `mcp-config.yaml`:
+
+```yaml
+endpoint: http://localhost:4000/  # Your GraphQL API endpoint
+```
+
+## Development workflow
+
+### Local development
+
+For local development and testing:
+
+1. Run `npm run dev` in `dev/the-store/` (instead of `npm run dev:e2e`)
+2. Use a local emulator or test environment
+3. Make changes and see them hot-reload
+
+### End-to-end testing
+
+For testing with ChatGPT:
+
+1. Run `npm run dev:e2e` in `dev/the-store/`
+2. Start ngrok tunnel
+3. Connect ChatGPT to your ngrok URL
+4. Test your app in the real ChatGPT environment
+
+## Next steps
+
+- Review the [MCP Apps Reference](/apollo-mcp-server/apps-sdk-reference) for key concepts and configuration
+- Check out [Troubleshooting](/apollo-mcp-server/apps-sdk-troubleshooting) if you encounter issues
+- Review the [template repository](https://github.com/apollographql/ai-apps-template) for more examples
+
+## Configuration details
+
+### MCP server configuration
+
+The `mcp-config.yaml` file configures your MCP server. Key settings:
+
+```yaml
+endpoint: http://localhost:4000/  # Your GraphQL API
+transport:
+  type: streamable_http
+  port: 8000
+```
+
+### App query parameter
+
+When connecting to your MCP server, use the `app` query parameter to specify which app to load:
+
+- `?app=the-store` - Loads the app named "the-store"
+- The app name corresponds to the directory name in your `apps/` folder
+
+### App target
+
+By default, Apollo MCP Server uses the AppsSDK target (for ChatGPT). You can also specify it explicitly:
+
+```
+https://your-url.ngrok-free.app/mcp?app=the-store&appTarget=openai
+```
+
+## Troubleshooting
+
+### App not loading
+
+- Ensure all three services are running (GraphQL API, React app, MCP server)
+- Check that the `app` query parameter matches your app directory name
+- Verify the MCP server can access your React app's build output
+
+### Connection issues
+
+- Verify ngrok is running and the URL is correct
+- Check that port 8000 is accessible
+- Ensure the MCP server started successfully
+
+### GraphQL errors
+
+- Verify your GraphQL API is running on the correct port
+- Check the endpoint URL in `mcp-config.yaml`
+- Test your GraphQL API directly with a tool like GraphQL Playground
+
+For more troubleshooting help, see the [Troubleshooting guide](/apollo-mcp-server/apps-sdk-troubleshooting).
