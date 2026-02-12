@@ -35,11 +35,12 @@ graph LR
     GraphQL["Your GraphQL API"]
     Iframe["Iframe with UI"]
     
-    Host -->|"1. Invoke Tool"| MCPServer
-    MCPServer -->|"2. Execute GraphQL"| GraphQL
-    GraphQL -->|"3. Return Data"| MCPServer
-    MCPServer -->|"4. Return Data"| Host
-    Host -->|"5. Create Iframe & Inject Data"| Iframe
+    Host -->|"1. Discover & Pre-fetch UI"| MCPServer
+    Host -->|"2. Invoke Tool"| MCPServer
+    MCPServer -->|"3. Execute GraphQL"| GraphQL
+    GraphQL -->|"4. Return Data"| MCPServer
+    MCPServer -->|"5. Return Data"| Host
+    Host -->|"6. Create Iframe & Inject Data"| Iframe
     
     style Host fill:#E3F2FD
     style MCPServer fill:#1976D2,color:#fff

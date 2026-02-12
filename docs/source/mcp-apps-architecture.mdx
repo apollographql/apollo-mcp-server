@@ -18,11 +18,11 @@ graph TB
     subgraph Discovery["Discovery Phase"]
         Host1["MCP Apps Host"]
         MCPServer1["Apollo MCP Server"]
-        Resource1["UI Resource"]
         
-        Host1 -->|"1. Discover App"| MCPServer1
-        MCPServer1 -->|"2. Return Resource"| Resource1
-        Resource1 -->|"3. Pre-fetch UI"| Host1
+        Host1 -->|"1. List Resources"| MCPServer1
+        MCPServer1 -->|"2. Return Resource URI"| Host1
+        Host1 -->|"3. Read Resource"| MCPServer1
+        MCPServer1 -->|"4. Return UI Content"| Host1
     end
     
     subgraph Execution["Tool Execution Phase"]
@@ -31,12 +31,12 @@ graph TB
         GraphQL["GraphQL API"]
         Iframe["Iframe with UI"]
         
-        Host2 -->|"4. Invoke Tool"| MCPServer2
-        MCPServer2 -->|"5. Execute GraphQL"| GraphQL
-        GraphQL -->|"6. Return Data"| MCPServer2
-        MCPServer2 -->|"7. Return Data"| Host2
-        Host2 -->|"8. Create Iframe"| Iframe
-        Host2 -->|"9. Inject Data"| Iframe
+        Host2 -->|"5. Invoke Tool"| MCPServer2
+        MCPServer2 -->|"6. Execute GraphQL"| GraphQL
+        GraphQL -->|"7. Return Data"| MCPServer2
+        MCPServer2 -->|"8. Return Data"| Host2
+        Host2 -->|"9. Create Iframe"| Iframe
+        Host2 -->|"10. Inject Data"| Iframe
     end
     
     style Host1 fill:#E3F2FD
@@ -44,7 +44,6 @@ graph TB
     style MCPServer1 fill:#1976D2,color:#fff
     style MCPServer2 fill:#1976D2,color:#fff
     style GraphQL fill:#00ACC1,color:#fff
-    style Resource1 fill:#4CAF50,color:#fff
     style Iframe fill:#4CAF50,color:#fff
 ```
 
@@ -79,7 +78,7 @@ graph TB
     Tool -->|"Returns Data"| MCPServer["Apollo MCP Server"]
     MCPServer -->|"Executes"| GraphQL["GraphQL API"]
     GraphQL -->|"Returns Data"| MCPServer
-    Resource -->|"Pre-fetched by Host"| Host["MCP Apps Host"]
+    Host["MCP Apps Host"] -->|"Pre-fetches"| Resource
     MCPServer -->|"Returns Data"| Host
     Host -->|"Injects into Iframe"| Iframe["Iframe with UI"]
     
