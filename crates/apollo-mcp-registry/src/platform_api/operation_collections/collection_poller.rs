@@ -140,12 +140,13 @@ async fn handle_poll_result(
 
 #[derive(Clone, Debug)]
 pub struct OperationData {
-    id: String,
-    last_updated_at: String,
+    pub id: String,
+    pub last_updated_at: String,
     pub source_text: String,
     pub headers: Option<Vec<(String, String)>>,
     pub variables: Option<String>,
 }
+
 impl From<&OperationCollectionEntry> for OperationData {
     fn from(operation: &OperationCollectionEntry) -> Self {
         Self {

@@ -144,3 +144,53 @@ impl serde::Serialize for RawOperation {
         state.end()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn operation_data(source_text: &str, variables: Option<&str>) -> OperationData {
+        OperationData {
+            id: String::new(),
+            last_updated_at: String::new(),
+            source_text: source_text.to_string(),
+            variables: variables.map(|v| v.to_string()),
+            headers: None,
+        }
+    }
+
+    #[test]
+    fn try_from_fails_with_malformed_variables_json() {
+        let data = operation_data(
+            "query GetUser($id: ID!) { user(id: $id) { name } }",
+            Some(r#"{id: "123"}"#), // unquoted key
+        );
+        let result = RawOperation::try_from(&data);
+        assert!(
+            matches!(result, Err(CollectionError::InvalidVariables(_))),
+            "expected InvalidVariables error for malformed JSON, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn one_bad_operation_does_not_poison_batch() {
+        let operations = [
+            operation_data(
+                "query GetUser($id: ID!) { user(id: $id) { name } }",
+                Some(r#"{"id": "123"}"#),
+            ),
+            operation_data("query ListUsers { users { name } }", None),
+            operation_data(
+                "query SearchUsers($term: String!) { search(term: $term) { name } }",
+                Some(r#"not valid json"#),
+            ),
+        ];
+
+        let recovered: Vec<RawOperation> = operations
+            .iter()
+            .filter_map(|op| RawOperation::try_from(op).ok())
+            .collect();
+
+        assert_eq!(recovered.len(), 2);
+    }
+}
