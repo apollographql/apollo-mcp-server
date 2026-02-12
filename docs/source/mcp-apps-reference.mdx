@@ -7,9 +7,15 @@ This reference guide provides a comprehensive overview of MCP Apps configuration
 
 ## Manifest file
 
-The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. Never edit the manifest directly. Instead, make changes to your app code and `package.json`, which will regenerate the manifest.
+The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. 
+
+<warning>
+Never edit the manifest directly. Instead, make changes to your app code and `package.json`, which will regenerate the manifest.
+</warning>
 
 ## App vs Host
+
+An **app** is your MCP App—the code, configuration, and UI resource you build that combines GraphQL operations with custom UI. The **host** is the MCP Apps-compatible application (such as ChatGPT) that discovers your app, invokes tools, and displays your UI.
 
 This table shows what you work with in your app code versus what the host does:
 
@@ -24,21 +30,21 @@ This table shows what you work with in your app code versus what the host does:
 
 Configuration elements defined at the app level (from `package.json`):
 
-| Element | What it is | Mapped from | Maps to (MCP/ChatGPT) | Notes |
-|---------|------------|-------------|----------------------|-------|
-| **App name** | Identifier for your app | `package.json` | App identifier in MCP tool namespace | Defaults to directory name if not specified |
-| **App description** | Description of your app | `package.json` | App metadata visible to the host | Prefixed to tool descriptions |
-| **Resource URL** | URL to your UI | `package.json` | UI resource that host pre-fetches during discovery | Can be local file path, built app URL, or remote URL |
-| **CSP: connect_domains** | Allowed domains for network requests | `package.json` | Content Security Policy for fetch/XHR/WebSocket | Must include protocol (`https://`) |
-| **CSP: resource_domains** | Allowed domains for loading resources | `package.json` | Content Security Policy for images/scripts/stylesheets | Must include protocol (`https://`) |
-| **CSP: frame_domains** | Allowed domains for iframe embeds | `package.json` | Content Security Policy for iframe sources | Must include protocol (`https://`) |
-| **CSP: redirect_domains** | Allowed domains for redirects | `package.json` | Content Security Policy for redirects (AppsSDK only) | AppsSDK target only |
-| **CSP: base_uri_domains** | Allowed base URI domains | `package.json` | Content Security Policy for base URI | Must include protocol (`https://`) |
-| **Widget: description** | Widget description | `package.json` | Widget metadata in host UI | AppsSDK target only |
-| **Widget: domain** | Domain restriction | `package.json` | Domain validation for widget | Restricts widget to specific domain |
-| **Widget: prefersBorder** | Border preference | `package.json` | Visual styling in host UI | Boolean flag for border display |
-| **Labels: toolInvocation/invoking** | Message shown when tool starts | `package.json` | User-facing message during tool invocation | Applies to all tools unless overridden |
-| **Labels: toolInvocation/invoked** | Message shown when tool completes | `package.json` | User-facing message after tool execution | Applies to all tools unless overridden |
+| Element | What it is | Maps to (MCP/ChatGPT) | Notes |
+|---------|------------|----------------------|-------|
+| **App description** | Description of your app | App metadata visible to the host | Prefixed to tool descriptions |
+| **App name** | Identifier for your app | App identifier in MCP tool namespace | Defaults to directory name if not specified |
+| **CSP: base_uri_domains** | Allowed base URI domains | Content Security Policy for base URI | Must include protocol (`https://`) |
+| **CSP: connect_domains** | Allowed domains for network requests | Content Security Policy for fetch/XHR/WebSocket | Must include protocol (`https://`) |
+| **CSP: frame_domains** | Allowed domains for iframe embeds | Content Security Policy for iframe sources | Must include protocol (`https://`) |
+| **CSP: redirect_domains** | Allowed domains for redirects | Content Security Policy for redirects (AppsSDK only) | AppsSDK target only |
+| **CSP: resource_domains** | Allowed domains for loading resources | Content Security Policy for images/scripts/stylesheets | Must include protocol (`https://`) |
+| **Labels: toolInvocation/invoked** | Message shown when tool completes | User-facing message after tool execution | Applies to all tools unless overridden |
+| **Labels: toolInvocation/invoking** | Message shown when tool starts | User-facing message during tool invocation | Applies to all tools unless overridden |
+| **Resource URL** | URL to your UI | UI resource that host pre-fetches during discovery | Can be local file path, built app URL, or remote URL |
+| **Widget: description** | Widget description | Widget metadata in host UI | AppsSDK target only |
+| **Widget: domain** | Domain restriction | Domain validation for widget | Restricts widget to specific domain |
+| **Widget: prefersBorder** | Border preference | Visual styling in host UI | Boolean flag for border display |
 
 ## Operation-level configuration
 
@@ -55,9 +61,9 @@ Configuration elements defined at the tool level (from operation tool definition
 
 | Element | What it is | Mapped from | Maps to (MCP/ChatGPT) | Notes |
 |---------|------------|-------------|----------------------|-------|
-| **Tool name** | Name of the MCP tool | Operation tool definition `name` field | MCP tool name that host can invoke | Must be unique within the app |
-| **Tool description** | Description of what the tool does | Operation tool definition `description` field | MCP tool description visible to host | App description is prefixed if present |
 | **Extra inputs** | Additional input parameters beyond GraphQL variables | Operation tool definition `extraInputs` array | Additional MCP tool input parameters | Must have unique names, cannot conflict with GraphQL variables |
+| **Tool description** | Description of what the tool does | Operation tool definition `description` field | MCP tool description visible to host | App description is prefixed if present |
+| **Tool name** | Name of the MCP tool | Operation tool definition `name` field | MCP tool name that host can invoke | Must be unique within the app |
 | **Tool-level labels** | Tool-specific invocation messages | Operation tool definition `labels` field | User-facing messages for this specific tool | Overrides app-level labels for this tool |
 
 ## App query parameter
@@ -68,8 +74,7 @@ Use the `app` query parameter to specify which app to load: `https://your-server
 
 Apollo MCP Server supports two targets: **AppsSDK** (default, for hosts supporting OpenAI's Apps SDK specification) and **MCPApps** (for MCP-compatible clients). Use the `appTarget` query parameter to specify the target.
 
-## Next steps
+For AppsSDK (default): `https://your-server.com/mcp?app=my-app&appTarget=openai`
 
-- Follow the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) to build your first app
-- Check [Troubleshooting](/apollo-mcp-server/mcp-apps-troubleshooting) for common issues
-- Explore the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup
+For MCPApps: `https://your-server.com/mcp?app=my-app&appTarget=mcp`
+
