@@ -1,20 +1,26 @@
 ---
 title: MCP Apps Quickstart Guide
-subtitle: Create your first ChatGPT app in minutes
+subtitle: Create your first MCP App in minutes
 ---
 
-This guide walks you through creating your first ChatGPT app using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template). The template provides a complete setup with React, Vite, Apollo Client, and Apollo MCP Server integration.
+This guide walks you through creating your first MCP App using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template). The template provides a complete setup with React, Vite, Apollo Client, and Apollo MCP Server integration.
+
+<Note>
+
+This guide uses ChatGPT as an example, but MCP Apps work with any host that supports the MCP Apps specification.
+
+</Note>
 
 ## Prerequisites
 
-Before starting, ensure you have all the [MCP Apps Prerequisites](/apollo-mcp-server/apps-sdk-prerequisites) in place, including:
+Before starting, ensure you have all the [MCP Apps Prerequisites](/apollo-mcp-server/mcp-apps-prerequisites) in place, including:
 
 - Apollo MCP Server
 - A GraphQL API endpoint
-- ChatGPT with OpenAI Apps SDK access (Plus plan or higher)
+- An MCP Apps-compatible host (this guide uses ChatGPT as an example)
 - Node.js v18 or later (for the template)
 - npm or yarn (for the template)
-- ngrok or similar tunneling tool (for accessing from ChatGPT)
+- (Optional) ngrok or similar tunneling tool (for accessing from your host)
 
 ## Step 1: Create your app from template
 
@@ -67,7 +73,7 @@ This starts the demo e-commerce GraphQL API on `http://localhost:4000`.
 
 ### Terminal 2: Start your React app
 
-For end-to-end testing with ChatGPT:
+For end-to-end testing with your host (for example, ChatGPT):
 
 ```bash
 cd dev/the-store
@@ -95,11 +101,11 @@ That command starts the Apollo MCP Server, which:
 - Loads your app from the `apps/` directory
 - Connects to your GraphQL API
 - Serves your React app as a resource
-- Exposes MCP tools to ChatGPT
+- Exposes MCP tools to your host (for example, ChatGPT)
 
-## Step 5: Set up tunneling (for ChatGPT access)
+## Step 5: Set up tunneling (for host access)
 
-To access your locally running MCP server from ChatGPT, create a tunnel using ngrok:
+To access your locally running MCP server from your host (for example, ChatGPT), create a tunnel using ngrok:
 
 ```bash
 ngrok http 8000
@@ -113,11 +119,11 @@ Make sure to note the HTTPS URL that ngrok provides. You'll need this in the nex
 
 </Note>
 
-## Step 6: Connect to ChatGPT
+## Step 6: Connect to your host
 
-Follow the instructions in the [OpenAI documentation](https://developers.openai.com/apps-sdk) to add your app to ChatGPT.
+Follow your host's documentation to connect your MCP server. For this example using ChatGPT, follow the instructions in the [OpenAI documentation](https://developers.openai.com/apps-sdk).
 
-When adding your MCP server URL to ChatGPT or MCP Inspector, use this format:
+When adding your MCP server URL to your host (for example, ChatGPT) or MCP Inspector, use this format:
 
 ```
 https://your-ngrok-url.ngrok-free.app/mcp?app=the-store
@@ -127,18 +133,18 @@ https://your-ngrok-url.ngrok-free.app/mcp?app=the-store
 
 ## Step 7: Test your app
 
-Once connected to ChatGPT, test your app by asking ChatGPT to use your tools. For example:
+Once connected to your host, test your app by invoking your tools. For example, when using ChatGPT, you might ask:
 
 > "Show me the products available"
 
-ChatGPT should:
+Your host should:
 1. Call your MCP tool
 2. Execute the GraphQL query against your API
 3. Display the results using your React app's UI
 
 ## What you've built
 
-You've created a ChatGPT app that:
+You've created an MCP App (in this example, for ChatGPT) that:
 
 - ✅ Uses React and Vite for a modern development experience
 - ✅ Integrates with Apollo Client for GraphQL
@@ -155,11 +161,11 @@ Edit files in `dev/the-store/` to customize your app's UI and behavior. The app 
 - **React** for the UI framework
 - **Vite** for building and bundling
 - **Apollo Client** for GraphQL integration
-- **Apollo MCP Server** for ChatGPT integration
+- **Apollo MCP Server** for MCP Apps integration
 
 ### Update GraphQL operations
 
-Modify the GraphQL operations in your app's manifest (located in `apps/`) to query different data or add new tools.
+Modify the GraphQL operations in your app code or `package.json`. The manifest is automatically generated from those sources.
 
 ### Change the GraphQL API
 
@@ -181,17 +187,17 @@ For local development and testing:
 
 ### End-to-end testing
 
-For testing with ChatGPT:
+For testing with your host (for example, ChatGPT):
 
 1. Run `npm run dev:e2e` in `dev/the-store/`
 2. Start ngrok tunnel
-3. Connect ChatGPT to your ngrok URL
-4. Test your app in the real ChatGPT environment
+3. Connect your host to your ngrok URL
+4. Test your app in the real host environment
 
 ## Next steps
 
-- Review the [MCP Apps Reference](/apollo-mcp-server/apps-sdk-reference) for key concepts and configuration
-- Check out [Troubleshooting](/apollo-mcp-server/apps-sdk-troubleshooting) if you encounter issues
+- Review the [MCP Apps Reference](/apollo-mcp-server/mcp-apps-reference) for key concepts and configuration
+- Check out [Troubleshooting](/apollo-mcp-server/mcp-apps-troubleshooting) if you encounter issues
 - Review the [template repository](https://github.com/apollographql/ai-apps-template) for more examples
 
 ## Configuration details
@@ -216,7 +222,7 @@ When connecting to your MCP server, use the `app` query parameter to specify whi
 
 ### App target
 
-By default, Apollo MCP Server uses the AppsSDK target (for ChatGPT). You can also specify it explicitly:
+By default, Apollo MCP Server uses the AppsSDK target (for example, for ChatGPT). You can also specify it explicitly:
 
 ```
 https://your-url.ngrok-free.app/mcp?app=the-store&appTarget=openai
@@ -242,4 +248,4 @@ https://your-url.ngrok-free.app/mcp?app=the-store&appTarget=openai
 - Check the endpoint URL in `mcp-config.yaml`
 - Test your GraphQL API directly with a tool like GraphQL Playground
 
-For more troubleshooting help, see the [Troubleshooting guide](/apollo-mcp-server/apps-sdk-troubleshooting).
+For more troubleshooting help, see the [Troubleshooting guide](/apollo-mcp-server/mcp-apps-troubleshooting).

@@ -1,0 +1,66 @@
+---
+title: MCP Apps Reference
+subtitle: Key concepts and configuration
+---
+
+## App structure
+
+An MCP App consists of your app code, UI resources, and GraphQL operations. Apps are organized in directories under `apps/`, each containing a generated manifest file (`.application-manifest.json`) and UI files.
+
+## App manifest
+
+The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. Never edit the manifest directly. Instead, make changes to your app code and `package.json`, which will regenerate the manifest.
+
+The generated manifest defines:
+- GraphQL operations and their associated MCP tools
+- Resource path (URL to your UI)
+- Configuration (CSP, widget settings, labels)
+
+## Resources
+
+The resource is the UI for your app, specified as a URL. This can point to a local file, a built React app, or a remote URL. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
+
+## Tools and operations
+
+Each app defines tools that MCP Apps-compatible hosts can invoke. Tools are backed by GraphQL operations. Configure these in your app code and `package.json`—the manifest is generated from these sources.
+
+Each operation includes:
+- `body`: The GraphQL query or mutation
+- `tools`: Array of tool definitions (name, description, optional extraInputs and labels)
+- `prefetchID` (optional): Runs as a prefetch for all tools
+
+
+## App query parameter
+
+Use the `app` query parameter to specify which app to load: `https://your-server.com/mcp?app=my-app`. The app name corresponds to the directory name in `apps/`.
+
+## App target
+
+Apollo MCP Server supports two targets: **AppsSDK** (default, for hosts supporting OpenAI's Apps SDK specification) and **MCPApps** (for MCP-compatible clients). Specify via `appTarget` query parameter.
+
+## Content Security Policy (CSP)
+
+CSP settings control external resource access. Configure in your app code or `package.json` (the manifest is generated from these):
+- `connect_domains`: Network requests (fetch, XHR, WebSocket)
+- `resource_domains`: Resources (images, scripts, stylesheets)
+- `frame_domains`: Iframe embeds
+- `redirect_domains`: Redirects (AppsSDK only)
+
+## Widget settings
+
+Control app appearance in the host: `description`, `domain`, `prefersBorder`. Configure in your app code or `package.json`.
+
+## Tool invocation labels
+
+Customize user-facing messages during tool execution via `toolInvocation/invoking` and 
+`toolInvocation/invoked` labels. Set at app or tool level.
+
+
+## Configuration
+The MCP Server automatically reloads when the manifest or resource files change. Multiple apps can coexist in the `apps/` directory, each accessible via its own `?app=app-name` parameter.
+
+## Next steps
+
+- Follow the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) to build your first app
+- Check [Troubleshooting](/apollo-mcp-server/mcp-apps-troubleshooting) for common issues
+- Explore the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup

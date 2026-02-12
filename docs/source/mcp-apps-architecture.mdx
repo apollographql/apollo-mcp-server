@@ -1,0 +1,115 @@
+---
+title: MCP Apps Architecture
+subtitle: How MCP Apps work with Apollo MCP Server
+---
+
+MCP Apps combine GraphQL operations with custom UI resources to create interactive experiences in MCP Apps-compatible hosts. Apollo MCP Server bridges your GraphQL APIs to the MCP Apps specification.
+
+## High-level flow
+
+MCP Apps work in two phases:
+
+**Discovery phase**: The host discovers your app and pre-fetches the UI resource.
+
+**Tool execution phase**: When a tool is invoked, the host receives data from the MCP server and injects it into a pre-loaded iframe.
+
+```mermaid
+graph TB
+    subgraph Discovery["Discovery Phase"]
+        Host1["MCP Apps Host"]
+        MCPServer1["Apollo MCP Server"]
+        Resource1["UI Resource"]
+        
+        Host1 -->|"1. Discover App"| MCPServer1
+        MCPServer1 -->|"2. Return Resource"| Resource1
+        Resource1 -->|"3. Pre-fetch UI"| Host1
+    end
+    
+    subgraph Execution["Tool Execution Phase"]
+        Host2["MCP Apps Host"]
+        MCPServer2["Apollo MCP Server"]
+        GraphQL["GraphQL API"]
+        Iframe["Iframe with UI"]
+        
+        Host2 -->|"4. Invoke Tool"| MCPServer2
+        MCPServer2 -->|"5. Execute GraphQL"| GraphQL
+        GraphQL -->|"6. Return Data"| MCPServer2
+        MCPServer2 -->|"7. Return Data"| Host2
+        Host2 -->|"8. Create Iframe"| Iframe
+        Host2 -->|"9. Inject Data"| Iframe
+    end
+    
+    style Host1 fill:#E3F2FD
+    style Host2 fill:#E3F2FD
+    style MCPServer1 fill:#1976D2,color:#fff
+    style MCPServer2 fill:#1976D2,color:#fff
+    style GraphQL fill:#00ACC1,color:#fff
+    style Resource1 fill:#4CAF50,color:#fff
+    style Iframe fill:#4CAF50,color:#fff
+```
+
+When an MCP Apps-compatible host invokes a tool, Apollo MCP Server executes the GraphQL operation and returns only the data. The host then creates an iframe with the pre-fetched UI resource and injects the tool result data into it via `window.toolResult`.
+
+## App components
+
+An MCP App consists of:
+
+- **Tools**: GraphQL operations exposed as MCP tools that MCP Apps-compatible hosts can invoke
+- **Resource**: The UI for your app, specified as a URL
+
+The app manifest (`.application-manifest.json`) is automatically generated from your app code and `package.json`. It defines the mapping between tools, operations, and the resource.
+
+## App structure
+
+```mermaid
+graph TB
+    subgraph App["MCP App"]
+        Tool["MCP Tool\nGraphQL Operation"]
+        Resource["HTML Resource\nCustom UI"]
+    end
+    
+    subgraph Manifest[".application-manifest.json"]
+        OpDef["Operation Definition"]
+        ToolDef["Tool Definition"]
+        ResourcePath["Resource Path"]
+    end
+    
+    Manifest --> Tool
+    Manifest --> Resource
+    Tool -->|"Returns Data"| MCPServer["Apollo MCP Server"]
+    MCPServer -->|"Executes"| GraphQL["GraphQL API"]
+    GraphQL -->|"Returns Data"| MCPServer
+    Resource -->|"Pre-fetched by Host"| Host["MCP Apps Host"]
+    MCPServer -->|"Returns Data"| Host
+    Host -->|"Injects into Iframe"| Iframe["Iframe with UI"]
+    
+    style App fill:#4CAF50,color:#fff
+    style Manifest fill:#FF9800,color:#fff
+    style GraphQL fill:#00ACC1,color:#fff
+    style Host fill:#E3F2FD
+    style MCPServer fill:#1976D2,color:#fff
+    style Iframe fill:#4CAF50,color:#fff
+```
+
+Apps are organized in directories under `apps/`, each containing your app code, `package.json`, and the resource. The manifest file is automatically generated from these sources and defines GraphQL operations, tool mappings, and resource paths.
+
+
+
+
+## Resources
+
+The resource is the UI for your app, specified as a URL. This can point to a local file, a built React app, or a remote URL. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
+
+## App target selection
+
+Apollo MCP Server supports two app targets:
+- **AppsSDK** (default): For hosts that support OpenAI's Apps SDK specification (for example, ChatGPT)
+- **MCPApps**: MCP Apps-compatible clients
+
+The target determines MIME type, metadata format, and CSP format. For ChatGPT and other Apps SDK-compatible hosts, use the default AppsSDK target.
+
+## Next steps
+
+- Review the [MCP Apps Overview](/apollo-mcp-server/mcp-apps) for key concepts
+- Follow the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) to build your first app
+- Explore the [MCP Apps Reference](/apollo-mcp-server/mcp-apps-reference) for detailed configuration
