@@ -3,7 +3,13 @@ title: MCP Apps Reference
 subtitle: Key concepts and configuration
 ---
 
+This reference guide provides a comprehensive overview of MCP Apps configuration elements. Use the tables below to understand what each element is, where it's configured in your app code or `package.json`, and how it maps to the MCP/ChatGPT side.
+
+<note>
+
 The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. Never edit the manifest directly. Instead, make changes to your app code and `package.json`, which will regenerate the manifest.
+
+</note>
 
 ## App vs Host
 
@@ -29,6 +35,7 @@ Configuration elements defined at the app level (from `package.json`):
 | **CSP: resource_domains** | Allowed domains for loading resources | `package.json` | Content Security Policy for images/scripts/stylesheets | Must include protocol (`https://`) |
 | **CSP: frame_domains** | Allowed domains for iframe embeds | `package.json` | Content Security Policy for iframe sources | Must include protocol (`https://`) |
 | **CSP: redirect_domains** | Allowed domains for redirects | `package.json` | Content Security Policy for redirects (AppsSDK only) | AppsSDK target only |
+| **CSP: base_uri_domains** | Allowed base URI domains | `package.json` | Content Security Policy for base URI | Must include protocol (`https://`) |
 | **Widget: description** | Widget description | `package.json` | Widget metadata in host UI | AppsSDK target only |
 | **Widget: domain** | Domain restriction | `package.json` | Domain validation for widget | Restricts widget to specific domain |
 | **Widget: prefersBorder** | Border preference | `package.json` | Visual styling in host UI | Boolean flag for border display |

@@ -16,7 +16,7 @@ MCP Apps are mini applications that run inside MCP Apps-compatible hosts. Unlike
 
 ## How MCP Apps work with Apollo MCP Server
 
-Apollo MCP Server bridges your GraphQL APIs to OpenAI's Apps SDK through MCP Apps, allowing you to:
+Apollo MCP Server bridges your GraphQL APIs to the MCP Apps specification, allowing you to:
 
 1. **Define GraphQL operations** that fetch data from your APIs
 2. **Create a UI resource** that controls how that data is displayed
@@ -33,18 +33,18 @@ graph LR
     Host["MCP Apps Host\n(e.g., ChatGPT)"]
     MCPServer["Apollo MCP Server"]
     GraphQL["Your GraphQL API"]
-    App["App\nHTML + GraphQL"]
+    Iframe["Iframe with UI"]
     
-    Host -->|"1. User Request"| MCPServer
+    Host -->|"1. Invoke Tool"| MCPServer
     MCPServer -->|"2. Execute GraphQL"| GraphQL
     GraphQL -->|"3. Return Data"| MCPServer
-    MCPServer -->|"4. Render in App UI"| App
-    App -->|"5. Display in Host"| Host
+    MCPServer -->|"4. Return Data"| Host
+    Host -->|"5. Create Iframe & Inject Data"| Iframe
     
     style Host fill:#E3F2FD
     style MCPServer fill:#1976D2,color:#fff
     style GraphQL fill:#00ACC1,color:#fff
-    style App fill:#4CAF50,color:#fff
+    style Iframe fill:#4CAF50,color:#fff
 ```
 
 ## MCP Apps vs standard MCP tools
