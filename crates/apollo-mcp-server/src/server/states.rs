@@ -153,9 +153,15 @@ impl StateMachine {
                 ServerEvent::OperationError(e, _) => {
                     State::Error(ServerError::Operation(OperationError::File(e)))
                 }
-                ServerEvent::CollectionError(e) => {
-                    State::Error(ServerError::Operation(OperationError::Collection(e)))
-                }
+                ServerEvent::CollectionError(e) => match state {
+                    State::Running(running) => {
+                        tracing::error!(
+                            "Collection error while running, keeping existing operations: {e}"
+                        );
+                        running.into()
+                    }
+                    _ => State::Error(ServerError::Operation(OperationError::Collection(e))),
+                },
                 ServerEvent::Shutdown => match state {
                     State::Running(running) => {
                         running.cancellation_token.cancel();
@@ -303,5 +309,193 @@ impl From<Result<Running, ServerError>> for State {
 impl From<ServerError> for State {
     fn from(error: ServerError) -> Self {
         State::Error(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use apollo_compiler::Schema;
+    use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
+    use reqwest::header::HeaderMap;
+    use tokio::sync::RwLock;
+    use tokio_util::sync::CancellationToken;
+
+    use crate::cors::CorsConfig;
+    use crate::errors::OperationError;
+    use crate::event::Event as ServerEvent;
+    use crate::health::HealthCheckConfig;
+    use crate::host_validation::HostValidationConfig;
+    use crate::operations::{MutationMode, RawOperation};
+    use crate::server::Transport;
+    use crate::server_info::ServerInfoConfig;
+
+    use super::{Config, Configuring, Running, State};
+
+    fn create_running_server() -> Running {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        Running {
+            schema: Arc::new(RwLock::new(schema)),
+            operations: Arc::new(RwLock::new(vec![])),
+            apps: vec![],
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            endpoint: "http://localhost:4000".parse().unwrap(),
+            execute_tool: None,
+            introspect_tool: None,
+            search_tool: None,
+            explorer_tool: None,
+            validate_tool: None,
+            custom_scalar_map: None,
+            peers: Arc::new(RwLock::new(vec![])),
+            cancellation_token: CancellationToken::new(),
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            enable_output_schema: false,
+            disable_auth_token_passthrough: false,
+            health_check: None,
+            server_info: ServerInfoConfig::default(),
+        }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            transport: Transport::StreamableHttp {
+                auth: None,
+                address: "127.0.0.1".parse().unwrap(),
+                port: 0,
+                stateful_mode: false,
+                host_validation: HostValidationConfig::default(),
+            },
+            endpoint: "http://localhost:4000".parse().unwrap(),
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            execute_introspection: false,
+            validate_introspection: false,
+            introspect_introspection: false,
+            search_introspection: false,
+            introspect_minify: false,
+            search_minify: false,
+            explorer_graph_ref: None,
+            execute_tool_hint: None,
+            introspect_tool_hint: None,
+            search_tool_hint: None,
+            validate_tool_hint: None,
+            custom_scalar_map: None,
+            mutation_mode: MutationMode::None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            enable_output_schema: false,
+            disable_auth_token_passthrough: false,
+            search_leaf_depth: 5,
+            index_memory_bytes: 1024 * 1024,
+            health_check: HealthCheckConfig::default(),
+            cors: CorsConfig::default(),
+            server_info: ServerInfoConfig::default(),
+        }
+    }
+
+    // Replicate the event-processing match from StateMachine::start() to test
+    // how each event variant is handled when the server is in the Running state.
+    async fn process_event(state: State, event: ServerEvent) -> State {
+        match event {
+            ServerEvent::OperationsUpdated(operations) => match state {
+                State::Running(running) => {
+                    running.update_operations(operations).await;
+                    running.into()
+                }
+                other => other,
+            },
+            ServerEvent::OperationError(e, _) => State::Error(
+                crate::errors::ServerError::Operation(OperationError::File(e)),
+            ),
+            ServerEvent::CollectionError(e) => match state {
+                State::Running(running) => running.into(),
+                _ => State::Error(crate::errors::ServerError::Operation(
+                    OperationError::Collection(e),
+                )),
+            },
+            _ => state,
+        }
+    }
+
+    #[tokio::test]
+    async fn operations_updated_keeps_server_running() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let event = ServerEvent::OperationsUpdated(vec![RawOperation::from((
+            "query Valid { id }".to_string(),
+            Some("valid.graphql".to_string()),
+        ))]);
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running after operations update"
+        );
+    }
+
+    // A CollectionError while Running should NOT kill the server.
+    // The server keeps its existing operations and stays alive.
+    #[tokio::test]
+    async fn collection_error_keeps_running_server_alive() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let event = ServerEvent::CollectionError(CollectionError::InvalidVariables(
+            r#"not valid json"#.to_string(),
+        ));
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running after CollectionError"
+        );
+    }
+
+    // A CollectionError from a Platform API error while Running should also
+    // keep the server alive.
+    #[tokio::test]
+    async fn collection_api_error_keeps_running_server_alive() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let event =
+            ServerEvent::CollectionError(CollectionError::Response("missing data".to_string()));
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running after API collection error"
+        );
+    }
+
+    // A CollectionError during startup (before Running) should still be fatal.
+    #[tokio::test]
+    async fn collection_error_during_startup_is_fatal() {
+        let event = ServerEvent::CollectionError(CollectionError::InvalidVariables(
+            r#"bad json"#.to_string(),
+        ));
+
+        let state = State::Configuring(Configuring {
+            config: test_config(),
+        });
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Error(_)),
+            "expected CollectionError during startup to be fatal"
+        );
     }
 }

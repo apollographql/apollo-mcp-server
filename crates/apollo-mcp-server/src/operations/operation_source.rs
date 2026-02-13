@@ -56,14 +56,17 @@ impl OperationSource {
                 .into_stream()
                 .map(|event| match event {
                     CollectionEvent::UpdateOperationCollection(operations) => {
-                        match operations
+                        let raw_operations = operations
                             .iter()
-                            .map(RawOperation::try_from)
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            Ok(operations) => Event::OperationsUpdated(operations),
-                            Err(e) => Event::CollectionError(e),
-                        }
+                            .filter_map(|op| {
+                                RawOperation::try_from(op)
+                                    .inspect_err(|e| {
+                                        warn!("Skipping invalid operation in collection: {e}");
+                                    })
+                                    .ok()
+                            })
+                            .collect();
+                        Event::OperationsUpdated(raw_operations)
                     }
                     CollectionEvent::CollectionError(error) => Event::CollectionError(error),
                 })
