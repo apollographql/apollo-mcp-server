@@ -61,29 +61,11 @@ pub enum Transport {
     #[default]
     Stdio,
 
-    /// Host the MCP server on the supplied configuration, using SSE for communication
-    ///
-    /// Note: This is deprecated in favor of HTTP streams.
-    #[serde(rename = "sse")]
-    SSE {
-        /// Authentication configuration
-        #[serde(default)]
-        auth: Option<auth::Config>,
-
-        /// The IP address to bind to
-        #[serde(default = "Transport::default_address")]
-        address: IpAddr,
-
-        /// The port to bind to
-        #[serde(default = "Transport::default_port")]
-        port: u16,
-    },
-
     /// Host the MCP server on the configuration, using streamable HTTP messages.
     StreamableHttp {
         /// Authentication configuration
         #[serde(default)]
-        auth: Option<auth::Config>,
+        auth: Option<Box<auth::Config>>,
 
         /// The IP address to bind to
         #[serde(default = "Transport::default_address")]
@@ -189,5 +171,34 @@ impl Server {
 
     pub async fn start(self) -> Result<(), ServerError> {
         StateMachine {}.start(self).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Transport;
+
+    #[test]
+    fn sse_transport_is_rejected_at_parse_time() {
+        let yaml = "type: sse\nport: 8000";
+        let result = serde_yaml::from_str::<Transport>(yaml);
+        assert!(result.is_err(), "Expected SSE transport to be rejected");
+    }
+
+    #[test]
+    fn stdio_transport_parses() {
+        let yaml = "type: stdio";
+        let result = serde_yaml::from_str::<Transport>(yaml);
+        assert!(result.is_ok(), "Expected stdio transport to parse");
+    }
+
+    #[test]
+    fn streamable_http_transport_parses() {
+        let yaml = "type: streamable_http\nport: 9000";
+        let result = serde_yaml::from_str::<Transport>(yaml);
+        assert!(
+            result.is_ok(),
+            "Expected streamable_http transport to parse"
+        );
     }
 }
