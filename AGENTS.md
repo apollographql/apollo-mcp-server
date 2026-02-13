@@ -36,6 +36,30 @@ cargo doc --no-deps
 cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
 ```
 
+## Runtime Quick Reference
+
+- Start with config file: `cargo run -p apollo-mcp-server -- path/to/config.yaml`
+- Start from env only: `cargo run -p apollo-mcp-server`
+- Config precedence: `APOLLO_MCP_*` env overrides YAML values.
+- Supported transports: `stdio` (default) and `streamable_http`; `sse` is not supported.
+- YAML env expansion supports `${env.VAR}` and `${env.VAR:-default}`.
+
+### Common Config Keys
+
+- Top-level keys: `endpoint`, `transport`, `operations`, `schema`, `introspection`, `graphos`, `overrides`, `headers`, `forward_headers`, `health_check`, `cors`, `telemetry`, `logging`, `server_info`, `custom_scalars`.
+- `auth` must be nested under `transport` (not top-level).
+- `operations.source`: `infer` (default), `local`, `manifest`, `collection`, `introspect`, `uplink`.
+- `schema.source`: `local` or `uplink`.
+
+### Useful Env Vars
+
+- GraphOS mapping:
+  - `APOLLO_GRAPH_REF` -> `graphos.apollo_graph_ref`
+  - `APOLLO_KEY` -> `graphos.apollo_key`
+  - `APOLLO_UPLINK_ENDPOINTS` -> `graphos.apollo_uplink_endpoints`
+- Nested config override format: `APOLLO_MCP_<SECTION>__<NESTED_KEY>=...`
+  - Example: `APOLLO_MCP_INTROSPECTION__EXECUTE__ENABLED=true`
+
 ## Workspace Structure
 
 The project is a Rust workspace with three crates:
