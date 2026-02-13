@@ -162,7 +162,10 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   -f body="**[Blocking]** Issue description here. See Chapter X for details." \
   -f commit_id="<commit_sha>" \
   -f path="src/foo.rs" \
-  -f line=42
+  # line MUST be an integer with -F
+  -F line=42 \
+  -f side="RIGHT" \
+  -f subject_type="line"
 
 # For general PR comments (summary, test coverage assessment):
 gh pr comment {pr_number} --body "## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
