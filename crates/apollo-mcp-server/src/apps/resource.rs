@@ -7,10 +7,10 @@ use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
 
 use super::App;
 
-const MCP_MINE_TYPE: &str = "text/html;profile=mcp-app";
+const MCP_MIME_TYPE: &str = "text/html;profile=mcp-app";
 
 pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
-    resource.raw.mime_type = Some(MCP_MINE_TYPE.into());
+    resource.raw.mime_type = Some(MCP_MIME_TYPE.to_string());
     resource
 }
 
@@ -135,7 +135,7 @@ pub(crate) async fn get_app_resource(
 
     Ok(ResourceContents::TextResourceContents {
         uri: request.uri,
-        mime_type: Some(MCP_MINE_TYPE.into()),
+        mime_type: Some(MCP_MIME_TYPE.to_string()),
         text,
         meta,
     })
