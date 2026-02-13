@@ -138,16 +138,12 @@ fn filter_inputs_for_operation(
 }
 
 /// This makes the tool executable from the app but hidden from the LLM
-pub(crate) fn make_tool_private(mut tool: Tool, app_target: &AppTarget) -> Tool {
+pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
     let meta = tool.meta.get_or_insert_with(Meta::new);
-    match app_target {
-        AppTarget::AppsSDK => meta.insert("openai/visibility".into(), "private".into()),
-        AppTarget::MCPApps => {
-            let mut ui = Meta::new();
-            ui.insert("visibility".into(), json!(["app"]));
-            meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default())
-        }
-    };
+
+    let mut ui = Meta::new();
+    ui.insert("visibility".into(), json!(["app"]));
+    meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
     tool
 }
@@ -156,25 +152,12 @@ pub(crate) fn make_tool_private(mut tool: Tool, app_target: &AppTarget) -> Tool 
 pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTarget) -> Tool {
     let mut inner_tool = tool.tool.clone();
     let meta = inner_tool.meta.get_or_insert_with(Meta::new);
-    let mut ui: Option<Meta> = None;
+    let mut ui = Meta::new();
 
-    match app_target {
-        AppTarget::AppsSDK => {
-            meta.insert(
-                "openai/outputTemplate".to_string(),
-                app.uri.to_string().into(),
-            );
-            meta.insert("openai/widgetAccessible".to_string(), true.into());
-        }
-        AppTarget::MCPApps => {
-            ui.get_or_insert_with(Meta::new)
-                .insert("resourceUri".to_string(), app.uri.to_string().into());
-            ui.get_or_insert_with(Meta::new)
-                .insert("visibility".to_string(), json!(["model", "app"]));
-            // Deprecated in favor of ui.resourceUri... keeping it here for clients who haven't yet moved to the new property
-            meta.insert("ui/resourceUri".to_string(), app.uri.to_string().into());
-        }
-    }
+    ui.insert("resourceUri".to_string(), app.uri.to_string().into());
+    ui.insert("visibility".to_string(), json!(["model", "app"]));
+    // Deprecated in favor of ui.resourceUri... keeping it here for clients who haven't yet moved to the new property
+    meta.insert("ui/resourceUri".to_string(), app.uri.to_string().into());
 
     if matches!(app_target, AppTarget::AppsSDK)
         && let Some(tool_invocation_invoking) = &tool.labels.tool_invocation_invoking
@@ -194,10 +177,7 @@ pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTa
         );
     }
 
-    // In the case of MCP Apps, the meta data is nested under `_meta.ui`
-    if matches!(app_target, AppTarget::MCPApps) {
-        meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
-    }
+    meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
     inner_tool
 }
@@ -502,44 +482,9 @@ mod tests {
     }
 
     #[test]
-    fn make_tool_private_adds_meta_when_tool_has_no_meta() {
-        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
-        tool = make_tool_private(tool, &AppTarget::AppsSDK);
-
-        let meta = tool.meta.unwrap();
-
-        assert_eq!(meta.keys().len(), 1);
-        assert_eq!(
-            meta.get("openai/visibility").unwrap(),
-            &Value::from("private")
-        );
-    }
-
-    #[test]
-    fn make_tool_private_modified_meta_when_tool_has_existing_meta() {
-        let mut existing_meta = Meta::new();
-        existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
-        let mut tool = Tool::new("GetId", "a description", JsonObject::new());
-        tool.meta = Some(existing_meta);
-        tool = make_tool_private(tool, &AppTarget::AppsSDK);
-
-        let meta = tool.meta.unwrap();
-
-        assert_eq!(meta.keys().len(), 2);
-        assert_eq!(
-            meta.get("my-awesome-key").unwrap(),
-            &Value::from("my-awesome-value")
-        );
-        assert_eq!(
-            meta.get("openai/visibility").unwrap(),
-            &Value::from("private")
-        );
-    }
-
-    #[test]
     fn make_tool_private_adds_ui_meta_for_mcp_apps_when_tool_has_no_meta() {
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
-        tool = make_tool_private(tool, &AppTarget::MCPApps);
+        tool = make_tool_private(tool);
 
         let meta = tool.meta.unwrap();
 
@@ -553,7 +498,7 @@ mod tests {
         existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
         tool.meta = Some(existing_meta);
-        tool = make_tool_private(tool, &AppTarget::MCPApps);
+        tool = make_tool_private(tool);
 
         let meta = tool.meta.unwrap();
 
@@ -579,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_tool_metadata_adds_output_template_and_widget_accessible() {
+    fn attach_tool_metadata_adds_resource_uri_and_visibility() {
         let app = App {
             name: "TestApp".to_string(),
             description: None,
@@ -600,11 +545,16 @@ mod tests {
         let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
 
         let meta = result.meta.unwrap();
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
         assert_eq!(
-            meta.get("openai/outputTemplate").unwrap(),
+            ui.get("resourceUri").unwrap(),
             "ui://widget/TestApp#hash123"
         );
-        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+        assert_eq!(ui.get("visibility").unwrap(), &json!(["model", "app"]));
+        assert_eq!(
+            meta.get("ui/resourceUri").unwrap(),
+            "ui://widget/TestApp#hash123"
+        );
     }
 
     #[test]
@@ -664,8 +614,8 @@ mod tests {
         assert!(meta.get("openai/toolInvocation/invoking").is_none());
         assert!(meta.get("openai/toolInvocation/invoked").is_none());
         // These should still be present
-        assert!(meta.get("openai/outputTemplate").is_some());
-        assert!(meta.get("openai/widgetAccessible").is_some());
+        assert!(meta.get("ui/resourceUri").is_some());
+        assert!(meta.get("ui").is_some());
     }
 
     #[test]
@@ -697,7 +647,7 @@ mod tests {
 
         let meta = result.meta.unwrap();
         assert_eq!(meta.get("custom-key").unwrap(), "custom-value");
-        assert!(meta.get("openai/outputTemplate").is_some());
+        assert!(meta.get("ui/resourceUri").is_some());
     }
 
     #[test]
