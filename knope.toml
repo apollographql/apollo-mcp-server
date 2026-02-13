@@ -7,8 +7,8 @@ versioned_files = [
     { path = "scripts/nix/install.sh", regex = "PACKAGE_VERSION=\"v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)\"" },
     { path = "scripts/windows/install.ps1", regex = "\\$package_version = 'v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)'" },
     { path = "docs/source/run.mdx", regex = [
-        "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+)([^\\w.-]|$)",
-        "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+)-rc\\.\\d+([^\\w.]|$)",
+        "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+(-experimental\\.\\d+)?)([^\\w.-]|$)",
+        "(^|[^\\w.-])v?(?<version>\\d+\\.\\d+\\.\\d+(-experimental\\.\\d+)?)-rc\\.\\d+([^\\w.]|$)",
     ] },
     { path = "server.json", regex = ["\"version\": \"(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)\"", "apollo-mcp-server:v(?<version>\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?)\""] },
 ]
