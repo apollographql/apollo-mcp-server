@@ -232,7 +232,7 @@ impl Running {
                                     .as_ref()
                                     .iter()
                                     // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
-                                    .map(|e| make_tool_private(e.tool.clone(), &app_target)),
+                                    .map(|e| make_tool_private(e.tool.clone())),
                             )
                             .chain(
                                 app.tools
@@ -272,14 +272,12 @@ impl Running {
         })
     }
 
-    fn list_resources_impl(&self, extensions: Extensions) -> Result<ListResourcesResult, McpError> {
-        let app_target = AppTarget::try_from(extensions)?;
-
+    fn list_resources_impl(&self) -> Result<ListResourcesResult, McpError> {
         Ok(ListResourcesResult {
             resources: self
                 .apps
                 .iter()
-                .map(|app| attach_resource_mime_type(app.resource(), &app_target))
+                .map(|app| attach_resource_mime_type(app.resource()))
                 .collect(),
             next_cursor: None,
             meta: None,
@@ -493,9 +491,9 @@ impl ServerHandler for Running {
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
+        _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl(context.extensions)
+        self.list_resources_impl()
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -735,7 +733,7 @@ mod tests {
             None,
             None,
         )
-        .list_resources_impl(Extensions::new())
+        .list_resources_impl()
         .unwrap()
         .resources;
 
@@ -744,67 +742,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resource_list_attaches_openai_mime_type_when_target_not_specified() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
+    async fn resource_list_attaches_mcp_apps_mime_type() {
         let resources = running_with_apps(
             AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
             None,
             None,
         )
-        .list_resources_impl(extensions)
-        .unwrap()
-        .resources;
-
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].mime_type, Some("text/html+skybridge".into()));
-    }
-
-    #[tokio::test]
-    async fn resource_list_attaches_openai_mime_type_when_target_is_openai() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=openai")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let resources = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(extensions)
-        .unwrap()
-        .resources;
-
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].mime_type, Some("text/html+skybridge".into()));
-    }
-
-    #[tokio::test]
-    async fn resource_list_attaches_mcp_apps_mime_type_when_target_is_mcp() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=mcp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let resources = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(extensions)
+        .list_resources_impl()
         .unwrap()
         .resources;
 
@@ -813,30 +757,6 @@ mod tests {
             resources[0].mime_type,
             Some("text/html;profile=mcp-app".into())
         );
-    }
-
-    #[tokio::test]
-    async fn resource_list_errors_when_target_is_unrecognized() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=lol")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(extensions);
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.err().unwrap().message,
-            "App target lol not recognized. Valid values are 'openai' or 'mcp'."
-        )
     }
 
     #[tokio::test]
@@ -870,8 +790,10 @@ mod tests {
             panic!("Expected TextResourceContents");
         };
         assert_eq!(text, resource_content);
-        assert_eq!(mime_type.unwrap(), "text/html+skybridge");
-        assert_eq!(meta, None);
+        assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
+        // Meta always contains at least the "ui" key now
+        let meta = meta.expect("meta should be set");
+        assert!(meta.get("ui").is_some());
         assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
     }
 
@@ -986,33 +908,43 @@ mod tests {
             panic!("Expected TextResourceContents");
         };
         let meta = meta.expect("meta is not set");
-        let csp_settings = meta
+        // OpenAI-specific CSP at root level should only contain redirect_domains
+        let openai_csp = meta
             .get("openai/widgetCSP")
-            .expect("csp settings not found");
-        let returned_resource_domains = csp_settings
-            .get("resource_domains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_resource_domains, &resource_domains);
-        let returned_connect_domains = csp_settings
-            .get("connect_domains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_connect_domains, &connect_domains);
-        let returned_frame_domains = csp_settings
-            .get("frame_domains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_frame_domains, &frame_domains);
-        let returned_redirect_domains = csp_settings
+            .expect("openai csp settings not found");
+        let returned_redirect_domains = openai_csp
             .get("redirect_domains")
             .unwrap()
             .as_array()
             .unwrap();
         assert_eq!(returned_redirect_domains, &redirect_domains);
+        // Common CSP properties are under ui.csp with camelCase keys
+        let ui_meta = meta.get("ui").expect("ui key not found");
+        let csp_settings = ui_meta.get("csp").expect("csp settings not found");
+        let returned_connect_domains = csp_settings
+            .get("connectDomains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_connect_domains, &connect_domains);
+        let returned_resource_domains = csp_settings
+            .get("resourceDomains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_resource_domains, &resource_domains);
+        let returned_frame_domains = csp_settings
+            .get("frameDomains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_frame_domains, &frame_domains);
+        let returned_base_uri_domains = csp_settings
+            .get("baseUriDomains")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(returned_base_uri_domains, &base_uri_domains);
     }
 
     #[tokio::test]
@@ -1092,8 +1024,15 @@ mod tests {
         let result = running.list_tools_impl(extensions).await.unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
-        assert_eq!(meta.get("openai/outputTemplate").unwrap(), RESOURCE_URI);
-        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+        // Should have ui nested metadata with resourceUri and visibility
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
+        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+        assert_eq!(
+            ui.get("visibility").unwrap(),
+            &serde_json::json!(["model", "app"])
+        );
+        // Should have deprecated root-level ui/resourceUri
+        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
     }
 
     #[tokio::test]
@@ -1150,9 +1089,14 @@ mod tests {
         let result = running.list_tools_impl(extensions).await.unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
-        // Default should use OpenAI/AppsSDK metadata format
-        assert_eq!(meta.get("openai/outputTemplate").unwrap(), RESOURCE_URI);
-        assert_eq!(meta.get("openai/widgetAccessible").unwrap(), true);
+        // Default should still have ui nested metadata
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
+        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+        assert_eq!(
+            ui.get("visibility").unwrap(),
+            &serde_json::json!(["model", "app"])
+        );
+        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
     }
 
     #[tokio::test]
@@ -1236,9 +1180,8 @@ mod tests {
             panic!("Expected TextResourceContents");
         };
         let meta = meta.expect("meta should be set");
-        let domain = meta
-            .get("openai/widgetDomain")
-            .expect("widgetDomain not found");
+        let ui_meta = meta.get("ui").expect("ui key not found");
+        let domain = ui_meta.get("domain").expect("domain not found");
         assert_eq!(domain.as_str().unwrap(), "example.com");
     }
 
@@ -1269,9 +1212,10 @@ mod tests {
             panic!("Expected TextResourceContents");
         };
         let meta = meta.expect("meta should be set");
-        let prefers_border = meta
-            .get("openai/widgetPrefersBorder")
-            .expect("widgetPrefersBorder not found");
+        let ui_meta = meta.get("ui").expect("ui key not found");
+        let prefers_border = ui_meta
+            .get("prefersBorder")
+            .expect("prefersBorder not found");
         assert!(prefers_border.as_bool().unwrap());
     }
 

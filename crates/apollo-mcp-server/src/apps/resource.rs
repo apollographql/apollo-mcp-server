@@ -7,19 +7,10 @@ use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
 
 use super::App;
 
-pub(crate) fn get_mime_type(app_target: &AppTarget) -> String {
-    match app_target {
-        AppTarget::AppsSDK => "text/html+skybridge".to_string(),
-        AppTarget::MCPApps => "text/html;profile=mcp-app".to_string(),
-    }
-}
+const MCP_MINE_TYPE: &str = "text/html;profile=mcp-app";
 
-// Attach resource mime type when requested to allow swapping between app targets (Apps SDK, MCP Apps)
-pub(crate) fn attach_resource_mime_type(
-    mut resource: Resource,
-    app_target: &AppTarget,
-) -> Resource {
-    resource.raw.mime_type = Some(get_mime_type(app_target));
+pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
+    resource.raw.mime_type = Some(MCP_MINE_TYPE.into());
     resource
 }
 
@@ -88,34 +79,32 @@ pub(crate) async fn get_app_resource(
         }
     };
 
+    // Most properties now are listed under _meta.ui.* but some openai specific properties are still at the root
+    // So, we will populate both and then nest "ui" into "meta" later in this function
     let mut meta: Option<Meta> = None;
+    let mut ui: Option<Meta> = None;
     if let Some(csp) = &app.csp_settings {
-        match app_target {
-            // Note that the difference in which keys are set here and the camelCase vs snake_key is on purpose. These are differences between the two specs.
-            AppTarget::AppsSDK => {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "openai/widgetCSP".into(),
-                    json!({
-                        "connect_domains": csp.connect_domains,
-                        "resource_domains": csp.resource_domains,
-                        "frame_domains": csp.frame_domains,
-                        "redirect_domains": csp.redirect_domains
-                    }),
-                );
-            }
-            AppTarget::MCPApps => {
-                meta.get_or_insert_with(Meta::new).insert(
-                    "csp".into(),
-                    json!({
-                        "connectDomains": csp.connect_domains,
-                        "resourceDomains": csp.resource_domains,
-                        "frameDomains": csp.frame_domains,
-                        "baseUriDomains": csp.base_uri_domains
-                    }),
-                );
-            }
+        ui.get_or_insert_with(Meta::new).insert(
+            "csp".into(),
+            json!({
+                "connectDomains": csp.connect_domains,
+                "resourceDomains": csp.resource_domains,
+                "frameDomains": csp.frame_domains,
+                "baseUriDomains": csp.base_uri_domains
+            }),
+        );
+
+        // Openai has a specific property so we'll set that separately
+        if matches!(app_target, AppTarget::AppsSDK) {
+            meta.get_or_insert_with(Meta::new).insert(
+                "openai/widgetCSP".into(),
+                json!({
+                    "redirect_domains": csp.redirect_domains
+                }),
+            );
         }
     }
+
     if let Some(widget_settings) = &app.widget_settings {
         if let Some(description) = &widget_settings.description
             && matches!(app_target, AppTarget::AppsSDK)
@@ -127,36 +116,26 @@ pub(crate) async fn get_app_resource(
         }
 
         if let Some(domain) = &widget_settings.domain {
-            meta.get_or_insert_with(Meta::new).insert(
-                match app_target {
-                    AppTarget::AppsSDK => "openai/widgetDomain".into(),
-                    AppTarget::MCPApps => "domain".into(),
-                },
+            ui.get_or_insert_with(Meta::new).insert(
+                "domain".into(),
                 serde_json::to_value(domain).unwrap_or_default(),
             );
         }
 
         if let Some(prefers_border) = &widget_settings.prefers_border {
-            meta.get_or_insert_with(Meta::new).insert(
-                match app_target {
-                    AppTarget::AppsSDK => "openai/widgetPrefersBorder".into(),
-                    AppTarget::MCPApps => "prefersBorder".into(),
-                },
+            ui.get_or_insert_with(Meta::new).insert(
+                "prefersBorder".into(),
                 serde_json::to_value(prefers_border).unwrap_or_default(),
             );
         }
     }
 
-    // In the case of MCP Apps, the meta data is nested under `_meta.ui`
-    if matches!(app_target, AppTarget::MCPApps) {
-        let mut nested = Meta::new();
-        nested.insert("ui".into(), serde_json::to_value(meta).unwrap_or_default());
-        meta = Some(nested);
-    }
+    meta.get_or_insert_with(Meta::new)
+        .insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
     Ok(ResourceContents::TextResourceContents {
         uri: request.uri,
-        mime_type: Some(get_mime_type(app_target)),
+        mime_type: Some(MCP_MINE_TYPE.into()),
         text,
         meta,
     })
@@ -172,7 +151,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn attach_correct_mime_type_when_open_ai() {
+    fn attach_correct_mime_type() {
         let resource = Resource::new(
             RawResource {
                 name: "TestResource".to_string(),
@@ -187,86 +166,11 @@ mod tests {
             None,
         );
 
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=openai")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = AppTarget::try_from(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
-
-        assert_eq!(
-            result.raw.mime_type,
-            Some("text/html+skybridge".to_string())
-        );
-    }
-
-    #[test]
-    fn attach_correct_mime_type_when_mcp_apps() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=mcp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = AppTarget::try_from(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
+        let result = attach_resource_mime_type(resource);
 
         assert_eq!(
             result.raw.mime_type,
             Some("text/html;profile=mcp-app".to_string())
-        );
-    }
-
-    #[test]
-    fn attach_correct_mime_type_when_not_provided() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-        let app_target = AppTarget::try_from(extensions).unwrap();
-
-        let result = attach_resource_mime_type(resource, &app_target);
-
-        assert_eq!(
-            result.raw.mime_type,
-            Some("text/html+skybridge".to_string())
         );
     }
 
@@ -329,21 +233,23 @@ mod tests {
         else {
             unreachable!()
         };
-        assert_eq!(mime_type, Some("text/html+skybridge".to_string()));
+        assert_eq!(mime_type, Some("text/html;profile=mcp-app".to_string()));
 
         let meta = meta.unwrap();
-        // AppsSDK CSP uses snake_case keys and includes redirect_domains (not base_uri_domains)
+        // OpenAI-specific CSP with redirect_domains should be at root
         let csp = meta.get("openai/widgetCSP").unwrap();
-        assert!(csp.get("connect_domains").is_some());
-        assert!(csp.get("resource_domains").is_some());
-        assert!(csp.get("frame_domains").is_some());
         assert!(csp.get("redirect_domains").is_some());
-        assert!(csp.get("base_uri_domains").is_none());
+        // OpenAI-specific description should be at root
         assert!(meta.get("openai/widgetDescription").is_some());
-        assert!(meta.get("openai/widgetDomain").is_some());
-        assert!(meta.get("openai/widgetPrefersBorder").is_some());
-        // AppsSDK should not have ui nesting
-        assert!(meta.get("ui").is_none());
+        // ui nesting should contain the common properties
+        let ui_meta = meta.get("ui").unwrap();
+        let ui_csp = ui_meta.get("csp").unwrap();
+        assert!(ui_csp.get("connectDomains").is_some());
+        assert!(ui_csp.get("resourceDomains").is_some());
+        assert!(ui_csp.get("frameDomains").is_some());
+        assert!(ui_csp.get("baseUriDomains").is_some());
+        assert!(ui_meta.get("domain").is_some());
+        assert!(ui_meta.get("prefersBorder").is_some());
     }
 
     #[tokio::test]
