@@ -90,7 +90,7 @@ prettyplease = "0.2.37"
 quote = "1.0.40"
 serde.workspace = true
 syn = "2.0.106"
-toml = "0.9.5"
+toml = "1.0.0"
 
 [features]
 apps = []
