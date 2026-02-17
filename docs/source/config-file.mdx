@@ -467,7 +467,8 @@ These fields are under the top-level `server_info` key and configure the server 
 | `name`        | `string` | `"Apollo MCP Server"`                                    | The name of the MCP server implementation (used as a technical identifier) |
 | `version`     | `string` | Current crate version (e.g., `"1.5.0"`)                  | The version of the MCP server implementation                               |
 | `title`       | `string` | `"Apollo MCP Server"`                                    | Human-readable title for the server (used for display in UIs)              |
-| `website_url` | `URL`    | `"https://www.apollographql.com/docs/apollo-mcp-server"` | URL to the server's website or documentation |
+| `website_url`  | `URL`    | `"https://www.apollographql.com/docs/apollo-mcp-server"`                                         | URL to the server's website or documentation                                                                  |
+| `description`  | `string` | `"A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."` | A brief description of the server                                                                             |
 
 All fields are optional. If not specified, sensible defaults are used. This is useful when wrapping Apollo MCP Server or branding it for specific use cases.
 
@@ -477,6 +478,7 @@ server_info:
   version: "2.0.0"
   title: "Acme MCP Server"
   website_url: "https://acme.com/mcp-docs"
+  description: "MCP server for Acme Corp's GraphQL API"
 ```
 
 ## Example config files

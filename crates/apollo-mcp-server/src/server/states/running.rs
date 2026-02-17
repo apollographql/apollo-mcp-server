@@ -538,8 +538,7 @@ impl ServerHandler for Running {
                 title: self.server_info.title().map(|s| s.to_string()),
                 version: self.server_info.version().to_string(),
                 website_url: self.server_info.website_url().map(|s| s.to_string()),
-                // TODO: Add support for this via configuration similar to above fields
-                description: None,
+                description: self.server_info.description().map(|s| s.to_string()),
             },
             capabilities,
             ..Default::default()
@@ -1429,6 +1428,13 @@ mod tests {
             info.server_info.website_url,
             Some("https://www.apollographql.com/docs/apollo-mcp-server".to_string())
         );
+        assert_eq!(
+            info.server_info.description,
+            Some(
+                "A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."
+                    .to_string()
+            )
+        );
         assert_eq!(info.server_info.icons, None);
     }
 
@@ -1444,6 +1450,7 @@ mod tests {
             version: Some("3.0.0-beta".to_string()),
             title: Some("Custom GraphQL Server".to_string()),
             website_url: Some("https://my-server.example.com/docs".to_string()),
+            description: Some("A custom MCP server for testing".to_string()),
         };
 
         let running = Running {
@@ -1481,6 +1488,10 @@ mod tests {
         assert_eq!(
             info.server_info.website_url,
             Some("https://my-server.example.com/docs".to_string())
+        );
+        assert_eq!(
+            info.server_info.description,
+            Some("A custom MCP server for testing".to_string())
         );
     }
 

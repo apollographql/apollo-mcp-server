@@ -198,6 +198,7 @@ mod test {
                     version: None,
                     title: None,
                     website_url: None,
+                    description: None,
                 },
                 custom_scalars: None,
                 endpoint: Endpoint(
