@@ -837,6 +837,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -976,6 +977,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1126,6 +1128,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1279,6 +1282,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1429,6 +1433,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1576,6 +1581,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1733,6 +1739,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -1905,6 +1912,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -2042,6 +2050,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -2290,6 +2299,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -2430,6 +2440,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -2574,6 +2585,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -2707,6 +2719,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -3238,6 +3251,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -3365,6 +3379,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -3926,6 +3941,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -4114,6 +4130,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }
@@ -4317,6 +4334,7 @@ mod tests {
                         open_world_hint: None,
                     },
                 ),
+                execution: None,
                 icons: None,
                 meta: None,
             },
@@ -4446,6 +4464,7 @@ mod tests {
                         open_world_hint: None,
                     },
                 ),
+                execution: None,
                 icons: None,
                 meta: None,
             },
@@ -4575,6 +4594,7 @@ mod tests {
                     open_world_hint: None,
                 },
             ),
+            execution: None,
             icons: None,
             meta: None,
         }

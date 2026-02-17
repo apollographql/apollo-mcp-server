@@ -5,8 +5,8 @@ use opentelemetry::KeyValue;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    Extensions, Implementation, ListResourcesResult, ReadResourceResult, ResourcesCapability,
-    ToolsCapability,
+    ClientCapabilities, Extensions, Implementation, ListResourcesResult, ReadResourceResult,
+    ResourcesCapability, ToolsCapability,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -195,7 +195,11 @@ impl Running {
         *peers = retained_peers;
     }
 
-    async fn list_tools_impl(&self, extensions: Extensions) -> Result<ListToolsResult, McpError> {
+    async fn list_tools_impl(
+        &self,
+        extensions: Extensions,
+        client_capabilities: Option<&ClientCapabilities>,
+    ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
@@ -211,7 +215,7 @@ impl Running {
                     .find(|(key, _)| key == "app")
                     .map(|(_, value)| value.into_owned())
             });
-        let app_target = AppTarget::try_from(extensions)?;
+        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         if let Some(app_name) = app_param {
@@ -288,6 +292,7 @@ impl Running {
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
+        client_capabilities: Option<&ClientCapabilities>,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -295,7 +300,7 @@ impl Running {
                 None,
             )
         })?;
-        let app_target = AppTarget::try_from(extensions)?;
+        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
         let resource = get_app_resource(&self.apps, request, request_uri, &app_target).await?;
 
@@ -484,7 +489,10 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        self.list_tools_impl(context.extensions).await
+        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+
+        self.list_tools_impl(context.extensions, client_capabilities)
+            .await
     }
 
     #[tracing::instrument(skip_all)]
@@ -502,7 +510,10 @@ impl ServerHandler for Running {
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        self.read_resource_impl(request, context.extensions).await
+        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+
+        self.read_resource_impl(request, context.extensions, client_capabilities)
+            .await
     }
 
     fn get_info(&self) -> ServerInfo {
@@ -527,6 +538,8 @@ impl ServerHandler for Running {
                 title: self.server_info.title().map(|s| s.to_string()),
                 version: self.server_info.version().to_string(),
                 website_url: self.server_info.website_url().map(|s| s.to_string()),
+                // TODO: Add support for this via configuration similar to above fields
+                description: None,
             },
             capabilities,
             ..Default::default()
@@ -776,6 +789,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .unwrap();
@@ -811,6 +825,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await;
         assert!(result.is_err());
@@ -830,6 +845,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await;
         assert!(result.is_err());
@@ -861,6 +877,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .expect("resource fetch failed");
@@ -899,6 +916,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .unwrap();
@@ -955,7 +973,10 @@ mod tests {
             None,
         );
 
-        let result = running.list_tools_impl(Extensions::new()).await.unwrap();
+        let result = running
+            .list_tools_impl(Extensions::new(), None)
+            .await
+            .unwrap();
 
         assert_eq!(result.tools.len(), 0);
         assert_eq!(result.next_cursor, None);
@@ -977,7 +998,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await.unwrap();
+        let result = running.list_tools_impl(extensions, None).await.unwrap();
 
         assert_eq!(result.tools.len(), 1);
         assert_eq!(result.tools[0].name, "GetId");
@@ -1000,7 +1021,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await;
+        let result = running.list_tools_impl(extensions, None).await;
 
         assert!(result.is_err());
     }
@@ -1021,7 +1042,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await.unwrap();
+        let result = running.list_tools_impl(extensions, None).await.unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Should have ui nested metadata with resourceUri and visibility
@@ -1051,7 +1072,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await.unwrap();
+        let result = running.list_tools_impl(extensions, None).await.unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Check nested ui metadata
@@ -1086,7 +1107,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await.unwrap();
+        let result = running.list_tools_impl(extensions, None).await.unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Default should still have ui nested metadata
@@ -1097,6 +1118,57 @@ mod tests {
             &serde_json::json!(["model", "app"])
         );
         assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+    }
+
+    #[tokio::test]
+    async fn list_tools_with_app_and_mcp_app_capability_defaults_to_mcp_target() {
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("test".to_string())),
+            None,
+            None,
+        );
+
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let mut extension_capabilities = std::collections::BTreeMap::new();
+        extension_capabilities.insert(
+            "io.modelcontextprotocol/ui".to_string(),
+            serde_json::json!({"mimeTypes": ["text/html;profile=mcp-app"]})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let client_capabilities = ClientCapabilities {
+            extensions: Some(extension_capabilities),
+            ..Default::default()
+        };
+
+        let result = running
+            .list_tools_impl(extensions, Some(&client_capabilities))
+            .await
+            .unwrap();
+        let meta = result.tools[0].meta.as_ref().unwrap();
+
+        // Should have MCP-style nested ui metadata
+        let ui = meta.get("ui").unwrap().as_object().unwrap();
+        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+        assert_eq!(
+            ui.get("visibility").unwrap(),
+            &serde_json::json!(["model", "app"])
+        );
+
+        // Check deprecated root-level ui/resourceUri for backwards compatibility
+        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+
+        // Ensure OpenAI-specific keys are NOT present
+        assert!(meta.get("openai/outputTemplate").is_none());
+        assert!(meta.get("openai/widgetAccessible").is_none());
     }
 
     #[tokio::test]
@@ -1115,7 +1187,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions).await;
+        let result = running.list_tools_impl(extensions, None).await;
 
         assert!(result.is_err());
     }
@@ -1139,6 +1211,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .unwrap();
@@ -1172,6 +1245,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .unwrap();
@@ -1204,6 +1278,7 @@ mod tests {
                     meta: None,
                 },
                 Extensions::new(),
+                None,
             )
             .await
             .unwrap();
@@ -1252,6 +1327,7 @@ mod tests {
                     meta: None,
                 },
                 extensions,
+                None,
             )
             .await
             .unwrap();
@@ -1303,6 +1379,7 @@ mod tests {
                     meta: None,
                 },
                 extensions,
+                None,
             )
             .await;
 

@@ -186,7 +186,7 @@ mod tests {
             .unwrap();
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
-        let app_target = AppTarget::try_from(extensions);
+        let app_target = AppTarget::try_from((extensions, None));
 
         assert!(app_target.is_err());
         assert_eq!(
