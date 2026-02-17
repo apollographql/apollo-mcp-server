@@ -133,6 +133,7 @@ pub(crate) fn load_from_path(
                     output_schema: operation.tool.output_schema.clone(),
                     annotations: operation.tool.annotations.clone(),
                     icons: operation.tool.icons.clone(),
+                    execution: None,
                 };
 
                 tools.push(AppTool {

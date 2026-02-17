@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
-use rmcp::model::{ErrorCode, Extensions, RawResource, Resource, Tool};
+use rmcp::model::{ClientCapabilities, ErrorCode, Extensions, RawResource, Resource, Tool};
+use serde_json::Value;
 use url::Url;
 
 use crate::apps::manifest::{AppLabels, CSPSettings, WidgetSettings};
@@ -88,10 +89,12 @@ pub(crate) enum AppTarget {
     MCPApps,
 }
 
-impl TryFrom<Extensions> for AppTarget {
+impl TryFrom<(Extensions, Option<&ClientCapabilities>)> for AppTarget {
     type Error = McpError;
 
-    fn try_from(extensions: Extensions) -> Result<Self, Self::Error> {
+    fn try_from(
+        (extensions, client_capabilities): (Extensions, Option<&ClientCapabilities>),
+    ) -> Result<Self, Self::Error> {
         let app_target_param = extensions
             .get::<axum::http::request::Parts>()
             .and_then(|parts| parts.uri.query())
@@ -111,10 +114,28 @@ impl TryFrom<Extensions> for AppTarget {
                 ),
                 None,
             )),
-            // TODO: In the future, once host capabilities are advertised, we should try auto detection before defaulting to apps sdk
-            None => Ok(AppTarget::AppsSDK),
+            None => {
+                // If target hasn't been specified in the URL, try to detect it via client capabilities. If we still don't know, we'll default to AppsSDK.
+                if let Some(client_capabilities) = client_capabilities
+                    && has_mcp_app_support(client_capabilities)
+                {
+                    Ok(AppTarget::MCPApps)
+                } else {
+                    Ok(AppTarget::AppsSDK)
+                }
+            }
         }
     }
+}
+
+pub(crate) fn has_mcp_app_support(client_capabilities: &ClientCapabilities) -> bool {
+    client_capabilities
+        .extensions
+        .as_ref()
+        .and_then(|extensions| extensions.get("io.modelcontextprotocol/ui"))
+        .and_then(|extension| extension.get("mimeTypes"))
+        .and_then(|mimetypes| mimetypes.as_array())
+        .is_some_and(|mimetypes| mimetypes.contains(&Value::from("text/html;profile=mcp-app")))
 }
 
 #[cfg(test)]
@@ -131,7 +152,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let app_target = AppTarget::try_from(extensions).unwrap();
+        let app_target = AppTarget::try_from((extensions, None)).unwrap();
         assert!(matches!(app_target, AppTarget::AppsSDK));
     }
 
@@ -145,7 +166,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let app_target = AppTarget::try_from(extensions).unwrap();
+        let app_target = AppTarget::try_from((extensions, None)).unwrap();
         assert!(matches!(app_target, AppTarget::AppsSDK));
     }
 
@@ -159,7 +180,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let app_target = AppTarget::try_from(extensions).unwrap();
+        let app_target = AppTarget::try_from((extensions, None)).unwrap();
         assert!(matches!(app_target, AppTarget::MCPApps));
     }
 
@@ -173,7 +194,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let app_target = AppTarget::try_from(extensions).unwrap();
+        let app_target = AppTarget::try_from((extensions, None)).unwrap();
         assert!(matches!(app_target, AppTarget::MCPApps));
     }
 
@@ -187,7 +208,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = AppTarget::try_from(extensions);
+        let result = AppTarget::try_from((extensions, None));
         assert!(result.is_err());
         let err = result.err().unwrap();
         assert_eq!(err.code, ErrorCode::INVALID_REQUEST);
@@ -207,7 +228,34 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let app_target = AppTarget::try_from(extensions).unwrap();
+        let app_target = AppTarget::try_from((extensions, None)).unwrap();
         assert!(matches!(app_target, AppTarget::AppsSDK));
+    }
+
+    #[test]
+    fn test_app_target_missing_with_mcp_app_capability_defaults_to_mcp_apps() {
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let mut extension_capabilities = std::collections::BTreeMap::new();
+        extension_capabilities.insert(
+            "io.modelcontextprotocol/ui".to_string(),
+            serde_json::json!({"mimeTypes": ["text/html;profile=mcp-app"]})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let client_capabilities = ClientCapabilities {
+            extensions: Some(extension_capabilities),
+            ..Default::default()
+        };
+
+        let app_target = AppTarget::try_from((extensions, Some(&client_capabilities))).unwrap();
+        assert!(matches!(app_target, AppTarget::MCPApps));
     }
 }
