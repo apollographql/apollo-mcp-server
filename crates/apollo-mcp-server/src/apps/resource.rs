@@ -94,11 +94,14 @@ pub(crate) async fn get_app_resource(
             }),
         );
 
-        // Openai has a specific property so we'll set that separately
+        // Openai has a weird bug where it won't merge these settings with the MCP ones... so we just have to set both.
         if matches!(app_target, AppTarget::AppsSDK) {
             meta.get_or_insert_with(Meta::new).insert(
                 "openai/widgetCSP".into(),
                 json!({
+                    "connect_domains": csp.connect_domains,
+                    "resource_domains": csp.resource_domains,
+                    "frame_domains": csp.frame_domains,
                     "redirect_domains": csp.redirect_domains
                 }),
             );
@@ -236,8 +239,10 @@ mod tests {
         assert_eq!(mime_type, Some("text/html;profile=mcp-app".to_string()));
 
         let meta = meta.unwrap();
-        // OpenAI-specific CSP with redirect_domains should be at root
         let csp = meta.get("openai/widgetCSP").unwrap();
+        assert!(csp.get("connect_domains").is_some());
+        assert!(csp.get("resource_domains").is_some());
+        assert!(csp.get("frame_domains").is_some());
         assert!(csp.get("redirect_domains").is_some());
         // OpenAI-specific description should be at root
         assert!(meta.get("openai/widgetDescription").is_some());
