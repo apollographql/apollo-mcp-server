@@ -34,7 +34,7 @@ use crate::{
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
-    headers::{ForwardHeaders, build_request_headers},
+    headers::{ForwardHeaders, HeaderTransform, build_request_headers},
     health::HealthCheck,
     introspection::tools::{
         execute::{EXECUTE_TOOL_NAME, Execute},
@@ -66,6 +66,7 @@ pub(super) struct Running {
     pub(super) disable_schema_description: bool,
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
+    pub(super) header_transform: Option<HeaderTransform>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
 }
@@ -382,9 +383,14 @@ impl ServerHandler for Running {
                         &axum_parts.headers,
                         &axum_parts.extensions,
                         self.disable_auth_token_passthrough,
+                        self.header_transform.as_ref(),
                     )
                 } else {
-                    self.headers.clone()
+                    let mut headers = self.headers.clone();
+                    if let Some(transform) = &self.header_transform {
+                        transform(&mut headers);
+                    }
+                    headers
                 };
 
             execute_operation(
@@ -412,9 +418,14 @@ impl ServerHandler for Running {
                         &axum_parts.headers,
                         &axum_parts.extensions,
                         self.disable_auth_token_passthrough,
+                        self.header_transform.as_ref(),
                     )
                 } else {
-                    self.headers.clone()
+                    let mut headers = self.headers.clone();
+                    if let Some(transform) = &self.header_transform {
+                        transform(&mut headers);
+                    }
+                    headers
                 };
 
             // Access the "app" query parameter from the HTTP request
@@ -585,6 +596,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            header_transform: None,
             health_check: None,
             server_info: ServerInfoConfig::default(),
         };
@@ -645,6 +657,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            header_transform: None,
             health_check: None,
             server_info: ServerInfoConfig::default(),
         };
@@ -723,6 +736,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            header_transform: None,
             health_check: None,
             server_info: ServerInfoConfig::default(),
         }
@@ -1392,6 +1406,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            header_transform: None,
             health_check: None,
             server_info: ServerInfoConfig::default(),
         };
@@ -1445,6 +1460,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            header_transform: None,
             health_check: None,
             server_info: custom_config,
         };
@@ -1499,6 +1515,7 @@ mod tests {
                 disable_schema_description: false,
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
+                header_transform: None,
                 health_check: None,
                 server_info: Default::default(),
             }

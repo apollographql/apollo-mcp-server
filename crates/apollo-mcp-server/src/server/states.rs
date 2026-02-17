@@ -9,7 +9,7 @@ use crate::{
     cors::CorsConfig,
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
-    headers::ForwardHeaders,
+    headers::{ForwardHeaders, HeaderTransform},
     health::HealthCheckConfig,
     operations::MutationMode,
     server_info::ServerInfoConfig,
@@ -60,6 +60,7 @@ struct Config {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    header_transform: Option<HeaderTransform>,
 }
 
 impl StateMachine {
@@ -101,6 +102,7 @@ impl StateMachine {
                 health_check: server.health_check,
                 cors: server.cors,
                 server_info: server.server_info,
+                header_transform: server.header_transform,
             },
         });
 

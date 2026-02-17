@@ -12,7 +12,7 @@ use crate::cors::CorsConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
 use crate::event::Event as ServerEvent;
-use crate::headers::ForwardHeaders;
+use crate::headers::{ForwardHeaders, HeaderTransform};
 use crate::health::HealthCheckConfig;
 use crate::host_validation::HostValidationConfig;
 use crate::operations::{MutationMode, OperationSource};
@@ -52,6 +52,7 @@ pub struct Server {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    header_transform: Option<HeaderTransform>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -149,6 +150,7 @@ impl Server {
         health_check: HealthCheckConfig,
         cors: CorsConfig,
         server_info: ServerInfoConfig,
+        header_transform: Option<HeaderTransform>,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -184,6 +186,7 @@ impl Server {
             health_check,
             cors,
             server_info,
+            header_transform,
         }
     }
 

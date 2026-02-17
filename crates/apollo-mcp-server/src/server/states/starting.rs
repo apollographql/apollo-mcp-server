@@ -166,6 +166,7 @@ impl Starting {
             disable_schema_description: self.config.disable_schema_description,
             enable_output_schema: self.config.enable_output_schema,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
+            header_transform: self.config.header_transform.clone(),
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
         };
@@ -340,6 +341,7 @@ mod tests {
                 },
                 cors: Default::default(),
                 server_info: Default::default(),
+                header_transform: None,
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
@@ -347,6 +349,79 @@ mod tests {
         };
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn start_server_with_header_transform() {
+        let transform: crate::headers::HeaderTransform =
+            std::sync::Arc::new(|headers: &mut reqwest::header::HeaderMap| {
+                headers.insert(
+                    "x-custom-auth",
+                    reqwest::header::HeaderValue::from_static("signed-value"),
+                );
+            });
+
+        let starting = Starting {
+            config: Config {
+                transport: Transport::StreamableHttp {
+                    auth: None,
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: 7797,
+                    stateful_mode: false,
+                    host_validation: HostValidationConfig::default(),
+                },
+                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+                mutation_mode: MutationMode::All,
+                execute_introspection: true,
+                headers: HeaderMap::new(),
+                forward_headers: vec![],
+                validate_introspection: true,
+                introspect_introspection: true,
+                search_introspection: true,
+                introspect_minify: false,
+                search_minify: false,
+                execute_tool_hint: None,
+                introspect_tool_hint: None,
+                search_tool_hint: None,
+                validate_tool_hint: None,
+                explorer_graph_ref: None,
+                custom_scalar_map: None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                search_leaf_depth: 5,
+                index_memory_bytes: 1024 * 1024 * 1024,
+                health_check: HealthCheckConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+                cors: Default::default(),
+                server_info: Default::default(),
+                header_transform: Some(transform),
+            },
+            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
+                .expect("Valid schema"),
+            operations: vec![],
+        };
+        let running = starting.start().await;
+        assert!(running.is_ok());
+
+        // Verify the header_transform was propagated to the Running state
+        let running = running.unwrap();
+        assert!(
+            running.header_transform.is_some(),
+            "header_transform should propagate from Starting config to Running state"
+        );
+
+        // Verify the transform works correctly when applied
+        let mut test_headers = HeaderMap::new();
+        (running.header_transform.as_ref().unwrap())(&mut test_headers);
+        assert_eq!(
+            test_headers.get("x-custom-auth").unwrap(),
+            "signed-value",
+            "propagated transform should be functional"
+        );
     }
 
     #[tokio::test]
@@ -383,6 +458,7 @@ mod tests {
                 health_check: HealthCheckConfig::default(),
                 cors: Default::default(),
                 server_info: Default::default(),
+                header_transform: None,
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
