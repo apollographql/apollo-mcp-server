@@ -449,8 +449,8 @@ mod tests {
 
     mod scope_validation {
         use super::*;
+        use rstest::rstest;
 
-        // Unified test helper for scope validation logic
         fn is_sufficient(mode: ScopeMode, required: &[String], present: &[String]) -> bool {
             if required.is_empty() {
                 return true;
@@ -462,53 +462,35 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insufficient_scopes_fails() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
+        fn s(vals: &[&str]) -> Vec<String> {
+            vals.iter().map(|v| v.to_string()).collect()
         }
 
-        #[test]
-        fn all_required_scopes_succeeds() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
+        #[rstest]
+        #[case::all_present(ScopeMode::RequireAll, &["read", "write"], &["read", "write"], true)]
+        #[case::missing_one(ScopeMode::RequireAll, &["read", "write"], &["read"], false)]
+        #[case::none_present(ScopeMode::RequireAll, &["read"], &[], false)]
+        #[case::superset(ScopeMode::RequireAll, &["read"], &["read", "write", "admin"], true)]
+        #[case::reversed_order(ScopeMode::RequireAll, &["write", "read"], &["read", "write"], true)]
+        #[case::any_one_match(ScopeMode::RequireAny, &["read", "write"], &["read"], true)]
+        #[case::any_zero_matches(ScopeMode::RequireAny, &["read", "write"], &["admin"], false)]
+        #[case::any_none_present(ScopeMode::RequireAny, &["read"], &[], false)]
+        #[case::disabled_ignores_scopes(ScopeMode::Disabled, &["read", "write"], &[], true)]
+        fn scope_check(
+            #[case] mode: ScopeMode,
+            #[case] required: &[&str],
+            #[case] present: &[&str],
+            #[case] expected: bool,
+        ) {
+            assert_eq!(is_sufficient(mode, &s(required), &s(present)), expected);
         }
 
-        #[test]
-        fn no_scopes_when_required_fails() {
-            let required = vec!["read".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-        }
-
-        #[test]
-        fn superset_of_scopes_succeeds() {
-            let required = vec!["read".to_string()];
-            let present = vec!["read".to_string(), "write".to_string(), "admin".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-        }
-
-        #[test]
-        fn empty_required_scopes_always_succeeds() {
-            let required: Vec<String> = vec![];
-            let present = vec!["read".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-
-            let present_empty: Vec<String> = vec![];
-            assert!(is_sufficient(
-                ScopeMode::RequireAll,
-                &required,
-                &present_empty
-            ));
-        }
-
-        #[test]
-        fn scope_order_does_not_matter() {
-            let required = vec!["write".to_string(), "read".to_string()];
-            let present = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
+        #[rstest]
+        #[case::require_all(ScopeMode::RequireAll)]
+        #[case::require_any(ScopeMode::RequireAny)]
+        #[case::disabled(ScopeMode::Disabled)]
+        fn empty_required_scopes_is_sufficient(#[case] mode: ScopeMode) {
+            assert!(is_sufficient(mode, &[], &s(&["anything"])));
         }
 
         #[test]
@@ -528,60 +510,25 @@ mod tests {
             let encoded = values.first().unwrap().to_str().unwrap();
 
             assert!(encoded.contains(r#"error="insufficient_scope""#));
+        }
+
+        #[test]
+        fn forbidden_error_includes_required_scopes() {
+            let header = WwwAuthenticate::Bearer {
+                resource_metadata: Url::parse(
+                    "https://test.com/.well-known/oauth-protected-resource",
+                )
+                .unwrap(),
+                scope: Some("read write".to_string()),
+                error: Some(BearerError::InsufficientScope),
+                scope_mode: None,
+            };
+
+            let mut values = Vec::new();
+            headers::Header::encode(&header, &mut values);
+            let encoded = values.first().unwrap().to_str().unwrap();
+
             assert!(encoded.contains(r#"scope="read write""#));
-        }
-
-        #[test]
-        fn scope_mode_disabled_always_sufficient() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_require_all_needs_all_scopes() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-
-            let present_all = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(
-                ScopeMode::RequireAll,
-                &required,
-                &present_all
-            ));
-        }
-
-        #[test]
-        fn scope_mode_require_any_accepts_one_match() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_require_any_rejects_zero_matches() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["admin".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_empty_scopes_is_sufficient_for_all_modes() {
-            let required: Vec<String> = vec![];
-            let present = vec!["anything".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_token_with_no_scopes_fails_when_required() {
-            let required = vec!["read".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
         }
 
         #[test]

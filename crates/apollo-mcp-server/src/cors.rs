@@ -220,17 +220,32 @@ mod tests {
     use tower::util::ServiceExt;
 
     #[test]
-    fn test_default_config() {
-        let config = CorsConfig::default();
-        assert!(!config.enabled);
-        assert!(!config.allow_any_origin);
-        assert!(!config.allow_credentials);
+    fn default_config_is_disabled() {
+        assert!(!CorsConfig::default().enabled);
+    }
+
+    #[test]
+    fn default_config_does_not_allow_any_origin() {
+        assert!(!CorsConfig::default().allow_any_origin);
+    }
+
+    #[test]
+    fn default_config_does_not_allow_credentials() {
+        assert!(!CorsConfig::default().allow_credentials);
+    }
+
+    #[test]
+    fn default_config_allows_standard_methods() {
         assert_eq!(
-            config.allow_methods,
+            CorsConfig::default().allow_methods,
             vec!["GET".to_string(), "POST".to_string(), "DELETE".to_string()]
         );
+    }
+
+    #[test]
+    fn default_config_allows_mcp_headers() {
         assert_eq!(
-            config.allow_headers,
+            CorsConfig::default().allow_headers,
             vec![
                 "content-type".to_string(),
                 "mcp-protocol-version".to_string(),
@@ -239,15 +254,23 @@ mod tests {
                 "tracestate".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn default_config_exposes_mcp_headers() {
         assert_eq!(
-            config.expose_headers,
+            CorsConfig::default().expose_headers,
             vec![
                 "mcp-session-id".to_string(),
                 "traceparent".to_string(),
                 "tracestate".to_string(),
             ]
         );
-        assert_eq!(config.max_age, Some(7200));
+    }
+
+    #[test]
+    fn default_config_max_age_is_two_hours() {
+        assert_eq!(CorsConfig::default().max_age, Some(7200));
     }
 
     #[test]
