@@ -30,14 +30,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_debug_event_no_more_schema() {
+    fn debug_event_no_more_schema() {
         let event = Event::NoMoreSchema;
         let output = format!("{:?}", event);
         assert_eq!(output, "NoMoreSchema");
     }
 
     #[test]
-    fn test_debug_redacts_update_schema() {
+    fn debug_redacts_update_schema() {
         let event = Event::UpdateSchema(SchemaState {
             sdl: "type Query { hello: String }".to_string(),
             launch_id: Some("test-launch-123".to_string()),

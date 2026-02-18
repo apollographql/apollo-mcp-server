@@ -250,7 +250,7 @@ mod tests {
     use tokio::time::{Duration, sleep};
 
     #[test]
-    fn test_health_check_default_config() {
+    fn health_check_default_config() {
         let config = HealthCheckConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.path, "/health");
@@ -260,7 +260,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_health_check_rejection_tracking() {
+    async fn health_check_rejection_tracking() {
         let mut config = HealthCheckConfig::default();
         config.readiness.allowed = 2;
         config.readiness.interval.sampling = Duration::from_millis(50);

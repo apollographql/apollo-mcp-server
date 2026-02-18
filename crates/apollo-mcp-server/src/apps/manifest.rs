@@ -377,7 +377,7 @@ mod test_load_from_path {
     use assert_fs::{TempDir, prelude::*};
 
     #[test]
-    fn test_local_resource() {
+    fn local_resource() {
         let temp = TempDir::new().expect("Could not create temporary directory for test");
         let app_dir = temp.child("MyApp");
         app_dir
@@ -417,7 +417,7 @@ mod test_load_from_path {
     }
 
     #[test]
-    fn test_remote_resource() {
+    fn remote_resource() {
         let temp = TempDir::new().expect("Could not create temporary directory for test");
         let app_dir = temp.child("RemoteApp");
         app_dir

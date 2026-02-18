@@ -143,7 +143,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_app_target_openai_lowercase() {
+    fn app_target_openai_lowercase() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?appTarget=openai")
@@ -157,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_openai_uppercase() {
+    fn app_target_openai_uppercase() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?appTarget=OPENAI")
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_mcp_lowercase() {
+    fn app_target_mcp_lowercase() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?appTarget=mcp")
@@ -185,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_mcp_uppercase() {
+    fn app_target_mcp_uppercase() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?appTarget=MCP")
@@ -199,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_invalid_value() {
+    fn app_target_invalid_value() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost?appTarget=invalid")
@@ -219,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_missing_defaults_to_apps_sdk() {
+    fn app_target_missing_defaults_to_apps_sdk() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost")
@@ -233,7 +233,7 @@ mod tests {
     }
 
     #[test]
-    fn test_app_target_missing_with_mcp_app_capability_defaults_to_mcp_apps() {
+    fn app_target_missing_with_mcp_app_capability_defaults_to_mcp_apps() {
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
             .uri("http://localhost")

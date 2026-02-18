@@ -389,62 +389,66 @@ mod tests {
             .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
     }
 
-    #[tokio::test]
-    async fn missing_token_returns_unauthorized() {
-        let config = test_config();
-        let app = test_router(config.clone());
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-    }
+    mod oauth_validate {
+        use super::*;
 
-    #[tokio::test]
-    async fn invalid_token_returns_unauthorized() {
-        let config = test_config();
-        let app = test_router(config.clone());
-        let req = Request::builder()
-            .uri("/test")
-            .header(AUTHORIZATION, "Bearer invalidtoken")
-            .body(Body::empty())
-            .unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-    }
+        #[tokio::test]
+        async fn missing_token_returns_unauthorized() {
+            let config = test_config();
+            let app = test_router(config.clone());
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+        }
 
-    #[tokio::test]
-    async fn missing_token_with_multiple_scopes() {
-        let mut config = test_config();
-        config.scopes = vec!["read".to_string(), "write".to_string()];
-        let app = test_router(config);
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains(r#"scope="read write""#));
-    }
+        #[tokio::test]
+        async fn invalid_token_returns_unauthorized() {
+            let config = test_config();
+            let app = test_router(config.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .header(AUTHORIZATION, "Bearer invalidtoken")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+        }
 
-    #[tokio::test]
-    async fn missing_token_without_scopes_omits_scope_parameter() {
-        let mut config = test_config();
-        config.scopes = vec![];
-        let app = test_router(config);
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-        assert!(!www_auth.contains("scope="));
+        #[tokio::test]
+        async fn missing_token_with_multiple_scopes() {
+            let mut config = test_config();
+            config.scopes = vec!["read".to_string(), "write".to_string()];
+            let app = test_router(config);
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains(r#"scope="read write""#));
+        }
+
+        #[tokio::test]
+        async fn missing_token_without_scopes_omits_scope_parameter() {
+            let mut config = test_config();
+            config.scopes = vec![];
+            let app = test_router(config);
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+            assert!(!www_auth.contains("scope="));
+        }
     }
 
     mod scope_validation {

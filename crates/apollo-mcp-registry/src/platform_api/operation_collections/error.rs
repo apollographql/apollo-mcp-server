@@ -60,33 +60,33 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
-    fn test_response_error_is_not_transient() {
+    fn response_error_is_not_transient() {
         let error = CollectionError::Response("permission denied".to_string());
         assert!(!error.is_transient());
     }
 
     #[test]
-    fn test_header_name_error_is_not_transient() {
+    fn header_name_error_is_not_transient() {
         let invalid_name = reqwest::header::HeaderName::from_bytes(b"\0invalid").unwrap_err();
         let error = CollectionError::HeaderName(invalid_name);
         assert!(!error.is_transient());
     }
 
     #[test]
-    fn test_header_value_error_is_not_transient() {
+    fn header_value_error_is_not_transient() {
         let invalid_value = reqwest::header::HeaderValue::from_bytes(b"\0invalid").unwrap_err();
         let error = CollectionError::HeaderValue(invalid_value);
         assert!(!error.is_transient());
     }
 
     #[test]
-    fn test_invalid_variables_error_is_not_transient() {
+    fn invalid_variables_error_is_not_transient() {
         let error = CollectionError::InvalidVariables("bad json".to_string());
         assert!(!error.is_transient());
     }
 
     #[tokio::test]
-    async fn test_client_error_404_is_not_transient() {
+    async fn client_error_404_is_not_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(404))
@@ -101,7 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_connection_error_is_transient() {
+    async fn connection_error_is_transient() {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(1))
             .build()
@@ -115,7 +115,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_timeout_error_is_transient() {
+    async fn timeout_error_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(10)))
@@ -136,7 +136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_error_is_transient() {
+    async fn server_error_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(500))
@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rate_limit_429_is_transient() {
+    async fn rate_limit_429_is_transient() {
         let mock_server = MockServer::start().await;
         Mock::given(any())
             .respond_with(ResponseTemplate::new(429))
@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_to_stream_with_closed_channel() {
+    async fn send_to_stream_with_closed_channel() {
         let (sender, receiver) = channel(1);
         drop(receiver);
 

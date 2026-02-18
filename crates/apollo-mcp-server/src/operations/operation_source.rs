@@ -214,7 +214,7 @@ mod tests {
     use std::io::Write;
 
     #[tokio::test]
-    async fn test_deduplication_of_overlapping_paths() {
+    async fn deduplication_of_overlapping_paths() {
         let temp_base = temp_dir();
         let test_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
