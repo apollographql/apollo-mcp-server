@@ -67,6 +67,8 @@ tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
+rhai = { version = "1.24.0", features = ["sync"] }
+parking_lot = "0.12.5"
 
 [dev-dependencies]
 assert_fs = "1"

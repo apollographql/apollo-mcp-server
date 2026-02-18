@@ -112,6 +112,9 @@ pub enum ServerError {
 
     #[error("Unsupported transport: {0}")]
     UnsupportedTransport(String),
+
+    #[error("There was a problem parsing Rhai scripts on startup.")]
+    RhaiError,
 }
 
 /// An MCP tool error

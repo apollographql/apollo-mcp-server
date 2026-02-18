@@ -1,12 +1,17 @@
+use std::sync::Arc;
+
 use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use rmcp::model::{CallToolResult, JsonObject};
+use parking_lot::Mutex;
+use rmcp::model::{CallToolResult, ErrorCode, JsonObject};
 use serde_json::Value;
+use tracing::error;
 use url::Url;
 
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
+use crate::rhai::engine::RhaiEngine;
 
 use super::Operation;
 
@@ -16,9 +21,10 @@ pub(crate) async fn find_and_execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
 ) -> Option<Result<CallToolResult, McpError>> {
     let operation = operations.iter().find(|op| op.as_ref().name == tool_name)?;
-    Some(execute_operation(operation, headers, arguments, endpoint).await)
+    Some(execute_operation(operation, headers, arguments, endpoint, rhai_engine).await)
 }
 
 pub(crate) async fn execute_operation(
@@ -26,12 +32,24 @@ pub(crate) async fn execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
 ) -> Result<CallToolResult, McpError> {
     let graphql_request = graphql::Request {
         input: Value::from(arguments.cloned()),
         endpoint,
         headers,
     };
+
+    rhai_engine
+        .lock()
+        .execute_hook(
+            "on_execute_graphql_operation",
+            (endpoint.to_string(), headers.clone()),
+        )
+        .map_err(|err| {
+            error!("Error when executing on_execute_graphql_operation hook: {err}");
+            McpError::new(ErrorCode::INTERNAL_ERROR, "Internal error", None)
+        })?;
 
     executable
         .execute(graphql_request)
