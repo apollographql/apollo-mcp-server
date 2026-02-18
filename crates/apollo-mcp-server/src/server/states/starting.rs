@@ -93,20 +93,16 @@ impl Starting {
                     .flatten()
             })
             .flatten();
-        let apps = if cfg!(feature = "apps") {
-            crate::apps::load_from_path(
-                Path::new("apps"),
-                &self.schema,
-                self.config.custom_scalar_map.as_ref(),
-                self.config.mutation_mode,
-                self.config.disable_type_description,
-                self.config.disable_schema_description,
-                self.config.enable_output_schema,
-            )
-            .map_err(ServerError::Apps)?
-        } else {
-            Vec::new()
-        };
+        let apps = crate::apps::load_from_path(
+            Path::new("apps"),
+            &self.schema,
+            self.config.custom_scalar_map.as_ref(),
+            self.config.mutation_mode,
+            self.config.disable_type_description,
+            self.config.disable_schema_description,
+            self.config.enable_output_schema,
+        )
+        .map_err(ServerError::Apps)?;
         let schema = Arc::new(RwLock::new(self.schema));
         let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
