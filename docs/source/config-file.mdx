@@ -178,8 +178,9 @@ The default value for `source` is `"infer"`. Learn more about [defining tools as
 | Introspection      | `source` | `"introspect"`   | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                                     |
 | Local              | `source` | `"local"`        | Load operations from local GraphQL files or directories                                                                                                 |
 | Local              | `paths`  | `List<FilePath>` | Paths to GraphQL files or directories to search. Note: These paths are relative to the location from which you are running Apollo MCP Server.           |
-| Manifest           | `source` | `"manifest"`     | Load operations from a persisted queries manifest file                                                                                                  |
-| Manifest           | `path`   | `FilePath`       | The path to the persisted query manifest                                                                                                                |
+| Manifest           | `source`       | `"manifest"`              | Load operations from a persisted queries manifest file                                                                                                  |
+| Manifest           | `path`         | `FilePath`                | The path to the persisted query manifest                                                                                                                |
+| Manifest           | `descriptions` | `Map<String, String>`     | Optional map from operation name to tool description. Overrides auto-generated descriptions. [Learn more](/apollo-mcp-server/define-tools#tool-descriptions-for-manifest-operations). |
 | Uplink             | `source` | `"uplink"`       | Load operations from an uplink manifest. Note: This source requires an Apollo key and graph reference                                                   |
 | Infer              | `source` | `"infer"`        | Infer where to load operations based on other configuration options.                                                                                    |
 
