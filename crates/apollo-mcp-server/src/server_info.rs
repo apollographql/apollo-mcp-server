@@ -17,6 +17,9 @@ pub struct ServerInfoConfig {
 
     /// URL to the server's website or documentation
     pub website_url: Option<String>,
+
+    /// A brief description of the server
+    pub description: Option<String>,
 }
 
 impl ServerInfoConfig {
@@ -36,5 +39,11 @@ impl ServerInfoConfig {
         self.website_url
             .as_deref()
             .or(Some("https://www.apollographql.com/docs/apollo-mcp-server"))
+    }
+
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref().or(Some(
+            "A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools.",
+        ))
     }
 }
