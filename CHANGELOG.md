@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.0-experimental.1 (2026-02-18)
+
+### Features
+
+#### Allow server "description" to be configured
+
+Example:
+
+```yaml title="config.yaml"
+server_info:
+  name: "Acme Corp GraphQL Server"
+  version: "2.0.0"
+  title: "Acme MCP Server"
+  website_url: "https://acme.com/mcp-docs"
+  description: "MCP server for Acme Corp's GraphQL API"
+```
+
+### Fixes
+
+#### Fix server crash on collection sync with invalid operations
+
+A single operation with malformed variables JSON in a collection would crash the entire server. Invalid operations are now skipped with a warning, and the server continues serving with the remaining valid operations.
+
 ## 1.7.0 (2026-02-10)
 
 ### Features
