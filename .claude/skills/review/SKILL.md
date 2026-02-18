@@ -156,16 +156,20 @@ Reference Chapter 8:
 
 Post review comments directly on the PR using inline comments on specific lines of code:
 
+**CRITICAL: Inline comment parameters:**
+- Always use `line` and `side` parameters — **NEVER use `position`**. The `position` parameter refers to a diff hunk offset and will fail with HTTP 422 errors.
+- The `line` value must be a line number that appears in the PR diff for that file. If the line you want to comment on is not in the diff, comment on the nearest changed line and reference the actual line in the body, or use a general PR comment instead.
+- Use `-F line=N` (not `-f line=N`) so the value is sent as an integer.
+
 ```bash
 # For line-specific comments:
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   -f body="**[Blocking]** Issue description here. See Chapter X for details." \
   -f commit_id="<commit_sha>" \
   -f path="src/foo.rs" \
-  # line MUST be an integer with -F
-  -F line=42 \
   -f side="RIGHT" \
-  -f subject_type="line"
+  -f subject_type="line" \
+  -F line=42
 
 # For general PR comments (summary, test coverage assessment):
 gh pr comment {pr_number} --body "## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
