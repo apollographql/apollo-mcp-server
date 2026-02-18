@@ -133,15 +133,16 @@ async fn main() -> anyhow::Result<()> {
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
         .enable_output_schema(config.overrides.enable_output_schema)
-        .disable_auth_token_passthrough(match transport {
-            apollo_mcp_server::server::Transport::Stdio => false,
-            apollo_mcp_server::server::Transport::SSE { auth, .. } => auth
-                .map(|a| a.disable_auth_token_passthrough)
-                .unwrap_or(false),
-            apollo_mcp_server::server::Transport::StreamableHttp { auth, .. } => auth
-                .map(|a| a.disable_auth_token_passthrough)
-                .unwrap_or(false),
-        })
+        .disable_auth_token_passthrough(
+            if let apollo_mcp_server::server::Transport::StreamableHttp {
+                auth: Some(auth), ..
+            } = &transport
+            {
+                auth.disable_auth_token_passthrough
+            } else {
+                false
+            },
+        )
         .custom_scalar_map(
             config
                 .custom_scalars
