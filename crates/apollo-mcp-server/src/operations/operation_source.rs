@@ -13,6 +13,7 @@ use apollo_mcp_registry::{
     uplink::persisted_queries::{ManifestSource, event::Event as ManifestEvent},
 };
 use futures::{Stream, StreamExt as _};
+use regex::Regex;
 use tracing::warn;
 
 use crate::event::Event;
@@ -27,8 +28,11 @@ pub enum OperationSource {
     /// GraphQL document files
     Files(Vec<PathBuf>),
 
-    /// Persisted Query manifest
-    Manifest(ManifestSource),
+    /// Persisted Query manifest with optional per-operation description overrides
+    Manifest {
+        source: ManifestSource,
+        descriptions: HashMap<String, String>,
+    },
 
     /// Operation collection
     Collection(CollectionSource),
@@ -38,17 +42,38 @@ pub enum OperationSource {
 }
 
 impl OperationSource {
+    pub fn manifest(source: ManifestSource, descriptions: HashMap<String, String>) -> Self {
+        OperationSource::Manifest {
+            source,
+            descriptions,
+        }
+    }
+
     #[tracing::instrument(skip_all, fields(operation_source = ?self))]
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
             OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
-            OperationSource::Manifest(manifest_source) => manifest_source
+            OperationSource::Manifest {
+                source,
+                descriptions,
+            } => source
                 .into_stream()
                 .await
-                .map(|event| {
+                .map(move |event| {
                     let ManifestEvent::UpdateManifest(operations) = event;
                     Event::OperationsUpdated(
-                        operations.into_iter().map(RawOperation::from).collect(),
+                        operations
+                            .into_iter()
+                            .map(|tuple| {
+                                let mut raw = RawOperation::from(tuple);
+                                if let Some(desc) = extract_operation_name(&raw.source_text)
+                                    .and_then(|name| descriptions.get(name))
+                                {
+                                    raw.description = Some(desc.clone());
+                                }
+                                raw
+                            })
+                            .collect(),
                     )
                 })
                 .boxed(),
@@ -195,8 +220,24 @@ impl OperationSource {
 
 impl From<ManifestSource> for OperationSource {
     fn from(manifest_source: ManifestSource) -> Self {
-        OperationSource::Manifest(manifest_source)
+        OperationSource::Manifest {
+            source: manifest_source,
+            descriptions: HashMap::new(),
+        }
     }
+}
+
+/// Extract the operation name from a GraphQL operation body using a lightweight
+/// regex, avoiding a full parse. Returns `None` for anonymous operations.
+fn extract_operation_name(source_text: &str) -> Option<&str> {
+    static OP_NAME_RE: std::sync::LazyLock<Option<Regex>> = std::sync::LazyLock::new(|| {
+        Regex::new(r"(?:query|mutation|subscription)\s+([A-Za-z_]\w*)").ok()
+    });
+    OP_NAME_RE
+        .as_ref()?
+        .captures(source_text)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str())
 }
 
 impl From<Vec<PathBuf>> for OperationSource {
@@ -253,5 +294,117 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(&tools_dir);
+    }
+
+    #[test]
+    fn extract_name_from_query() {
+        assert_eq!(
+            extract_operation_name("query GetAlerts($state: String!) { alerts { severity } }"),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn extract_name_from_mutation() {
+        assert_eq!(
+            extract_operation_name(
+                "mutation CreateUser($name: String!) { createUser(name: $name) { id } }"
+            ),
+            Some("CreateUser")
+        );
+    }
+
+    #[test]
+    fn extract_name_from_subscription() {
+        assert_eq!(
+            extract_operation_name("subscription OnMessage { messages { text } }"),
+            Some("OnMessage")
+        );
+    }
+
+    #[test]
+    fn extract_name_with_leading_comment() {
+        assert_eq!(
+            extract_operation_name("# Get alerts\nquery GetAlerts { alerts { severity } }"),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn extract_name_returns_none_for_anonymous() {
+        assert_eq!(extract_operation_name("{ alerts { severity } }"), None);
+    }
+
+    #[test]
+    fn extract_name_returns_none_for_anonymous_query() {
+        assert_eq!(
+            extract_operation_name("query { alerts { severity } }"),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn manifest_descriptions_applied_to_raw_operations() {
+        let manifest_json = r#"{
+            "format": "apollo-persisted-query-manifest",
+            "version": 1,
+            "operations": [
+                {
+                    "id": "abc123",
+                    "body": "query GetAlerts($state: String!) { alerts(state: $state) { severity } }"
+                },
+                {
+                    "id": "def456",
+                    "body": "query GetForecast($coord: String!) { forecast(coord: $coord) { temp } }"
+                }
+            ]
+        }"#;
+
+        let temp_dir = temp_dir();
+        let test_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let manifest_path = temp_dir.join(format!("test_manifest_{}.json", test_id));
+        let mut file = fs::File::create(&manifest_path).unwrap();
+        file.write_all(manifest_json.as_bytes()).unwrap();
+        drop(file);
+
+        let mut descriptions = HashMap::new();
+        descriptions.insert(
+            "GetAlerts".to_string(),
+            "Get weather alerts for a US state".to_string(),
+        );
+
+        let source = OperationSource::manifest(
+            ManifestSource::LocalStatic(vec![manifest_path.clone()]),
+            descriptions,
+        );
+        let mut stream = source.into_stream().await;
+
+        if let Some(Event::OperationsUpdated(operations)) = stream.next().await {
+            assert_eq!(operations.len(), 2);
+
+            let alerts_op = operations
+                .iter()
+                .find(|op| op.source_text.contains("GetAlerts"));
+            let forecast_op = operations
+                .iter()
+                .find(|op| op.source_text.contains("GetForecast"));
+
+            assert_eq!(
+                alerts_op.unwrap().description.as_deref(),
+                Some("Get weather alerts for a US state"),
+                "GetAlerts should have the config-provided description"
+            );
+            assert!(
+                forecast_op.unwrap().description.is_none(),
+                "GetForecast should have no description (not in config)"
+            );
+        } else {
+            panic!("Expected OperationsUpdated event");
+        }
+
+        let _ = fs::remove_file(&manifest_path);
     }
 }
