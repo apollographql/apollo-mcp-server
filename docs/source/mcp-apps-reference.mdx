@@ -3,14 +3,14 @@ title: MCP Apps Reference
 subtitle: Key concepts and configuration
 ---
 
-This reference guide provides a comprehensive overview of MCP Apps configuration elements. Use the tables below to understand what each element is, where it's configured in your app code or `package.json`, and how it maps to the MCP/ChatGPT side.
+This reference guide provides a comprehensive overview of MCP Apps configuration elements. Use the tables below to understand what each element is, where it's configured (GraphQL operations come from your app code, while app-level settings come from `package.json`), and how it maps to the MCP/ChatGPT side.
 
 ## Manifest file
 
-The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. 
+The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. GraphQL operations come from your app code, while app-level configuration (like CSP settings, widget settings, and labels) comes from `package.json`.
 
 <warning>
-Never edit the manifest directly. Instead, make changes to your app code and `package.json`, which will regenerate the manifest.
+Don't edit the manifest directly. Instead, make changes to your app code (for GraphQL operations) and `package.json` (for app-level configuration). The manifest file generates automatically.
 </warning>
 
 ## App vs Host
@@ -24,47 +24,36 @@ This table shows what you work with in your app code versus what the host does:
 | You define your app code and `package.json`, which generates the manifest | The host discovers your app via the MCP protocol and pre-fetches the UI resource |
 | You specify the resource URL (your UI) | The host pre-fetches the resource during discovery and creates an iframe when tools are invoked |
 | You define tools backed by GraphQL operations | The host invokes tools and receives data from the MCP server |
-| You access data via `window.toolResult.result.data` in your UI code | The host injects tool result data into the iframe via `window.toolResult` |
+| You access data in your UI code | The host injects tool result data into the iframe |
 
 ## App-level configuration
 
 Configuration elements defined at the app level (from `package.json`):
 
-| Element | What it is | Maps to (MCP/ChatGPT) | Notes |
-|---------|------------|----------------------|-------|
-| **App description** | Description of your app | App metadata visible to the host | Prefixed to tool descriptions |
-| **App name** | Identifier for your app | App identifier in MCP tool namespace | Defaults to directory name if not specified |
-| **CSP: base_uri_domains** | Allowed base URI domains | Content Security Policy for base URI | Must include protocol (`https://`) |
-| **CSP: connect_domains** | Allowed domains for network requests | Content Security Policy for fetch/XHR/WebSocket | Must include protocol (`https://`) |
-| **CSP: frame_domains** | Allowed domains for iframe embeds | Content Security Policy for iframe sources | Must include protocol (`https://`) |
-| **CSP: redirect_domains** | Allowed domains for redirects | Content Security Policy for redirects (AppsSDK only) | AppsSDK target only |
-| **CSP: resource_domains** | Allowed domains for loading resources | Content Security Policy for images/scripts/stylesheets | Must include protocol (`https://`) |
-| **Labels: toolInvocation/invoked** | Message shown when tool completes | User-facing message after tool execution | Applies to all tools unless overridden |
-| **Labels: toolInvocation/invoking** | Message shown when tool starts | User-facing message during tool invocation | Applies to all tools unless overridden |
-| **Resource URL** | URL to your UI | UI resource that host pre-fetches during discovery | Can be local file path, built app URL, or remote URL |
-| **Widget: description** | Widget description | Widget metadata in host UI | AppsSDK target only |
-| **Widget: domain** | Domain restriction | Domain validation for widget | Restricts widget to specific domain |
-| **Widget: prefersBorder** | Border preference | Visual styling in host UI | Boolean flag for border display |
-
-## Operation-level configuration
-
-Configuration elements defined at the operation level (from GraphQL operations):
-
-| Element | What it is | Mapped from | Maps to (MCP/ChatGPT) | Notes |
-|---------|------------|-------------|----------------------|-------|
-| **Operation body** | GraphQL query or mutation | GraphQL operation definition | GraphQL operation executed by MCP server | Must be valid GraphQL matching your schema |
-| **Prefetch ID** | Identifier for prefetch data | Operation definition `prefetchID` field | Data available at `window.toolResult.prefetch.prefetchID` | Operation runs automatically when any tool in app is invoked |
+| Element | What it is | Where it comes from | Where it maps to | Notes |
+|---------|------------|---------------------|------------------|-------|
+| `name` | App identifier | `package.json` | MCP tool namespace | Defaults to directory name if not specified |
+| `description` | App description | `package.json` | Tool description prefix | Prefixed to tool descriptions |
+| `resource` | UI resource URL | `package.json` | Resource URI in manifest | Can be a local built React app or a remotely hosted React app |
+| `csp.connectDomains` | Allowed domains for network requests | `package.json` | `openai/widgetCSP.connect_domains` (AppsSDK)<br>`_meta.ui.csp.connectDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.resourceDomains` | Allowed domains for loading resources | `package.json` | `openai/widgetCSP.resource_domains` (AppsSDK)<br>`_meta.ui.csp.resourceDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.frameDomains` | Allowed domains for iframe embeds | `package.json` | `openai/widgetCSP.frame_domains` (AppsSDK)<br>`_meta.ui.csp.frameDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.redirectDomains` | Allowed domains for redirects | `package.json` | `openai/widgetCSP.redirect_domains` (AppsSDK only) | AppsSDK target only |
+| `csp.baseUriDomains` | Allowed base URI domains | `package.json` | `_meta.ui.csp.baseUriDomains` (MCPApps only) | MCPApps target only |
+| `widgetSettings.description` | Widget description | `package.json` | `openai/widgetDescription` (AppsSDK only) | AppsSDK target only |
+| `widgetSettings.domain` | Domain restriction | `package.json` | `openai/widgetDomain` (AppsSDK)<br>`_meta.ui.domain` (MCPApps) | Restricts widget to specific domain |
+| `widgetSettings.prefersBorder` | Border preference | `package.json` | `openai/widgetPrefersBorder` (AppsSDK)<br>`_meta.ui.prefersBorder` (MCPApps) | Boolean flag for border display |
+| `labels.toolInvocation/invoking` | Message shown when tool starts | `package.json` | `openai/toolInvocation/invoking` (AppsSDK only) | Applies to all tools unless overridden |
+| `labels.toolInvocation/invoked` | Message shown when tool completes | `package.json` | `openai/toolInvocation/invoked` (AppsSDK only) | Applies to all tools unless overridden |
 
 ## Tool-level configuration
 
-Configuration elements defined at the tool level (from operation tool definitions):
+Tools are defined using the `@tool` directive on GraphQL operations in your app code. You can also use the `@prefetch` directive to mark operations that run automatically when any tool is invoked.
 
-| Element | What it is | Mapped from | Maps to (MCP/ChatGPT) | Notes |
-|---------|------------|-------------|----------------------|-------|
-| **Extra inputs** | Additional input parameters beyond GraphQL variables | Operation tool definition `extraInputs` array | Additional MCP tool input parameters | Must have unique names, cannot conflict with GraphQL variables |
-| **Tool description** | Description of what the tool does | Operation tool definition `description` field | MCP tool description visible to host | App description is prefixed if present |
-| **Tool name** | Name of the MCP tool | Operation tool definition `name` field | MCP tool name that host can invoke | Must be unique within the app |
-| **Tool-level labels** | Tool-specific invocation messages | Operation tool definition `labels` field | User-facing messages for this specific tool | Overrides app-level labels for this tool |
+| Element | What it is | Where it comes from | Where it maps to | Notes |
+|---------|------------|---------------------|------------------|-------|
+| `@tool(name: "...", description: "...")` | MCP tool definition | `@tool` directive on GraphQL operation | MCP tool `name` and `description` | Must be unique within the app. App description is prefixed to tool description if present |
+| `@prefetch` | Prefetch operation marker | `@prefetch` directive on GraphQL operation | Prefetch operation in manifest | Operation runs automatically when any tool in the app is invoked |
 
 ## App query parameter
 

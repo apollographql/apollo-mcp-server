@@ -165,7 +165,7 @@ Edit files in `dev/the-store/` to customize your app's UI and behavior. The app 
 
 ### Update GraphQL operations
 
-Modify the GraphQL operations in your app code or `package.json`. The manifest is automatically generated from those sources.
+Modify the GraphQL operations in your app code. Use the `@tool` directive to define MCP tools and the `@prefetch` directive to mark operations that need to be pre-loaded. The manifest is automatically generated from your app code and `package.json`.
 
 ### Change the GraphQL API
 
@@ -185,6 +185,12 @@ For local development and testing:
 2. Use a local emulator or test environment
 3. Make changes and see them hot-reload
 
+<Note>
+
+The template comes pre-bundled with MCP Jam for local emulation, so you don't need to set up a host connection yourself for local testing.
+
+</Note>
+
 ### End-to-end testing
 
 For testing with your host (for example, ChatGPT):
@@ -197,7 +203,6 @@ For testing with your host (for example, ChatGPT):
 ## Next steps
 
 - Review the [MCP Apps Reference](/apollo-mcp-server/mcp-apps-reference) for key concepts and configuration
-- Check out [Troubleshooting](/apollo-mcp-server/mcp-apps-troubleshooting) if you encounter issues
 - Review the [template repository](https://github.com/apollographql/ai-apps-template) for more examples
 
 ## Configuration details
@@ -247,5 +252,3 @@ https://your-url.ngrok-free.app/mcp?app=the-store&appTarget=openai
 - Verify your GraphQL API is running on the correct port
 - Check the endpoint URL in `mcp-config.yaml`
 - Test your GraphQL API directly with a tool like GraphQL Playground
-
-For more troubleshooting help, see the [Troubleshooting guide](/apollo-mcp-server/mcp-apps-troubleshooting).

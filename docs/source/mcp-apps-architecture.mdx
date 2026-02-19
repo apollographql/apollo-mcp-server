@@ -47,7 +47,7 @@ graph TB
     style Iframe fill:#4CAF50,color:#fff
 ```
 
-When an MCP Apps-compatible host invokes a tool, Apollo MCP Server executes the GraphQL operation and returns only the data. The host then creates an iframe with the pre-fetched UI resource and injects the tool result data into it via `window.toolResult`.
+When an MCP Apps-compatible host invokes a tool, Apollo MCP Server executes the GraphQL operation and returns only the data. The host then creates an iframe with the pre-fetched UI resource and injects the tool result data into it.
 
 ## App components
 
@@ -56,48 +56,18 @@ An MCP App consists of:
 - **Tools**: GraphQL operations exposed as MCP tools that MCP Apps-compatible hosts can invoke
 - **Resource**: The UI for your app, specified as a URL
 
-The app manifest (`.application-manifest.json`) is automatically generated from your app code and `package.json`. It defines the mapping between tools, operations, and the resource.
+The app manifest (`.application-manifest.json`) is automatically generated from your app code and `package.json`. GraphQL operations come from your app code, while app-level configuration comes from `package.json`. The manifest defines the mapping between tools, operations, and the resource.
 
 ## App structure
 
-```mermaid
-graph TB
-    subgraph App["MCP App"]
-        Tool["MCP Tool\nGraphQL Operation"]
-        Resource["HTML Resource\nCustom UI"]
-    end
-    
-    subgraph Manifest[".application-manifest.json"]
-        OpDef["Operation Definition"]
-        ToolDef["Tool Definition"]
-        ResourcePath["Resource Path"]
-    end
-    
-    Manifest --> Tool
-    Manifest --> Resource
-    Tool -->|"Returns Data"| MCPServer["Apollo MCP Server"]
-    MCPServer -->|"Executes"| GraphQL["GraphQL API"]
-    GraphQL -->|"Returns Data"| MCPServer
-    Host["MCP Apps Host"] -->|"Pre-fetches"| Resource
-    MCPServer -->|"Returns Data"| Host
-    Host -->|"Injects into Iframe"| Iframe["Iframe with UI"]
-    
-    style App fill:#4CAF50,color:#fff
-    style Manifest fill:#FF9800,color:#fff
-    style GraphQL fill:#00ACC1,color:#fff
-    style Host fill:#E3F2FD
-    style MCPServer fill:#1976D2,color:#fff
-    style Iframe fill:#4CAF50,color:#fff
-```
+
 
 Apps are organized in directories under `apps/`, each containing your app code, `package.json`, and the resource. The manifest file is automatically generated from these sources and defines GraphQL operations, tool mappings, and resource paths.
 
 
-
-
 ## Resources
 
-The resource is the UI for your app, specified as a URL. This can point to a local file, a built React app, or a remote URL. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
+The resource is the UI for your app, specified as a URL. This can point to a local built React app or a remotely hosted React app. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
 
 ## App target selection
 

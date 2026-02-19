@@ -52,8 +52,6 @@ items:
         href: "./mcp-apps-quickstart"
       - label: "Reference"
         href: "./mcp-apps-reference"
-      - label: "Troubleshooting"
-        href: "./mcp-apps-troubleshooting"
   - label: "Guides"
     children:
       - label: "Development to Production Workflows"
