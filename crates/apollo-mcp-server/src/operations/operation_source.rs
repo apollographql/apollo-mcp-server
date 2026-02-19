@@ -227,14 +227,16 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
+#[allow(clippy::expect_used)]
+static OP_NAME_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"(?:query|mutation|subscription)\s+([A-Za-z_]\w*)")
+        .expect("OP_NAME_RE is a valid regex")
+});
+
 /// Extract the operation name from a GraphQL operation body using a lightweight
 /// regex, avoiding a full parse. Returns `None` for anonymous operations.
 fn extract_operation_name(source_text: &str) -> Option<&str> {
-    static OP_NAME_RE: std::sync::LazyLock<Option<Regex>> = std::sync::LazyLock::new(|| {
-        Regex::new(r"(?:query|mutation|subscription)\s+([A-Za-z_]\w*)").ok()
-    });
     OP_NAME_RE
-        .as_ref()?
         .captures(source_text)
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str())
