@@ -84,14 +84,16 @@ impl Operation {
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
 
-            let description = Self::tool_description(
-                comments,
-                &mut tree_shaker,
-                graphql_schema,
-                &operation,
-                disable_type_description,
-                disable_schema_description,
-            );
+            let description = raw_operation.description.clone().unwrap_or_else(|| {
+                Self::tool_description(
+                    comments,
+                    &mut tree_shaker,
+                    graphql_schema,
+                    &operation,
+                    disable_type_description,
+                    disable_schema_description,
+                )
+            });
 
             let mut object = serde_json::to_value(get_json_schema(
                 &operation,
@@ -728,6 +730,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -865,6 +868,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1006,6 +1010,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1167,6 +1172,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1314,6 +1320,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1469,6 +1476,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1610,6 +1618,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1785,6 +1794,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -1928,6 +1938,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2066,6 +2077,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2096,6 +2108,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2127,6 +2140,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2155,6 +2169,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2182,6 +2197,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2316,6 +2332,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2457,6 +2474,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
@@ -2604,6 +2622,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             custom_scalar_map.ok().as_ref(),
@@ -2862,6 +2881,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &schema,
             None,
@@ -2950,6 +2970,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -2984,6 +3005,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3010,6 +3032,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3040,6 +3063,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3075,6 +3099,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3106,6 +3131,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &Schema::parse(
                 r#"
@@ -3270,6 +3296,7 @@ mod tests {
                     serde_json::Value::String("v".to_string()),
                 )])),
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3396,6 +3423,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3431,6 +3459,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3470,6 +3499,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3508,6 +3538,7 @@ mod tests {
             headers: None,
             variables: None,
             source_path: None,
+            description: None,
         };
         let operation = Operation::from_document(
             raw_op,
@@ -3535,6 +3566,7 @@ mod tests {
             headers: None,
             variables: None,
             source_path: None,
+            description: None,
         };
         let operation = Operation::from_document(
             raw_op,
@@ -3561,6 +3593,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3596,6 +3629,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3631,6 +3665,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3666,6 +3701,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3705,6 +3741,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3735,6 +3772,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3774,6 +3812,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3804,6 +3843,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -3997,6 +4037,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -4183,6 +4224,7 @@ mod tests {
                     headers: None,
                     variables: None,
                     source_path: None,
+                    description: None,
                 },
                 &SCHEMA,
                 None,
@@ -4206,6 +4248,7 @@ mod tests {
                     headers: None,
                     variables: None,
                     source_path: None,
+                    description: None,
                 },
                 &SCHEMA,
                 None,
@@ -4229,6 +4272,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -4344,6 +4388,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             operation_name: "MutationName",
         }
@@ -4359,6 +4404,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -4474,6 +4520,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             operation_name: "MutationName",
         }
@@ -4489,6 +4536,7 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
+                description: None,
             },
             &SCHEMA,
             None,
@@ -4709,5 +4757,96 @@ mod tests {
                 .len();
 
         assert_eq!(length_with - length_without, expected_output_schema_len);
+    }
+
+    #[test]
+    fn explicit_description_overrides_auto_generated() {
+        let explicit_desc = "My custom tool description from PQ manifest";
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($id: ID) { id }".to_string(),
+                persisted_query_id: Some("hash123".to_string()),
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: Some(explicit_desc.to_string()),
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some(explicit_desc),
+            "tool description should use the explicit description from RawOperation"
+        );
+    }
+
+    #[test]
+    fn no_explicit_description_falls_back_to_auto_generated() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query QueryName($id: ID) { id }".to_string(),
+                persisted_query_id: Some("hash123".to_string()),
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            operation.tool.description.is_some(),
+            "tool description should be auto-generated when no explicit description"
+        );
+        assert_ne!(
+            operation.tool.description.as_deref(),
+            Some(""),
+            "auto-generated description should not be empty"
+        );
+    }
+
+    #[test]
+    fn explicit_description_overrides_comments() {
+        let explicit_desc = "Override from manifest";
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "# Comment-based description\nquery QueryName($id: ID) { id }"
+                    .to_string(),
+                persisted_query_id: Some("hash123".to_string()),
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: Some(explicit_desc.to_string()),
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some(explicit_desc),
+            "explicit description should take priority over comment-based description"
+        );
     }
 }

@@ -75,8 +75,8 @@ async fn main() -> anyhow::Result<()> {
         runtime::OperationSource::Local { paths } if !paths.is_empty() => {
             OperationSource::from(paths)
         }
-        runtime::OperationSource::Manifest { path } => {
-            OperationSource::from(ManifestSource::LocalHotReload(vec![path]))
+        runtime::OperationSource::Manifest { path, descriptions } => {
+            OperationSource::manifest(ManifestSource::LocalHotReload(vec![path]), descriptions)
         }
         runtime::OperationSource::Uplink => {
             OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
