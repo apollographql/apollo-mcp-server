@@ -98,7 +98,7 @@ mod tests {
     use rstest::rstest;
 
     #[test]
-    fn test_create_explorer_url() {
+    fn create_explorer_url() {
         let explorer = Explorer::new(String::from("mcp-example@mcp"));
         let input = json!({
             "document": "query GetWeatherAlerts($state: String!) {\n  alerts(state: $state) {\n    severity\n    description\n    instruction\n  }\n}",
@@ -141,7 +141,7 @@ mod tests {
         "variables": "{\"state\": \"CA\"}",
         "headers": "{}"
     }))]
-    async fn test_input_missing_fields(#[case] input: Value, #[case] input_with_default: Value) {
+    async fn input_missing_fields(#[case] input: Value, #[case] input_with_default: Value) {
         let input = serde_json::from_value::<Input>(input).unwrap();
         let input_with_default = serde_json::from_value::<Input>(input_with_default).unwrap();
         let explorer = Explorer::new(String::from("mcp-example@mcp"));

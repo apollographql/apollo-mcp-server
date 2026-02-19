@@ -2746,7 +2746,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_description() {
+    fn tool_description() {
         const SCHEMA: &str = r#"
         type Query {
           """
@@ -3530,7 +3530,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_name_with_named_query() {
+    fn operation_name_with_named_query() {
         let source_text = "query GetUser($id: ID!) { user(id: $id) { name email } }";
         let raw_op = RawOperation {
             source_text: source_text.to_string(),
@@ -3557,7 +3557,7 @@ mod tests {
     }
 
     #[test]
-    fn test_operation_name_with_named_mutation() {
+    fn operation_name_with_named_mutation() {
         let source_text =
             "mutation CreateUser($input: UserInput!) { createUser(input: $input) { id name } }";
         let raw_op = RawOperation {

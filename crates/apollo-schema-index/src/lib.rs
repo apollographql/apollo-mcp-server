@@ -531,7 +531,7 @@ mod tests {
     }
 
     #[rstest]
-    fn test_search(schema: Valid<Schema>) {
+    fn search(schema: Valid<Schema>) {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[rstest]
-    fn test_search_interface_implementer_fields(schema: Valid<Schema>) {
+    fn search_interface_implementer_fields(schema: Valid<Schema>) {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,

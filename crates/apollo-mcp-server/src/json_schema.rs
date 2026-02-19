@@ -27,7 +27,7 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_from_type() {
+    fn schema_from_type() {
         let schema = schema_from_type!(TestInput);
 
         assert_eq!(

@@ -1630,16 +1630,33 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn priming_event_contains_event_id() {
+        async fn initialize_returns_ok() {
             let service = create_test_service(true);
             let response = service.oneshot(build_initialize_request()).await.unwrap();
             assert_eq!(response.status(), StatusCode::OK);
+        }
 
+        #[tokio::test]
+        async fn initialize_returns_event_stream() {
+            let service = create_test_service(true);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
             let content_type = response.headers().get("content-type").unwrap();
             assert!(content_type.to_str().unwrap().contains("text/event-stream"));
+        }
 
+        #[tokio::test]
+        async fn priming_event_contains_event_id() {
+            let service = create_test_service(true);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
             let events = collect_sse_events(response).await;
             assert!(events.iter().any(|e| e.starts_with("id:")));
+        }
+
+        #[tokio::test]
+        async fn priming_event_contains_retry_interval() {
+            let service = create_test_service(true);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            let events = collect_sse_events(response).await;
             assert!(events.iter().any(|e| e.starts_with("retry:")));
         }
 
@@ -1647,8 +1664,6 @@ mod tests {
         async fn session_id_returned_on_initialize() {
             let service = create_test_service(true);
             let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-
             let session_id = response.headers().get("mcp-session-id");
             assert!(!session_id.unwrap().is_empty());
         }
@@ -1673,88 +1688,117 @@ mod tests {
             assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
 
-        #[tokio::test]
-        async fn can_reconnect_with_last_event_id() {
-            let running = create_test_running();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-
-            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
-            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(init_response.status(), StatusCode::OK);
-
-            let session_id = init_response
+        async fn initialize_and_get_session_id(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> String {
+            let service = create_stateful_service(running, session_manager);
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            response
                 .headers()
                 .get("mcp-session-id")
                 .unwrap()
                 .to_str()
-                .unwrap();
+                .unwrap()
+                .to_string()
+        }
 
-            let service2 = create_stateful_service(running, session_manager);
-            let reconnect_response = service2
-                .oneshot(build_get_request(Some(session_id), Some("0")))
+        #[tokio::test]
+        async fn reconnect_with_last_event_id_returns_ok() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
+
+            let service = create_stateful_service(running, session_manager);
+            let response = service
+                .oneshot(build_get_request(Some(&session_id), Some("0")))
                 .await
                 .unwrap();
-            assert_eq!(reconnect_response.status(), StatusCode::OK);
+            assert_eq!(response.status(), StatusCode::OK);
+        }
 
-            let content_type = reconnect_response.headers().get("content-type").unwrap();
+        #[tokio::test]
+        async fn reconnect_with_last_event_id_returns_event_stream() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
+
+            let service = create_stateful_service(running, session_manager);
+            let response = service
+                .oneshot(build_get_request(Some(&session_id), Some("0")))
+                .await
+                .unwrap();
+            let content_type = response.headers().get("content-type").unwrap();
             assert!(content_type.to_str().unwrap().contains("text/event-stream"));
         }
 
         #[tokio::test]
-        async fn standalone_stream_can_be_established_via_get() {
+        async fn standalone_get_stream_returns_ok() {
             let running = create_test_running();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
 
-            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
-            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(init_response.status(), StatusCode::OK);
-
-            let session_id = init_response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap();
-
-            let service2 = create_stateful_service(running, session_manager);
-            let get_response = service2
-                .oneshot(build_get_request(Some(session_id), None))
-                .await
-                .unwrap();
-            assert_eq!(get_response.status(), StatusCode::OK);
-
-            let content_type = get_response.headers().get("content-type").unwrap();
-            assert!(content_type.to_str().unwrap().contains("text/event-stream"));
-        }
-
-        #[tokio::test]
-        async fn delete_request_closes_session() {
-            let running = create_test_running();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-
-            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
-            let init_response = service.oneshot(build_initialize_request()).await.unwrap();
-            let session_id = init_response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string();
-
-            let service2 = create_stateful_service(running.clone(), Arc::clone(&session_manager));
-            let delete_response = service2
-                .oneshot(build_delete_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(delete_response.status(), StatusCode::ACCEPTED);
-
-            let service3 = create_stateful_service(running, session_manager);
-            let get_response = service3
+            let service = create_stateful_service(running, session_manager);
+            let response = service
                 .oneshot(build_get_request(Some(&session_id), None))
                 .await
                 .unwrap();
-            assert_eq!(get_response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn standalone_get_stream_returns_event_stream() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
+
+            let service = create_stateful_service(running, session_manager);
+            let response = service
+                .oneshot(build_get_request(Some(&session_id), None))
+                .await
+                .unwrap();
+            let content_type = response.headers().get("content-type").unwrap();
+            assert!(content_type.to_str().unwrap().contains("text/event-stream"));
+        }
+
+        #[tokio::test]
+        async fn delete_request_returns_accepted() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
+
+            let service = create_stateful_service(running, session_manager);
+            let response = service
+                .oneshot(build_delete_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+        }
+
+        #[tokio::test]
+        async fn deleted_session_rejects_subsequent_requests() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id =
+                initialize_and_get_session_id(running.clone(), Arc::clone(&session_manager)).await;
+
+            let service = create_stateful_service(running.clone(), Arc::clone(&session_manager));
+            service
+                .oneshot(build_delete_request(&session_id))
+                .await
+                .unwrap();
+
+            let service2 = create_stateful_service(running, session_manager);
+            let response = service2
+                .oneshot(build_get_request(Some(&session_id), None))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
         }
 
         #[tokio::test]

@@ -51,21 +51,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_debug_event_schema_updated() {
+    fn debug_event_schema_updated() {
         let event = Event::SchemaUpdated(SchemaEvent::NoMoreSchema);
         let output = format!("{:?}", event);
         assert_eq!(output, "SchemaUpdated(NoMoreSchema)");
     }
 
     #[test]
-    fn test_debug_event_operations_updated() {
+    fn debug_event_operations_updated() {
         let event = Event::OperationsUpdated(vec![]);
         let output = format!("{:?}", event);
         assert_eq!(output, "OperationsChanged([])");
     }
 
     #[test]
-    fn test_debug_event_operation_error() {
+    fn debug_event_operation_error() {
         let event = Event::OperationError(std::io::Error::other("TEST"), None);
         let output = format!("{:?}", event);
         assert_eq!(
@@ -75,14 +75,14 @@ mod tests {
     }
 
     #[test]
-    fn test_debug_event_collection_error() {
+    fn debug_event_collection_error() {
         let event = Event::CollectionError(CollectionError::Response("TEST".to_string()));
         let output = format!("{:?}", event);
         assert_eq!(output, r#"OperationError(Response("TEST"))"#);
     }
 
     #[test]
-    fn test_debug_event_shutdown() {
+    fn debug_event_shutdown() {
         let event = Event::Shutdown;
         let output = format!("{:?}", event);
         assert_eq!(output, "Shutdown");
