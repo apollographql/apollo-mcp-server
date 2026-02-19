@@ -35,14 +35,14 @@ Configuration elements defined at the app level (from `package.json`):
 | `name` | App identifier | `package.json` | MCP tool namespace | Defaults to directory name if not specified |
 | `description` | App description | `package.json` | Tool description prefix | Prefixed to tool descriptions |
 | `resource` | UI resource URL | `package.json` | Resource URI in manifest | Can be a local built React app or a remotely hosted React app |
-| `csp.connectDomains` | Allowed domains for network requests | `package.json` | `openai/widgetCSP.connect_domains` (AppsSDK)<br>`_meta.ui.csp.connectDomains` (MCPApps) | Must include protocol (`https://`) |
-| `csp.resourceDomains` | Allowed domains for loading resources | `package.json` | `openai/widgetCSP.resource_domains` (AppsSDK)<br>`_meta.ui.csp.resourceDomains` (MCPApps) | Must include protocol (`https://`) |
-| `csp.frameDomains` | Allowed domains for iframe embeds | `package.json` | `openai/widgetCSP.frame_domains` (AppsSDK)<br>`_meta.ui.csp.frameDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.connectDomains` | Allowed domains for network requests | `package.json` | `openai/widgetCSP.connect_domains` (AppsSDK)<br />`_meta.ui.csp.connectDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.resourceDomains` | Allowed domains for loading resources | `package.json` | `openai/widgetCSP.resource_domains` (AppsSDK)<br />`_meta.ui.csp.resourceDomains` (MCPApps) | Must include protocol (`https://`) |
+| `csp.frameDomains` | Allowed domains for iframe embeds | `package.json` | `openai/widgetCSP.frame_domains` (AppsSDK)<br />`_meta.ui.csp.frameDomains` (MCPApps) | Must include protocol (`https://`) |
 | `csp.redirectDomains` | Allowed domains for redirects | `package.json` | `openai/widgetCSP.redirect_domains` (AppsSDK only) | AppsSDK target only |
 | `csp.baseUriDomains` | Allowed base URI domains | `package.json` | `_meta.ui.csp.baseUriDomains` (MCPApps only) | MCPApps target only |
 | `widgetSettings.description` | Widget description | `package.json` | `openai/widgetDescription` (AppsSDK only) | AppsSDK target only |
-| `widgetSettings.domain` | Domain restriction | `package.json` | `openai/widgetDomain` (AppsSDK)<br>`_meta.ui.domain` (MCPApps) | Restricts widget to specific domain |
-| `widgetSettings.prefersBorder` | Border preference | `package.json` | `openai/widgetPrefersBorder` (AppsSDK)<br>`_meta.ui.prefersBorder` (MCPApps) | Boolean flag for border display |
+| `widgetSettings.domain` | Domain restriction | `package.json` | `openai/widgetDomain` (AppsSDK)<br />`_meta.ui.domain` (MCPApps) | Restricts widget to specific domain |
+| `widgetSettings.prefersBorder` | Border preference | `package.json` | `openai/widgetPrefersBorder` (AppsSDK)<br />`_meta.ui.prefersBorder` (MCPApps) | Boolean flag for border display |
 | `labels.toolInvocation/invoking` | Message shown when tool starts | `package.json` | `openai/toolInvocation/invoking` (AppsSDK only) | Applies to all tools unless overridden |
 | `labels.toolInvocation/invoked` | Message shown when tool completes | `package.json` | `openai/toolInvocation/invoked` (AppsSDK only) | Applies to all tools unless overridden |
 
