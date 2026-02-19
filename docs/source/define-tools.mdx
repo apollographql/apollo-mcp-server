@@ -121,7 +121,7 @@ Tool descriptions help AI models understand when and how to use each tool. You c
 
 **Using GraphQL comments in the operation body** (recommended): Embed `#` comments before the operation definition in the `body` field. The MCP Server extracts leading comments and uses them as the tool description.
 
-```json title="Manifest with comment-based descriptions"
+```json title="Manifest with comment-based descriptions" {7}
 {
   "format": "apollo-persisted-query-manifest",
   "version": 1,
@@ -136,7 +136,7 @@ Tool descriptions help AI models understand when and how to use each tool. You c
 
 **Using config-level descriptions**: Add a `descriptions` map to your `operations` config that maps operation names to tool descriptions. These descriptions override auto-generated descriptions for the matching operations.
 
-```yaml title="Config with tool descriptions for manifest operations"
+```yaml title="Config with tool descriptions for manifest operations" {4-5}
 operations:
   source: manifest
   path: <PATH/TO/persisted-queries-manifest.json>
