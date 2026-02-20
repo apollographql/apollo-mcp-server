@@ -147,9 +147,63 @@ This table shows what you work with in your app code versus what the host does:
 | You define tools backed by GraphQL operations                                  | The host invokes tools and receives data from the MCP server                               |
 | You access data in your UI code                                                | The host injects tool result data into the iframe                                          |
 
+## Register an operation as an MCP tool
+
+Tools are defined from your GraphQL operations using the `@tool` directive. You write queries like you would in an Apollo Client application and add the `@tool` directive to the operation.
+
+As an example, let's define a query that gets the highest rated products in a store-like application. Define a query called `TopProductsQuery` in your React component. Use the `useQuery` hook from `@apollo/client/react` to read the query data. We use the `@tool` directive to register this query as it's own tool.
+
+```tsx
+import { gql, TypedDocumentNode } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
+// Note: These types should be generated using a tool like GraphQL Codegen.
+// Avoid writing them by hand.
+const TOP_PRODUCTS_QUERY: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  query TopProductsQuery
+  @tool(
+    name: "TopProducts"
+    description: "Shows a list of the highest rated products."
+  ) {
+    topProducts {
+      id
+      title
+      rating
+      price
+      thumbnail
+    }
+  }
+`;
+
+function TopProducts() {
+  const { data, loading, error, dataState } = useQuery(TOP_PRODUCTS_QUERY);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  if (error) {
+    return <div>Error! {error.message}</div>;
+  }
+
+  return (
+    <div>
+      {data.topProducts.map((product) => (
+        <Product key={product.id} product={product} />
+      ))}
+    </div>
+  );
+}
+```
+
+Now this query is registered as a tool in our app! If you run the app in ChatGPT or an MCP apps compatible host, you can ask the LLM to show you some top products. This will render our view using data fetched by our MCP server.
+
 ## Tool-level configuration
 
-Tools are defined using directives on GraphQL operations in your app code. Available directives:
+### Available directives
 
 - **`@tool`**: Defines a GraphQL operation as an MCP tool that hosts can invoke
 - **`@prefetch`**: Marks an operation that runs automatically when any tool in the app is invoked
