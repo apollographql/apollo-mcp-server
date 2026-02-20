@@ -75,8 +75,8 @@ async fn main() -> anyhow::Result<()> {
         runtime::OperationSource::Local { paths } if !paths.is_empty() => {
             OperationSource::from(paths)
         }
-        runtime::OperationSource::Manifest { path, descriptions } => {
-            OperationSource::manifest(ManifestSource::LocalHotReload(vec![path]), descriptions)
+        runtime::OperationSource::Manifest { path } => {
+            OperationSource::from(ManifestSource::LocalHotReload(vec![path]))
         }
         runtime::OperationSource::Uplink => {
             OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
@@ -133,6 +133,7 @@ async fn main() -> anyhow::Result<()> {
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
         .enable_output_schema(config.overrides.enable_output_schema)
+        .descriptions(config.overrides.descriptions)
         .disable_auth_token_passthrough(
             if let apollo_mcp_server::server::Transport::StreamableHttp {
                 auth: Some(auth), ..

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 
 use apollo_mcp_registry::uplink::schema::SchemaSource;
@@ -47,6 +48,7 @@ pub struct Server {
     disable_schema_description: bool,
     enable_output_schema: bool,
     disable_auth_token_passthrough: bool,
+    descriptions: HashMap<String, String>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
@@ -126,6 +128,7 @@ impl Server {
         disable_schema_description: bool,
         enable_output_schema: bool,
         disable_auth_token_passthrough: bool,
+        descriptions: HashMap<String, String>,
         search_leaf_depth: usize,
         index_memory_bytes: usize,
         health_check: HealthCheckConfig,
@@ -161,6 +164,7 @@ impl Server {
             disable_schema_description,
             enable_output_schema,
             disable_auth_token_passthrough,
+            descriptions,
             search_leaf_depth,
             index_memory_bytes,
             health_check,

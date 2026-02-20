@@ -28,11 +28,8 @@ pub enum OperationSource {
     /// GraphQL document files
     Files(Vec<PathBuf>),
 
-    /// Persisted Query manifest with optional per-operation description overrides
-    Manifest {
-        source: ManifestSource,
-        descriptions: HashMap<String, String>,
-    },
+    /// Persisted Query manifest
+    Manifest(ManifestSource),
 
     /// Operation collection
     Collection(CollectionSource),
@@ -42,38 +39,17 @@ pub enum OperationSource {
 }
 
 impl OperationSource {
-    pub fn manifest(source: ManifestSource, descriptions: HashMap<String, String>) -> Self {
-        OperationSource::Manifest {
-            source,
-            descriptions,
-        }
-    }
-
     #[tracing::instrument(skip_all, fields(operation_source = ?self))]
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
             OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
-            OperationSource::Manifest {
-                source,
-                descriptions,
-            } => source
+            OperationSource::Manifest(source) => source
                 .into_stream()
                 .await
-                .map(move |event| {
+                .map(|event| {
                     let ManifestEvent::UpdateManifest(operations) = event;
                     Event::OperationsUpdated(
-                        operations
-                            .into_iter()
-                            .map(|tuple| {
-                                let mut raw = RawOperation::from(tuple);
-                                if let Some(desc) = extract_operation_name(&raw.source_text)
-                                    .and_then(|name| descriptions.get(name))
-                                {
-                                    raw.description = Some(desc.clone());
-                                }
-                                raw
-                            })
-                            .collect(),
+                        operations.into_iter().map(RawOperation::from).collect(),
                     )
                 })
                 .boxed(),
@@ -220,10 +196,7 @@ impl OperationSource {
 
 impl From<ManifestSource> for OperationSource {
     fn from(manifest_source: ManifestSource) -> Self {
-        OperationSource::Manifest {
-            source: manifest_source,
-            descriptions: HashMap::new(),
-        }
+        OperationSource::Manifest(manifest_source)
     }
 }
 
@@ -235,7 +208,7 @@ static OP_NAME_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
 
 /// Extract the operation name from a GraphQL operation body using a lightweight
 /// regex, avoiding a full parse. Returns `None` for anonymous operations.
-fn extract_operation_name(source_text: &str) -> Option<&str> {
+pub(crate) fn extract_operation_name(source_text: &str) -> Option<&str> {
     OP_NAME_RE
         .captures(source_text)
         .and_then(|caps| caps.get(1))
@@ -343,70 +316,5 @@ mod tests {
             extract_operation_name("query { alerts { severity } }"),
             None
         );
-    }
-
-    #[tokio::test]
-    async fn manifest_descriptions_applied_to_raw_operations() {
-        let manifest_json = r#"{
-            "format": "apollo-persisted-query-manifest",
-            "version": 1,
-            "operations": [
-                {
-                    "id": "abc123",
-                    "body": "query GetAlerts($state: String!) { alerts(state: $state) { severity } }"
-                },
-                {
-                    "id": "def456",
-                    "body": "query GetForecast($coord: String!) { forecast(coord: $coord) { temp } }"
-                }
-            ]
-        }"#;
-
-        let temp_dir = temp_dir();
-        let test_id = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let manifest_path = temp_dir.join(format!("test_manifest_{}.json", test_id));
-        let mut file = fs::File::create(&manifest_path).unwrap();
-        file.write_all(manifest_json.as_bytes()).unwrap();
-        drop(file);
-
-        let mut descriptions = HashMap::new();
-        descriptions.insert(
-            "GetAlerts".to_string(),
-            "Get weather alerts for a US state".to_string(),
-        );
-
-        let source = OperationSource::manifest(
-            ManifestSource::LocalStatic(vec![manifest_path.clone()]),
-            descriptions,
-        );
-        let mut stream = source.into_stream().await;
-
-        if let Some(Event::OperationsUpdated(operations)) = stream.next().await {
-            assert_eq!(operations.len(), 2);
-
-            let alerts_op = operations
-                .iter()
-                .find(|op| op.source_text.contains("GetAlerts"));
-            let forecast_op = operations
-                .iter()
-                .find(|op| op.source_text.contains("GetForecast"));
-
-            assert_eq!(
-                alerts_op.unwrap().description.as_deref(),
-                Some("Get weather alerts for a US state"),
-                "GetAlerts should have the config-provided description"
-            );
-            assert!(
-                forecast_op.unwrap().description.is_none(),
-                "GetForecast should have no description (not in config)"
-            );
-        } else {
-            panic!("Expected OperationsUpdated event");
-        }
-
-        let _ = fs::remove_file(&manifest_path);
     }
 }

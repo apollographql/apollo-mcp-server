@@ -315,6 +315,7 @@ mod test {
                     enable_output_schema: false,
                     enable_explorer: false,
                     mutation_mode: None,
+                    descriptions: {},
                 },
                 schema: Uplink,
                 transport: Stdio,
@@ -404,6 +405,34 @@ mod test {
 
             let err = result.unwrap_err().to_string();
             assert!(err.contains("unknown field"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_parses_overrides_descriptions() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+                overrides:
+                    descriptions:
+                        GetAlerts: "Fetch active weather alerts"
+                        GetForecast: "Get the 7-day forecast"
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+            assert_eq!(config.overrides.descriptions.len(), 2);
+            assert_eq!(
+                config.overrides.descriptions.get("GetAlerts").unwrap(),
+                "Fetch active weather alerts"
+            );
+            assert_eq!(
+                config.overrides.descriptions.get("GetForecast").unwrap(),
+                "Get the 7-day forecast"
+            );
             Ok(())
         });
     }
