@@ -115,37 +115,6 @@ operations:
   path: <PATH/TO/persisted-queries-manifest.json>
 ```
 
-#### Tool descriptions for manifest operations
-
-Tool descriptions help AI models understand when and how to use each tool. You can provide descriptions for operations in a persisted query manifest using either of the following methods.
-
-**Using GraphQL comments in the operation body** (recommended): Embed `#` comments before the operation definition in the `body` field. The MCP Server extracts leading comments and uses them as the tool description.
-
-```json title="Manifest with comment-based descriptions" {7}
-{
-  "format": "apollo-persisted-query-manifest",
-  "version": 1,
-  "operations": [
-    {
-      "id": "f4d7c9e3...",
-      "body": "# Get active weather alerts for a US state\nquery GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
-    }
-  ]
-}
-```
-
-**Using config-level descriptions**: Add a `descriptions` map to your `operations` config that maps operation names to tool descriptions. These descriptions override auto-generated descriptions for the matching operations.
-
-```yaml title="Config with tool descriptions for manifest operations" {4-5}
-operations:
-  source: manifest
-  path: <PATH/TO/persisted-queries-manifest.json>
-  descriptions:
-    GetAlerts: "Get active weather alerts for a US state by its two-letter abbreviation"
-```
-
-If neither config-level descriptions nor leading comments are provided, the MCP Server automatically generates a description from the GraphQL schema's field and type descriptions.
-
 ### From GraphOS-managed persisted queries
 
 For graphs managed by GraphOS, Apollo MCP Server can get operations by reading persisted queries from GraphOS. The MCP Server uses Apollo Uplink to access the persisted queries.
@@ -177,6 +146,60 @@ headers:
 operations:
   source: uplink
 ```
+
+## Tool descriptions
+
+Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates one from the GraphQL schema's field and type descriptions.
+
+### GraphQL comments in operation bodies
+
+Embed `#` comments before the operation definition. The MCP Server extracts leading comments and uses them as the tool description.
+
+**In local `.graphql` files**, add comments directly above the operation:
+
+```graphql title="operations/GetAlerts.graphql"
+# Get active weather alerts for a US state
+query GetAlerts($state: String!) {
+  alerts(state: $state) {
+    severity
+    description
+    instruction
+  }
+}
+```
+
+**In persisted query manifests**, embed comments in the `body` field:
+
+```json title="persisted-queries-manifest.json" {7}
+{
+  "format": "apollo-persisted-query-manifest",
+  "version": 1,
+  "operations": [
+    {
+      "id": "f4d7c9e3...",
+      "body": "# Get active weather alerts for a US state\nquery GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
+    }
+  ]
+}
+```
+
+**In GraphOS operation collections**, add comments above the operation in the Explorer editor before saving to the collection.
+
+### Config-level descriptions
+
+If you can't modify the operation source directly, add a `descriptions` map under the `overrides` config key to map operation names to tool descriptions. These descriptions override auto-generated descriptions for the matching operations, regardless of the operation source.
+
+```yaml title="Config with tool descriptions" {4-6}
+operations:
+  source: local
+  paths: [./operations]
+overrides:
+  descriptions:
+    GetAlerts: "Get active weather alerts for a US state by its two-letter abbreviation"
+    GetForecast: "Get a detailed weather forecast for a geographic coordinate"
+```
+
+Config-level descriptions take priority over comment-based descriptions when both are present for the same operation.
 
 ## Introspection tools
 

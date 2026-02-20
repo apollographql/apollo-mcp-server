@@ -40,10 +40,7 @@ impl Starting {
         let operations: Vec<_> = self
             .operations
             .into_iter()
-            .map(|mut operation| {
-                apply_description_override(&mut operation, &self.config.descriptions);
-                operation
-            })
+            .map(|operation| apply_description_override(operation, &self.config.descriptions))
             .filter_map(|operation| {
                 operation
                     .into_operation(

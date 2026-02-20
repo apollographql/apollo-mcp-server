@@ -22,12 +22,13 @@ pub(crate) use raw_operation::RawOperation;
 /// If an override description exists for this operation, set it on the raw
 /// operation so it takes priority over auto-generated descriptions.
 pub(crate) fn apply_description_override(
-    operation: &mut RawOperation,
+    mut operation: RawOperation,
     descriptions: &HashMap<String, String>,
-) {
+) -> RawOperation {
     if let Some(desc) =
         extract_operation_name(&operation.source_text).and_then(|name| descriptions.get(name))
     {
         operation.description = Some(desc.clone());
     }
+    operation
 }

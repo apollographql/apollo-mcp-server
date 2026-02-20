@@ -137,10 +137,7 @@ impl Running {
             let schema = &*self.schema.read().await;
             operations
                 .into_iter()
-                .map(|mut operation| {
-                    apply_description_override(&mut operation, &self.descriptions);
-                    operation
-                })
+                .map(|operation| apply_description_override(operation, &self.descriptions))
                 .filter_map(|operation| {
                     operation
                         .into_operation(
@@ -572,18 +569,10 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn invalid_operations_should_not_crash_server() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let operations = Arc::new(RwLock::new(vec![]));
-
-        let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: operations.clone(),
+    fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
+        Running {
+            schema,
+            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
@@ -604,6 +593,21 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_operations_should_not_crash_server() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let operations = Arc::new(RwLock::new(vec![]));
+
+        let running = Running {
+            operations: operations.clone(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let new_operations = vec![
@@ -645,28 +649,9 @@ mod tests {
         )]);
 
         let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
             operations: operations.clone(),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
             descriptions,
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let new_operations = vec![RawOperation::from((
@@ -700,28 +685,9 @@ mod tests {
         )]);
 
         let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
             operations: operations.clone(),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
             descriptions,
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let new_operations = vec![RawOperation::from((
@@ -752,30 +718,7 @@ mod tests {
             .unwrap(),
         ));
 
-        let running = Running {
-            schema: schema.clone(),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            descriptions: HashMap::new(),
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
-        };
+        let running = test_running(schema.clone());
 
         let operations = vec![
             RawOperation::from((
@@ -832,28 +775,8 @@ mod tests {
         };
 
         Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![app],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            descriptions: HashMap::new(),
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         }
     }
 
@@ -1511,30 +1434,7 @@ mod tests {
             .validate()
             .unwrap();
 
-        let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            descriptions: HashMap::new(),
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
-        };
+        let running = test_running(Arc::new(RwLock::new(schema)));
 
         let info = running.get_info();
 
@@ -1574,28 +1474,8 @@ mod tests {
         };
 
         let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            descriptions: HashMap::new(),
-            health_check: None,
             server_info: custom_config,
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let info = running.get_info();
