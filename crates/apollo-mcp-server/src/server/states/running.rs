@@ -1578,6 +1578,230 @@ mod tests {
         }
     }
 
+    mod output_schema_gating {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::operations::RawOperation;
+
+        fn create_running_with_output_schema() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+
+            let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = raw_op
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![operation])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: true,
+                disable_auth_token_passthrough: false,
+                health_check: None,
+                server_info: Default::default(),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": protocol_version,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_notification_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_tools_list_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn extract_session_id<B>(response: &http::Response<B>) -> String {
+            response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+
+        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
+        where
+            B: BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+
+            for line in body_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                {
+                    return val;
+                }
+            }
+            panic!("no JSON data found in SSE response");
+        }
+
+        async fn initialize_session(
+            running: &Running,
+            session_manager: &Arc<LocalSessionManager>,
+            protocol_version: &str,
+        ) -> String {
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_initialize_request(protocol_version))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = extract_session_id(&response);
+
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_notification_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            session_id
+        }
+
+        async fn list_tools(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+            session_id: &str,
+        ) -> Vec<serde_json::Value> {
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_tools_list_request(session_id))
+                .await
+                .unwrap();
+            let body = extract_json_body(response).await;
+            body["result"]["tools"]
+                .as_array()
+                .expect("tools/list should return a tools array")
+                .clone()
+        }
+
+        #[tokio::test]
+        async fn excludes_output_schema_when_protocol_predates_it() {
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
+
+            let tools = list_tools(running, session_manager, &session_id).await;
+
+            assert!(!tools.is_empty());
+            for tool in &tools {
+                assert!(
+                    tool.get("outputSchema").is_none(),
+                    "tool '{}' should not have outputSchema with protocol 2025-03-26",
+                    tool["name"]
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn includes_output_schema_when_protocol_supports_it() {
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
+
+            let tools = list_tools(running, session_manager, &session_id).await;
+
+            assert!(!tools.is_empty());
+            for tool in &tools {
+                assert!(
+                    tool.get("outputSchema").is_some(),
+                    "tool '{}' should have outputSchema with protocol 2025-06-18",
+                    tool["name"]
+                );
+            }
+        }
+    }
+
     mod sse_resumability {
         use axum::body::Body;
         use http::{Request, StatusCode};
