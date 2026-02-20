@@ -29,9 +29,24 @@ App-level configuration can be defined using a config file. Configuration is loa
 - `apollo-client-ai-apps.config.cjs`
 - An `apollo-client-ai-apps` key in `package.json`
 
+### TypeScript configuration
+
+If you use a TypeScript config file, use the `ApolloClientAiAppsConfig` type from the `@apollo/client-ai-apps/config` entry point to get TypeScript validation on your config object.
+
+```ts
+// apollo-client-ai-apps.config.ts
+import { ApolloClientAiAppsConfig } from "@apollo/client-ai-apps/config";
+
+const config: ApolloClientAiAppsConfig.Config = {
+  // your configuration
+};
+
+export default config;
+```
+
 <Note>
 
-If you are using a config file with a `.ts` extension in development, you may need to restart your dev server in between edits in order for the manifest to update correctly due to how the `cosmiconfig` TypeScript loader caches the config file.
+When updating the TypeScript config file in development, you may need to restart your dev server in between edits in order for the manifest to update correctly due to how the `cosmiconfig` TypeScript loader caches the config file.
 
 </Note>
 
