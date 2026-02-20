@@ -3,52 +3,94 @@ title: MCP Apps Reference
 subtitle: Key concepts and configuration
 ---
 
-This reference guide provides a comprehensive overview of MCP Apps configuration elements. Use the tables below to understand what each element is, where it's configured (GraphQL operations come from your app code, while app-level settings come from `package.json`), and how it maps to the MCP/ChatGPT side.
+This reference guide provides a comprehensive overview of MCP Apps configuration elements. Use the tables below to understand what each element is, where it's configured (GraphQL operations come from your app code, while app-level settings come from your configuration files or `package.json`), and how it maps to the MCP/ChatGPT side.
+
+<Note>
+
+For more information about MCP Apps specifications, visit the [OpenAI Apps SDK documentation](https://developers.openai.com/apps-sdk/quickstart/#add-your-app-to-chatgpt) and the [Model Context Protocol documentation](https://modelcontextprotocol.io/docs/getting-started/intro).
+
+</Note>
+
+## Configuration files
+
+App-level configuration can be defined using `cosmiconfig`, which supports multiple file formats and locations. Configuration is automatically loaded from:
+
+- `.apollo-client-ai-apps.config.json`
+- `apollo-client-ai-apps.config.json`
+- `.apollo-client-ai-apps.config.yml`
+- `apollo-client-ai-apps.config.yml`
+- `.apollo-client-ai-apps.config.yaml`
+- `apollo-client-ai-apps.config.yaml`
+- `.apollo-client-ai-apps.config.js`
+- `apollo-client-ai-apps.config.js`
+- `.apollo-client-ai-apps.config.ts`
+- `apollo-client-ai-apps.config.ts`
+- `.apollo-client-ai-apps.config.cjs`
+- `apollo-client-ai-apps.config.cjs`
+- An `apollo-client-ai-apps` key in `package.json`
 
 ## Manifest file
 
-The manifest file (`.application-manifest.json`) is automatically generated from your app code and `package.json`. GraphQL operations come from your app code, while app-level configuration (like CSP settings, widget settings, and labels) comes from `package.json`.
+The manifest file (`.application-manifest.json`) is automatically generated from your app code and your configuration files. GraphQL operations come from your app code, while app-level configuration  comes from your configuration files or `package.json`.
 
-<warning>
-Don't edit the manifest directly. Instead, make changes to your app code (for GraphQL operations) and `package.json` (for app-level configuration). The manifest file generates automatically.
-</warning>
+<caution>
+Don't edit the manifest directly. Instead, make changes to your app code (for GraphQL operations) and your configuration files or `package.json` (for app-level configuration). The manifest file generates automatically.
+</caution>
 
 ## App vs Host
 
-An **app** is your MCP App—the code, configuration, and UI resource you build that combines GraphQL operations with custom UI. The **host** is the MCP Apps-compatible application (such as ChatGPT) that discovers your app, invokes tools, and displays your UI.
+An **app** is your MCP App—the code, configuration, and built resource you create that combines GraphQL operations with custom UI. The **host** is the MCP Apps-compatible application (such as ChatGPT) that discovers your app, invokes tools, and displays your UI.
 
 This table shows what you work with in your app code versus what the host does:
 
 | In Your App | In the Host |
 |-------------|-------------|
-| You define your app code and `package.json`, which generates the manifest | The host discovers your app via the MCP protocol and pre-fetches the UI resource |
-| You specify the resource URL (your UI) | The host pre-fetches the resource during discovery and creates an iframe when tools are invoked |
+| You define your app code and configuration files, which generates the manifest | The host discovers your app via the MCP protocol and pre-fetches the built resource |
+| You specify the resource | The host pre-fetches it file during discovery and creates an iframe when tools are invoked |
 | You define tools backed by GraphQL operations | The host invokes tools and receives data from the MCP server |
 | You access data in your UI code | The host injects tool result data into the iframe |
 
 ## App-level configuration
 
-Configuration elements defined at the app level (from `package.json`):
+Configuration elements defined at the app level (from your configuration files or `package.json`):
 
 | Element | What it is | Where it comes from | Where it maps to | Notes |
 |---------|------------|---------------------|------------------|-------|
-| `name` | App identifier | `package.json` | MCP tool namespace | Defaults to directory name if not specified |
-| `description` | App description | `package.json` | Tool description prefix | Prefixed to tool descriptions |
-| `resource` | UI resource URL | `package.json` | Resource URI in manifest | Can be a local built React app or a remotely hosted React app |
-| `csp.connectDomains` | Allowed domains for network requests | `package.json` | `openai/widgetCSP.connect_domains` (AppsSDK)<br />`_meta.ui.csp.connectDomains` (MCPApps) | Must include protocol (`https://`) |
-| `csp.resourceDomains` | Allowed domains for loading resources | `package.json` | `openai/widgetCSP.resource_domains` (AppsSDK)<br />`_meta.ui.csp.resourceDomains` (MCPApps) | Must include protocol (`https://`) |
-| `csp.frameDomains` | Allowed domains for iframe embeds | `package.json` | `openai/widgetCSP.frame_domains` (AppsSDK)<br />`_meta.ui.csp.frameDomains` (MCPApps) | Must include protocol (`https://`) |
-| `csp.redirectDomains` | Allowed domains for redirects | `package.json` | `openai/widgetCSP.redirect_domains` (AppsSDK only) | AppsSDK target only |
-| `csp.baseUriDomains` | Allowed base URI domains | `package.json` | `_meta.ui.csp.baseUriDomains` (MCPApps only) | MCPApps target only |
-| `widgetSettings.description` | Widget description | `package.json` | `openai/widgetDescription` (AppsSDK only) | AppsSDK target only |
-| `widgetSettings.domain` | Domain restriction | `package.json` | `openai/widgetDomain` (AppsSDK)<br />`_meta.ui.domain` (MCPApps) | Restricts widget to specific domain |
-| `widgetSettings.prefersBorder` | Border preference | `package.json` | `openai/widgetPrefersBorder` (AppsSDK)<br />`_meta.ui.prefersBorder` (MCPApps) | Boolean flag for border display |
-| `labels.toolInvocation/invoking` | Message shown when tool starts | `package.json` | `openai/toolInvocation/invoking` (AppsSDK only) | Applies to all tools unless overridden |
-| `labels.toolInvocation/invoked` | Message shown when tool completes | `package.json` | `openai/toolInvocation/invoked` (AppsSDK only) | Applies to all tools unless overridden |
+| `name` | Application name | Configuration file or `package.json` | MCP tool namespace | If not provided, defaults to `name` property in `package.json` |
+| `description` | Application description | Configuration file or `package.json` | Tool description prefix | If not provided, defaults to `description` property in `package.json`. Prefixed to tool descriptions |
+| `version` | Application version | Configuration file or `package.json` | Reported as part of `appInfo` during `ui/initialize` notification | If not provided, defaults to `version` property in `package.json` |
+| `entry` | Entry point configuration | Configuration file or `package.json` | `resource` in manifest | Map that configures the entry point for a mode. Can be a string (used for both `mcp` and `openai` environments) or an object with `mcp` and `openai` keys. Defaults: `development` points to local Vite dev server URL; `production` points to `index.html`. Custom modes supported via `--mode` option |
+| `csp.connectDomains` | Approved origins for network requests | Configuration file or `package.json` | `openai/widgetCSP.connect_domains` (AppsSDK)<br />`_meta.ui.csp.connectDomains` (MCPApps) | Approved origins for fetch/XHR/WebSocket requests. Must include protocol (`https://`) |
+| `csp.frameDomains` | Approved origins for nested iframes | Configuration file or `package.json` | `openai/widgetCSP.frame_domains` (AppsSDK)<br />`_meta.ui.csp.frameDomains` (MCPApps) | Approved origins for nested iframes (frame-src directive). Must include protocol (`https://`) |
+| `csp.redirectDomains` | Approved origins for redirects | Configuration file or `package.json` | `openai/widgetCSP.redirect_domains` (AppsSDK only) | OpenAI environment only. Enables ChatGPT return link to the same conversation. ChatGPT skips the safe-link modal and appends a `redirectUrl` query parameter |
+| `csp.resourceDomains` | Approved origins for static resources | Configuration file or `package.json` | `openai/widgetCSP.resource_domains` (AppsSDK)<br />`_meta.ui.csp.resourceDomains` (MCPApps) | Approved origins for static resources (scripts, images, styles, fonts). Must include protocol (`https://`) |
+| `widgetSettings.prefersBorder` | Visual boundary preference | Configuration file or `package.json` | `openai/widgetPrefersBorder` (AppsSDK)<br />`_meta.ui.prefersBorder` (MCPApps) | Boolean flag for visual boundary display |
+| `widgetSettings.description` | Widget description | Configuration file or `package.json` | `openai/widgetDescription` (AppsSDK only) | OpenAI environment only. Lets the widget describe itself |
+| `widgetSettings.domain` | Dedicated origin for the view | Configuration file or `package.json` | `openai/widgetDomain` (AppsSDK)<br />`_meta.ui.domain` (MCPApps) | Dedicated origin for the view |
+| `labels.toolInvocation.invoking` | Status text while tool runs | Configuration file or `package.json` | `openai/toolInvocation/invoking` (AppsSDK only) | OpenAI environment only. Short status text shown while the tool runs. Applies to all tools unless overridden |
+| `labels.toolInvocation.invoked` | Status text after tool completes | Configuration file or `package.json` | `openai/toolInvocation/invoked` (AppsSDK only) | OpenAI environment only. Short status text shown after the tool completes. Applies to all tools unless overridden |
 
 ## Tool-level configuration
 
-Tools are defined using the `@tool` directive on GraphQL operations in your app code. You can also use the `@prefetch` directive to mark operations that run automatically when any tool is invoked.
+Tools are defined using directives on GraphQL operations in your app code. Available directives:
+
+- **`@tool`**: Defines a GraphQL operation as an MCP tool that hosts can invoke
+- **`@prefetch`**: Marks an operation that runs automatically when any tool in the app is invoked
+
+### `@tool` directive arguments
+
+| Argument | What it is | Required | Where it maps to | Notes |
+|----------|------------|----------|------------------|-------|
+| `name` | Tool name | Yes | MCP tool `name` | Must be unique within the app |
+| `description` | Tool description | Yes | MCP tool `description` | App description is prefixed to tool description if present |
+| `extraInputs` | Additional tool inputs | No | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs are not part of the GraphQL operation but are provided by the host |
+| `labels` | Tool-specific labels | No | Tool labels in manifest | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool |
+
+### `@prefetch` directive
+
+The `@prefetch` directive marks a GraphQL operation to run automatically whenever any tool in the app is invoked. Prefetch operations execute after the main tool operation and their results are included in the tool response.
+
+**Usage**: Add `@prefetch` to any GraphQL operation (query or mutation).
 
 | Element | What it is | Where it comes from | Where it maps to | Notes |
 |---------|------------|---------------------|------------------|-------|
@@ -57,13 +99,32 @@ Tools are defined using the `@tool` directive on GraphQL operations in your app 
 
 ## App query parameter
 
-Use the `app` query parameter to specify which app to load: `https://your-server.com/mcp?app=my-app`. The app name corresponds to the directory name in `apps/`.
+Use the `app` query parameter to specify which app to load: `https://your-server.com/mcp?app=my-app`. The app name corresponds to the directory name in `apps/` (where build artifacts are located).
+
+<Note>
+
+**Development vs Build Artifacts**: The `apps/` directory contains build artifacts that the MCP Server reads from. Development happens in a separate directory (we recommend using `dev/<app-name>`, like the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) does).
+
+</Note>
 
 ## App target
 
-Apollo MCP Server supports two targets: **AppsSDK** (default, for hosts supporting OpenAI's Apps SDK specification) and **MCPApps** (for MCP-compatible clients). Use the `appTarget` query parameter to specify the target.
+Apollo MCP Server supports two targets: OpenAI Apps (for hosts supporting OpenAI's Apps SDK specification) and MCP Apps (for MCP-compatible clients). Use the `appTarget` query parameter to specify the target.
 
-For AppsSDK (default): `https://your-server.com/mcp?app=my-app&appTarget=openai`
+OpenAI Apps: `https://your-server.com/mcp?app=my-app&appTarget=openai`
 
-For MCPApps: `https://your-server.com/mcp?app=my-app&appTarget=mcp`
+MCP Apps: `https://your-server.com/mcp?app=my-app&appTarget=mcp`
 
+## TypeScript configuration
+
+The template includes TypeScript configuration files (`tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`) that enable TypeScript support and allow the build process to extract GraphQL operations from your code.
+
+These configuration files are **extensible**, allowing you to organize your TypeScript settings by specification:
+
+- **Shared configurations**: Common TypeScript settings that apply to both AppsSDK and MCPApps targets
+- **AppsSDK-specific configurations**: Settings specific to the OpenAI Apps SDK specification
+- **MCPApps-specific configurations**: Settings specific to the MCP Apps specification
+
+You can extend the base `tsconfig.json` with specification-specific configurations using TypeScript's `extends` feature. This allows you to maintain separate type definitions, compiler options, or path mappings for different targets while sharing a common configuration.
+
+The pattern helps you maintain type safety and proper configuration for each specification while avoiding duplication.

@@ -9,7 +9,7 @@ MCP Apps combine GraphQL operations with custom UI resources to create interacti
 
 MCP Apps work in two phases:
 
-**Discovery phase**: The host discovers your app and pre-fetches the UI resource.
+**Discovery phase**: The host discovers your app and pre-fetches the built resource.
 
 **Tool execution phase**: When a tool is invoked, the host receives data from the MCP server and injects it into a pre-loaded iframe.
 
@@ -47,38 +47,32 @@ graph TB
     style Iframe fill:#4CAF50,color:#fff
 ```
 
-When an MCP Apps-compatible host invokes a tool, Apollo MCP Server executes the GraphQL operation and returns only the data. The host then creates an iframe with the pre-fetched UI resource and injects the tool result data into it.
+When an MCP Apps-compatible host invokes a tool, Apollo MCP Server executes the GraphQL operation and returns only the data. The host then creates an iframe with the pre-fetched HTML resource and injects the tool result data into it.
 
 ## App components
 
 An MCP App consists of:
 
 - **Tools**: GraphQL operations exposed as MCP tools that MCP Apps-compatible hosts can invoke
-- **Resource**: The UI for your app, specified as a URL
+- **Resource**: The built `.html` file that contains your application code.
 
-The app manifest (`.application-manifest.json`) is automatically generated from your app code and `package.json`. GraphQL operations come from your app code, while app-level configuration comes from `package.json`. The manifest defines the mapping between tools, operations, and the resource.
+The app manifest (`.application-manifest.json`) is automatically generated from your app code and your configuration file (or `package.json`). GraphQL operations come from your app code, while app-level configuration comes from your configuration files. The manifest defines the mapping between tools, operations, and the resource.
 
 ## App structure
 
+Apps are organized in directories under `apps/`, each containing build artifacts (the manifest file and built resources). The MCP Server reads from the `apps/` directory.
 
-
-Apps are organized in directories under `apps/`, each containing your app code, `package.json`, and the resource. The manifest file is automatically generated from these sources and defines GraphQL operations, tool mappings, and resource paths.
+**Important**: The `apps/` directory contains build artifacts, not your development code. Development happens in a separate directory (we recommend using `dev/<app-name>`, like the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) does).
 
 
 ## Resources
 
-The resource is the UI for your app, specified as a URL. This can point to a local built React app or a remotely hosted React app. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
+The resource is the built `.html` file that contains your application code. This file is loaded by the host and contains everything needed to render your app's UI. We recommend using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) for a complete setup.
 
 ## App target selection
 
 Apollo MCP Server supports two app targets:
-- **AppsSDK** (default): For hosts that support OpenAI's Apps SDK specification (for example, ChatGPT)
-- **MCPApps**: MCP Apps-compatible clients
+- ChatGPT Apps: For hosts that support OpenAI's Apps SDK specification (for example, ChatGPT)
+- MCP Apps: MCP Apps-compatible clients
 
-The target determines MIME type, metadata format, and CSP format. For ChatGPT and other Apps SDK-compatible hosts, use the default AppsSDK target.
-
-## Next steps
-
-- Review the [MCP Apps Overview](/apollo-mcp-server/mcp-apps) for key concepts
-- Follow the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) to build your first app
-- Explore the [MCP Apps Reference](/apollo-mcp-server/mcp-apps-reference) for detailed configuration
+The target determines MIME type, metadata format, and CSP format.

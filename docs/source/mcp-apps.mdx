@@ -3,15 +3,21 @@ title: MCP Apps Overview
 subtitle: Build custom, interactive experiences in MCP Apps-compatible hosts
 ---
 
-Apollo MCP Server supports MCP Apps, enabling you to build custom, interactive experiences in any host that supports the MCP Apps specification (such as ChatGPT with OpenAI's Apps SDK). This integration allows you to control how results are displayed, tailoring the look, feel, and interactivity of responses generated from your GraphQL APIs and agentic workflows.
+Apollo MCP Server supports MCP Apps, enabling you to build custom, interactive experiences in any host that supports the MCP Apps specification (like as ChatGPT with OpenAI's Apps SDK). This integration allows you to control how results are displayed, tailoring the look, feel, and interactivity of responses generated from your GraphQL APIs and agentic workflows.
+
+<Note>
+
+For more information about MCP Apps compatibility, visit the [OpenAI Apps SDK documentation](https://developers.openai.com/apps-sdk/quickstart/#add-your-app-to-chatgpt) and the [Model Context Protocol documentation](https://modelcontextprotocol.io/docs/getting-started/intro).
+
+</Note>
 
 ## What are MCP Apps?
 
 MCP Apps are mini applications that run inside MCP Apps-compatible hosts. Unlike standard MCP tools that return text responses, apps give you complete control over how data appears, enabling:
 
 - **Custom visualizations**: Display data in tables, cards, charts, or any custom HTML layout
-- **Interactive experiences**: Build forms, buttons, and interactive elements that users can interact with directly
-- **Unique experiences**: Create bespoke experiences that match your use-case
+- **Interactive experiences**: Build forms, buttons, and elements that users can interact with directly
+- **Unique experiences**: Create experiences specific to your use-case
 - **Rich UI beyond text**: Go beyond plain text responses with styled, interactive interfaces
 
 ## How MCP Apps work with Apollo MCP Server
@@ -19,14 +25,16 @@ MCP Apps are mini applications that run inside MCP Apps-compatible hosts. Unlike
 Apollo MCP Server bridges your GraphQL APIs to the MCP Apps specification, allowing you to:
 
 1. **Define GraphQL operations** that fetch data from your APIs
-2. **Create a UI resource** that controls how that data is displayed
+2. **Create a UI resource** that controls how data is displayed
 3. **Package them together** as apps that MCP Apps-compatible hosts can discover and use
 
-<Note>
+Overall, building an MCP App feels like building a GraphQL app with Apollo Client. If you're already familiar with Apollo Client and React, you can leverage that knowledge to build MCP Apps with only minor modifications—primarily adding `@tool` and `@prefetch` directives to your GraphQL operations. This means you can focus on building great user experiences rather than learning a completely new framework.
 
-The easiest way to get started is to use the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template), which provides a complete setup with React, Vite, Apollo Client, and Apollo MCP Server integration. See the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) for more information.
+<Tip>
 
-</Note>
+The easiest way to get started building MCP Apps is to use the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template), which provides a complete setup with React, Vite, Apollo Client, and Apollo MCP Server integration. See the [Quickstart guide](/apollo-mcp-server/mcp-apps-quickstart) for more information.
+
+</Tip>
 
 ```mermaid
 graph LR
