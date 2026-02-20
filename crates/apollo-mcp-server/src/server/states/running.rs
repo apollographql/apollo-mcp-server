@@ -13,7 +13,8 @@ use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
         CallToolRequestParams, CallToolResult, Content, ErrorCode, InitializeRequestParams,
-        InitializeResult, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
+        InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
 };
@@ -73,6 +74,15 @@ pub(super) struct Running {
 }
 
 impl Running {
+    /// Returns true if the given client's negotiated protocol version supports
+    /// `outputSchema` / `structuredContent` (introduced in MCP 2025-06-18).
+    fn client_supports_output_schema(&self, peer: &Peer<RoleServer>) -> bool {
+        self.enable_output_schema
+            && peer
+                .peer_info()
+                .is_some_and(|info| info.protocol_version >= ProtocolVersion::V_2025_06_18)
+    }
+
     /// Update a running server with a new schema.
     ///
     /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
@@ -350,7 +360,7 @@ impl ServerHandler for Running {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
-        let result = if tool_name == INTROSPECT_TOOL_NAME
+        let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
         {
             match serde_json::from_value(Value::from(request.arguments)) {
@@ -483,6 +493,12 @@ impl ServerHandler for Running {
             .build()
             .add(1, &attributes);
 
+        if !self.client_supports_output_schema(&context.peer)
+            && let Ok(r) = &mut result
+        {
+            r.structured_content = None;
+        }
+
         result
     }
 
@@ -494,8 +510,17 @@ impl ServerHandler for Running {
     ) -> Result<ListToolsResult, McpError> {
         let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
 
-        self.list_tools_impl(context.extensions, client_capabilities)
-            .await
+        let mut result = self
+            .list_tools_impl(context.extensions, client_capabilities)
+            .await?;
+
+        if !self.client_supports_output_schema(&context.peer) {
+            for tool in &mut result.tools {
+                tool.output_schema = None;
+            }
+        }
+
+        Ok(result)
     }
 
     #[tracing::instrument(skip_all)]
@@ -534,7 +559,14 @@ impl ServerHandler for Running {
             ..Default::default()
         };
 
+        let protocol_version = if self.enable_output_schema {
+            ProtocolVersion::V_2025_06_18
+        } else {
+            ProtocolVersion::default()
+        };
+
         ServerInfo {
+            protocol_version,
             server_info: Implementation {
                 name: self.server_info.name().to_string(),
                 icons: None,
@@ -544,7 +576,7 @@ impl ServerHandler for Running {
                 description: self.server_info.description().map(|s| s.to_string()),
             },
             capabilities,
-            ..Default::default()
+            instructions: None,
         }
     }
 }
@@ -1494,6 +1526,56 @@ mod tests {
             info.server_info.description,
             Some("A custom MCP server for testing".to_string())
         );
+    }
+
+    mod get_info_protocol_version {
+        use super::*;
+        use rmcp::model::ProtocolVersion;
+
+        fn build_running(enable_output_schema: bool) -> Running {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                headers: HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: "http://localhost:4000".parse().unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema,
+                disable_auth_token_passthrough: false,
+                health_check: None,
+                server_info: ServerInfoConfig::default(),
+            }
+        }
+
+        #[test]
+        fn advertises_default_version_when_output_schema_disabled() {
+            let info = build_running(false).get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::default());
+        }
+
+        #[test]
+        fn advertises_v2025_06_18_when_output_schema_enabled() {
+            let info = build_running(true).get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+        }
     }
 
     mod sse_resumability {
