@@ -94,7 +94,6 @@ The `@prefetch` directive marks a GraphQL operation to run automatically wheneve
 
 | Element | What it is | Where it comes from | Where it maps to | Notes |
 |---------|------------|---------------------|------------------|-------|
-| `@tool(name: "...", description: "...")` | MCP tool definition | `@tool` directive on GraphQL operation | MCP tool `name` and `description` | Must be unique within the app. App description is prefixed to tool description if present |
 | `@prefetch` | Prefetch operation marker | `@prefetch` directive on GraphQL operation | Prefetch operation in manifest | Operation runs automatically when any tool in the app is invoked |
 
 ## App query parameter
