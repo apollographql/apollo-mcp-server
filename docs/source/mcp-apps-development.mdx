@@ -1,0 +1,66 @@
+---
+title: Developing MCP Apps
+subtitle: Key concepts when developing MCP Apps
+---
+
+This reference guide provides an overview of the core concepts of developing an MCP app using React, Apollo Client, and Apollo MCP Server.
+
+<Note>
+
+This guide does not provide a comprehensive overview of Apollo Client capabilities. Refer to the [Apollo Client documentation](../react) for more documentation about Apollo Client.
+
+</Note>
+
+## Register an operation as an MCP tool
+
+Tools are defined from your GraphQL operations using the `@tool` directive. You write queries like you would in an Apollo Client application and add the `@tool` directive to the operation.
+
+As an example, let's define a query that gets the highest rated products in a store-like application. Define a query called `TopProductsQuery` in your React component. Use the `useQuery` hook from `@apollo/client/react` to read the query data. We use the `@tool` directive to register this query as it's own tool.
+
+```tsx
+import { gql, TypedDocumentNode } from "@apollo/client";
+import { useQuery } from "@apollo/client/react";
+
+// Note: These types should be generated using a tool like GraphQL Codegen.
+// Avoid writing them by hand.
+const TOP_PRODUCTS_QUERY: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  query TopProductsQuery
+  @tool(
+    name: "TopProducts"
+    description: "Shows a list of the highest rated products."
+  ) {
+    topProducts {
+      id
+      title
+      rating
+      price
+      thumbnail
+    }
+  }
+`;
+
+function TopProducts() {
+  const { data, loading, error, dataState } = useQuery(TOP_PRODUCTS_QUERY);
+
+  if (loading) {
+    return <div>Loading...</div>;
+  }
+
+  if (error) {
+    return <div>Error! {error.message}</div>;
+  }
+
+  return (
+    <div>
+      {data.topProducts.map((product) => (
+        <Product key={product.id} product={product} />
+      ))}
+    </div>
+  );
+}
+```
+
+Now this query is registered as a tool in our app! If you run the app in ChatGPT or an MCP apps compatible host, you can ask the LLM to show you some top products. This will render our view using data fetched by our MCP server.
