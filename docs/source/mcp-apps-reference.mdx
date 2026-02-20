@@ -29,6 +29,12 @@ App-level configuration can be defined using a config file. Configuration is loa
 - `apollo-client-ai-apps.config.cjs`
 - An `apollo-client-ai-apps` key in `package.json`
 
+<Note>
+
+If you are using a config file with a `.ts` extension in development, you may need to restart your dev server in between edits in order for the manifest to update correctly due to how the `cosmiconfig` TypeScript loader caches the config file.
+
+</Note>
+
 ## Manifest file
 
 The manifest file (`.application-manifest.json`) is automatically generated from your app code and your configuration files. GraphQL operations come from your app code, while app-level configuration  comes from your configuration files or `package.json`.
