@@ -5,11 +5,63 @@ subtitle: Key concepts when developing MCP Apps
 
 This reference guide provides an overview of the core concepts of developing an MCP app using React, Apollo Client, and Apollo MCP Server.
 
+If you are using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) to follow along, much of the following code is provided for you. This guide walks through the critical areas of developing an MCP application for your own understanding.
+
 <Note>
 
 This guide does not provide a comprehensive overview of Apollo Client capabilities. Refer to the [Apollo Client documentation](../react) for more documentation about Apollo Client.
 
 </Note>
+
+## Get started
+
+The `@apollo/client-ai-apps` package uses Apollo Client to manage GraphQL operations in our MCP app. This means you can use the knowledge you already have building applications with Apollo Client to build MCP apps.
+
+### Initialize Apollo Client
+
+To get started, we need to initialize and instance of `ApolloClient` from the `@apollo/client-ai-apps` package. The `ApolloClient` constructor needs, at minim, an instance of an `ApolloCache` and our [manifest file](./mcp-apps-reference#manifest-file).
+
+<Note>
+
+Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, not the core `@apollo/client` repository. The `ApolloClient` class from `@apollo/client-ai-apps` handles the details of integrating with an MCP apps environment.
+
+</Note>
+
+```ts
+// src/main.tsx
+import { InMemoryCache } from "@apollo/client";
+import { ApolloClient, ApplicationManifest } from "@apollo/client-ai-apps";
+// Note the manifest location is at the root of our app
+import manifest from "../.application-manifest.json";
+
+// You may also provide other options that the core ApolloClient accepts
+const client = new ApolloClient({
+  cache: new InMemoryCache(),
+  manifest: manifest as ApplicationManifest,
+});
+```
+
+<Note>
+
+Unlike the `ApolloClient` class from the core `@apollo/client` package, the `ApolloClient` class from `@apollo/client-ai-apps` does not require a configured `link`. By default it uses `ToolCallLink` which executes GraphQL queries through MCP tools. <br/><br/>
+
+You may provide a custom link chain to provide additional capability to `ApolloClient`, however your terminating link must be a `ToolCallLink`.
+
+</Note>
+
+### Provide your client to `ApolloProvider`
+
+Once you have a `client` instance, you need to provide that client to `ApolloProvider`. Like `ApolloClient`, you will need to use the `ApolloProvider` component exported from the `@apollo/client-ai-apps` package. This implementaton is reponsible for initializing the client with our MCP server.
+
+```tsx
+import { ApolloProvider } from "@apollo/client-ai-apps/react";
+
+createRoot(document.getElementById("root")!).render(
+  <ApolloProvider client={client}>
+    <App />
+  </ApolloProvider>,
+);
+```
 
 ## Register an operation as an MCP tool
 
@@ -64,3 +116,5 @@ function TopProducts() {
 ```
 
 Now this query is registered as a tool in our app! If you run the app in ChatGPT or an MCP apps compatible host, you can ask the LLM to show you some top products. This will render our view using data fetched by our MCP server.
+
+## Platform-specific components
