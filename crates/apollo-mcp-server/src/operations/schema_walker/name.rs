@@ -40,7 +40,8 @@ impl From<Name<'_>> for JSONSchema {
         let result = match name.as_str() {
             // Basic types map nicely
             "String" | "ID" => json_schema!({"type": "string"}),
-            "Int" | "Float" => json_schema!({"type": "number"}),
+            "Float" => json_schema!({"type": "number"}),
+            "Int" => json_schema!({"type": "integer"}),
             "Boolean" => json_schema!({"type": "boolean"}),
 
             // If we've already cached it, then return the reference immediately
