@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
 use rhai::module_resolvers::FileModuleResolver;
-use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Scope};
+use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
+use tracing::info;
+
+use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
+use crate::rhai::types::{RhaiErrorCode, RhaiHeaderMap};
 
 pub(crate) struct RhaiEngine {
     engine: Engine,
@@ -25,8 +29,9 @@ impl RhaiEngine {
         let scope = Self::create_scope();
 
         Self::register_modules();
-        Self::handle_logging();
         Self::register_functions();
+        Self::register_types(&mut engine);
+        Self::register_logging(&mut engine);
 
         Self {
             engine,
@@ -48,16 +53,15 @@ impl RhaiEngine {
         //     .register_static_module("base64", base64_module.into())
     }
 
-    fn handle_logging() {
-        // // Default print/debug implementations
-        // engine.on_print(|text| println!("{text}"));
+    fn register_logging(engine: &mut Engine) {
+        engine.on_print(|text| info!("{text}"));
 
-        // engine.on_debug(|text, source, pos| match (source, pos) {
-        //     (Some(source), Position::NONE) => println!("{source} | {text}"),
-        //     (Some(source), pos) => println!("{source} @ {pos:?} | {text}"),
-        //     (None, Position::NONE) => println!("{text}"),
-        //     (None, pos) => println!("{pos:?} | {text}"),
-        // });
+        engine.on_debug(|text, source, pos| match (source, pos) {
+            (Some(source), Position::NONE) => info!("{source} | {text}"),
+            (Some(source), pos) => info!("{source} @ {pos:?} | {text}"),
+            (None, Position::NONE) => info!("{text}"),
+            (None, pos) => info!("{pos:?} | {text}"),
+        });
     }
 
     fn register_functions() {
@@ -89,6 +93,12 @@ impl RhaiEngine {
         // });
     }
 
+    fn register_types(engine: &mut Engine) {
+        RhaiHeaderMap::register(engine);
+        OnExecuteGraphqlOperationContext::register(engine);
+        RhaiErrorCode::register(engine);
+    }
+
     fn create_scope() -> Scope<'static> {
         let scope = Scope::new();
         // scope.push("my_string", "hello, world!");
@@ -117,14 +127,17 @@ impl RhaiEngine {
         &mut self,
         hook_name: &str,
         args: impl FuncArgs,
-    ) -> Result<(), Box<EvalAltResult>> {
+    ) -> Result<Option<Dynamic>, Box<EvalAltResult>> {
         if self.ast_has_function(hook_name) {
-            let _ = self
-                .engine
-                .call_fn::<Dynamic>(&mut self.scope, &self.ast, hook_name, args)?;
+            return Ok(Some(self.engine.call_fn::<Dynamic>(
+                &mut self.scope,
+                &self.ast,
+                hook_name,
+                args,
+            )?));
         }
 
-        Ok(())
+        Ok(None)
     }
 
     pub fn ast_has_function(&self, name: &str) -> bool {

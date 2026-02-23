@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
@@ -30,7 +29,7 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::rhai::engine::RhaiEngine;
+use crate::rhai::RhaiEngine;
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -497,14 +496,6 @@ impl ServerHandler for Running {
     ) -> Result<ListToolsResult, McpError> {
         let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
 
-        self.rhai_engine
-            .lock()
-            .execute_hook("on_list_tools", ())
-            .map_err(|err| {
-                error!("Error when executing on_list_tools hook: {err}");
-                McpError::new(ErrorCode::INTERNAL_ERROR, "Internal error", None)
-            })?;
-
         self.list_tools_impl(context.extensions, client_capabilities)
             .await
     }
@@ -515,14 +506,6 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.rhai_engine
-            .lock()
-            .execute_hook("on_list_resources", ())
-            .map_err(|err| {
-                error!("Error when executing on_list_resources hook: {err}");
-                McpError::new(ErrorCode::INTERNAL_ERROR, "Internal error", None)
-            })?;
-
         self.list_resources_impl()
     }
 

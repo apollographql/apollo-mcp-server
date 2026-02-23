@@ -4,14 +4,13 @@ use http::HeaderMap;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
 use parking_lot::Mutex;
-use rmcp::model::{CallToolResult, ErrorCode, JsonObject};
+use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::Value;
-use tracing::error;
 use url::Url;
 
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
-use crate::rhai::engine::RhaiEngine;
+use crate::rhai::{RhaiEngine, checkpoints};
 
 use super::Operation;
 
@@ -34,22 +33,14 @@ pub(crate) async fn execute_operation(
     endpoint: &Url,
     rhai_engine: &Arc<Mutex<RhaiEngine>>,
 ) -> Result<CallToolResult, McpError> {
+    let (endpoint, headers) =
+        checkpoints::on_execute_graphql_operation(rhai_engine, endpoint, headers)?;
+
     let graphql_request = graphql::Request {
         input: Value::from(arguments.cloned()),
-        endpoint,
-        headers,
+        endpoint: &endpoint,
+        headers: &headers,
     };
-
-    rhai_engine
-        .lock()
-        .execute_hook(
-            "on_execute_graphql_operation",
-            (endpoint.to_string(), headers.clone()),
-        )
-        .map_err(|err| {
-            error!("Error when executing on_execute_graphql_operation hook: {err}");
-            McpError::new(ErrorCode::INTERNAL_ERROR, "Internal error", None)
-        })?;
 
     executable
         .execute(graphql_request)

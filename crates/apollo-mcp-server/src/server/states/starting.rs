@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::host_validation::{HostValidationState, validate_host};
-use crate::rhai::engine::RhaiEngine;
+use crate::rhai::{RhaiEngine, checkpoints};
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     errors::ServerError,
@@ -153,11 +153,9 @@ impl Starting {
             error!("Error loading Rhai scripts: {err}");
             ServerError::RhaiError
         })?;
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
 
-        engine.execute_hook("on_startup", ()).map_err(|err| {
-            error!("Error when execusing on_startup hook: {err}");
-            ServerError::RhaiError
-        })?;
+        checkpoints::on_startup(&engine)?;
 
         let running = Running {
             schema,
@@ -181,7 +179,7 @@ impl Starting {
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
-            rhai_engine: Arc::new(parking_lot::Mutex::new(engine)),
+            rhai_engine: engine,
         };
 
         // Helper to enable auth
