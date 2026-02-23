@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.0-experimental.2 (2026-02-23)
+
+### Features
+
+#### Allow server "description" to be configured
+
+Example:
+
+```yaml title="config.yaml"
+server_info:
+  name: "Acme Corp GraphQL Server"
+  version: "2.0.0"
+  title: "Acme MCP Server"
+  website_url: "https://acme.com/mcp-docs"
+  description: "MCP server for Acme Corp's GraphQL API"
+```
+
+#### Support custom tool descriptions for manifest operations
+
+Users can now provide custom tool descriptions for operations loaded from persisted query manifests by adding a `descriptions` map to the `operations` config. This lets AI models better understand when and how to use each tool, without requiring changes to the standard manifest format.
+
+```yaml
+operations:
+  source: manifest
+  path: ./manifest.json
+  descriptions:
+    GetAlerts: "Get active weather alerts for a US state"
+    GetForecast: "Get a detailed weather forecast for a coordinate"
+```
+
+### Fixes
+
+#### Fix server crash on collection sync with invalid operations
+
+A single operation with malformed variables JSON in a collection would crash the entire server. Invalid operations are now skipped with a warning, and the server continues serving with the remaining valid operations.
+
 ## 1.7.0 (2026-02-10)
 
 ### Features
