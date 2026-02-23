@@ -106,6 +106,9 @@ fn nest_app_tool_result(
             map.insert("prefetch".into(), Value::Object(prefetch));
         }
 
+        // This is a temporary workaround because some MCP hosts don't properly expose _meta so we need the tool name to be available here as a backup
+        map.insert("toolName".into(), Value::String(tool_name.to_string()));
+
         let wrapped = Value::Object(map);
         result.content =
             vec![Content::json(&wrapped).unwrap_or(Content::text(wrapped.to_string()))];
