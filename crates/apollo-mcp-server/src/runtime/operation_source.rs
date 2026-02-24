@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use schemars::JsonSchema;
@@ -30,14 +29,7 @@ pub enum OperationSource {
     Local { paths: Vec<PathBuf> },
 
     /// Load operations from a persisted queries manifest file
-    Manifest {
-        path: PathBuf,
-        /// Optional map from operation name to tool description. When provided,
-        /// these descriptions override the auto-generated tool descriptions for
-        /// the matching operations.
-        #[serde(default)]
-        descriptions: HashMap<String, String>,
-    },
+    Manifest { path: PathBuf },
 
     /// Load operations from uplink manifest
     Uplink,
@@ -111,33 +103,7 @@ mod test {
     }
 
     #[test]
-    fn manifest_with_descriptions_parses() {
-        let json = serde_json::json!({
-            "source": "manifest",
-            "path": "./manifest.json",
-            "descriptions": {
-                "GetAlerts": "Get weather alerts",
-                "GetForecast": "Get forecast data"
-            }
-        });
-
-        let source: OperationSource = serde_json::from_value(json).unwrap();
-        match source {
-            OperationSource::Manifest { path, descriptions } => {
-                assert_eq!(path.to_str().unwrap(), "./manifest.json");
-                assert_eq!(descriptions.len(), 2);
-                assert_eq!(descriptions.get("GetAlerts").unwrap(), "Get weather alerts");
-                assert_eq!(
-                    descriptions.get("GetForecast").unwrap(),
-                    "Get forecast data"
-                );
-            }
-            other => panic!("Expected Manifest variant, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn manifest_without_descriptions_parses() {
+    fn manifest_parses() {
         let json = serde_json::json!({
             "source": "manifest",
             "path": "./manifest.json"
@@ -145,9 +111,8 @@ mod test {
 
         let source: OperationSource = serde_json::from_value(json).unwrap();
         match source {
-            OperationSource::Manifest { path, descriptions } => {
+            OperationSource::Manifest { path } => {
                 assert_eq!(path.to_str().unwrap(), "./manifest.json");
-                assert!(descriptions.is_empty());
             }
             other => panic!("Expected Manifest variant, got {:?}", other),
         }

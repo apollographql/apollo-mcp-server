@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
@@ -55,6 +57,7 @@ struct Config {
     disable_schema_description: bool,
     enable_output_schema: bool,
     disable_auth_token_passthrough: bool,
+    descriptions: HashMap<String, String>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
@@ -96,6 +99,7 @@ impl StateMachine {
                 disable_schema_description: server.disable_schema_description,
                 enable_output_schema: server.enable_output_schema,
                 disable_auth_token_passthrough: server.disable_auth_token_passthrough,
+                descriptions: server.descriptions,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
@@ -314,6 +318,7 @@ impl From<ServerError> for State {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use apollo_compiler::Schema;
@@ -359,6 +364,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
         }
@@ -393,6 +399,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            descriptions: HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024,
             health_check: HealthCheckConfig::default(),

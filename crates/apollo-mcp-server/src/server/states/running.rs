@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
@@ -42,7 +43,7 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{MutationMode, Operation, RawOperation},
+    operations::{MutationMode, Operation, RawOperation, apply_description_override},
 };
 
 #[derive(Clone)]
@@ -66,6 +67,7 @@ pub(super) struct Running {
     pub(super) disable_schema_description: bool,
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
+    pub(super) descriptions: HashMap<String, String>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
 }
@@ -135,6 +137,7 @@ impl Running {
             let schema = &*self.schema.read().await;
             operations
                 .into_iter()
+                .map(|operation| apply_description_override(operation, &self.descriptions))
                 .filter_map(|operation| {
                     operation
                         .into_operation(
@@ -566,18 +569,10 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn invalid_operations_should_not_crash_server() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let operations = Arc::new(RwLock::new(vec![]));
-
-        let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: operations.clone(),
+    fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
+        Running {
+            schema,
+            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
@@ -595,8 +590,24 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
+            descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_operations_should_not_crash_server() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let operations = Arc::new(RwLock::new(vec![]));
+
+        let running = Running {
+            operations: operations.clone(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let new_operations = vec![
@@ -624,6 +635,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn overrides_descriptions_applied_to_operations() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let operations = Arc::new(RwLock::new(vec![]));
+
+        let descriptions = HashMap::from([(
+            "GetId".to_string(),
+            "Custom description for GetId".to_string(),
+        )]);
+
+        let running = Running {
+            operations: operations.clone(),
+            descriptions,
+            ..test_running(Arc::new(RwLock::new(schema)))
+        };
+
+        let new_operations = vec![RawOperation::from((
+            "query GetId { id }".to_string(),
+            Some("get_id.graphql".to_string()),
+        ))];
+
+        running.update_operations(new_operations).await;
+
+        let updated = operations.read().await;
+        let tool: &Tool = updated.first().unwrap().as_ref();
+        assert_eq!(
+            tool.description.as_deref(),
+            Some("Custom description for GetId"),
+            "Override description should replace auto-generated one"
+        );
+    }
+
+    #[tokio::test]
+    async fn overrides_descriptions_do_not_affect_unmatched_operations() {
+        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+
+        let operations = Arc::new(RwLock::new(vec![]));
+
+        let descriptions = HashMap::from([(
+            "NonExistent".to_string(),
+            "This should not match anything".to_string(),
+        )]);
+
+        let running = Running {
+            operations: operations.clone(),
+            descriptions,
+            ..test_running(Arc::new(RwLock::new(schema)))
+        };
+
+        let new_operations = vec![RawOperation::from((
+            "query GetId { id }".to_string(),
+            Some("get_id.graphql".to_string()),
+        ))];
+
+        running.update_operations(new_operations).await;
+
+        let updated = operations.read().await;
+        let tool: &Tool = updated.first().unwrap().as_ref();
+        assert_ne!(
+            tool.description.as_deref(),
+            Some("This should not match anything"),
+            "Unmatched override description should not be applied"
+        );
+    }
+
+    #[tokio::test]
     async fn changing_schema_invalidates_outdated_operations() {
         let schema = Arc::new(RwLock::new(
             Schema::parse(
@@ -635,29 +718,7 @@ mod tests {
             .unwrap(),
         ));
 
-        let running = Running {
-            schema: schema.clone(),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
-        };
+        let running = test_running(schema.clone());
 
         let operations = vec![
             RawOperation::from((
@@ -714,27 +775,8 @@ mod tests {
         };
 
         Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![app],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
+            ..test_running(Arc::new(RwLock::new(schema)))
         }
     }
 
@@ -1392,29 +1434,7 @@ mod tests {
             .validate()
             .unwrap();
 
-        let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            health_check: None,
-            server_info: ServerInfoConfig::default(),
-        };
+        let running = test_running(Arc::new(RwLock::new(schema)));
 
         let info = running.get_info();
 
@@ -1454,27 +1474,8 @@ mod tests {
         };
 
         let running = Running {
-            schema: Arc::new(RwLock::new(schema)),
-            operations: Arc::new(RwLock::new(vec![])),
-            apps: vec![],
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            endpoint: "http://localhost:4000".parse().unwrap(),
-            execute_tool: None,
-            introspect_tool: None,
-            search_tool: None,
-            explorer_tool: None,
-            validate_tool: None,
-            custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
-            cancellation_token: CancellationToken::new(),
-            mutation_mode: MutationMode::None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            health_check: None,
             server_info: custom_config,
+            ..test_running(Arc::new(RwLock::new(schema)))
         };
 
         let info = running.get_info();
@@ -1531,6 +1532,7 @@ mod tests {
                 disable_schema_description: false,
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
             }
