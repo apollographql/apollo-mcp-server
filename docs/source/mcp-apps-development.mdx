@@ -7,13 +7,11 @@ This document explains the core concepts of developing an MCP app using React, A
 
 If you are using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) to follow along, much of the following code is provided for you. This guide walks through the critical areas of developing an MCP application for your own understanding.
 
-## Get started
+## Apollo Client initialization
 
 If you have experience developing with Apollo Client, you already know most of what you need to know to develop with MCP Apps, which uses the `@apollo/client-ai-apps` package to manage GraphQL operations. However, this guide doesn't provide a comprehensive explanation of Apollo Client. To learn about it, go to the [Apollo Client documentation](../react).
 
-### Initialize Apollo Client
-
-Initialize an instance of `ApolloClient` from the `@apollo/client-ai-apps` package. The `ApolloClient` constructor needs at least an instance of `ApolloCache` (typically `InMemoryCache`) and the [manifest file](./mcp-apps-reference#manifest-file).
+You initialize `ApolloClient` by using the `ApolloClient` class provided by `@apollo/client-ai-apps`. The `ApolloClient` constructor needs at least an instance of `ApolloCache` (typically `InMemoryCache`) and the [manifest file](./mcp-apps-reference#manifest-file).
 
 <Caution>
 
@@ -21,8 +19,7 @@ Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, n
 
 </Caution>
 
-```ts
-// src/main.tsx
+```ts title=src/main.tsx
 import { InMemoryCache } from "@apollo/client";
 import { ApolloClient, ApplicationManifest } from "@apollo/client-ai-apps";
 // Note the manifest is written to the root of the app
@@ -45,10 +42,14 @@ You can provide a custom link chain to grant additional capabilities to `ApolloC
 
 ### Provide your client to `ApolloProvider`
 
-Once you have a `client` instance, provide that client to `ApolloProvider`. Like `ApolloClient`, you need to use the `ApolloProvider` component exported from the `@apollo/client-ai-apps` package. This implementation is responsible for initializing the client with MCP Server.
+Once you've created your `client` instance, provide that client to `ApolloProvider`. Like `ApolloClient`, you need to use the `ApolloProvider` component exported from the `@apollo/client-ai-apps` package.
 
-```tsx
+```tsx title=src/main.tsx
 import { ApolloProvider } from "@apollo/client-ai-apps/react";
+
+const client = new ApolloClient({
+  // ...
+});
 
 createRoot(document.getElementById("root")!).render(
   <ApolloProvider client={client}>
@@ -57,9 +58,13 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
+The `ApolloProvider` implementation from `@apollo/client-ai-apps/react` is responsible for initializing your application with the MCP server and providing the `client` instance in React context for use with Apollo Client's data fetching hooks.
+
 #### Show a loading fallback during initialization
 
-We can leverage React's [`Suspense` component](https://react.dev/reference/react/Suspense) to show a loading fallback while the client is connecting to our MCP server. Wrap `ApolloProvider` with `Suspense`.
+The `ApolloProvider` component leverages React's [Suspense](https://react.dev/reference/react/Suspense) functionality during initialization to avoid rendering application code that relies on client initialization. The client is initialized once the `ui/notifications/tool-result` notification is received from the host.
+
+You can use React's [`Suspense` component](https://react.dev/reference/react/Suspense) to show a loading fallback while the app is initializing. Wrap `ApolloProvider` with `Suspense`.
 
 ```tsx
 import { Suspense } from "react";
