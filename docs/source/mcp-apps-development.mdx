@@ -288,10 +288,10 @@ The base configuration that should include all project references.
 
 The `@apollo/client-ai-apps` package includes a [Vite](https://vite.dev/) plugin that configures your application for developing ChatGPT and MCP apps.
 
-To use it, import `apolloClientAiApps` from `@apollo/client-ai-apps/vite` and provide it to the `plugins` option in your vite config. Set the `targets` option to tell the plugin which environments you are building for.
+To use it, import `apolloClientAiApps` from `@apollo/client-ai-apps/vite` and provide it to the `plugins` option in your Vite configuration. Set the `targets` option to define what environments you are building for.
 
-- `mcp` - Creates a build artifact for MCP apps
-- `openai` - Creates a build artifact for ChatGPT apps
+- `mcp` - Creates a build artifact for MCP apps.
+- `openai` - Creates a build artifact for ChatGPT apps.
 
 ```ts title=vite.config.ts
 import { defineConfig } from "vite";
@@ -310,7 +310,7 @@ export default defineConfig({
 
 ### Development mode
 
-You can only run a single environment in development mode at a time. Set the `devTarget` option to tell the plugin which environment you are developing for.
+You can only run one environment in development mode at a time. Set the `devTarget` option to define what environment you are developing for.
 
 ```ts
 apolloClientAiApps({
@@ -321,13 +321,13 @@ apolloClientAiApps({
 
 <Note>
 
-If the configured `targets` option only includes a single value, you may omit the `devTarget` option because the plugin will infer the `devTarget` as the value in `targets`.
+If the configured `targets` option only includes one value, you can omit the `devTarget` option because the plugin infers the `devTarget` as the value in `targets`.
 
 </Note>
 
 #### Use environment variables to set `devTarget`
 
-If you are developing both ChatGPT and MCP apps, it is cumbersome to switch the `devTarget` each time you want to develop for a different environment. It is common to use environment variables to configure these kinds of dynamic values so that you can easily change the environment without the need to edit the build config.
+If you are developing both ChatGPT and MCP apps, switching the `devTarget` each time you want to develop for a different environment is cumbersome. We recommend that you use environment variables to configure those kinds of dynamic values so that you can easily change the environment without having to edit the build configuration.
 
 ```ts
 apolloClientAiApps({
@@ -336,7 +336,7 @@ apolloClientAiApps({
 });
 ```
 
-This however presents a TypeScript issue. `devTarget` only accepts the values `mcp` or `openai`, but `process.env.DEV_TARGET` is a `string` type. To fix this, use the `devTarget` helper exported from `@apollo/client-ai-apps/vite` which validates the input and returns the correctly typed value.
+However, this results in a TypeScript error. `devTarget` only accepts the values `mcp` or `openai`, but `process.env.DEV_TARGET` is a `string` type. To fix this issue, use the `devTarget` helper exported from `@apollo/client-ai-apps/vite` which validates the input and returns the correctly typed value.
 
 ```ts
 import { apolloClientAiApps, devTarget } from "@apollo/client-ai-apps/vite";
@@ -349,7 +349,7 @@ apolloClientAiApps({
 
 <Tip>
 
-We recommend that you add separate development scripts in `package.json` that target each environment so that you don't need to remember to set the environment variable.
+We recommend that you add separate development scripts in `package.json` that target each environment so you don't need to remember to set the environment variable.
 
 ```json title=package.json
 {
