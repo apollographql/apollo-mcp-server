@@ -140,14 +140,39 @@ Now that the query is registered as a tool, you can run the app in ChatGPT or an
 
 ## Platform-specific modules
 
-ChatGPT provides additional capabilities with ChatGPT-specific extensions available through `window.openai`. This presents a problem when developing applications that also target MCP Apps-compatible hosts which do not provide `window.openai`.
-
 You can create platform-specific modules using an additional file extension that designates the module as a platform-specific module.
 
-- `<module-name>.openai.ts(x)` - Code specific to a ChatGPT app
-- `<module-name>.mcp.ts(x)` - Code specific to an MCP app
+- `*.openai.ts(x)` - Code specific to a ChatGPT app
+- `*.mcp.ts(x)` - Code specific to an MCP app
 
-You import these files using the base name. For example, if you need to provide a ChatGPT-specific `Home` component, you write it as the following:
+This makes it possible to write code that is only available for the targeted environment.
+
+For example, the `@apollo/client-ai-apps/openai` entry point provides a `useWidgetState` hook that is only available to ChatGPT apps. Create a component file with the `.openai.tsx` extension to use this hook.
+
+```tsx title=MyComponent.openai.tsx
+import { useWidgetState } from "@apollo/client-ai-apps/openai";
+
+export function MyComponent() {
+  const [widgetState, setWidgetState] = useWidgetState();
+
+  return (
+    <div>
+      <div>{widgetState.foo.toString()}</div>
+      <button onClick={() => setWidgetState({ foo: true })}>Set foo</button>
+    </div>
+  );
+}
+```
+
+<Tip>
+
+For additional type safety when developing a platform-specific module, please reference the [TypeScript configuration](#typescript-configuration) section to update your configuration.
+
+</Tip>
+
+### Import a platform-specific module
+
+You import these files using the base name. For example, if you create a platform-specific `Home` component for OpenAI (`Home.openai.tsx`) and MCP (`Home.mcp.tsx`), you would import it as follows:
 
 ```tsx
 import { Home } from "./Home";
@@ -155,25 +180,109 @@ import { Home } from "./Home";
 
 <Caution>
 
-If you create a platform-specific module, you will need to create a module for the other platform, otherwise you will get a build error when the source component tries to import the module. For example, if you create a `Home.openai.tsx` file, you will also need to create either a `Home.mcp.tsx` or `Home.tsx` file.
+You need to make sure that each configured environment includes an importable module, otherwise the application will fail to build. For example, if you create a `Home.openai.tsx` file, you will also need to create either a `Home.mcp.tsx` or `Home.tsx` file to ensure that the MCP apps environment builds correctly.
 
 </Caution>
 
-<Tip>
+## TypeScript configuration
 
-Make sure your TypeScript configuration configures these files. `@apollo/client-ai-apps` provides extendable TypeScript config that adds the necessary configuration to write these components.
+`@apollo/client-ai-apps` provides extendable TypeScript configs that ensures you only use code available to your application that might be available in [platform-specific modules](#platform-specific-modules).
 
-</Tip>
+- `@apollo/client-ai-apps/tsconfig/core` — for shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files used in all environments.
+- `@apollo/client-ai-apps/tsconfig/mcp` — for developing MCP-specific modules. Allows you to use utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
+- `@apollo/client-ai-apps/tsconfig/openai` — for developing ChatGPT-specific modules. Allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
+
+### Recommended TypeScript configuration
+
+Use TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) to apply a TypeScript configuration to a subset of files. We recommend the following config files:
+
+```
+.
+├── tsconfig.app.json
+├── tsconfig.base.json
+├── tsconfig.mcp.json
+├── tsconfig.openai.json
+└── tsconfig.json
+```
+
+**`tsconfig.base.json`**
+
+Shared configuration for all TypeScript files. This should be where most of your `compilerOptions` are configured.
+
+```jsonc title=tsconfig.base.json
+{
+  "compilerOptions": {
+    "strict": true,
+    // ... all other preferred TypeScript settings
+  },
+}
+```
+
+**`tsconfig.app.json`**
+
+Configuration that targets all shared modules. Extend `@apollo/client-ai-apps/tsconfig/core` and exclude platform-specific modules (`.mcp.*` and `.openai.*` files).
+
+```jsonc title=tsconfig.app.json
+{
+  "extends": ["@apollo/client-ai-apps/tsconfig/core", "./tsconfig.base.json"],
+  "include": ["src"],
+  "exclude": ["src/**/*.mcp.*", "src/**/*.openai.*"],
+}
+```
+
+**`tsconfig.mcp.json`**
+
+Configuration that targets MCP app specific modules. Extend `@apollo/client-ai-apps/tsconfig/mcp` and include `.mcp.*` files.
+
+```jsonc title=tsconfig.mcp.json
+{
+  "extends": ["@apollo/client-ai-apps/tsconfig/mcp", "./tsconfig.base.json"],
+  "include": ["src/**/*.mcp.ts", "src/**/*.mcp.tsx"],
+}
+```
 
 <Note>
 
-The `apolloClientAiApps` vite plugin needs to include `openai` as a target.
+If your app doesn't have any MCP apps specific files, don't include this file because TypeScript might complain that it is unable to match files in the `include` setting.
 
 </Note>
 
-## Configuring app targets
+**`tsconfig.openai.json`**
 
-## TypeScript configuration
+Configuration that targets ChatGPT app specific modules. Extend `@apollo/client-ai-apps/tsconfig/openai` and include `.openai.*` files. Include the `openai/globals` types in `types` configuration which provides types for `window.openai`.
+
+```jsonc title=tsconfig.openai.json
+{
+  "extends": ["@apollo/client-ai-apps/tsconfig/openai", "./tsconfig.base.json"],
+  "compilerOptions": {
+    "types": ["@apollo/client-ai-apps/openai/globals"],
+  },
+  "include": ["src/**/*.openai.ts", "src/**/*.openai.tsx"],
+}
+```
+
+<Note>
+
+If your app doesn't have any MCP apps specific files, don't include this file because TypeScript might complain that it is unable to match files in the `include` setting.
+
+</Note>
+
+**`tsconfig.json`**
+
+The base config that should include all project references
+
+```jsonc title=tsconfig.openai.json
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    // Omit if you don't create this file
+    { "path": "./tsconfig.mcp.json" },
+    // Omit if you don't create this file
+    { "path": "./tsconfig.openai.json" },
+  ],
+}
+```
 
 ## Vite configuration
 
