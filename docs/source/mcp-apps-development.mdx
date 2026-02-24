@@ -81,7 +81,7 @@ You are not required to use a `Suspense` component to show a loading fallback. I
 
 ## Register an MCP tool
 
-The `@tool` directive defines tools from your GraphQL operations, so you can write queries like you would in an Apollo Client application. Just add the `@tool` directive to the operation.
+You register MCP tools by writing GraphQL queries combined with the `@tool` directive.
 
 For example, if you want to define a query that gets the highest-rated products in a marketplace application, define a query called `TopProductsQuery` in your React component, then use the `useQuery` hook from `@apollo/client/react` to read the query data. To register the query as its own tool, use the `@tool` directive.
 
