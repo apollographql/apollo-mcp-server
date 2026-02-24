@@ -1,9 +1,9 @@
 ---
-title: Developing MCP Apps
+title: Advanced development with MCP Apps
 subtitle: Key concepts when developing MCP Apps
 ---
 
-This reference guide provides an overview of the core concepts of developing an MCP app using React, Apollo Client, and Apollo MCP Server.
+This document explains the core concepts of developing an MCP app using React, Apollo Client, and Apollo MCP Server.
 
 If you are using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) to follow along, much of the following code is provided for you. This guide walks through the critical areas of developing an MCP application for your own understanding.
 
@@ -15,15 +15,15 @@ This guide does not provide a comprehensive overview of Apollo Client capabiliti
 
 ## Get started
 
-The `@apollo/client-ai-apps` package uses Apollo Client to manage GraphQL operations in our MCP app. This means you can use the knowledge you already have building applications with Apollo Client to build MCP apps.
+If you have experience developing with Apollo Client, you already know most of what you need to know to develop with MCP Apps, which uses the `@apollo/client-ai-apps` package to manage GraphQL operations. However, this guide doesn't provide a comprehensive explanation of Apollo Client. To learn about it, go to the [Apollo Client documentation](../react).
 
 ### Initialize Apollo Client
 
-To get started, we need to initialize and instance of `ApolloClient` from the `@apollo/client-ai-apps` package. The `ApolloClient` constructor needs, at minim, an instance of an `ApolloCache` and our [manifest file](./mcp-apps-reference#manifest-file).
+Initialize an instance of `ApolloClient` from the `@apollo/client-ai-apps` package. The `ApolloClient` constructor needs at least one instance of an `ApolloCache` and the [manifest file](./mcp-apps-reference#manifest-file).
 
 <Note>
 
-Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, not the core `@apollo/client` repository. The `ApolloClient` class from `@apollo/client-ai-apps` handles the details of integrating with an MCP apps environment.
+Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, not the core `@apollo/client` repository. The `ApolloClient` class from `@apollo/client-ai-apps` is for integrating with the MCP Apps environment.
 
 </Note>
 
@@ -43,15 +43,15 @@ const client = new ApolloClient({
 
 <Note>
 
-Unlike the `ApolloClient` class from the core `@apollo/client` package, the `ApolloClient` class from `@apollo/client-ai-apps` does not require a configured `link`. By default it uses `ToolCallLink` which executes GraphQL queries through MCP tools. <br/><br/>
+Unlike the `ApolloClient` class from the core `@apollo/client` package, the `ApolloClient` class from `@apollo/client-ai-apps` doesn't require a configured `link`. By default, the class uses `ToolCallLink`, which executes GraphQL queries through MCP tools. <br/><br/>
 
-You may provide a custom link chain to provide additional capability to `ApolloClient`, however your terminating link must be a `ToolCallLink`.
+You can provide a custom link chain to grant additional capabilities to `ApolloClient`; however, your terminating link needs to be a `ToolCallLink`.
 
 </Note>
 
 ### Provide your client to `ApolloProvider`
 
-Once you have a `client` instance, you need to provide that client to `ApolloProvider`. Like `ApolloClient`, you will need to use the `ApolloProvider` component exported from the `@apollo/client-ai-apps` package. This implementaton is reponsible for initializing the client with our MCP server.
+Once you have a `client` instance, provide that client to `ApolloProvider`. Like `ApolloClient`, you need to use the `ApolloProvider` component exported from the `@apollo/client-ai-apps` package. This implementation is responsible for initializing the client with MCP Server.
 
 ```tsx
 import { ApolloProvider } from "@apollo/client-ai-apps/react";
@@ -65,9 +65,9 @@ createRoot(document.getElementById("root")!).render(
 
 ## Register an operation as an MCP tool
 
-Tools are defined from your GraphQL operations using the `@tool` directive. You write queries like you would in an Apollo Client application and add the `@tool` directive to the operation.
+The `@tool` directive defines tools from your GraphQL operations, so you can write queries like you would in an Apollo Client application. Just add the `@tool` directive to the operation.
 
-As an example, let's define a query that gets the highest rated products in a store-like application. Define a query called `TopProductsQuery` in your React component. Use the `useQuery` hook from `@apollo/client/react` to read the query data. We use the `@tool` directive to register this query as it's own tool.
+For example, if you want to define a query that gets the highest-rated products in a marketplace application, define a query called `TopProductsQuery` in your React component, then use the `useQuery` hook from `@apollo/client/react` to read the query data. To register the query as its own tool, use the `@tool` directive.
 
 ```tsx
 import { gql, TypedDocumentNode } from "@apollo/client";
@@ -115,6 +115,6 @@ function TopProducts() {
 }
 ```
 
-Now this query is registered as a tool in our app! If you run the app in ChatGPT or an MCP apps compatible host, you can ask the LLM to show you some top products. This will render our view using data fetched by our MCP server.
+Now that the query is registered as a tool, you can run the app in ChatGPT or an MCP Apps-compatible host and prompt the LLM to show you the top products. They render using data fetched by MCP Server.
 
 ## Platform-specific components

@@ -48,7 +48,7 @@ items:
         href: "./mcp-apps-prerequisites"
       - label: "Quickstart"
         href: "./mcp-apps-quickstart"
-      - label: "Development"
+      - label: "Advanced development with MCP Apps"
         href: "./mcp-apps-development"
       - label: "Architecture"
         href: "./mcp-apps-architecture"
