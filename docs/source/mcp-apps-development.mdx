@@ -116,7 +116,7 @@ const TOP_PRODUCTS_QUERY: TypedDocumentNode<
   }
 `;
 
-function TopProducts() {
+function App() {
   const { data, loading, error, dataState } = useQuery(TOP_PRODUCTS_QUERY);
 
   if (loading) {
@@ -139,6 +139,39 @@ function TopProducts() {
 
 Now that the query is registered as a tool, you can run the app in ChatGPT or an MCP Apps-compatible host and prompt the LLM to show you the top products. They render using data fetched by MCP Server.
 
-## Platform-specific components
+## Platform-specific modules
+
+ChatGPT provides additional capabilities with ChatGPT-specific extensions available through `window.openai`. This presents a problem when developing applications that also target MCP Apps-compatible hosts which do not provide `window.openai`.
+
+You can create platform-specific modules using an additional file extension that designates the module as a platform-specific module.
+
+- `<module-name>.openai.ts(x)` - Code specific to a ChatGPT app
+- `<module-name>.mcp.ts(x)` - Code specific to an MCP app
+
+You import these files using the base name. For example, if you need to provide a ChatGPT-specific `Home` component, you write it as the following:
+
+```tsx
+import { Home } from "./Home";
+```
+
+<Caution>
+
+If you create a platform-specific module, you will need to create a module for the other platform, otherwise you will get a build error when the source component tries to import the module. For example, if you create a `Home.openai.tsx` file, you will also need to create either a `Home.mcp.tsx` or `Home.tsx` file.
+
+</Caution>
+
+<Tip>
+
+Make sure your TypeScript configuration configures these files. `@apollo/client-ai-apps` provides extendable TypeScript config that adds the necessary configuration to write these components.
+
+</Tip>
+
+<Note>
+
+The `apolloClientAiApps` vite plugin needs to include `openai` as a target.
+
+</Note>
 
 ## Configuring app targets
+
+## TypeScript configuration
