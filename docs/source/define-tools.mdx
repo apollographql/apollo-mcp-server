@@ -149,15 +149,17 @@ operations:
 
 ## Tool descriptions
 
-Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates one from the GraphQL schema's field and type descriptions.
+Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates a tool description using the GraphQL schema's field and type descriptions.
 
 ### GraphQL comments in operation bodies
 
-Embed `#` comments before the operation definition. The MCP Server extracts leading comments and uses them as the tool description.
+Embed `#` comments before the operation definition. MCP Server extracts leading comments and uses them as the tool description.
+
+MCP Server ignores comments placed inside the operation body — for example, above or beside field selections.
 
 **In local `.graphql` files**, add comments directly above the operation:
 
-```graphql title="operations/GetAlerts.graphql"
+```graphql title="operations/GetAlerts.graphql" {1}
 # Get active weather alerts for a US state
 query GetAlerts($state: String!) {
   alerts(state: $state) {
@@ -167,6 +169,7 @@ query GetAlerts($state: String!) {
   }
 }
 ```
+**In GraphOS operation collections**, add comments above the operation in the Explorer editor before saving to the collection.
 
 **In persisted query manifests**, embed comments in the `body` field:
 
