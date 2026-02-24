@@ -15,11 +15,11 @@ If you have experience developing with Apollo Client, you already know most of w
 
 Initialize an instance of `ApolloClient` from the `@apollo/client-ai-apps` package. The `ApolloClient` constructor needs at least an instance of `ApolloCache` (typically `InMemoryCache`) and the [manifest file](./mcp-apps-reference#manifest-file).
 
-<Note>
+<Caution>
 
 Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, not the core `@apollo/client` repository. The `ApolloClient` class from `@apollo/client-ai-apps` is for integrating with the MCP Apps environment.
 
-</Note>
+</Caution>
 
 ```ts
 // src/main.tsx
