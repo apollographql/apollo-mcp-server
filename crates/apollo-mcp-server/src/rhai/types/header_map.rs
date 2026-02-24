@@ -1,25 +1,6 @@
 use http::header::{HeaderName, InvalidHeaderName, InvalidHeaderValue};
 use http::{HeaderMap, HeaderValue};
-use parking_lot::Mutex;
-use rhai::plugin::*;
-use rhai::{CustomType, Dynamic, Engine, EvalAltResult, Module, Position, Shared, TypeBuilder};
-use rhai::{export_module, exported_module};
-use rmcp::model::ErrorCode;
-
-/// With the `sync` feature, `rhai::Shared` is `Arc`, so this is `Arc<Mutex<T>>`.
-pub(crate) type SharedMut<T> = Shared<Mutex<T>>;
-
-pub(crate) trait WithMut<T> {
-    /// Run a closure with a mutable reference to the inner value.
-    fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
-}
-
-impl<T> WithMut<T> for SharedMut<T> {
-    fn with_mut<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        let mut guard = self.lock();
-        f(&mut guard)
-    }
-}
+use rhai::{CustomType, Engine, EvalAltResult, Position, TypeBuilder};
 
 #[derive(Clone, Debug, CustomType)]
 pub(crate) struct RhaiHeaderMap {
@@ -69,36 +50,4 @@ impl RhaiHeaderMap {
     pub(crate) fn as_header_map(&self) -> HeaderMap {
         self.header_map.clone()
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum RhaiErrorCode {
-    InvalidRequest,
-    InternalError,
-}
-
-impl RhaiErrorCode {
-    pub(crate) fn register(engine: &mut Engine) {
-        engine
-            .register_type_with_name::<RhaiErrorCode>("ErrorCode")
-            .register_static_module("ErrorCode", exported_module!(rhai_error_code_module).into());
-    }
-}
-
-impl From<RhaiErrorCode> for ErrorCode {
-    fn from(code: RhaiErrorCode) -> Self {
-        match code {
-            RhaiErrorCode::InvalidRequest => ErrorCode::INVALID_REQUEST,
-            RhaiErrorCode::InternalError => ErrorCode::INTERNAL_ERROR,
-        }
-    }
-}
-
-#[export_module]
-mod rhai_error_code_module {
-
-    use crate::rhai::types::RhaiErrorCode;
-
-    pub const INVALID_REQUEST: RhaiErrorCode = RhaiErrorCode::InvalidRequest;
-    pub const INTERNAL_ERROR: RhaiErrorCode = RhaiErrorCode::InternalError;
 }

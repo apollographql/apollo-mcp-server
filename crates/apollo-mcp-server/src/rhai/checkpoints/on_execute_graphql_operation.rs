@@ -8,23 +8,13 @@ use tracing::{error, warn};
 use url::Url;
 
 use crate::{
-    errors::{McpError, ServerError},
+    errors::McpError,
     rhai::{
         engine::RhaiEngine,
-        types::{RhaiErrorCode, RhaiHeaderMap, SharedMut, WithMut},
+        shared_mut::{SharedMut, WithMut},
+        types::{RhaiErrorCode, RhaiHeaderMap},
     },
 };
-
-pub fn on_startup(engine: &Arc<Mutex<RhaiEngine>>) -> Result<(), ServerError> {
-    engine
-        .lock()
-        .execute_hook("on_startup", ())
-        .map_err(|err| {
-            error!("Error when executing on_startup hook: {err}");
-            ServerError::RhaiError
-        })?;
-    Ok(())
-}
 
 #[derive(Clone, Debug, CustomType)]
 pub(crate) struct OnExecuteGraphqlOperationContext {

@@ -5,6 +5,7 @@ use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
 use tracing::info;
 
 use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
+use crate::rhai::functions::RhaiSha256;
 use crate::rhai::types::{RhaiErrorCode, RhaiHeaderMap};
 
 pub(crate) struct RhaiEngine {
@@ -28,8 +29,7 @@ impl RhaiEngine {
 
         let scope = Self::create_scope();
 
-        Self::register_modules();
-        Self::register_functions();
+        Self::register_functions(&mut engine);
         Self::register_types(&mut engine);
         Self::register_logging(&mut engine);
 
@@ -38,19 +38,6 @@ impl RhaiEngine {
             scope,
             ast: AST::empty(),
         }
-    }
-
-    fn register_modules() {
-        //  let mut module = exported_module!(router_plugin);
-        // combine_with_exported_module!(&mut module, "header", router_header_map);
-
-        // let base64_module = exported_module!(router_base64);
-
-        // engine
-        //     // Register our plugin module
-        //     .register_global_module(module.into())
-        //     // Register our base64 module (not global)
-        //     .register_static_module("base64", base64_module.into())
     }
 
     fn register_logging(engine: &mut Engine) {
@@ -64,33 +51,8 @@ impl RhaiEngine {
         });
     }
 
-    fn register_functions() {
-        // fn add_len(x: i64, s: ImmutableString) -> i64 {
-        //     x + s.len()
-        // }
-        //engine.register_fn("add", add_len);
-
-        // engine.register_fn("foo", move |x: i64, y: bool| {
-        //     embedded_obj.borrow().do_foo(x, y);
-        // });
-
-        //     engine
-        // // Register a series of logging functions
-        // .register_fn("log_trace", move |message: Dynamic| {
-        //     tracing::trace!(%message, target = %trace_main);
-        // })
-        // .register_fn("log_debug", move |message: Dynamic| {
-        //     tracing::debug!(%message, target = %debug_main);
-        // })
-        // .register_fn("log_info", move |message: Dynamic| {
-        //     tracing::info!(%message, target = %info_main);
-        // })
-        // .register_fn("log_warn", move |message: Dynamic| {
-        //     tracing::warn!(%message, target = %warn_main);
-        // })
-        // .register_fn("log_error", move |message: Dynamic| {
-        //     tracing::error!(%message, target = %error_main);
-        // });
+    fn register_functions(engine: &mut Engine) {
+        RhaiSha256::register(engine);
     }
 
     fn register_types(engine: &mut Engine) {
@@ -144,9 +106,6 @@ impl RhaiEngine {
         self.ast.iter_functions().any(|fn_def| fn_def.name == name)
     }
 }
-
-// For creating custom types that can be used in Rhai
-// #[derive(CustomType)]
 
 /*
 #[export_module]
