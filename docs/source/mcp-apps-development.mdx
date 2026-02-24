@@ -62,7 +62,7 @@ The `ApolloProvider` implementation from `@apollo/client-ai-apps/react` is respo
 
 #### Show a loading fallback during initialization
 
-The `ApolloProvider` component leverages React's [Suspense](https://react.dev/reference/react/Suspense) functionality during initialization to avoid rendering application code that relies on client initialization. The client is initialized once the `ui/notifications/tool-result` notification is received from the host.
+The `ApolloProvider` component uses React's [Suspense](https://react.dev/reference/react/Suspense) functionality during initialization, which avoids rendering application code that relies on client initialization. The client is initialized when it receives the `ui/notifications/tool-result` notification from the host.
 
 You can use React's [`Suspense` component](https://react.dev/reference/react/Suspense) to show a loading fallback while the app is initializing. Wrap `ApolloProvider` with `Suspense`.
 
@@ -80,13 +80,13 @@ createRoot(document.getElementById("root")!).render(
 
 <Note>
 
-You are not required to use a `Suspense` component to show a loading fallback. If a `Suspense` component is not provided, the screen will remain blank until the tool result is available from the application host.
+Using a `Suspense` component to display a loading fallback is optional. If you don't provide a `Suspense` component, the screen remains blank until the host provides the tool result.
 
 </Note>
 
 ## Register an MCP tool
 
-You register MCP tools by writing GraphQL queries combined with the `@tool` directive.
+To register MCP tools, combine your GraphQL queries with the `@tool` directive.
 
 For example, if you want to define a query that gets the highest-rated products in a marketplace application, define a query called `TopProductsQuery` in your React component, then use the `useQuery` hook from `@apollo/client/react` to read the query data. To register the query as its own tool, use the `@tool` directive.
 
@@ -140,14 +140,14 @@ Now that the query is registered as a tool, you can run the app in ChatGPT or an
 
 ## Platform-specific modules
 
-You can create platform-specific modules using an additional file extension that designates the module as a platform-specific module.
+To create platform-specific modules, append the file extension that corresponds with the host you want to target.
 
 - `*.openai.ts(x)` - Code specific to a ChatGPT app
 - `*.mcp.ts(x)` - Code specific to an MCP app
 
-This makes it possible to write code that is only available for the targeted environment.
+Those extensions allow you to write code only available to the targeted host.
 
-For example, the `@apollo/client-ai-apps/openai` entry point provides a `useWidgetState` hook that is only available to ChatGPT apps. Create a component file with the `.openai.tsx` extension to use this hook.
+For example, the `@apollo/client-ai-apps/openai` entry point provides a `useWidgetState` hook that is only available to ChatGPT apps. To use that hook, create a component file with the `.openai.tsx` extension.
 
 ```tsx title=MyComponent.openai.tsx
 import { useWidgetState } from "@apollo/client-ai-apps/openai";
@@ -170,9 +170,9 @@ For additional type safety when developing a platform-specific module, please re
 
 </Tip>
 
-### Import a platform-specific module
+### How to import platform-specific modules
 
-You import these files using the base name. For example, if you create a platform-specific `Home` component for OpenAI (`Home.openai.tsx`) and MCP (`Home.mcp.tsx`), you would import it as follows:
+To import platform-specific modules, use the base name. For example, if you create a platform-specific `Home` component for OpenAI (`Home.openai.tsx`) and MCP (`Home.mcp.tsx`), you import it like this:
 
 ```tsx
 import { Home } from "./Home";
@@ -180,21 +180,21 @@ import { Home } from "./Home";
 
 <Caution>
 
-You need to make sure that each configured environment includes an importable module, otherwise the application will fail to build. For example, if you create a `Home.openai.tsx` file, you will also need to create either a `Home.mcp.tsx` or `Home.tsx` file to ensure that the MCP apps environment builds correctly.
+Make sure each configured environment has a module it can import. If one doesn't exist, the application fails to build. For example, if you create a `Home.openai.tsx` file, you also need to create either a `Home.mcp.tsx` or `Home.tsx` file.
 
 </Caution>
 
 ## TypeScript configuration
 
-`@apollo/client-ai-apps` provides extendable TypeScript configs that ensures you only use code available to your application that might be available in [platform-specific modules](#platform-specific-modules).
+`@apollo/client-ai-apps` provides extendable TypeScript configurations that make sure you only use code available to your application from [platform-specific modules](#platform-specific-modules).
 
 - `@apollo/client-ai-apps/tsconfig/core` — for shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files used in all environments.
-- `@apollo/client-ai-apps/tsconfig/mcp` — for developing MCP-specific modules. Allows you to use utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
-- `@apollo/client-ai-apps/tsconfig/openai` — for developing ChatGPT-specific modules. Allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
+- `@apollo/client-ai-apps/tsconfig/mcp` — For developing MCP-specific modules. This configuration allows you to access utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
+- `@apollo/client-ai-apps/tsconfig/openai` — For developing ChatGPT-specific modules. This configuration allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
 
 ### Recommended TypeScript configuration
 
-Use TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) to apply a TypeScript configuration to a subset of files. We recommend the following config files:
+Use TypeScript [project references](https://www.typescriptlang.org/docs/handbook/project-references.html) to apply a TypeScript configuration to a subset of files. We recommend these configuration files:
 
 ```
 .
@@ -243,13 +243,13 @@ Configuration that targets MCP app specific modules. Extend `@apollo/client-ai-a
 
 <Note>
 
-If your app doesn't have any MCP apps specific files, don't include this file because TypeScript might complain that it is unable to match files in the `include` setting.
+If your app doesn't have any MCP Apps-specific files, don't include this file because TypeScript might be unable to match files in the `include` setting.
 
 </Note>
 
 **`tsconfig.openai.json`**
 
-Configuration that targets ChatGPT app specific modules. Extend `@apollo/client-ai-apps/tsconfig/openai` and include `.openai.*` files. Include the `openai/globals` types in `types` configuration which provides types for `window.openai`.
+Configuration that targets ChatGPT App-specific modules. Extend `@apollo/client-ai-apps/tsconfig/openai` and include `.openai.*` files. Include the `openai/globals` types in the `types` configuration, which provides types for `window.openai`.
 
 ```jsonc title=tsconfig.openai.json
 {
@@ -269,7 +269,7 @@ If your app doesn't have any ChatGPT apps specific files, don't include this fil
 
 **`tsconfig.json`**
 
-The base config that should include all project references
+The base configuration that should include all project references.
 
 ```jsonc title=tsconfig.openai.json
 {
