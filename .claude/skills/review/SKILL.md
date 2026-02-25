@@ -197,13 +197,7 @@ After posting inline comments, add a summary comment with:
 - Final recommendation (Approve / Approve with suggestions / Request changes)
 - Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
 
-**Important:** Always update the existing summary comment rather than creating a new one. Use the find-and-update pattern shown above. If this is a follow-up review (an existing summary comment was found), the updated content should be concise and focused on what changed:
-
-- Overall assessment (summary of the changes, keep this to a couple of sentences maximum)
-- Any new findings (if any, if none do not include this section)
-- Changes to test coverage assessment (if any, if none do not include this section)
-- Final recommendation
-- Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
+**Important:** Always update the existing summary comment rather than creating a new one. Use the find-and-update pattern shown above.
 
 ## Guidelines for High-Signal Reviews
 
