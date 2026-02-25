@@ -32,7 +32,7 @@ use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeMode {
     /// Skip scope enforcement entirely.
@@ -159,11 +159,45 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
+/// Constructs the protected resource metadata URL per RFC 9728 Section 3.
+///
+/// The well-known URI is formed by inserting `/.well-known/oauth-protected-resource`
+/// between the host and path components of the resource identifier.
+/// Query strings and fragments are stripped per RFC 9728.
+fn build_resource_metadata_url(resource: &Url) -> Url {
+    let mut url = resource.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+
+    if url.host_str().is_none() {
+        warn!("resource URL has no host, falling back to root-level metadata path");
+        url.set_path("/.well-known/oauth-protected-resource");
+        return url;
+    }
+
+    let path = url
+        .path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    if path.is_empty() {
+        url.set_path("/.well-known/oauth-protected-resource");
+    } else {
+        url.set_path(&format!("/.well-known/oauth-protected-resource/{path}"));
+    }
+
+    url
+}
+
 /// Internal state for the auth middleware, containing both config and pre-built HTTP client
 #[derive(Clone)]
 struct AuthState {
     config: Config,
     client: reqwest::Client,
+    resource_metadata_url: Url,
 }
 
 impl Config {
@@ -203,9 +237,12 @@ impl Config {
 
         // Build HTTP client with TLS configuration
         let client = self.tls.build_client()?;
+        let resource_metadata_url = build_resource_metadata_url(&self.resource);
+        let metadata_route_path = resource_metadata_url.path().to_string();
         let auth_state = AuthState {
             config: self.clone(),
             client,
+            resource_metadata_url,
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -214,10 +251,7 @@ impl Config {
             .allow_methods([Method::GET])
             .allow_origin(Any);
         let auth_router = Router::new()
-            .route(
-                "/.well-known/oauth-protected-resource",
-                get(protected_resource),
-            )
+            .route(&metadata_route_path, get(protected_resource))
             .with_state(auth_state.clone())
             .layer(cors);
 
@@ -237,13 +271,7 @@ async fn oauth_validate(
     next: Next,
 ) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
     let auth_config = &auth_state.config;
-
-    // Helper to construct the resource metadata URL
-    let resource_metadata_url = || {
-        let mut url = auth_config.resource.clone();
-        url.set_path("/.well-known/oauth-protected-resource");
-        url
-    };
+    let resource_metadata_url = &auth_state.resource_metadata_url;
 
     // Unauthorized error for missing or invalid tokens
     let unauthorized_error = || {
@@ -256,10 +284,10 @@ async fn oauth_validate(
         (
             StatusCode::UNAUTHORIZED,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: resource_metadata_url(),
+                resource_metadata: resource_metadata_url.clone(),
                 scope,
                 error: None,
-                scope_mode: Some(auth_config.scope_mode.clone()),
+                scope_mode: Some(auth_config.scope_mode),
             }),
         )
     };
@@ -269,10 +297,10 @@ async fn oauth_validate(
         (
             StatusCode::FORBIDDEN,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: resource_metadata_url(),
+                resource_metadata: resource_metadata_url.clone(),
                 scope: Some(required_scopes.join(" ")),
                 error: Some(BearerError::InsufficientScope),
-                scope_mode: Some(auth_config.scope_mode.clone()),
+                scope_mode: Some(auth_config.scope_mode),
             }),
         )
     };
@@ -377,9 +405,11 @@ mod tests {
     }
 
     fn test_auth_state(config: Config) -> AuthState {
+        let resource_metadata_url = build_resource_metadata_url(&config.resource);
         AuthState {
             config,
             client: reqwest::Client::new(),
+            resource_metadata_url,
         }
     }
 
@@ -716,6 +746,58 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
+        }
+    }
+
+    mod build_resource_metadata_url {
+        use super::*;
+        use rstest::rstest;
+
+        #[rstest]
+        #[case::no_path(
+            "https://mcp.example.com",
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        )]
+        #[case::single_path_segment(
+            "https://mcp.example.com/mcp",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::multi_path_segments(
+            "https://api.example.com/first-service/mcp",
+            "https://api.example.com/.well-known/oauth-protected-resource/first-service/mcp"
+        )]
+        #[case::trailing_slash_normalized(
+            "https://mcp.example.com/mcp/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::non_standard_port(
+            "https://localhost:8443/mcp",
+            "https://localhost:8443/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::no_path_with_port(
+            "https://localhost:4000",
+            "https://localhost:4000/.well-known/oauth-protected-resource"
+        )]
+        #[case::deep_path(
+            "https://api.example.com/v1/services/mcp",
+            "https://api.example.com/.well-known/oauth-protected-resource/v1/services/mcp"
+        )]
+        #[case::query_string_stripped(
+            "https://mcp.example.com/mcp?version=2",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::fragment_stripped(
+            "https://mcp.example.com/mcp#section",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::root_trailing_slash(
+            "https://mcp.example.com/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        )]
+        fn constructs_correct_url(#[case] resource: &str, #[case] expected: &str) {
+            let resource_url = Url::parse(resource).unwrap();
+            let result = build_resource_metadata_url(&resource_url);
+            assert_eq!(result.as_str(), expected);
         }
     }
 }
