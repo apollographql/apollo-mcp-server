@@ -171,8 +171,14 @@ gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   -f subject_type="line" \
   -F line=42
 
-# For general PR comments (summary, test coverage assessment):
-gh pr comment {pr_number} --body "## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
+# For the summary comment, always update an existing one if present (instead of creating a new one):
+COMMENT_ID=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments --jq '.[] | select(.body | contains("Reviewed by Claude Code")) | .id' | tail -1)
+BODY="## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
+if [ -n "$COMMENT_ID" ]; then
+  gh api repos/{owner}/{repo}/issues/comments/$COMMENT_ID -X PATCH -f body="$BODY"
+else
+  gh pr comment {pr_number} --body "$BODY"
+fi
 ```
 
 Each inline comment should:
@@ -191,13 +197,7 @@ After posting inline comments, add a summary comment with:
 - Final recommendation (Approve / Approve with suggestions / Request changes)
 - Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
 
-If you have already posted a summary comment on this PR previously, any follow up summary comments should be concise and focused on what changed:
-
-- Overall assessment (summary of the changes, keep this to a couple of sentences maximum)
-- Any new findings (if any, if none do not include this section)
-- Changes to test coverage assessment (if any, if none do not include this section)
-- Final recommendation
-- Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
+**Important:** Always update the existing summary comment rather than creating a new one. Use the find-and-update pattern shown above.
 
 ## Guidelines for High-Signal Reviews
 
