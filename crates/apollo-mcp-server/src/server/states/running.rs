@@ -13,7 +13,8 @@ use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
         CallToolRequestParams, CallToolResult, Content, ErrorCode, InitializeRequestParams,
-        InitializeResult, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerInfo,
+        InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
+        ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
 };
@@ -73,6 +74,13 @@ pub(super) struct Running {
 }
 
 impl Running {
+    /// Returns true when `enable_output_schema` is active and the negotiated
+    /// protocol version supports `outputSchema` / `structuredContent` (MCP 2025-06-18+).
+    fn client_supports_output_schema(&self, protocol_version: Option<&ProtocolVersion>) -> bool {
+        self.enable_output_schema
+            && protocol_version.is_some_and(|v| *v >= ProtocolVersion::V_2025_06_18)
+    }
+
     /// Update a running server with a new schema.
     ///
     /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
@@ -202,6 +210,7 @@ impl Running {
         &self,
         extensions: Extensions,
         client_capabilities: Option<&ClientCapabilities>,
+        protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
@@ -209,48 +218,38 @@ impl Running {
             .build()
             .add(1, &[]);
 
-        // Access the "app" query parameter from the HTTP request
-        let app_param = extensions
-            .get::<axum::http::request::Parts>()
-            .and_then(|parts| parts.uri.query())
-            .and_then(|query| {
-                url::form_urlencoded::parse(query.as_bytes())
-                    .find(|(key, _)| key == "app")
-                    .map(|(_, value)| value.into_owned())
-            });
+        let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
-        if let Some(app_name) = app_param {
+        let mut result = if let Some(app_name) = app_param {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
-                Some(app) => {
-                    return Ok(ListToolsResult {
-                        next_cursor: None,
-                        tools: self
-                            .operations
-                            .read()
-                            .await
-                            .iter()
-                            .map(|op| op.as_ref().clone())
-                            .chain(
-                                self.execute_tool
-                                    .as_ref()
-                                    .iter()
-                                    // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
-                                    .map(|e| make_tool_private(e.tool.clone())),
-                            )
-                            .chain(
-                                app.tools
-                                    .iter()
-                                    .map(|tool| attach_tool_metadata(app, tool, &app_target))
-                                    .collect::<Vec<_>>(),
-                            )
-                            .collect(),
-                        meta: None,
-                    });
-                }
+                Some(app) => ListToolsResult {
+                    next_cursor: None,
+                    tools: self
+                        .operations
+                        .read()
+                        .await
+                        .iter()
+                        .map(|op| op.as_ref().clone())
+                        .chain(
+                            self.execute_tool
+                                .as_ref()
+                                .iter()
+                                // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
+                                .map(|e| make_tool_private(e.tool.clone())),
+                        )
+                        .chain(
+                            app.tools
+                                .iter()
+                                .map(|tool| attach_tool_metadata(app, tool, &app_target))
+                                .collect::<Vec<_>>(),
+                        )
+                        .collect(),
+                    meta: None,
+                },
                 None => {
                     return Err(McpError::new(
                         ErrorCode::INVALID_REQUEST,
@@ -259,24 +258,32 @@ impl Running {
                     ));
                 }
             }
+        } else {
+            ListToolsResult {
+                next_cursor: None,
+                tools: self
+                    .operations
+                    .read()
+                    .await
+                    .iter()
+                    .map(|op| op.as_ref().clone())
+                    .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .collect(),
+                meta: None,
+            }
+        };
+
+        if !self.client_supports_output_schema(protocol_version) {
+            for tool in &mut result.tools {
+                tool.output_schema = None;
+            }
         }
 
-        Ok(ListToolsResult {
-            next_cursor: None,
-            tools: self
-                .operations
-                .read()
-                .await
-                .iter()
-                .map(|op| op.as_ref().clone())
-                .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .collect(),
-            meta: None,
-        })
+        Ok(result)
     }
 
     fn list_resources_impl(&self) -> Result<ListResourcesResult, McpError> {
@@ -350,7 +357,10 @@ impl ServerHandler for Running {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
-        let result = if tool_name == INTROSPECT_TOOL_NAME
+
+        let app_param = extract_app_param(&context.extensions);
+
+        let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
         {
             match serde_json::from_value(Value::from(request.arguments)) {
@@ -423,17 +433,6 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            // Access the "app" query parameter from the HTTP request
-            let app_param = context
-                .extensions
-                .get::<axum::http::request::Parts>()
-                .and_then(|parts| parts.uri.query())
-                .and_then(|query| {
-                    url::form_urlencoded::parse(query.as_bytes())
-                        .find(|(key, _)| key == "app")
-                        .map(|(_, value)| value.into_owned())
-                });
-
             if let Some(res) = find_and_execute_operation(
                 &self.operations.read().await,
                 &tool_name,
@@ -444,10 +443,10 @@ impl ServerHandler for Running {
             .await
             {
                 res
-            } else if let Some(app_name) = app_param
+            } else if let Some(app_name) = app_param.as_deref()
                 && let Some(res) = find_and_execute_app_tool(
                     &self.apps,
-                    &app_name,
+                    app_name,
                     &tool_name,
                     &headers,
                     request.arguments.as_ref(),
@@ -483,6 +482,15 @@ impl ServerHandler for Running {
             .build()
             .add(1, &attributes);
 
+        // MCP Apps rely on structured_content; only strip for non-app calls with older protocol versions.
+        let protocol_version = context.peer.peer_info().map(|info| &info.protocol_version);
+        if app_param.is_none()
+            && !self.client_supports_output_schema(protocol_version)
+            && let Ok(r) = &mut result
+        {
+            r.structured_content = None;
+        }
+
         result
     }
 
@@ -492,9 +500,11 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+        let peer_info = context.peer.peer_info();
+        let client_capabilities = peer_info.map(|info| &info.capabilities);
+        let protocol_version = peer_info.map(|info| &info.protocol_version);
 
-        self.list_tools_impl(context.extensions, client_capabilities)
+        self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
             .await
     }
 
@@ -534,7 +544,14 @@ impl ServerHandler for Running {
             ..Default::default()
         };
 
+        let protocol_version = if self.enable_output_schema {
+            ProtocolVersion::V_2025_06_18
+        } else {
+            ProtocolVersion::default()
+        };
+
         ServerInfo {
+            protocol_version,
             server_info: Implementation {
                 name: self.server_info.name().to_string(),
                 icons: None,
@@ -544,9 +561,20 @@ impl ServerHandler for Running {
                 description: self.server_info.description().map(|s| s.to_string()),
             },
             capabilities,
-            ..Default::default()
+            instructions: None,
         }
     }
+}
+
+fn extract_app_param(extensions: &Extensions) -> Option<String> {
+    extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.uri.query())
+        .and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find(|(key, _)| key == "app")
+                .map(|(_, value)| value.into_owned())
+        })
 }
 
 fn tool_not_found(name: &str) -> McpError {
@@ -1015,7 +1043,7 @@ mod tests {
         );
 
         let result = running
-            .list_tools_impl(Extensions::new(), None)
+            .list_tools_impl(Extensions::new(), None, None)
             .await
             .unwrap();
 
@@ -1039,7 +1067,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(result.tools.len(), 1);
         assert_eq!(result.tools[0].name, "GetId");
@@ -1062,7 +1093,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await;
+        let result = running.list_tools_impl(extensions, None, None).await;
 
         assert!(result.is_err());
     }
@@ -1083,7 +1114,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Should have ui nested metadata with resourceUri and visibility
@@ -1113,7 +1147,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Check nested ui metadata
@@ -1148,7 +1185,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Default should still have ui nested metadata
@@ -1191,7 +1231,7 @@ mod tests {
         };
 
         let result = running
-            .list_tools_impl(extensions, Some(&client_capabilities))
+            .list_tools_impl(extensions, Some(&client_capabilities), None)
             .await
             .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
@@ -1228,7 +1268,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await;
+        let result = running.list_tools_impl(extensions, None, None).await;
 
         assert!(result.is_err());
     }
@@ -1494,6 +1534,520 @@ mod tests {
             info.server_info.description,
             Some("A custom MCP server for testing".to_string())
         );
+    }
+
+    mod get_info_protocol_version {
+        use super::*;
+        use rmcp::model::ProtocolVersion;
+
+        fn build_running(enable_output_schema: bool) -> Running {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                headers: HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: "http://localhost:4000".parse().unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: ServerInfoConfig::default(),
+            }
+        }
+
+        #[test]
+        fn advertises_default_version_when_output_schema_disabled() {
+            let info = build_running(false).get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::default());
+        }
+
+        #[test]
+        fn advertises_v2025_06_18_when_output_schema_enabled() {
+            let info = build_running(true).get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+        }
+    }
+
+    mod output_schema_gating {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::operations::RawOperation;
+
+        fn create_running_with_output_schema() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+
+            let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = raw_op
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![operation])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: true,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": protocol_version,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_notification_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_tools_list_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/list"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn extract_session_id<B>(response: &http::Response<B>) -> String {
+            response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+
+        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
+        where
+            B: BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+
+            for line in body_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                {
+                    return val;
+                }
+            }
+            panic!("no JSON data found in SSE response");
+        }
+
+        async fn initialize_session(
+            running: &Running,
+            session_manager: &Arc<LocalSessionManager>,
+            protocol_version: &str,
+        ) -> String {
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_initialize_request(protocol_version))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = extract_session_id(&response);
+
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_notification_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            session_id
+        }
+
+        async fn list_tools(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+            session_id: &str,
+        ) -> Vec<serde_json::Value> {
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_tools_list_request(session_id))
+                .await
+                .unwrap();
+            let body = extract_json_body(response).await;
+            body["result"]["tools"]
+                .as_array()
+                .expect("tools/list should return a tools array")
+                .clone()
+        }
+
+        #[tokio::test]
+        async fn excludes_output_schema_when_protocol_predates_it() {
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
+
+            let tools = list_tools(running, session_manager, &session_id).await;
+
+            assert!(!tools.is_empty());
+            for tool in &tools {
+                assert!(
+                    tool.get("outputSchema").is_none(),
+                    "tool '{}' should not have outputSchema with protocol 2025-03-26",
+                    tool["name"]
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn includes_output_schema_when_protocol_supports_it() {
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
+
+            let tools = list_tools(running, session_manager, &session_id).await;
+
+            assert!(!tools.is_empty());
+            for tool in &tools {
+                assert!(
+                    tool.get("outputSchema").is_some(),
+                    "tool '{}' should have outputSchema with protocol 2025-06-18",
+                    tool["name"]
+                );
+            }
+        }
+    }
+
+    mod structured_content_gating {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::operations::RawOperation;
+
+        fn create_running_with_mock_endpoint(endpoint: url::Url) -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+
+            let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = raw_op
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![operation])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint,
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: true,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": protocol_version,
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_notification_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_call_tool_request(session_id: &str, tool_name: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": {}
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn extract_session_id<B>(response: &http::Response<B>) -> String {
+            response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+
+        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
+        where
+            B: BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+
+            for line in body_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                {
+                    return val;
+                }
+            }
+            panic!("no JSON data found in SSE response");
+        }
+
+        async fn initialize_session(
+            running: &Running,
+            session_manager: &Arc<LocalSessionManager>,
+            protocol_version: &str,
+        ) -> String {
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_initialize_request(protocol_version))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = extract_session_id(&response);
+
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_notification_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            session_id
+        }
+
+        async fn call_tool(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+            session_id: &str,
+            tool_name: &str,
+        ) -> serde_json::Value {
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_call_tool_request(session_id, tool_name))
+                .await
+                .unwrap();
+            extract_json_body(response).await
+        }
+
+        #[tokio::test]
+        async fn strips_structured_content_when_protocol_predates_it() {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("POST", "/")
+                .with_body(r#"{"data": {"hello": "world"}}"#)
+                .create_async()
+                .await;
+
+            let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
+
+            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+
+            mock.assert();
+            let result = &body["result"];
+            assert!(
+                result.get("structuredContent").is_none() || result["structuredContent"].is_null(),
+                "structuredContent should be stripped with protocol 2025-03-26"
+            );
+        }
+
+        #[tokio::test]
+        async fn preserves_structured_content_when_protocol_supports_it() {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("POST", "/")
+                .with_body(r#"{"data": {"hello": "world"}}"#)
+                .create_async()
+                .await;
+
+            let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
+
+            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+
+            mock.assert();
+            let result = &body["result"];
+            assert!(
+                result
+                    .get("structuredContent")
+                    .is_some_and(|v| !v.is_null()),
+                "structuredContent should be preserved with protocol 2025-06-18"
+            );
+        }
     }
 
     mod sse_resumability {
