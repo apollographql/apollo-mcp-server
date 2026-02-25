@@ -74,13 +74,11 @@ pub(super) struct Running {
 }
 
 impl Running {
-    /// Returns true if the given client's negotiated protocol version supports
-    /// `outputSchema` / `structuredContent` (introduced in MCP 2025-06-18).
-    fn client_supports_output_schema(&self, peer: &Peer<RoleServer>) -> bool {
+    /// Returns true when `enable_output_schema` is active and the negotiated
+    /// protocol version supports `outputSchema` / `structuredContent` (MCP 2025-06-18+).
+    fn client_supports_output_schema(&self, protocol_version: Option<&ProtocolVersion>) -> bool {
         self.enable_output_schema
-            && peer
-                .peer_info()
-                .is_some_and(|info| info.protocol_version >= ProtocolVersion::V_2025_06_18)
+            && protocol_version.is_some_and(|v| *v >= ProtocolVersion::V_2025_06_18)
     }
 
     /// Update a running server with a new schema.
@@ -212,6 +210,7 @@ impl Running {
         &self,
         extensions: Extensions,
         client_capabilities: Option<&ClientCapabilities>,
+        protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
@@ -219,48 +218,38 @@ impl Running {
             .build()
             .add(1, &[]);
 
-        // Access the "app" query parameter from the HTTP request
-        let app_param = extensions
-            .get::<axum::http::request::Parts>()
-            .and_then(|parts| parts.uri.query())
-            .and_then(|query| {
-                url::form_urlencoded::parse(query.as_bytes())
-                    .find(|(key, _)| key == "app")
-                    .map(|(_, value)| value.into_owned())
-            });
+        let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
-        if let Some(app_name) = app_param {
+        let mut result = if let Some(app_name) = app_param {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
-                Some(app) => {
-                    return Ok(ListToolsResult {
-                        next_cursor: None,
-                        tools: self
-                            .operations
-                            .read()
-                            .await
-                            .iter()
-                            .map(|op| op.as_ref().clone())
-                            .chain(
-                                self.execute_tool
-                                    .as_ref()
-                                    .iter()
-                                    // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
-                                    .map(|e| make_tool_private(e.tool.clone())),
-                            )
-                            .chain(
-                                app.tools
-                                    .iter()
-                                    .map(|tool| attach_tool_metadata(app, tool, &app_target))
-                                    .collect::<Vec<_>>(),
-                            )
-                            .collect(),
-                        meta: None,
-                    });
-                }
+                Some(app) => ListToolsResult {
+                    next_cursor: None,
+                    tools: self
+                        .operations
+                        .read()
+                        .await
+                        .iter()
+                        .map(|op| op.as_ref().clone())
+                        .chain(
+                            self.execute_tool
+                                .as_ref()
+                                .iter()
+                                // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
+                                .map(|e| make_tool_private(e.tool.clone())),
+                        )
+                        .chain(
+                            app.tools
+                                .iter()
+                                .map(|tool| attach_tool_metadata(app, tool, &app_target))
+                                .collect::<Vec<_>>(),
+                        )
+                        .collect(),
+                    meta: None,
+                },
                 None => {
                     return Err(McpError::new(
                         ErrorCode::INVALID_REQUEST,
@@ -269,24 +258,32 @@ impl Running {
                     ));
                 }
             }
+        } else {
+            ListToolsResult {
+                next_cursor: None,
+                tools: self
+                    .operations
+                    .read()
+                    .await
+                    .iter()
+                    .map(|op| op.as_ref().clone())
+                    .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .collect(),
+                meta: None,
+            }
+        };
+
+        if !self.client_supports_output_schema(protocol_version) {
+            for tool in &mut result.tools {
+                tool.output_schema = None;
+            }
         }
 
-        Ok(ListToolsResult {
-            next_cursor: None,
-            tools: self
-                .operations
-                .read()
-                .await
-                .iter()
-                .map(|op| op.as_ref().clone())
-                .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
-                .collect(),
-            meta: None,
-        })
+        Ok(result)
     }
 
     fn list_resources_impl(&self) -> Result<ListResourcesResult, McpError> {
@@ -360,6 +357,9 @@ impl ServerHandler for Running {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
         let tool_name = request.name.clone();
+
+        let app_param = extract_app_param(&context.extensions);
+
         let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
         {
@@ -433,17 +433,6 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            // Access the "app" query parameter from the HTTP request
-            let app_param = context
-                .extensions
-                .get::<axum::http::request::Parts>()
-                .and_then(|parts| parts.uri.query())
-                .and_then(|query| {
-                    url::form_urlencoded::parse(query.as_bytes())
-                        .find(|(key, _)| key == "app")
-                        .map(|(_, value)| value.into_owned())
-                });
-
             if let Some(res) = find_and_execute_operation(
                 &self.operations.read().await,
                 &tool_name,
@@ -454,10 +443,10 @@ impl ServerHandler for Running {
             .await
             {
                 res
-            } else if let Some(app_name) = app_param
+            } else if let Some(app_name) = app_param.as_deref()
                 && let Some(res) = find_and_execute_app_tool(
                     &self.apps,
-                    &app_name,
+                    app_name,
                     &tool_name,
                     &headers,
                     request.arguments.as_ref(),
@@ -493,7 +482,10 @@ impl ServerHandler for Running {
             .build()
             .add(1, &attributes);
 
-        if !self.client_supports_output_schema(&context.peer)
+        // MCP Apps rely on structured_content; only strip for non-app calls with older protocol versions.
+        let protocol_version = context.peer.peer_info().map(|info| &info.protocol_version);
+        if app_param.is_none()
+            && !self.client_supports_output_schema(protocol_version)
             && let Ok(r) = &mut result
         {
             r.structured_content = None;
@@ -508,19 +500,12 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+        let peer_info = context.peer.peer_info();
+        let client_capabilities = peer_info.map(|info| &info.capabilities);
+        let protocol_version = peer_info.map(|info| &info.protocol_version);
 
-        let mut result = self
-            .list_tools_impl(context.extensions, client_capabilities)
-            .await?;
-
-        if !self.client_supports_output_schema(&context.peer) {
-            for tool in &mut result.tools {
-                tool.output_schema = None;
-            }
-        }
-
-        Ok(result)
+        self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
+            .await
     }
 
     #[tracing::instrument(skip_all)]
@@ -579,6 +564,17 @@ impl ServerHandler for Running {
             instructions: None,
         }
     }
+}
+
+fn extract_app_param(extensions: &Extensions) -> Option<String> {
+    extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.uri.query())
+        .and_then(|query| {
+            url::form_urlencoded::parse(query.as_bytes())
+                .find(|(key, _)| key == "app")
+                .map(|(_, value)| value.into_owned())
+        })
 }
 
 fn tool_not_found(name: &str) -> McpError {
@@ -1047,7 +1043,7 @@ mod tests {
         );
 
         let result = running
-            .list_tools_impl(Extensions::new(), None)
+            .list_tools_impl(Extensions::new(), None, None)
             .await
             .unwrap();
 
@@ -1071,7 +1067,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
 
         assert_eq!(result.tools.len(), 1);
         assert_eq!(result.tools[0].name, "GetId");
@@ -1094,7 +1093,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await;
+        let result = running.list_tools_impl(extensions, None, None).await;
 
         assert!(result.is_err());
     }
@@ -1115,7 +1114,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Should have ui nested metadata with resourceUri and visibility
@@ -1145,7 +1147,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Check nested ui metadata
@@ -1180,7 +1185,10 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await.unwrap();
+        let result = running
+            .list_tools_impl(extensions, None, None)
+            .await
+            .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
 
         // Default should still have ui nested metadata
@@ -1223,7 +1231,7 @@ mod tests {
         };
 
         let result = running
-            .list_tools_impl(extensions, Some(&client_capabilities))
+            .list_tools_impl(extensions, Some(&client_capabilities), None)
             .await
             .unwrap();
         let meta = result.tools[0].meta.as_ref().unwrap();
@@ -1260,7 +1268,7 @@ mod tests {
         let (parts, _) = request.into_parts();
         extensions.insert(parts);
 
-        let result = running.list_tools_impl(extensions, None).await;
+        let result = running.list_tools_impl(extensions, None, None).await;
 
         assert!(result.is_err());
     }
@@ -1558,6 +1566,7 @@ mod tests {
                 disable_schema_description: false,
                 enable_output_schema,
                 disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
                 health_check: None,
                 server_info: ServerInfoConfig::default(),
             }
@@ -1624,6 +1633,7 @@ mod tests {
                 disable_schema_description: false,
                 enable_output_schema: true,
                 disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
             }
