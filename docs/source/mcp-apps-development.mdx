@@ -1,11 +1,11 @@
 ---
-title: MCP App Development
+title: MCP Apps Development
 subtitle: Key concepts when developing MCP Apps
 ---
 
-This document explains the core concepts of developing an MCP app using React, Apollo Client, and Apollo MCP Server.
+This document explains the core concepts of developing MCP Apps using React, Apollo Client, and Apollo MCP Server.
 
-If you are using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) to follow along, much of the following code is provided for you. This guide walks through the critical areas of developing an MCP application for your own understanding.
+We recommend that you use the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template) to get started developing your app. The template includes much of the code referenced in this document.
 
 ## Apollo Client initialization
 
@@ -58,13 +58,13 @@ createRoot(document.getElementById("root")!).render(
 );
 ```
 
-The `ApolloProvider` implementation from `@apollo/client-ai-apps/react` is responsible for initializing your application with the MCP server and providing the `client` instance in React context for use with Apollo Client's data fetching hooks.
+The `ApolloProvider` implementation from `@apollo/client-ai-apps/react` initializes your application with Apollo MCP Server and provides the `client` instance in React context for use with Apollo Client's data-fetching hooks.
 
 #### Show a loading fallback during initialization
 
 The `ApolloProvider` component uses React's [Suspense](https://react.dev/reference/react/Suspense) functionality during initialization, which avoids rendering application code that relies on client initialization. The client is initialized when it receives the `ui/notifications/tool-result` notification from the host.
 
-You can use React's [`Suspense` component](https://react.dev/reference/react/Suspense) to show a loading fallback while the app is initializing. Wrap `ApolloProvider` with `Suspense`.
+If you want to display a loading fallback while the app initializes, wrap `ApolloProvider` with React's [`Suspense` component](https://react.dev/reference/react/Suspense).
 
 ```tsx
 import { Suspense } from "react";
@@ -188,7 +188,7 @@ Make sure each configured environment has a module it can import. If one doesn't
 
 `@apollo/client-ai-apps` provides extendable TypeScript configurations that make sure you only use code available to your application from [platform-specific modules](#platform-specific-modules).
 
-- `@apollo/client-ai-apps/tsconfig/core` — for shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files used in all environments.
+- `@apollo/client-ai-apps/tsconfig/core` — for shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files for all environments..
 - `@apollo/client-ai-apps/tsconfig/mcp` — For developing MCP-specific modules. This configuration allows you to access utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
 - `@apollo/client-ai-apps/tsconfig/openai` — For developing ChatGPT-specific modules. This configuration allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
 
@@ -207,7 +207,7 @@ Use TypeScript [project references](https://www.typescriptlang.org/docs/handbook
 
 **`tsconfig.base.json`**
 
-Shared configuration for all TypeScript files. This should be where most of your `compilerOptions` are configured.
+Shared configuration for all TypeScript files. This is be where you should configure most of your `compilerOptions`.
 
 ```jsonc title=tsconfig.base.json
 {
@@ -263,7 +263,7 @@ Configuration that targets ChatGPT App-specific modules. Extend `@apollo/client-
 
 <Note>
 
-If your app doesn't have any ChatGPT apps specific files, don't include this file because TypeScript might complain that it is unable to match files in the `include` setting.
+If your app doesn't have any ChatGPT App-specific files, don't include this file because TypeScript might complain that it is unable to match files in the `include` setting.
 
 </Note>
 
