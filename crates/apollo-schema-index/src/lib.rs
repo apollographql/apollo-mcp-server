@@ -54,7 +54,7 @@ pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
 pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
-/// be included in an [`EnumSet`](EnumSet).
+/// be included in an [`EnumSet`].
 #[derive(EnumSetType, Debug)]
 pub enum OperationType {
     Query,
@@ -115,8 +115,8 @@ impl Default for Options {
 /// characters are preserved as-is so that Tantivy's `SimpleTokenizer` can still split on them.
 ///
 /// Examples:
-/// - `"CreatePostInput"` → `"Create Post Input"`
-/// - `"fieldName: TypeName"` → `"field Name: Type Name"`
+/// - `"CreatePostInput"` → `"create post input"`
+/// - `"fieldName: TypeName"` → `"field name: type name"`
 fn expand_identifiers(text: &str) -> String {
     let mut result = String::with_capacity(text.len() * 2);
     let mut word_start = None;
@@ -128,21 +128,36 @@ fn expand_identifiers(text: &str) -> String {
             }
         } else {
             if let Some(start) = word_start {
-                let word = &text[start..i];
-                result.push_str(&word.to_snake_case().replace('_', " "));
+                push_expanded_word(&mut result, &text[start..i]);
                 word_start = None;
             }
             result.push(ch);
         }
     }
 
-    // Handle trailing word
     if let Some(start) = word_start {
-        let word = &text[start..];
-        result.push_str(&word.to_snake_case().replace('_', " "));
+        push_expanded_word(&mut result, &text[start..]);
     }
 
     result
+}
+
+/// Converts a single camelCase word to space-separated lowercase words and appends to `out`.
+/// Consecutive underscores are collapsed to a single space, matching Rover's
+/// `.filter(|w| !w.is_empty())` behavior.
+fn push_expanded_word(out: &mut String, word: &str) {
+    let mut prev_underscore = false;
+    for ch in word.to_snake_case().chars() {
+        if ch == '_' {
+            if !prev_underscore {
+                out.push(' ');
+            }
+            prev_underscore = true;
+        } else {
+            out.push(ch);
+            prev_underscore = false;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -693,24 +708,18 @@ mod tests {
         );
     }
 
-    #[test]
-    fn expand_identifiers_splits_camel_case() {
-        assert_eq!(expand_identifiers("CreatePostInput"), "create post input");
-        assert_eq!(expand_identifiers("createPost"), "create post");
-        assert_eq!(expand_identifiers("PostConnection"), "post connection");
-        assert_eq!(expand_identifiers("post"), "post");
-        assert_eq!(expand_identifiers("ID"), "id");
-    }
-
-    #[test]
-    fn expand_identifiers_preserves_separators() {
-        assert_eq!(
-            expand_identifiers("fieldName: TypeName"),
-            "field name: type name"
-        );
-        assert_eq!(
-            expand_identifiers("firstName, lastName"),
-            "first name, last name"
-        );
+    #[rstest]
+    #[case::pascal_case("CreatePostInput", "create post input")]
+    #[case::camel_case("createPost", "create post")]
+    #[case::camel_case_multi("getUserById", "get user by id")]
+    #[case::pascal_compound("PostConnection", "post connection")]
+    #[case::uppercase_run("HTMLParser", "html parser")]
+    #[case::single_word("post", "post")]
+    #[case::acronym("ID", "id")]
+    #[case::snake_case_input("get_user_by_id", "get user by id")]
+    #[case::with_colon_separator("fieldName: TypeName", "field name: type name")]
+    #[case::with_comma_separator("firstName, lastName", "first name, last name")]
+    fn expand_identifiers_splits_at_word_boundaries(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(expand_identifiers(input), expected);
     }
 }
