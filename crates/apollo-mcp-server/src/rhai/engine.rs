@@ -1,12 +1,14 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use rhai::module_resolvers::FileModuleResolver;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
 use tracing::info;
 
 use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
-use crate::rhai::functions::RhaiSha256;
-use crate::rhai::types::{RhaiErrorCode, RhaiHeaderMap};
+use crate::rhai::functions::{Json, RhaiHttp, RhaiSha256};
+use crate::rhai::types::{Promise, RhaiErrorCode, RhaiHeaderMap};
 
 pub(crate) struct RhaiEngine {
     engine: Engine,
@@ -26,6 +28,8 @@ impl RhaiEngine {
 
         let resolver = FileModuleResolver::new_with_path("/rhai");
         engine.set_module_resolver(resolver);
+
+        engine.disable_symbol("await");
 
         let scope = Self::create_scope();
 
@@ -53,12 +57,15 @@ impl RhaiEngine {
 
     fn register_functions(engine: &mut Engine) {
         RhaiSha256::register(engine);
+        RhaiHttp::register(engine);
+        Json::register(engine);
     }
 
     fn register_types(engine: &mut Engine) {
         RhaiHeaderMap::register(engine);
         OnExecuteGraphqlOperationContext::register(engine);
         RhaiErrorCode::register(engine);
+        Promise::register(engine);
     }
 
     fn create_scope() -> Scope<'static> {
@@ -106,16 +113,3 @@ impl RhaiEngine {
         self.ast.iter_functions().any(|fn_def| fn_def.name == name)
     }
 }
-
-/*
-#[export_module]
-mod router_sha256 {
-    use sha2::Digest;
-
-    #[rhai_fn(pure)]
-    pub(crate) fn digest(input: &mut ImmutableString) -> String {
-        let hash = sha2::Sha256::digest(input.as_bytes());
-        hex::encode(hash)
-    }
-}
-*/
