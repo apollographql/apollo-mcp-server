@@ -2,9 +2,9 @@
 source: crates/apollo-schema-index/src/lib.rs
 expression: "results.iter().take(10).map(ToString::to_string).collect::<Vec<_>>().join(\"\\n\")"
 ---
-Mutation -> uploadMedia(Upload) -> Media -> metadata -> MediaMetadata (5.5972385)
-Mutation -> uploadMedia(Upload) -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (5.3678007)
-Query -> posts(PostFilter) -> Post -> media -> Media -> metadata -> MediaMetadata (4.6643653)
-Query -> post(ID) -> Post -> media -> Media -> metadata -> MediaMetadata (4.6643653)
-Query -> posts(PostFilter) -> Post -> media -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (4.2942405)
-Query -> post(ID) -> Post -> media -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (4.2942405)
+Mutation -> uploadMedia(Upload) -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (6.170166)
+Mutation -> uploadMedia(Upload) -> Media -> metadata -> MediaMetadata (6.0267076)
+Query -> posts(PostFilter) -> Post -> media -> Media -> metadata -> MediaMetadata (5.0222564)
+Query -> post(ID) -> Post -> media -> Media -> metadata -> MediaMetadata (5.0222564)
+Query -> posts(PostFilter) -> Post -> media -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (4.936133)
+Query -> post(ID) -> Post -> media -> Media -> metadata -> MediaMetadata -> dimensions -> Dimensions (4.936133)
