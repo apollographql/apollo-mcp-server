@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
 use crate::rhai::functions::{Json, RhaiHttp, RhaiSha256};
-use crate::rhai::types::{Promise, RhaiErrorCode, RhaiHeaderMap};
+use crate::rhai::types::{HttpResponse, Promise, RhaiErrorCode, RhaiHeaderMap};
 
 pub(crate) struct RhaiEngine {
     engine: Engine,
@@ -63,6 +63,7 @@ impl RhaiEngine {
 
     fn register_types(engine: &mut Engine) {
         RhaiHeaderMap::register(engine);
+        HttpResponse::register(engine);
         OnExecuteGraphqlOperationContext::register(engine);
         RhaiErrorCode::register(engine);
         Promise::register(engine);

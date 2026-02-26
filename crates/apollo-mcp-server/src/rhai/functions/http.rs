@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::rhai::types::{Promise, PromiseState};
+use crate::rhai::types::{HttpResponse, Promise, PromiseState};
 use parking_lot::Mutex;
 use rhai::plugin::*;
 use rhai::{Engine, Module, Shared};
@@ -21,10 +21,13 @@ impl RhaiHttp {
             tokio::spawn(async move {
                 let result = reqwest::get(&url).await;
                 let value = match result {
-                    Ok(resp) => match resp.text().await {
-                        Ok(body) => Ok(Dynamic::from(body)),
-                        Err(e) => Err(e.to_string()),
-                    },
+                    Ok(resp) => {
+                        let status = resp.status().as_u16() as i64;
+                        match resp.text().await {
+                            Ok(body) => Ok(Dynamic::from(HttpResponse::new(status, body))),
+                            Err(e) => Err(e.to_string()),
+                        }
+                    }
                     Err(e) => Err(e.to_string()),
                 };
 
