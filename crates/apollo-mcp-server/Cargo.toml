@@ -92,9 +92,6 @@ serde.workspace = true
 syn = "2.0.106"
 toml = "1.0.0"
 
-[features]
-apps = []
-
 [lints]
 workspace = true
 
