@@ -58,7 +58,9 @@ pub(super) trait ValidateToken {
         pub struct Claims {
             /// The intended audience of this token.
             /// Can be either a single string or an array of strings per JWT spec. (https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.3)
-            #[serde(deserialize_with = "deserialize_audience")]
+            /// Some providers (e.g., AWS Cognito) omit `aud` entirely in access tokens,
+            /// so this field defaults to an empty vec when absent.
+            #[serde(default, deserialize_with = "deserialize_audience")]
             pub aud: Vec<String>,
 
             /// The user who owns this token
@@ -80,9 +82,10 @@ pub(super) trait ValidateToken {
                 Multiple(Vec<String>),
             }
 
-            Ok(match Audience::deserialize(deserializer)? {
-                Audience::Single(s) => vec![s],
-                Audience::Multiple(v) => v,
+            Ok(match Option::<Audience>::deserialize(deserializer)? {
+                Some(Audience::Single(s)) => vec![s],
+                Some(Audience::Multiple(v)) => v,
+                None => Vec::new(),
             })
         }
 
@@ -128,6 +131,14 @@ pub(super) trait ValidateToken {
 
             match decode::<Claims>(jwt, &jwk.decoding_key, &validation) {
                 Ok(token_data) => {
+                    // When audience validation is enabled, explicitly reject tokens
+                    // with a missing `aud` claim. The `jsonwebtoken` crate skips its
+                    // own audience check when the claim is absent from the raw JWT,
+                    // so we enforce it here.
+                    if !self.allow_any_audience() && token_data.claims.aud.is_empty() {
+                        warn!("Token is missing the required `aud` claim");
+                        continue;
+                    }
                     let scopes = extract_scopes(token_data.claims.scope.as_deref());
                     return Some(ValidToken { token, scopes });
                 }
@@ -456,6 +467,107 @@ mod test {
 
         let token = jwt.token().to_string();
         assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_missing_audience_when_allow_any() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: KeyAlgorithm::HS512,
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        // Create a JWT without the `aud` claim (like AWS Cognito access tokens)
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![],
+            allow_any_audience: true,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .token
+                .token(),
+            token
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_missing_audience_when_audience_required() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: KeyAlgorithm::HS512,
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        // Create a JWT without the `aud` claim
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // With allow_any_audience=false and configured audiences, missing aud should fail
+        let test_validator = TestTokenValidator {
+            audiences: vec!["expected-audience".to_string()],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("missing the required `aud` claim"))
+                .then_some(())
+                .ok_or("Expected warning for missing aud claim".to_string())
+        });
     }
 
     #[traced_test]
