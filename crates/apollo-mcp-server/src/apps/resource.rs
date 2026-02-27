@@ -130,6 +130,15 @@ pub(crate) async fn get_app_resource(
                 "prefersBorder".into(),
                 serde_json::to_value(prefers_border).unwrap_or_default(),
             );
+
+            // ChatGPT currently ignores _meta.ui.prefersBorder, so we set
+            // this field to ensure this setting is honored
+            if matches!(app_target, AppTarget::AppsSDK) {
+                meta.get_or_insert_with(Meta::new).insert(
+                    "openai/widgetPrefersBorder".into(),
+                    serde_json::to_value(prefers_border).unwrap_or_default(),
+                );
+            }
         }
     }
 
@@ -246,6 +255,7 @@ mod tests {
         assert!(csp.get("redirect_domains").is_some());
         // OpenAI-specific description should be at root
         assert!(meta.get("openai/widgetDescription").is_some());
+        assert!(meta.get("openai/widgetPrefersBorder").is_some());
         // ui nesting should contain the common properties
         let ui_meta = meta.get("ui").unwrap();
         let ui_csp = ui_meta.get("csp").unwrap();
@@ -314,6 +324,8 @@ mod tests {
         assert!(ui_meta.get("prefersBorder").is_some());
         // MCPApps should not have description
         assert!(ui_meta.get("description").is_none());
+        // MCPApps should not have openai-specific root meta keys
+        assert!(meta.get("openai/widgetPrefersBorder").is_none());
     }
 
     #[tokio::test]
