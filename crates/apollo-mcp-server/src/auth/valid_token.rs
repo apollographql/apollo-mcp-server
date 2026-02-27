@@ -480,7 +480,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -530,7 +530,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
