@@ -132,6 +132,7 @@ type Dimensions {
   height: Int!
 }
 
+"""A label used to categorize posts. Use createPost to assign tags."""
 type Tag {
   id: ID!
   name: String!
