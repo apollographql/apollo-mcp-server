@@ -131,6 +131,8 @@ pub(crate) async fn get_app_resource(
                 serde_json::to_value(prefers_border).unwrap_or_default(),
             );
 
+            // ChatGPT currently ignores _meta.ui.prefersBorder, so we set
+            // this field to ensure this setting is honored
             if matches!(app_target, AppTarget::AppsSDK) {
                 meta.get_or_insert_with(Meta::new).insert(
                     "openai/widgetPrefersBorder".into(),
