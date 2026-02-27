@@ -276,7 +276,7 @@ impl SchemaIndex {
                 description_field,
                 extended_type
                     .description()
-                    .map(|d| d.to_string())
+                    .map(|d| expand_identifiers(d))
                     .unwrap_or_default(),
             );
 
@@ -346,7 +346,7 @@ impl SchemaIndex {
                     .join("\n"),
                 _ => String::new(),
             };
-            doc.add_text(description_field, &field_descriptions);
+            doc.add_text(description_field, expand_identifiers(&field_descriptions));
             index_writer.add_document(doc)?;
         }
         index_writer.commit()?;
@@ -704,6 +704,29 @@ mod tests {
         assert!(
             has_post,
             "Should find Post-related types when searching for 'CreatePost' (query term camelCase split).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+    }
+
+    #[rstest]
+    fn search_camel_case_in_description(schema: Valid<Schema>) {
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
+
+        // Tag's description contains "createPost", so searching "post" should match via
+        // camelCase splitting of the description at index time.
+        let results = search
+            .search(vec!["post".to_string()], Options::default())
+            .unwrap();
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        assert!(
+            paths.iter().any(|p| p.contains("Tag")),
+            "Should find Tag when searching for 'post' (camelCase in description).\nFound paths:\n{}",
             paths.join("\n")
         );
     }
