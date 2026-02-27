@@ -58,6 +58,8 @@ pub enum TlsConfigError {
     ClientBuild(#[from] reqwest::Error),
     #[error("Auth server URL at index {index} ({url}) has no host")]
     ServerUrlMissingHost { index: usize, url: String },
+    #[error("Resource URL has non-HTTP(S) scheme '{scheme}': {url}")]
+    ResourceUrlInvalidScheme { url: String, scheme: String },
 }
 
 impl TlsConfig {
@@ -215,6 +217,13 @@ impl Config {
             }
         }
 
+        let scheme = self.resource.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(TlsConfigError::ResourceUrlInvalidScheme {
+                url: self.resource.to_string(),
+                scheme: scheme.to_string(),
+            });
+        }
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -798,6 +807,121 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let resource_url = Url::parse(resource).unwrap();
             let result = build_resource_metadata_url(&resource_url);
             assert_eq!(result.as_str(), expected);
+        }
+    }
+
+    mod resource_url_validation {
+        use super::*;
+
+        #[test]
+        fn rejects_resource_url_with_file_scheme() {
+            let mut config = test_config();
+            config.resource = Url::parse("file:///some/path").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::ResourceUrlInvalidScheme { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_resource_url_with_non_http_scheme() {
+            let mut config = test_config();
+            config.resource = Url::parse("ftp://example.com/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::ResourceUrlInvalidScheme { .. }
+            ));
+        }
+
+        #[test]
+        fn accepts_http_resource_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn accepts_https_resource_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_ok());
+        }
+    }
+
+    mod enable_middleware_integration {
+        use super::*;
+
+        #[tokio::test]
+        async fn unauthorized_response_contains_path_scoped_resource_metadata_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
+
+            let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/my-service/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap();
+            assert!(www_auth.contains(
+                r#"resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/my-service/mcp""#
+            ));
+        }
+
+        #[tokio::test]
+        async fn get_resource_metadata_path_returns_ok() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
+
+            let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/.well-known/oauth-protected-resource/my-service/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn root_resource_metadata_path_returns_ok() {
+            let config = test_config();
+
+            let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/.well-known/oauth-protected-resource")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
         }
     }
 }
