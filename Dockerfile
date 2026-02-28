@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.92.0-bookworm AS builder
+FROM rust:1.93.1-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31 AS builder
 
 WORKDIR /app
 
