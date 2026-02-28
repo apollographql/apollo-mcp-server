@@ -13,7 +13,7 @@ description = "GraphQL schema indexing"
 apollo-compiler.workspace = true
 enumset = "1.1.6"
 itertools = "0.14.0"
-tantivy = "0.24.2"
+tantivy = "0.25.0"
 thiserror.workspace = true
 tracing.workspace = true
 
