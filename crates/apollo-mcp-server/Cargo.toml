@@ -45,7 +45,7 @@ opentelemetry_sdk = { version = "0.31.0", features = [
 ] }
 regex = "1.11.1"
 reqwest-middleware = "0.4.2"
-reqwest-tracing = { version = "0.5.8", features = ["opentelemetry_0_30"] }
+reqwest-tracing = { version = "0.7.0", features = ["opentelemetry_0_30"] }
 reqwest.workspace = true
 rmcp = { version = "0.16", features = [
   "server",
