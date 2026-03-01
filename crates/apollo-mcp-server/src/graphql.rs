@@ -27,7 +27,7 @@ pub struct OperationDetails {
 }
 
 static GRAPHQL_CLIENT: LazyLock<ClientWithMiddleware> = LazyLock::new(|| {
-    ClientBuilder::new(reqwest::Client::new())
+    ClientBuilder::new(reqwest_middleware::reqwest::Client::new())
         .with_init(Extension(OtelName("mcp-graphql-client".into())))
         .with(TracingMiddleware::default())
         .build()
