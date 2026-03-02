@@ -120,6 +120,33 @@ Use `scope_mode: disabled` only when downstream services, such as subgraphs, han
 
 </Caution>
 
+## Per-operation scope requirements
+
+The global `scopes` and `scope_mode` settings apply uniformly to every request. For finer-grained control, you can declare required OAuth scopes per operation using `overrides.required_scopes`. This enables _step-up authorization_: a client with a limited token can call most tools freely, but is prompted to re-authorize with elevated scopes when it tries to call a more sensitive operation.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+overrides:
+  required_scopes:
+    GetUser:
+      - user:read
+    DeleteUser:
+      - user:write
+      - admin
+```
+
+When a tool call is made and the token is missing one or more required scopes, the server returns HTTP 403 with a `WWW-Authenticate` header:
+
+```
+WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
+```
+
+The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
+
 ## HTTP error responses
 
 Apollo MCP Server returns different HTTP status codes depending on the type of authorization failure, following [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-3.1) and the MCP specification.
