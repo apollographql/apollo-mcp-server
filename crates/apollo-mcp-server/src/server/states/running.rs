@@ -298,7 +298,7 @@ impl Running {
                 Some(app) => vec![attach_resource_mime_type(app.resource())],
                 None => {
                     return Err(McpError::new(
-                        ErrorCode::INVALID_REQUEST,
+                        ErrorCode::INVALID_PARAMS,
                         format!("App {app_name} not found"),
                         None,
                     ));
