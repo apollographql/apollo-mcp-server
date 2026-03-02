@@ -15,7 +15,6 @@ type PromiseReceiver = Arc<Mutex<Option<oneshot::Receiver<Result<Dynamic, String
 
 #[derive(Clone, Debug, CustomType)]
 pub(crate) struct Promise {
-    pub(crate) id: String,
     pub(crate) state: PromiseState,
     pub(crate) resolved_value: Option<Dynamic>,
     pub(crate) receiver: PromiseReceiver,
