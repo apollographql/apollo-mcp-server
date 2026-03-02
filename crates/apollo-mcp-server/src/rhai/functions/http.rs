@@ -4,7 +4,6 @@ use crate::rhai::types::{HttpResponse, Promise, PromiseState};
 use parking_lot::Mutex;
 use rhai::plugin::*;
 use rhai::{Engine, Module, Shared};
-use rhai::{export_module, exported_module};
 use tokio::sync::oneshot;
 
 pub(crate) struct RhaiHttp {}
@@ -13,7 +12,8 @@ impl RhaiHttp {
     pub(crate) fn register(engine: &mut Engine) {
         let mut module = Module::new();
 
-        module.set_native_fn("get", move || {
+        // TODO: I can probably rewrite this to be a module now that I don't need to pass in the promises array
+        module.set_native_fn("get", || {
             let (tx, rx) = oneshot::channel();
             // TODO: This needs to come from the args
             let url = "https://randomuser.me/api/".to_string();
@@ -35,7 +35,7 @@ impl RhaiHttp {
             });
 
             Ok(Promise {
-                id: "1".to_string(),
+                id: "1".to_string(), // TODO: I don't think we need this id anymore
                 state: PromiseState::Pending,
                 resolved_value: None,
                 receiver: Arc::new(Mutex::new(Some(rx))),
@@ -49,15 +49,3 @@ impl RhaiHttp {
             .register_static_module("Http", module);
     }
 }
-
-// #[export_module]
-// mod rhai_http_module {
-//     use crate::rhai::types::{Promise, PromiseState};
-
-//     pub(crate) fn get() -> Promise {
-//         Promise {
-//             id: "1".to_string(),
-//             state: PromiseState::Pending,
-//         }
-//     }
-// }

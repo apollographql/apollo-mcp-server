@@ -1,7 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
-use parking_lot::Mutex;
 use rhai::module_resolvers::FileModuleResolver;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
 use tracing::info;
