@@ -128,11 +128,7 @@ pub trait Executable {
                 is_error: Some(
                     json.get("errors")
                         .filter(|value| !matches!(value, Value::Null))
-                        .is_some()
-                        && json
-                            .get("data")
-                            .filter(|value| !matches!(value, Value::Null))
-                            .is_none(),
+                        .is_some(),
                 ),
                 meta: None,
                 structured_content: Some(json),
@@ -415,6 +411,39 @@ mod test {
         // then
         assert!(result.is_error.is_some());
         assert!(result.is_error.unwrap());
+    }
+
+    #[tokio::test]
+    async fn gql_response_with_errors_and_partial_data_is_flagged_as_error() {
+        // given
+        let mut server = mockito::Server::new_async().await;
+        let url = Url::parse(server.url().as_str()).unwrap();
+        let mock_request = Request {
+            input: json!({}),
+            endpoint: &url,
+            headers: &HeaderMap::new(),
+        };
+
+        // Partial success: resolver failed but `data` is a non-null object.
+        // This is the common shape for runtime GraphQL errors (e.g. constraint violations).
+        server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                json!({ "data": { "createUsers": null }, "errors": ["a resolver error"] })
+                    .to_string(),
+            )
+            .expect(1)
+            .create_async()
+            .await;
+
+        // when
+        let test_executable = TestExecutableWithPersistedQueryId {};
+        let result = test_executable.execute(mock_request).await.unwrap();
+
+        // then
+        assert!(result.is_error == Some(true));
     }
 
     #[tokio::test]
