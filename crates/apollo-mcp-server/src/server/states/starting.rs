@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::host_validation::{HostValidationState, validate_host};
-use crate::operations::apply_description_override;
+use crate::operations::{apply_description_override, apply_required_scopes_override};
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     cors::CorsConfig,
@@ -42,6 +42,9 @@ impl Starting {
             .operations
             .into_iter()
             .map(|operation| apply_description_override(operation, &self.config.descriptions))
+            .map(|operation| {
+                apply_required_scopes_override(operation, &self.config.required_scopes)
+            })
             .filter_map(|operation| {
                 operation
                     .into_operation(
@@ -166,6 +169,7 @@ impl Starting {
             enable_output_schema: self.config.enable_output_schema,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             descriptions: self.config.descriptions,
+            required_scopes: self.config.required_scopes.clone(),
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
         };
@@ -191,9 +195,11 @@ impl Starting {
                 );
                 let mut router = axum::Router::new().nest_service("/mcp", service);
                 if let Some(auth) = auth {
-                    router = auth.enable_middleware(router).inspect_err(|e| {
-                        error!("Failed to enable auth middleware: {}", e);
-                    })?;
+                    router = auth
+                        .enable_middleware_with_scopes(router, self.config.required_scopes.clone())
+                        .inspect_err(|e| {
+                            error!("Failed to enable auth middleware: {}", e);
+                        })?;
                 }
                 let mut router = with_cors(router, &self.config.cors)?
                     .layer(HttpMetricsLayerBuilder::new().build())
@@ -298,6 +304,7 @@ mod tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: std::collections::HashMap::new(),
+                required_scopes: std::collections::HashMap::new(),
                 search_leaf_depth: 5,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {

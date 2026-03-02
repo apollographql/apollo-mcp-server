@@ -21,6 +21,8 @@ pub struct RawOperation {
     /// An explicit tool description provided via config.
     /// When present, this takes priority over auto-generated descriptions.
     pub(crate) description: Option<String>,
+    /// OAuth scopes required to call this operation (step-up auth, MCP spec 2025-11-25).
+    pub(crate) required_scopes: Vec<String>,
 }
 
 impl RawOperation {
@@ -54,6 +56,7 @@ impl From<(String, Option<String>)> for RawOperation {
             variables: None,
             source_path,
             description: None,
+            required_scopes: Vec::new(),
         }
     }
 }
@@ -67,6 +70,7 @@ impl From<(String, String)> for RawOperation {
             variables: None,
             source_path: None,
             description: None,
+            required_scopes: Vec::new(),
         }
     }
 }
@@ -108,6 +112,7 @@ impl TryFrom<&OperationData> for RawOperation {
             variables,
             source_path: None,
             description: None,
+            required_scopes: Vec::new(),
         })
     }
 }
@@ -148,6 +153,9 @@ impl serde::Serialize for RawOperation {
         }
         if let Some(ref description) = self.description {
             state.serialize_field("description", description)?;
+        }
+        if !self.required_scopes.is_empty() {
+            state.serialize_field("required_scopes", &self.required_scopes)?;
         }
 
         state.end()

@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
     Json, Router,
+    body::Body,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -208,6 +211,8 @@ struct AuthState {
     config: Config,
     client: reqwest::Client,
     resource_metadata_url: Url,
+    /// Per-operation required scopes, keyed by operation name.
+    required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
 
 impl Config {
@@ -215,6 +220,15 @@ impl Config {
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
     pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
+        self.enable_middleware_with_scopes(router, HashMap::new())
+    }
+
+    /// Enable auth middleware with per-operation scope requirements.
+    pub fn enable_middleware_with_scopes(
+        &self,
+        router: Router,
+        required_scopes: HashMap<String, Vec<String>>,
+    ) -> Result<Router, TlsConfigError> {
         // Validate server URLs have hosts (fail fast on config errors)
         for (i, server) in self.servers.iter().enumerate() {
             if server.host_str().is_none() {
@@ -260,6 +274,7 @@ impl Config {
             config: self.clone(),
             client,
             resource_metadata_url,
+            required_scopes: Arc::new(required_scopes),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -443,11 +458,51 @@ async fn oauth_validate(
         }
     }
 
+    // Per-operation scope check: buffer the request body to extract the operation
+    // name before SSE streaming begins, so we can return HTTP 403 before the
+    // response headers are committed.
+    let (parts, body) = request.into_parts();
+    let bytes = axum::body::to_bytes(body, 1024 * 1024)
+        .await
+        .inspect_err(|err| tracing::warn!(%err, "Failed to read request body for scope check; skipping per-operation enforcement"))
+        .unwrap_or_default();
+
+    // Minimal view of a tools/call JSON-RPC request — avoids allocating a full Value tree.
+    #[derive(Deserialize)]
+    struct ToolCallParams<'a> {
+        name: &'a str,
+    }
+    #[derive(Deserialize)]
+    struct ToolCallRequest<'a> {
+        method: &'a str,
+        params: Option<ToolCallParams<'a>>,
+    }
+
+    if let Ok(req) = serde_json::from_slice::<ToolCallRequest<'_>>(&bytes)
+        && req.method == "tools/call"
+        && let Some(op_name) = req.params.as_ref().map(|p| p.name)
+        && let Some(required) = auth_state.required_scopes.get(op_name)
+        && !required.iter().all(|s| valid_token.scopes.contains(s))
+    {
+        tracing::warn!(
+            op = op_name,
+            required = ?required,
+            present = ?valid_token.scopes,
+            "Token has insufficient scopes for operation"
+        );
+        tracing::Span::current().record("reason", "insufficient_scope");
+        tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+        return Err(forbidden_error(required));
+    }
+
+    let mut request = Request::from_parts(parts, Body::from(bytes));
+
     // Insert new context to ensure that handlers only use our enforced token verification
-    // for propagation
+    // for propagation.
     request.extensions_mut().insert(valid_token);
 
     let response = next.run(request).await;
+
     tracing::Span::current().record("status_code", response.status().as_u16());
     Ok(response)
 }
@@ -488,6 +543,7 @@ mod tests {
             config,
             client: reqwest::Client::new(),
             resource_metadata_url,
+            required_scopes: Arc::new(HashMap::new()),
         }
     }
 
