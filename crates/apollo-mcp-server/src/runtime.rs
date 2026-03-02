@@ -316,6 +316,7 @@ mod test {
                     enable_explorer: false,
                     mutation_mode: None,
                     descriptions: {},
+                    required_scopes: {},
                 },
                 schema: Uplink,
                 transport: Stdio,

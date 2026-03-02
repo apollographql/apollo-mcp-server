@@ -27,6 +27,13 @@ pub struct Overrides {
     /// these descriptions override the auto-generated tool descriptions for
     /// the matching operations, regardless of the operation source.
     pub descriptions: HashMap<String, String>,
+
+    /// Per-operation OAuth scope requirements for step-up authorization.
+    /// Keys are operation names; values are lists of required scopes.
+    /// When a token lacks the required scopes for an operation, the server
+    /// returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`.
+    #[serde(default)]
+    pub required_scopes: HashMap<String, Vec<String>>,
 }
 
 #[cfg(test)]
@@ -63,5 +70,37 @@ mod tests {
         let json = serde_json::json!({});
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert!(overrides.descriptions.is_empty());
+    }
+
+    #[test]
+    fn overrides_with_required_scopes_parses() {
+        let json = serde_json::json!({
+            "required_scopes": {
+                "GetUser": ["user:read"],
+                "UpdateUser": ["user:write"],
+                "DeleteUser": ["user:write", "admin"]
+            }
+        });
+
+        let overrides: Overrides = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            overrides.required_scopes.get("GetUser").unwrap(),
+            &vec!["user:read".to_string()]
+        );
+        assert_eq!(
+            overrides.required_scopes.get("UpdateUser").unwrap(),
+            &vec!["user:write".to_string()]
+        );
+        assert_eq!(
+            overrides.required_scopes.get("DeleteUser").unwrap(),
+            &vec!["user:write".to_string(), "admin".to_string()]
+        );
+    }
+
+    #[test]
+    fn overrides_without_required_scopes_defaults_to_empty() {
+        let json = serde_json::json!({});
+        let overrides: Overrides = serde_json::from_value(json).unwrap();
+        assert!(overrides.required_scopes.is_empty());
     }
 }
