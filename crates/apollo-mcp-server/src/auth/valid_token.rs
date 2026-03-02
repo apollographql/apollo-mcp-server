@@ -96,7 +96,11 @@ pub(super) trait ValidateToken {
             };
 
             let validation = {
-                let mut val = Validation::new(match jwk.alg {
+                let Some(alg) = jwk.alg else {
+                    warn!("Skipping JWK with no algorithm specified");
+                    continue;
+                };
+                let mut val = Validation::new(match alg {
                     jwk::KeyAlgorithm::HS256 => Algorithm::HS256,
                     jwk::KeyAlgorithm::HS384 => Algorithm::HS384,
                     jwk::KeyAlgorithm::HS512 => Algorithm::HS512,
@@ -113,7 +117,7 @@ pub(super) trait ValidateToken {
                     // No other validation key type is supported by this library, so we
                     // warn and fail if we encounter one.
                     other => {
-                        warn!("Skipping JWT signed by unsupported algorithm: {other}");
+                        warn!("Skipping JWT signed by unsupported algorithm: {other:?}");
                         continue;
                     }
                 });
@@ -235,7 +239,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -272,7 +276,7 @@ mod test {
         let (_, decode_key) = create_key("CAFED00D");
         let (bad_encode_key, _) = create_key("DEADC0DE");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -313,7 +317,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("F0CACC1A");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -349,7 +353,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("F0CACC1A");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -387,7 +391,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -435,7 +439,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -466,7 +470,7 @@ mod test {
         let key_id = "some-example-id".to_string();
         let (encode_key, decode_key) = create_key("DEADBEEF");
         let jwk = Jwk {
-            alg: KeyAlgorithm::HS512,
+            alg: Some(KeyAlgorithm::HS512),
             decoding_key: decode_key,
         };
 
@@ -507,6 +511,42 @@ mod test {
                 .any(|line| line.contains("InvalidAudience"))
                 .then_some(())
                 .ok_or("Expected warning for validation failure".to_string())
+        });
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_jwk_with_no_algorithm() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: None,
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("no algorithm specified"))
+                .then_some(())
+                .ok_or("Expected warning for missing algorithm".to_string())
         });
     }
 
