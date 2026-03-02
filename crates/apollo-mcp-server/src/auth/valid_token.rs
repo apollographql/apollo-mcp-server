@@ -514,6 +514,42 @@ mod test {
         });
     }
 
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_jwk_with_no_algorithm() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: None,
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("no algorithm specified"))
+                .then_some(())
+                .ok_or("Expected warning for missing algorithm".to_string())
+        });
+    }
+
     // Tests for extract_scopes
     mod extract_scopes_tests {
         use super::super::extract_scopes;
