@@ -433,7 +433,22 @@ impl ServerHandler for Running {
                     self.headers.clone()
                 };
 
-            if let Some(res) = find_and_execute_operation(
+            if let Some(app_param) = &app_param {
+                if let Some(res) = find_and_execute_app_tool(
+                    &self.apps,
+                    app_param,
+                    &tool_name,
+                    &headers,
+                    request.arguments.as_ref(),
+                    &self.endpoint,
+                )
+                .await
+                {
+                    res
+                } else {
+                    Err(tool_not_found(&tool_name))
+                }
+            } else if let Some(res) = find_and_execute_operation(
                 &self.operations.read().await,
                 &tool_name,
                 &headers,
@@ -441,18 +456,6 @@ impl ServerHandler for Running {
                 &self.endpoint,
             )
             .await
-            {
-                res
-            } else if let Some(app_name) = app_param.as_deref()
-                && let Some(res) = find_and_execute_app_tool(
-                    &self.apps,
-                    app_name,
-                    &tool_name,
-                    &headers,
-                    request.arguments.as_ref(),
-                    &self.endpoint,
-                )
-                .await
             {
                 res
             } else {
@@ -2365,6 +2368,263 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+    }
+
+    mod app_tool_collision {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::model::{JsonObject, Tool};
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::apps::App;
+        use crate::apps::app::{AppResource, AppResourceSource, AppTool};
+        use crate::apps::manifest::AppLabels;
+        use crate::operations::{MutationMode, RawOperation};
+
+        fn create_running_with_collision(endpoint: url::Url) -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+
+            // Create an operation named "Hello"
+            let operation: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = operation
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            // Create an app tool also named "Hello", but backed by a different operation
+            let app_operation: RawOperation = ("query AppHello { hello }".to_string(), None).into();
+            let app_operation = app_operation
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("app operation should be valid");
+
+            let app = App {
+                name: "MyApp".to_string(),
+                description: None,
+                resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
+                csp_settings: None,
+                widget_settings: None,
+                uri: "ui://MyApp".parse().unwrap(),
+                tools: vec![AppTool {
+                    operation: Arc::new(app_operation),
+                    labels: AppLabels::default(),
+                    tool: Tool::new("Hello", "app tool", JsonObject::new()),
+                }],
+                prefetch_operations: vec![],
+            };
+
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![operation])),
+                apps: vec![app],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint,
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: true,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-03-26",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_notification_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_call_tool_request_with_app(
+            session_id: &str,
+            tool_name: &str,
+            app_name: &str,
+        ) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": tool_name,
+                    "arguments": {}
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri(format!("/mcp?app={app_name}"))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn extract_session_id<B>(response: &http::Response<B>) -> String {
+            response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+
+        async fn initialize_session(
+            running: &Running,
+            session_manager: &Arc<LocalSessionManager>,
+        ) -> String {
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = extract_session_id(&response);
+
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_notification_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            session_id
+        }
+
+        async fn call_tool_with_app<B>(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+            session_id: &str,
+            tool_name: &str,
+            app_name: &str,
+        ) -> serde_json::Value
+        where
+            B: http_body_util::BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_call_tool_request_with_app(
+                    session_id, tool_name, app_name,
+                ))
+                .await
+                .unwrap();
+
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+
+            for line in body_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                {
+                    return val;
+                }
+            }
+            panic!("no JSON data found in SSE response");
+        }
+
+        #[tokio::test]
+        async fn app_tool_called_instead_of_operation_when_app_param_present() {
+            let mut server = mockito::Server::new_async().await;
+
+            // Mock for the operation "Hello" — should NOT be called
+            let operation_mock = server
+                .mock("POST", "/")
+                .match_body(mockito::Matcher::Regex(
+                    r#".*"operationName"\s*:\s*"Hello".*"#.to_string(),
+                ))
+                .with_body(r#"{"data": {"hello": "from operation"}}"#)
+                .with_header("Content-Type", "application/json")
+                .expect(0)
+                .create_async()
+                .await;
+
+            // Mock for the app tool's operation "AppHello" — should be called
+            let app_tool_mock = server
+                .mock("POST", "/")
+                .match_body(mockito::Matcher::Regex(
+                    r#".*"operationName"\s*:\s*"AppHello".*"#.to_string(),
+                ))
+                .with_body(r#"{"data": {"hello": "from app"}}"#)
+                .with_header("Content-Type", "application/json")
+                .expect(1)
+                .create_async()
+                .await;
+
+            let running = create_running_with_collision(server.url().parse().unwrap());
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager).await;
+
+            let _body =
+                call_tool_with_app::<Body>(running, session_manager, &session_id, "Hello", "MyApp")
+                    .await;
+
+            app_tool_mock.assert();
+            operation_mock.assert();
         }
     }
 }
