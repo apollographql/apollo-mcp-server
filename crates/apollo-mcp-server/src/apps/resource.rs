@@ -19,11 +19,11 @@ pub(crate) async fn get_app_resource(
     request: rmcp::model::ReadResourceRequestParams,
     request_uri: Url,
     app_target: &AppTarget,
-    app_name: &String,
+    app_name: &str,
 ) -> Result<ResourceContents, ErrorData> {
     let Some(app) = apps
         .iter()
-        .find(|app| app.uri.path() == request_uri.path() && &app.name == app_name)
+        .find(|app| app.uri.path() == request_uri.path() && app.name == app_name)
     else {
         return Err(ErrorData::resource_not_found(
             format!("Resource not found for URI: {}", request.uri),
@@ -239,7 +239,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await
         .unwrap();
@@ -303,7 +303,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await
         .unwrap();
@@ -355,7 +355,7 @@ mod tests {
             },
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await;
 
@@ -383,7 +383,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
-            &"WrongApp".to_string(),
+            "WrongApp",
         )
         .await;
 
@@ -414,7 +414,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await
         .unwrap();
@@ -449,7 +449,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await
         .unwrap();
@@ -484,7 +484,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
-            &"TestApp".to_string(),
+            "TestApp",
         )
         .await;
 
