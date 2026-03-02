@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.1 (2026-03-02)
+
+### Fixes
+
+#### Fix panic with multibyte UTF-8 characters in GraphQL schemas
+
+Update `apollo-compiler` to 1.31.1, which upgrades the `ariadne` error reporting library from 0.5.1 to 0.6.0. This fixes a panic when handling GraphQL schemas containing CJK text or emoji in field names or descriptions, where byte-offset span calculations could land inside a multibyte character boundary.
+
+#### Use `openai/widgetPrefersBorder` when `prefersBorder` setting is provided
+
+Set `_meta['openai/widgetPrefersBorder']` for the resource because ChatGPT ignores `_meta.ui.prefersBorder` at the moment.
+
 ## 1.8.0 (2026-02-26)
 
 ### Features
