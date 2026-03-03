@@ -27,6 +27,9 @@ pub struct OperationDetails {
 }
 
 static GRAPHQL_CLIENT: LazyLock<ClientWithMiddleware> = LazyLock::new(|| {
+    // reqwest-middleware 0.5+ uses reqwest 0.13 with rustls-no-provider, so we must install
+    // the ring crypto provider before creating the client.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     ClientBuilder::new(reqwest_middleware::reqwest::Client::new())
         .with_init(Extension(OtelName("mcp-graphql-client".into())))
         .with(TracingMiddleware::default())
