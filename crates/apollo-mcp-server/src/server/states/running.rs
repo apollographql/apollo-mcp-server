@@ -286,13 +286,30 @@ impl Running {
         Ok(result)
     }
 
-    fn list_resources_impl(&self) -> Result<ListResourcesResult, McpError> {
+    fn list_resources_impl(
+        &self,
+        extensions: &Extensions,
+    ) -> Result<ListResourcesResult, McpError> {
+        let app_param = extract_app_param(extensions);
+
+        let resources = if let Some(app_name) = app_param {
+            let app = self.apps.iter().find(|app| app.name == app_name);
+            match app {
+                Some(app) => vec![attach_resource_mime_type(app.resource())],
+                None => {
+                    return Err(McpError::new(
+                        ErrorCode::INVALID_PARAMS,
+                        format!("App {app_name} not found"),
+                        None,
+                    ));
+                }
+            }
+        } else {
+            vec![]
+        };
+
         Ok(ListResourcesResult {
-            resources: self
-                .apps
-                .iter()
-                .map(|app| attach_resource_mime_type(app.resource()))
-                .collect(),
+            resources,
             next_cursor: None,
             meta: None,
         })
@@ -310,13 +327,21 @@ impl Running {
                 None,
             )
         })?;
+        let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
-        let resource = get_app_resource(&self.apps, request, request_uri, &app_target).await?;
-
-        Ok(ReadResourceResult {
-            contents: vec![resource],
-        })
+        if let Some(app_name) = app_param {
+            let resource =
+                get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
+            Ok(ReadResourceResult {
+                contents: vec![resource],
+            })
+        } else {
+            Err(ErrorData::resource_not_found(
+                format!("Resource not found for URI: {}", request.uri),
+                None,
+            ))
+        }
     }
 }
 
@@ -512,9 +537,9 @@ impl ServerHandler for Running {
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl()
+        self.list_resources_impl(&context.extensions)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -810,12 +835,20 @@ mod tests {
 
     #[tokio::test]
     async fn resource_list_includes_app_resources() {
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let resources = running_with_apps(
             AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
             None,
             None,
         )
-        .list_resources_impl()
+        .list_resources_impl(&extensions)
         .unwrap()
         .resources;
 
@@ -825,12 +858,20 @@ mod tests {
 
     #[tokio::test]
     async fn resource_list_attaches_mcp_apps_mime_type() {
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let resources = running_with_apps(
             AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
             None,
             None,
         )
-        .list_resources_impl()
+        .list_resources_impl(&extensions)
         .unwrap()
         .resources;
 
@@ -842,6 +883,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resource_list_empty_without_app_param() {
+        let resources = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(&Extensions::new())
+        .unwrap()
+        .resources;
+
+        assert!(resources.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resource_list_with_nonexistent_app() {
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=NonExistent")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        )
+        .list_resources_impl(&extensions);
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn getting_resource_from_running() {
         let resource_content = "This is a test resource";
         let running = running_with_apps(
@@ -849,6 +924,14 @@ mod tests {
             None,
             None,
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
@@ -857,7 +940,7 @@ mod tests {
                         .unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -887,13 +970,21 @@ mod tests {
             None,
             None,
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let result = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await;
@@ -907,13 +998,69 @@ mod tests {
             None,
             None,
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let result = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "not a uri".parse().unwrap(),
                     meta: None,
                 },
+                extensions,
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_resource_without_app_param_returns_error() {
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        );
+        let result = running
+            .read_resource_impl(
+                ReadResourceRequestParams {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
+                },
                 Extensions::new(),
+                None,
+            )
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn read_resource_with_wrong_app_param_returns_error() {
+        let running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+            None,
+            None,
+        );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=NonExistent")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
+        let result = running
+            .read_resource_impl(
+                ReadResourceRequestParams {
+                    uri: "http://localhost:4000/resource".parse().unwrap(),
+                    meta: None,
+                },
+                extensions,
                 None,
             )
             .await;
@@ -939,13 +1086,21 @@ mod tests {
             None,
         );
 
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: RESOURCE_URI.to_string(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -978,13 +1133,21 @@ mod tests {
             }),
             None,
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -1285,13 +1448,21 @@ mod tests {
                 prefers_border: None,
             }),
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -1319,13 +1490,21 @@ mod tests {
                 prefers_border: None,
             }),
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -1352,13 +1531,21 @@ mod tests {
                 prefers_border: Some(true),
             }),
         );
+        let mut extensions = Extensions::new();
+        let request = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap();
+        let (parts, _) = request.into_parts();
+        extensions.insert(parts);
+
         let mut resource = running
             .read_resource_impl(
                 ReadResourceRequestParams {
                     uri: "http://localhost:4000/resource".parse().unwrap(),
                     meta: None,
                 },
-                Extensions::new(),
+                extensions,
                 None,
             )
             .await
@@ -1395,7 +1582,7 @@ mod tests {
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=mcp")
+            .uri("http://localhost?app=MyApp&appTarget=mcp")
             .body(())
             .unwrap();
         let (parts, _) = request.into_parts();
@@ -1447,7 +1634,7 @@ mod tests {
 
         let mut extensions = Extensions::new();
         let request = axum::http::Request::builder()
-            .uri("http://localhost?appTarget=invalid")
+            .uri("http://localhost?app=MyApp&appTarget=invalid")
             .body(())
             .unwrap();
         let (parts, _) = request.into_parts();

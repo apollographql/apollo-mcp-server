@@ -19,8 +19,12 @@ pub(crate) async fn get_app_resource(
     request: rmcp::model::ReadResourceRequestParams,
     request_uri: Url,
     app_target: &AppTarget,
+    app_name: &str,
 ) -> Result<ResourceContents, ErrorData> {
-    let Some(app) = apps.iter().find(|app| app.uri.path() == request_uri.path()) else {
+    let Some(app) = apps
+        .iter()
+        .find(|app| app.uri.path() == request_uri.path() && app.name == app_name)
+    else {
         return Err(ErrorData::resource_not_found(
             format!("Resource not found for URI: {}", request.uri),
             None,
@@ -235,6 +239,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -298,6 +303,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -349,6 +355,35 @@ mod tests {
             },
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_app_resource_returns_error_for_wrong_app_name() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams {
+                uri: "ui://widget/TestApp".to_string(),
+                meta: None,
+            },
+            "ui://widget/TestApp".parse().unwrap(),
+            &AppTarget::AppsSDK,
+            "WrongApp",
         )
         .await;
 
@@ -379,6 +414,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -413,6 +449,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -447,6 +484,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await;
 
