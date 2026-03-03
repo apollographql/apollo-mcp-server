@@ -286,6 +286,151 @@ impl Running {
         Ok(result)
     }
 
+    async fn call_tool_impl(
+        &self,
+        request: CallToolRequestParams,
+        extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<CallToolResult, McpError> {
+        let meter = &meter::METER;
+        let start = std::time::Instant::now();
+        let tool_name = request.name;
+        let app_param = extract_app_param(extensions);
+
+        let mut result = if tool_name == INTROSPECT_TOOL_NAME
+            && let Some(introspect_tool) = &self.introspect_tool
+        {
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => introspect_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
+        } else if tool_name == SEARCH_TOOL_NAME
+            && let Some(search_tool) = &self.search_tool
+        {
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => search_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
+        } else if tool_name == EXPLORER_TOOL_NAME
+            && let Some(explorer_tool) = &self.explorer_tool
+        {
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => explorer_tool.execute(args).await,
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
+        } else if tool_name == EXECUTE_TOOL_NAME
+            && let Some(execute_tool) = &self.execute_tool
+        {
+            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+                build_request_headers(
+                    &self.headers,
+                    &self.forward_headers,
+                    &axum_parts.headers,
+                    &axum_parts.extensions,
+                    self.disable_auth_token_passthrough,
+                )
+            } else {
+                self.headers.clone()
+            };
+
+            execute_operation(
+                execute_tool,
+                &headers,
+                request.arguments.as_ref(),
+                &self.endpoint,
+            )
+            .await
+        } else if tool_name == VALIDATE_TOOL_NAME
+            && let Some(validate_tool) = &self.validate_tool
+        {
+            match serde_json::from_value(Value::from(request.arguments)) {
+                Ok(args) => Ok(validate_tool.execute(args).await),
+                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid input: {e}"
+                ))])),
+            }
+        } else {
+            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+                build_request_headers(
+                    &self.headers,
+                    &self.forward_headers,
+                    &axum_parts.headers,
+                    &axum_parts.extensions,
+                    self.disable_auth_token_passthrough,
+                )
+            } else {
+                self.headers.clone()
+            };
+
+            if let Some(app_param) = &app_param {
+                if let Some(res) = find_and_execute_app_tool(
+                    &self.apps,
+                    app_param,
+                    &tool_name,
+                    &headers,
+                    request.arguments.as_ref(),
+                    &self.endpoint,
+                )
+                .await
+                {
+                    res
+                } else {
+                    Err(tool_not_found(&tool_name))
+                }
+            } else if let Some(res) = find_and_execute_operation(
+                &self.operations.read().await,
+                &tool_name,
+                &headers,
+                request.arguments.as_ref(),
+                &self.endpoint,
+            )
+            .await
+            {
+                res
+            } else {
+                Err(tool_not_found(&tool_name))
+            }
+        };
+
+        // Track errors for health check
+        if let (Err(_), Some(health_check)) = (&result, &self.health_check) {
+            health_check.record_rejection();
+        }
+
+        let attributes = vec![
+            KeyValue::new(
+                TelemetryAttribute::Success.to_key(),
+                result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
+            ),
+            KeyValue::new(TelemetryAttribute::ToolName.to_key(), tool_name),
+        ];
+        // Record response time and status
+        meter
+            .f64_histogram(TelemetryMetric::ToolDuration.as_str())
+            .build()
+            .record(start.elapsed().as_millis() as f64, &attributes);
+        meter
+            .u64_counter(TelemetryMetric::ToolCount.as_str())
+            .build()
+            .add(1, &attributes);
+
+        // MCP Apps rely on structured_content; only strip for non-app calls with older protocol versions.
+        if app_param.is_none()
+            && !self.client_supports_output_schema(protocol_version)
+            && let Ok(r) = &mut result
+        {
+            r.structured_content = None;
+        }
+
+        result
+    }
+
     fn list_resources_impl(
         &self,
         extensions: &Extensions,
@@ -379,147 +524,11 @@ impl ServerHandler for Running {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        let meter = &meter::METER;
-        let start = std::time::Instant::now();
-        let tool_name = request.name.clone();
+        let peer_info = context.peer.peer_info();
+        let protocol_version = peer_info.map(|info| &info.protocol_version);
 
-        let app_param = extract_app_param(&context.extensions);
-
-        let mut result = if tool_name == INTROSPECT_TOOL_NAME
-            && let Some(introspect_tool) = &self.introspect_tool
-        {
-            match serde_json::from_value(Value::from(request.arguments)) {
-                Ok(args) => introspect_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid input: {e}"
-                ))])),
-            }
-        } else if tool_name == SEARCH_TOOL_NAME
-            && let Some(search_tool) = &self.search_tool
-        {
-            match serde_json::from_value(Value::from(request.arguments)) {
-                Ok(args) => search_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid input: {e}"
-                ))])),
-            }
-        } else if tool_name == EXPLORER_TOOL_NAME
-            && let Some(explorer_tool) = &self.explorer_tool
-        {
-            match serde_json::from_value(Value::from(request.arguments)) {
-                Ok(args) => explorer_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid input: {e}"
-                ))])),
-            }
-        } else if tool_name == EXECUTE_TOOL_NAME
-            && let Some(execute_tool) = &self.execute_tool
-        {
-            let headers =
-                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
-                    build_request_headers(
-                        &self.headers,
-                        &self.forward_headers,
-                        &axum_parts.headers,
-                        &axum_parts.extensions,
-                        self.disable_auth_token_passthrough,
-                    )
-                } else {
-                    self.headers.clone()
-                };
-
-            execute_operation(
-                execute_tool,
-                &headers,
-                request.arguments.as_ref(),
-                &self.endpoint,
-            )
+        self.call_tool_impl(request, &context.extensions, protocol_version)
             .await
-        } else if tool_name == VALIDATE_TOOL_NAME
-            && let Some(validate_tool) = &self.validate_tool
-        {
-            match serde_json::from_value(Value::from(request.arguments)) {
-                Ok(args) => Ok(validate_tool.execute(args).await),
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                    "Invalid input: {e}"
-                ))])),
-            }
-        } else {
-            let headers =
-                if let Some(axum_parts) = context.extensions.get::<axum::http::request::Parts>() {
-                    build_request_headers(
-                        &self.headers,
-                        &self.forward_headers,
-                        &axum_parts.headers,
-                        &axum_parts.extensions,
-                        self.disable_auth_token_passthrough,
-                    )
-                } else {
-                    self.headers.clone()
-                };
-
-            if let Some(app_param) = &app_param {
-                if let Some(res) = find_and_execute_app_tool(
-                    &self.apps,
-                    app_param,
-                    &tool_name,
-                    &headers,
-                    request.arguments.as_ref(),
-                    &self.endpoint,
-                )
-                .await
-                {
-                    res
-                } else {
-                    Err(tool_not_found(&tool_name))
-                }
-            } else if let Some(res) = find_and_execute_operation(
-                &self.operations.read().await,
-                &tool_name,
-                &headers,
-                request.arguments.as_ref(),
-                &self.endpoint,
-            )
-            .await
-            {
-                res
-            } else {
-                Err(tool_not_found(&tool_name))
-            }
-        };
-
-        // Track errors for health check
-        if let (Err(_), Some(health_check)) = (&result, &self.health_check) {
-            health_check.record_rejection();
-        }
-
-        let attributes = vec![
-            KeyValue::new(
-                TelemetryAttribute::Success.to_key(),
-                result.as_ref().is_ok_and(|r| r.is_error != Some(true)),
-            ),
-            KeyValue::new(TelemetryAttribute::ToolName.to_key(), tool_name),
-        ];
-        // Record response time and status
-        meter
-            .f64_histogram(TelemetryMetric::ToolDuration.as_str())
-            .build()
-            .record(start.elapsed().as_millis() as f64, &attributes);
-        meter
-            .u64_counter(TelemetryMetric::ToolCount.as_str())
-            .build()
-            .add(1, &attributes);
-
-        // MCP Apps rely on structured_content; only strip for non-app calls with older protocol versions.
-        let protocol_version = context.peer.peer_info().map(|info| &info.protocol_version);
-        if app_param.is_none()
-            && !self.client_supports_output_schema(protocol_version)
-            && let Ok(r) = &mut result
-        {
-            r.structured_content = None;
-        }
-
-        result
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
@@ -615,11 +624,11 @@ fn tool_not_found(name: &str) -> McpError {
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::{JsonObject, ReadResourceRequestParams, ResourceContents, Tool};
+    use rmcp::model::{JsonObject, Tool};
 
     use crate::apps::{
         App,
-        app::{AppResource, AppResourceSource, AppTool},
+        app::{AppResource, AppTool},
         manifest::{AppLabels, CSPSettings, WidgetSettings},
     };
 
@@ -650,152 +659,6 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
         }
-    }
-
-    #[tokio::test]
-    async fn invalid_operations_should_not_crash_server() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let operations = Arc::new(RwLock::new(vec![]));
-
-        let running = Running {
-            operations: operations.clone(),
-            ..test_running(Arc::new(RwLock::new(schema)))
-        };
-
-        let new_operations = vec![
-            RawOperation::from((
-                "query Valid { id }".to_string(),
-                Some("valid.graphql".to_string()),
-            )),
-            RawOperation::from((
-                "query Invalid {{ id }".to_string(),
-                Some("invalid.graphql".to_string()),
-            )),
-            RawOperation::from((
-                "query { id }".to_string(),
-                Some("unnamed.graphql".to_string()),
-            )),
-        ];
-
-        running.update_operations(new_operations.clone()).await;
-
-        // Check that our local copy of operations is updated, representing what the server sees
-        let updated_operations = operations.read().await;
-
-        assert_eq!(updated_operations.len(), 1);
-        assert_eq!(updated_operations.first().unwrap().as_ref().name, "Valid");
-    }
-
-    #[tokio::test]
-    async fn overrides_descriptions_applied_to_operations() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let operations = Arc::new(RwLock::new(vec![]));
-
-        let descriptions = HashMap::from([(
-            "GetId".to_string(),
-            "Custom description for GetId".to_string(),
-        )]);
-
-        let running = Running {
-            operations: operations.clone(),
-            descriptions,
-            ..test_running(Arc::new(RwLock::new(schema)))
-        };
-
-        let new_operations = vec![RawOperation::from((
-            "query GetId { id }".to_string(),
-            Some("get_id.graphql".to_string()),
-        ))];
-
-        running.update_operations(new_operations).await;
-
-        let updated = operations.read().await;
-        let tool: &Tool = updated.first().unwrap().as_ref();
-        assert_eq!(
-            tool.description.as_deref(),
-            Some("Custom description for GetId"),
-            "Override description should replace auto-generated one"
-        );
-    }
-
-    #[tokio::test]
-    async fn overrides_descriptions_do_not_affect_unmatched_operations() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let operations = Arc::new(RwLock::new(vec![]));
-
-        let descriptions = HashMap::from([(
-            "NonExistent".to_string(),
-            "This should not match anything".to_string(),
-        )]);
-
-        let running = Running {
-            operations: operations.clone(),
-            descriptions,
-            ..test_running(Arc::new(RwLock::new(schema)))
-        };
-
-        let new_operations = vec![RawOperation::from((
-            "query GetId { id }".to_string(),
-            Some("get_id.graphql".to_string()),
-        ))];
-
-        running.update_operations(new_operations).await;
-
-        let updated = operations.read().await;
-        let tool: &Tool = updated.first().unwrap().as_ref();
-        assert_ne!(
-            tool.description.as_deref(),
-            Some("This should not match anything"),
-            "Unmatched override description should not be applied"
-        );
-    }
-
-    #[tokio::test]
-    async fn changing_schema_invalidates_outdated_operations() {
-        let schema = Arc::new(RwLock::new(
-            Schema::parse(
-                "type Query { data: String, something: String }",
-                "schema.graphql",
-            )
-            .unwrap()
-            .validate()
-            .unwrap(),
-        ));
-
-        let running = test_running(schema.clone());
-
-        let operations = vec![
-            RawOperation::from((
-                "query Valid { data }".to_string(),
-                Some("valid.graphql".to_string()),
-            )),
-            RawOperation::from((
-                "query WillBeStale { something }".to_string(),
-                Some("invalid.graphql".to_string()),
-            )),
-        ];
-
-        running.update_operations(operations).await;
-
-        let new_schema = Schema::parse("type Query { data: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-        running.update_schema(new_schema.clone()).await;
-
-        assert_eq!(*schema.read().await, new_schema);
     }
 
     const RESOURCE_URI: &str = "http://localhost:4000/resource#1234";
@@ -836,963 +699,1002 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn resource_list_includes_app_resources() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let resources = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(&extensions)
-        .unwrap()
-        .resources;
-
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0].uri, RESOURCE_URI);
-    }
-
-    #[tokio::test]
-    async fn resource_list_attaches_mcp_apps_mime_type() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let resources = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(&extensions)
-        .unwrap()
-        .resources;
-
-        assert_eq!(resources.len(), 1);
-        assert_eq!(
-            resources[0].mime_type,
-            Some("text/html;profile=mcp-app".into())
-        );
-    }
-
-    #[tokio::test]
-    async fn resource_list_empty_without_app_param() {
-        let resources = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(&Extensions::new())
-        .unwrap()
-        .resources;
-
-        assert!(resources.is_empty());
-    }
-
-    #[tokio::test]
-    async fn resource_list_with_nonexistent_app() {
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=NonExistent")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        )
-        .list_resources_impl(&extensions);
-
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn getting_resource_from_running() {
-        let resource_content = "This is a test resource";
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
-            None,
-            None,
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource#a_different_fragment"
-                        .parse()
-                        .unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-        assert_eq!(resource.contents.len(), 1);
-        let Some(ResourceContents::TextResourceContents {
-            uri,
-            mime_type,
-            text,
-            meta,
-        }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        assert_eq!(text, resource_content);
-        assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
-        // Meta always contains at least the "ui" key now
-        let meta = meta.expect("meta should be set");
-        assert!(meta.get("ui").is_some());
-        assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
-    }
-
-    #[tokio::test]
-    async fn getting_resource_that_does_not_exist() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn getting_resource_from_running_with_invalid_uri() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "not a uri".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn read_resource_without_app_param_returns_error() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        );
-        let result = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                Extensions::new(),
-                None,
-            )
-            .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn read_resource_with_wrong_app_param_returns_error() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-            None,
-            None,
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=NonExistent")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn fetch_remote_resource_downloads_content() {
-        let mut server = mockito::Server::new_async().await;
-        let body = "<html>remote</html>";
-        let mock = server
-            .mock("GET", "/widget")
-            .with_status(200)
-            .with_body(body)
-            .expect(1)
-            .create_async()
-            .await;
-
-        let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Remote(url)),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: RESOURCE_URI.to_string(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .expect("resource fetch failed");
-
-        mock.assert();
-        let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
-        else {
-            panic!("unexpected resource contents");
-        };
-        assert_eq!(text, body);
-    }
-
-    #[tokio::test]
-    async fn csp_settings() {
-        let resource_content = "This is a test resource";
-        let connect_domains = vec!["connect.example.com".to_string()];
-        let resource_domains = vec!["resource.example.com".to_string()];
-        let frame_domains = vec!["frame.example.com".to_string()];
-        let redirect_domains = vec!["redirect.example.com".to_string()];
-        let base_uri_domains = vec!["base_uri.example.com".to_string()];
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
-            Some(CSPSettings {
-                connect_domains: Some(connect_domains.clone()),
-                resource_domains: Some(resource_domains.clone()),
-                frame_domains: Some(frame_domains.clone()),
-                redirect_domains: Some(redirect_domains.clone()),
-                base_uri_domains: Some(base_uri_domains.clone()),
-            }),
-            None,
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-        assert_eq!(resource.contents.len(), 1);
-        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        let meta = meta.expect("meta is not set");
-        // OpenAI-specific CSP at root level should only contain redirect_domains
-        let openai_csp = meta
-            .get("openai/widgetCSP")
-            .expect("openai csp settings not found");
-        let returned_redirect_domains = openai_csp
-            .get("redirect_domains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_redirect_domains, &redirect_domains);
-        // Common CSP properties are under ui.csp with camelCase keys
-        let ui_meta = meta.get("ui").expect("ui key not found");
-        let csp_settings = ui_meta.get("csp").expect("csp settings not found");
-        let returned_connect_domains = csp_settings
-            .get("connectDomains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_connect_domains, &connect_domains);
-        let returned_resource_domains = csp_settings
-            .get("resourceDomains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_resource_domains, &resource_domains);
-        let returned_frame_domains = csp_settings
-            .get("frameDomains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_frame_domains, &frame_domains);
-        let returned_base_uri_domains = csp_settings
-            .get("baseUriDomains")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(returned_base_uri_domains, &base_uri_domains);
-    }
-
-    #[tokio::test]
-    async fn list_tools_without_app_parameter() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let result = running
-            .list_tools_impl(Extensions::new(), None, None)
-            .await
-            .unwrap();
-
-        assert_eq!(result.tools.len(), 0);
-        assert_eq!(result.next_cursor, None);
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_valid_app_parameter() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .list_tools_impl(extensions, None, None)
-            .await
-            .unwrap();
-
-        assert_eq!(result.tools.len(), 1);
-        assert_eq!(result.tools[0].name, "GetId");
-        assert_eq!(result.next_cursor, None);
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_nonexistent_app_parameter() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=NonExistent")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running.list_tools_impl(extensions, None, None).await;
-
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_app_and_openai_target_has_correct_metadata() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=openai")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .list_tools_impl(extensions, None, None)
-            .await
-            .unwrap();
-        let meta = result.tools[0].meta.as_ref().unwrap();
-
-        // Should have ui nested metadata with resourceUri and visibility
-        let ui = meta.get("ui").unwrap().as_object().unwrap();
-        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
-        assert_eq!(
-            ui.get("visibility").unwrap(),
-            &serde_json::json!(["model", "app"])
-        );
-        // Should have deprecated root-level ui/resourceUri
-        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_app_and_mcp_target_has_correct_metadata() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=mcp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .list_tools_impl(extensions, None, None)
-            .await
-            .unwrap();
-        let meta = result.tools[0].meta.as_ref().unwrap();
-
-        // Check nested ui metadata
-        let ui = meta.get("ui").unwrap().as_object().unwrap();
-        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
-        assert_eq!(
-            ui.get("visibility").unwrap(),
-            &serde_json::json!(["model", "app"])
-        );
-
-        // Check deprecated root-level ui/resourceUri for backwards compatibility
-        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
-
-        // Ensure OpenAI-specific keys are NOT present
-        assert!(meta.get("openai/outputTemplate").is_none());
-        assert!(meta.get("openai/widgetAccessible").is_none());
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_app_defaults_to_openai_target() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .list_tools_impl(extensions, None, None)
-            .await
-            .unwrap();
-        let meta = result.tools[0].meta.as_ref().unwrap();
-
-        // Default should still have ui nested metadata
-        let ui = meta.get("ui").unwrap().as_object().unwrap();
-        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
-        assert_eq!(
-            ui.get("visibility").unwrap(),
-            &serde_json::json!(["model", "app"])
-        );
-        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_app_and_mcp_app_capability_defaults_to_mcp_target() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut extension_capabilities = std::collections::BTreeMap::new();
-        extension_capabilities.insert(
-            "io.modelcontextprotocol/ui".to_string(),
-            serde_json::json!({"mimeTypes": ["text/html;profile=mcp-app"]})
-                .as_object()
-                .unwrap()
-                .clone(),
-        );
-        let client_capabilities = ClientCapabilities {
-            extensions: Some(extension_capabilities),
-            ..Default::default()
-        };
-
-        let result = running
-            .list_tools_impl(extensions, Some(&client_capabilities), None)
-            .await
-            .unwrap();
-        let meta = result.tools[0].meta.as_ref().unwrap();
-
-        // Should have MCP-style nested ui metadata
-        let ui = meta.get("ui").unwrap().as_object().unwrap();
-        assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
-        assert_eq!(
-            ui.get("visibility").unwrap(),
-            &serde_json::json!(["model", "app"])
-        );
-
-        // Check deprecated root-level ui/resourceUri for backwards compatibility
-        assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
-
-        // Ensure OpenAI-specific keys are NOT present
-        assert!(meta.get("openai/outputTemplate").is_none());
-        assert!(meta.get("openai/widgetAccessible").is_none());
-    }
-
-    #[tokio::test]
-    async fn list_tools_with_invalid_app_target_returns_error() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=invalid")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running.list_tools_impl(extensions, None, None).await;
-
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn widget_settings_description_is_set_in_meta() {
-        let resource_content = "This is a test resource";
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
-            None,
-            Some(WidgetSettings {
-                description: Some("A custom description".to_string()),
-                domain: None,
-                prefers_border: None,
-            }),
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        let meta = meta.expect("meta should be set");
-        let description = meta
-            .get("openai/widgetDescription")
-            .expect("widgetDescription not found");
-        assert_eq!(description.as_str().unwrap(), "A custom description");
-    }
-
-    #[tokio::test]
-    async fn widget_settings_domain_is_set_in_meta() {
-        let resource_content = "This is a test resource";
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
-            None,
-            Some(WidgetSettings {
-                description: None,
-                domain: Some("example.com".to_string()),
-                prefers_border: None,
-            }),
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        let meta = meta.expect("meta should be set");
-        let ui_meta = meta.get("ui").expect("ui key not found");
-        let domain = ui_meta.get("domain").expect("domain not found");
-        assert_eq!(domain.as_str().unwrap(), "example.com");
-    }
-
-    #[tokio::test]
-    async fn widget_settings_prefers_border_is_set_in_meta() {
-        let resource_content = "This is a test resource";
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
-            None,
-            Some(WidgetSettings {
-                description: None,
-                domain: None,
-                prefers_border: Some(true),
-            }),
-        );
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-        let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        let meta = meta.expect("meta should be set");
-        let ui_meta = meta.get("ui").expect("ui key not found");
-        let prefers_border = ui_meta
-            .get("prefersBorder")
-            .expect("prefersBorder not found");
-        assert!(prefers_border.as_bool().unwrap());
-    }
-
-    #[tokio::test]
-    async fn read_resource_impl_returns_mcp_format_when_target_is_mcp() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test content".to_string())),
-            Some(CSPSettings {
-                connect_domains: Some(vec!["connect.example.com".to_string()]),
-                resource_domains: Some(vec!["resource.example.com".to_string()]),
-                frame_domains: Some(vec!["frame.example.com".to_string()]),
-                redirect_domains: Some(vec!["redirect.example.com".to_string()]),
-                base_uri_domains: Some(vec!["base.example.com".to_string()]),
-            }),
-            Some(WidgetSettings {
-                description: Some("Test description".to_string()),
-                domain: Some("example.com".to_string()),
-                prefers_border: Some(true),
-            }),
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=mcp")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let mut resource = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await
-            .unwrap();
-
-        let Some(ResourceContents::TextResourceContents {
-            mime_type, meta, ..
-        }) = resource.contents.pop()
-        else {
-            panic!("Expected TextResourceContents");
-        };
-        assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
-
-        let meta = meta.expect("meta should be set");
-        // MCPApps should have ui nesting
-        let ui_meta = meta.get("ui").expect("ui key should be set");
-        // MCPApps CSP uses camelCase keys and includes baseUriDomains (not redirectDomains)
-        let csp = ui_meta.get("csp").expect("CSP should be set");
-        assert!(csp.get("connectDomains").is_some());
-        assert!(csp.get("resourceDomains").is_some());
-        assert!(csp.get("frameDomains").is_some());
-        assert!(csp.get("baseUriDomains").is_some());
-        assert!(csp.get("redirectDomains").is_none());
-        assert!(ui_meta.get("domain").is_some());
-        assert!(ui_meta.get("prefersBorder").is_some());
-        // MCPApps should not have description
-        assert!(ui_meta.get("description").is_none());
-    }
-
-    #[tokio::test]
-    async fn read_resource_impl_returns_error_for_invalid_app_target() {
-        let running = running_with_apps(
-            AppResource::Single(AppResourceSource::Local("test content".to_string())),
-            None,
-            None,
-        );
-
-        let mut extensions = Extensions::new();
-        let request = axum::http::Request::builder()
-            .uri("http://localhost?app=MyApp&appTarget=invalid")
-            .body(())
-            .unwrap();
-        let (parts, _) = request.into_parts();
-        extensions.insert(parts);
-
-        let result = running
-            .read_resource_impl(
-                ReadResourceRequestParams {
-                    uri: "http://localhost:4000/resource".parse().unwrap(),
-                    meta: None,
-                },
-                extensions,
-                None,
-            )
-            .await;
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn get_info_should_use_default_metadata_when_config_is_empty() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let running = test_running(Arc::new(RwLock::new(schema)));
-
-        let info = running.get_info();
-
-        assert_eq!(info.server_info.name, "Apollo MCP Server");
-        assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(
-            info.server_info.title,
-            Some("Apollo MCP Server".to_string())
-        );
-        assert_eq!(
-            info.server_info.website_url,
-            Some("https://www.apollographql.com/docs/apollo-mcp-server".to_string())
-        );
-        assert_eq!(
-            info.server_info.description,
-            Some(
-                "A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."
-                    .to_string()
-            )
-        );
-        assert_eq!(info.server_info.icons, None);
-    }
-
-    #[test]
-    fn get_info_should_use_custom_metadata_when_config_provided() {
-        let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-            .unwrap()
-            .validate()
-            .unwrap();
-
-        let custom_config = ServerInfoConfig {
-            name: Some("My Custom Server".to_string()),
-            version: Some("3.0.0-beta".to_string()),
-            title: Some("Custom GraphQL Server".to_string()),
-            website_url: Some("https://my-server.example.com/docs".to_string()),
-            description: Some("A custom MCP server for testing".to_string()),
-        };
-
-        let running = Running {
-            server_info: custom_config,
-            ..test_running(Arc::new(RwLock::new(schema)))
-        };
-
-        let info = running.get_info();
-
-        assert_eq!(info.server_info.name, "My Custom Server");
-        assert_eq!(info.server_info.version, "3.0.0-beta");
-        assert_eq!(
-            info.server_info.title,
-            Some("Custom GraphQL Server".to_string())
-        );
-        assert_eq!(
-            info.server_info.website_url,
-            Some("https://my-server.example.com/docs".to_string())
-        );
-        assert_eq!(
-            info.server_info.description,
-            Some("A custom MCP server for testing".to_string())
-        );
-    }
-
-    mod get_info_protocol_version {
+    mod update_operations {
         use super::*;
-        use rmcp::model::ProtocolVersion;
+        use rmcp::model::Tool;
 
-        fn build_running(enable_output_schema: bool) -> Running {
+        #[tokio::test]
+        async fn invalid_operations_should_not_crash_server() {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
                 .unwrap()
                 .validate()
                 .unwrap();
 
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![])),
-                apps: vec![],
-                headers: HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint: "http://localhost:4000".parse().unwrap(),
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::None,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                health_check: None,
-                server_info: ServerInfoConfig::default(),
-            }
+            let operations = Arc::new(RwLock::new(vec![]));
+
+            let running = Running {
+                operations: operations.clone(),
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let new_operations = vec![
+                RawOperation::from((
+                    "query Valid { id }".to_string(),
+                    Some("valid.graphql".to_string()),
+                )),
+                RawOperation::from((
+                    "query Invalid {{ id }".to_string(),
+                    Some("invalid.graphql".to_string()),
+                )),
+                RawOperation::from((
+                    "query { id }".to_string(),
+                    Some("unnamed.graphql".to_string()),
+                )),
+            ];
+
+            running.update_operations(new_operations.clone()).await;
+
+            // Check that our local copy of operations is updated, representing what the server sees
+            let updated_operations = operations.read().await;
+
+            assert_eq!(updated_operations.len(), 1);
+            assert_eq!(updated_operations.first().unwrap().as_ref().name, "Valid");
         }
 
-        #[test]
-        fn advertises_default_version_when_output_schema_disabled() {
-            let info = build_running(false).get_info();
+        #[tokio::test]
+        async fn overrides_descriptions_applied_to_operations() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::default());
+            let operations = Arc::new(RwLock::new(vec![]));
+
+            let descriptions = HashMap::from([(
+                "GetId".to_string(),
+                "Custom description for GetId".to_string(),
+            )]);
+
+            let running = Running {
+                operations: operations.clone(),
+                descriptions,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let new_operations = vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("get_id.graphql".to_string()),
+            ))];
+
+            running.update_operations(new_operations).await;
+
+            let updated = operations.read().await;
+            let tool: &Tool = updated.first().unwrap().as_ref();
+            assert_eq!(
+                tool.description.as_deref(),
+                Some("Custom description for GetId"),
+                "Override description should replace auto-generated one"
+            );
         }
 
-        #[test]
-        fn advertises_v2025_06_18_when_output_schema_enabled() {
-            let info = build_running(true).get_info();
+        #[tokio::test]
+        async fn overrides_descriptions_do_not_affect_unmatched_operations() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+            let operations = Arc::new(RwLock::new(vec![]));
+
+            let descriptions = HashMap::from([(
+                "NonExistent".to_string(),
+                "This should not match anything".to_string(),
+            )]);
+
+            let running = Running {
+                operations: operations.clone(),
+                descriptions,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let new_operations = vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("get_id.graphql".to_string()),
+            ))];
+
+            running.update_operations(new_operations).await;
+
+            let updated = operations.read().await;
+            let tool: &Tool = updated.first().unwrap().as_ref();
+            assert_ne!(
+                tool.description.as_deref(),
+                Some("This should not match anything"),
+                "Unmatched override description should not be applied"
+            );
+        }
+
+        #[tokio::test]
+        async fn changing_schema_invalidates_outdated_operations() {
+            let schema = Arc::new(RwLock::new(
+                Schema::parse(
+                    "type Query { data: String, something: String }",
+                    "schema.graphql",
+                )
+                .unwrap()
+                .validate()
+                .unwrap(),
+            ));
+
+            let running = test_running(schema.clone());
+
+            let operations = vec![
+                RawOperation::from((
+                    "query Valid { data }".to_string(),
+                    Some("valid.graphql".to_string()),
+                )),
+                RawOperation::from((
+                    "query WillBeStale { something }".to_string(),
+                    Some("invalid.graphql".to_string()),
+                )),
+            ];
+
+            running.update_operations(operations).await;
+
+            let new_schema = Schema::parse("type Query { data: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+            running.update_schema(new_schema.clone()).await;
+
+            assert_eq!(*schema.read().await, new_schema);
         }
     }
 
-    mod output_schema_gating {
-        use std::sync::Arc;
-
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
-        use serde_json::json;
-        use tokio::sync::RwLock;
-        use tower::ServiceExt;
+    mod list_resources {
+        use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
-        use crate::operations::RawOperation;
 
-        fn create_running_with_output_schema() -> Running {
+        #[tokio::test]
+        async fn resource_list_includes_app_resources() {
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let resources = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            )
+            .list_resources_impl(&extensions)
+            .unwrap()
+            .resources;
+
+            assert_eq!(resources.len(), 1);
+            assert_eq!(resources[0].uri, RESOURCE_URI);
+        }
+
+        #[tokio::test]
+        async fn resource_list_attaches_mcp_apps_mime_type() {
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let resources = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            )
+            .list_resources_impl(&extensions)
+            .unwrap()
+            .resources;
+
+            assert_eq!(resources.len(), 1);
+            assert_eq!(
+                resources[0].mime_type,
+                Some("text/html;profile=mcp-app".into())
+            );
+        }
+
+        #[tokio::test]
+        async fn resource_list_empty_without_app_param() {
+            let resources = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            )
+            .list_resources_impl(&Extensions::new())
+            .unwrap()
+            .resources;
+
+            assert!(resources.is_empty());
+        }
+
+        #[tokio::test]
+        async fn resource_list_with_nonexistent_app() {
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=NonExistent")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            )
+            .list_resources_impl(&extensions);
+
+            assert!(result.is_err());
+        }
+    }
+
+    mod read_resource {
+        use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+
+        use crate::apps::{
+            app::{AppResource, AppResourceSource},
+            manifest::CSPSettings,
+        };
+
+        use super::*;
+
+        #[tokio::test]
+        async fn getting_resource_from_running() {
+            let resource_content = "This is a test resource";
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource#a_different_fragment"
+                            .parse()
+                            .unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(resource.contents.len(), 1);
+            let Some(ResourceContents::TextResourceContents {
+                uri,
+                mime_type,
+                text,
+                meta,
+            }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            assert_eq!(text, resource_content);
+            assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
+            // Meta always contains at least the "ui" key now
+            let meta = meta.expect("meta should be set");
+            assert!(meta.get("ui").is_some());
+            assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
+        }
+
+        #[tokio::test]
+        async fn getting_resource_that_does_not_exist() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn getting_resource_from_running_with_invalid_uri() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "not a uri".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn read_resource_without_app_param_returns_error() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    Extensions::new(),
+                    None,
+                )
+                .await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn read_resource_with_wrong_app_param_returns_error() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=NonExistent")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await;
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn fetch_remote_resource_downloads_content() {
+            let mut server = mockito::Server::new_async().await;
+            let body = "<html>remote</html>";
+            let mock = server
+                .mock("GET", "/widget")
+                .with_status(200)
+                .with_body(body)
+                .expect(1)
+                .create_async()
+                .await;
+
+            let url = Url::parse(&format!("{}/widget", server.url())).unwrap();
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Remote(url)),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: RESOURCE_URI.to_string(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .expect("resource fetch failed");
+
+            mock.assert();
+            let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
+            else {
+                panic!("unexpected resource contents");
+            };
+            assert_eq!(text, body);
+        }
+
+        #[tokio::test]
+        async fn csp_settings() {
+            let resource_content = "This is a test resource";
+            let connect_domains = vec!["connect.example.com".to_string()];
+            let resource_domains = vec!["resource.example.com".to_string()];
+            let frame_domains = vec!["frame.example.com".to_string()];
+            let redirect_domains = vec!["redirect.example.com".to_string()];
+            let base_uri_domains = vec!["base_uri.example.com".to_string()];
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+                Some(CSPSettings {
+                    connect_domains: Some(connect_domains.clone()),
+                    resource_domains: Some(resource_domains.clone()),
+                    frame_domains: Some(frame_domains.clone()),
+                    redirect_domains: Some(redirect_domains.clone()),
+                    base_uri_domains: Some(base_uri_domains.clone()),
+                }),
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+            assert_eq!(resource.contents.len(), 1);
+            let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            let meta = meta.expect("meta is not set");
+            // OpenAI-specific CSP at root level should only contain redirect_domains
+            let openai_csp = meta
+                .get("openai/widgetCSP")
+                .expect("openai csp settings not found");
+            let returned_redirect_domains = openai_csp
+                .get("redirect_domains")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(returned_redirect_domains, &redirect_domains);
+            // Common CSP properties are under ui.csp with camelCase keys
+            let ui_meta = meta.get("ui").expect("ui key not found");
+            let csp_settings = ui_meta.get("csp").expect("csp settings not found");
+            let returned_connect_domains = csp_settings
+                .get("connectDomains")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(returned_connect_domains, &connect_domains);
+            let returned_resource_domains = csp_settings
+                .get("resourceDomains")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(returned_resource_domains, &resource_domains);
+            let returned_frame_domains = csp_settings
+                .get("frameDomains")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(returned_frame_domains, &frame_domains);
+            let returned_base_uri_domains = csp_settings
+                .get("baseUriDomains")
+                .unwrap()
+                .as_array()
+                .unwrap();
+            assert_eq!(returned_base_uri_domains, &base_uri_domains);
+        }
+
+        #[tokio::test]
+        async fn widget_settings_description_is_set_in_meta() {
+            let resource_content = "This is a test resource";
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+                None,
+                Some(WidgetSettings {
+                    description: Some("A custom description".to_string()),
+                    domain: None,
+                    prefers_border: None,
+                }),
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+            let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            let meta = meta.expect("meta should be set");
+            let description = meta
+                .get("openai/widgetDescription")
+                .expect("widgetDescription not found");
+            assert_eq!(description.as_str().unwrap(), "A custom description");
+        }
+
+        #[tokio::test]
+        async fn widget_settings_domain_is_set_in_meta() {
+            let resource_content = "This is a test resource";
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+                None,
+                Some(WidgetSettings {
+                    description: None,
+                    domain: Some("example.com".to_string()),
+                    prefers_border: None,
+                }),
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+            let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            let meta = meta.expect("meta should be set");
+            let ui_meta = meta.get("ui").expect("ui key not found");
+            let domain = ui_meta.get("domain").expect("domain not found");
+            assert_eq!(domain.as_str().unwrap(), "example.com");
+        }
+
+        #[tokio::test]
+        async fn widget_settings_prefers_border_is_set_in_meta() {
+            let resource_content = "This is a test resource";
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local(resource_content.to_string())),
+                None,
+                Some(WidgetSettings {
+                    description: None,
+                    domain: None,
+                    prefers_border: Some(true),
+                }),
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+            let Some(ResourceContents::TextResourceContents { meta, .. }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            let meta = meta.expect("meta should be set");
+            let ui_meta = meta.get("ui").expect("ui key not found");
+            let prefers_border = ui_meta
+                .get("prefersBorder")
+                .expect("prefersBorder not found");
+            assert!(prefers_border.as_bool().unwrap());
+        }
+
+        #[tokio::test]
+        async fn read_resource_impl_returns_mcp_format_when_target_is_mcp() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test content".to_string())),
+                Some(CSPSettings {
+                    connect_domains: Some(vec!["connect.example.com".to_string()]),
+                    resource_domains: Some(vec!["resource.example.com".to_string()]),
+                    frame_domains: Some(vec!["frame.example.com".to_string()]),
+                    redirect_domains: Some(vec!["redirect.example.com".to_string()]),
+                    base_uri_domains: Some(vec!["base.example.com".to_string()]),
+                }),
+                Some(WidgetSettings {
+                    description: Some("Test description".to_string()),
+                    domain: Some("example.com".to_string()),
+                    prefers_border: Some(true),
+                }),
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp&appTarget=mcp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await
+                .unwrap();
+
+            let Some(ResourceContents::TextResourceContents {
+                mime_type, meta, ..
+            }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
+
+            let meta = meta.expect("meta should be set");
+            // MCPApps should have ui nesting
+            let ui_meta = meta.get("ui").expect("ui key should be set");
+            // MCPApps CSP uses camelCase keys and includes baseUriDomains (not redirectDomains)
+            let csp = ui_meta.get("csp").expect("CSP should be set");
+            assert!(csp.get("connectDomains").is_some());
+            assert!(csp.get("resourceDomains").is_some());
+            assert!(csp.get("frameDomains").is_some());
+            assert!(csp.get("baseUriDomains").is_some());
+            assert!(csp.get("redirectDomains").is_none());
+            assert!(ui_meta.get("domain").is_some());
+            assert!(ui_meta.get("prefersBorder").is_some());
+            // MCPApps should not have description
+            assert!(ui_meta.get("description").is_none());
+        }
+
+        #[tokio::test]
+        async fn read_resource_impl_returns_error_for_invalid_app_target() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test content".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp&appTarget=invalid")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams {
+                        uri: "http://localhost:4000/resource".parse().unwrap(),
+                        meta: None,
+                    },
+                    extensions,
+                    None,
+                )
+                .await;
+
+            assert!(result.is_err());
+        }
+    }
+
+    mod list_tools {
+        use crate::apps::app::{AppResource, AppResourceSource};
+
+        use super::*;
+
+        #[tokio::test]
+        async fn list_tools_without_app_parameter() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let result = running
+                .list_tools_impl(Extensions::new(), None, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.tools.len(), 0);
+            assert_eq!(result.next_cursor, None);
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_valid_app_parameter() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .list_tools_impl(extensions, None, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.tools.len(), 1);
+            assert_eq!(result.tools[0].name, "GetId");
+            assert_eq!(result.next_cursor, None);
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_nonexistent_app_parameter() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=NonExistent")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running.list_tools_impl(extensions, None, None).await;
+
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_app_and_openai_target_has_correct_metadata() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp&appTarget=openai")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .list_tools_impl(extensions, None, None)
+                .await
+                .unwrap();
+            let meta = result.tools[0].meta.as_ref().unwrap();
+
+            // Should have ui nested metadata with resourceUri and visibility
+            let ui = meta.get("ui").unwrap().as_object().unwrap();
+            assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+            assert_eq!(
+                ui.get("visibility").unwrap(),
+                &serde_json::json!(["model", "app"])
+            );
+            // Should have deprecated root-level ui/resourceUri
+            assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_app_and_mcp_target_has_correct_metadata() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp&appTarget=mcp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .list_tools_impl(extensions, None, None)
+                .await
+                .unwrap();
+            let meta = result.tools[0].meta.as_ref().unwrap();
+
+            // Check nested ui metadata
+            let ui = meta.get("ui").unwrap().as_object().unwrap();
+            assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+            assert_eq!(
+                ui.get("visibility").unwrap(),
+                &serde_json::json!(["model", "app"])
+            );
+
+            // Check deprecated root-level ui/resourceUri for backwards compatibility
+            assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+
+            // Ensure OpenAI-specific keys are NOT present
+            assert!(meta.get("openai/outputTemplate").is_none());
+            assert!(meta.get("openai/widgetAccessible").is_none());
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_app_defaults_to_openai_target() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .list_tools_impl(extensions, None, None)
+                .await
+                .unwrap();
+            let meta = result.tools[0].meta.as_ref().unwrap();
+
+            // Default should still have ui nested metadata
+            let ui = meta.get("ui").unwrap().as_object().unwrap();
+            assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+            assert_eq!(
+                ui.get("visibility").unwrap(),
+                &serde_json::json!(["model", "app"])
+            );
+            assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_app_and_mcp_app_capability_defaults_to_mcp_target() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut extension_capabilities = std::collections::BTreeMap::new();
+            extension_capabilities.insert(
+                "io.modelcontextprotocol/ui".to_string(),
+                serde_json::json!({"mimeTypes": ["text/html;profile=mcp-app"]})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            );
+            let client_capabilities = ClientCapabilities {
+                extensions: Some(extension_capabilities),
+                ..Default::default()
+            };
+
+            let result = running
+                .list_tools_impl(extensions, Some(&client_capabilities), None)
+                .await
+                .unwrap();
+            let meta = result.tools[0].meta.as_ref().unwrap();
+
+            // Should have MCP-style nested ui metadata
+            let ui = meta.get("ui").unwrap().as_object().unwrap();
+            assert_eq!(ui.get("resourceUri").unwrap(), RESOURCE_URI);
+            assert_eq!(
+                ui.get("visibility").unwrap(),
+                &serde_json::json!(["model", "app"])
+            );
+
+            // Check deprecated root-level ui/resourceUri for backwards compatibility
+            assert_eq!(meta.get("ui/resourceUri").unwrap(), RESOURCE_URI);
+
+            // Ensure OpenAI-specific keys are NOT present
+            assert!(meta.get("openai/outputTemplate").is_none());
+            assert!(meta.get("openai/widgetAccessible").is_none());
+        }
+
+        #[tokio::test]
+        async fn list_tools_with_invalid_app_target_returns_error() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp&appTarget=invalid")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running.list_tools_impl(extensions, None, None).await;
+
+            assert!(result.is_err());
+        }
+
+        #[tokio::test]
+        async fn excludes_output_schema_when_protocol_predates_it() {
             let schema =
                 apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
                     .unwrap();
@@ -1803,221 +1705,29 @@ mod tests {
                 .unwrap()
                 .expect("operation should be valid");
 
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
+            let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
-                apps: vec![],
-                headers: http::HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::None,
-                disable_type_description: false,
-                disable_schema_description: false,
                 enable_output_schema: true,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                health_check: None,
-                server_info: Default::default(),
-            }
-        }
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
 
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            )
-        }
-
-        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": protocol_version,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_tools_list_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
+            let result = running
+                .list_tools_impl(Extensions::new(), None, Some(&ProtocolVersion::default()))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
 
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
-        }
-
-        async fn list_tools(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-        ) -> Vec<serde_json::Value> {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_tools_list_request(session_id))
-                .await
-                .unwrap();
-            let body = extract_json_body(response).await;
-            body["result"]["tools"]
-                .as_array()
-                .expect("tools/list should return a tools array")
-                .clone()
-        }
-
-        #[tokio::test]
-        async fn excludes_output_schema_when_protocol_predates_it() {
-            let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
-
-            assert!(!tools.is_empty());
-            for tool in &tools {
+            assert!(!result.tools.is_empty());
+            for tool in &result.tools {
                 assert!(
-                    tool.get("outputSchema").is_none(),
-                    "tool '{}' should not have outputSchema with protocol 2025-03-26",
-                    tool["name"]
+                    tool.output_schema.is_none(),
+                    "tool '{}' should not have output_schema with default protocol version",
+                    tool.name
                 );
             }
         }
 
         #[tokio::test]
         async fn includes_output_schema_when_protocol_supports_it() {
-            let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
-
-            assert!(!tools.is_empty());
-            for tool in &tools {
-                assert!(
-                    tool.get("outputSchema").is_some(),
-                    "tool '{}' should have outputSchema with protocol 2025-06-18",
-                    tool["name"]
-                );
-            }
-        }
-    }
-
-    mod structured_content_gating {
-        use std::sync::Arc;
-
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
-        use serde_json::json;
-        use tokio::sync::RwLock;
-        use tower::ServiceExt;
-
-        use super::*;
-        use crate::operations::RawOperation;
-
-        fn create_running_with_mock_endpoint(endpoint: url::Url) -> Running {
             let schema =
                 apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
                     .unwrap();
@@ -2028,168 +1738,143 @@ mod tests {
                 .unwrap()
                 .expect("operation should be valid");
 
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
+            let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
-                apps: vec![],
-                headers: http::HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint,
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::None,
-                disable_type_description: false,
-                disable_schema_description: false,
                 enable_output_schema: true,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                health_check: None,
-                server_info: Default::default(),
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let result = running
+                .list_tools_impl(
+                    Extensions::new(),
+                    None,
+                    Some(&ProtocolVersion::V_2025_06_18),
+                )
+                .await
+                .unwrap();
+
+            assert!(!result.tools.is_empty());
+            for tool in &result.tools {
+                assert!(
+                    tool.output_schema.is_some(),
+                    "tool '{}' should have output_schema with protocol 2025-06-18",
+                    tool.name
+                );
             }
         }
+    }
 
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            )
-        }
+    mod get_info {
+        use super::*;
 
-        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": protocol_version,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
+        #[test]
+        fn get_info_should_use_default_metadata_when_config_is_empty() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
                 .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_call_tool_request(session_id: &str, tool_name: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": {}
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
-                .await
+                .validate()
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
 
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let running = test_running(Arc::new(RwLock::new(schema)));
 
-            session_id
+            let info = running.get_info();
+
+            assert_eq!(info.server_info.name, "Apollo MCP Server");
+            assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
+            assert_eq!(
+                info.server_info.title,
+                Some("Apollo MCP Server".to_string())
+            );
+            assert_eq!(
+                info.server_info.website_url,
+                Some("https://www.apollographql.com/docs/apollo-mcp-server".to_string())
+            );
+            assert_eq!(
+                info.server_info.description,
+                Some(
+                    "A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."
+                        .to_string()
+                )
+            );
+            assert_eq!(info.server_info.icons, None);
         }
 
-        async fn call_tool(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-            tool_name: &str,
-        ) -> serde_json::Value {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_call_tool_request(session_id, tool_name))
-                .await
+        #[test]
+        fn get_info_should_use_custom_metadata_when_config_provided() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
                 .unwrap();
-            extract_json_body(response).await
+
+            let custom_config = ServerInfoConfig {
+                name: Some("My Custom Server".to_string()),
+                version: Some("3.0.0-beta".to_string()),
+                title: Some("Custom GraphQL Server".to_string()),
+                website_url: Some("https://my-server.example.com/docs".to_string()),
+                description: Some("A custom MCP server for testing".to_string()),
+            };
+
+            let running = Running {
+                server_info: custom_config,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let info = running.get_info();
+
+            assert_eq!(info.server_info.name, "My Custom Server");
+            assert_eq!(info.server_info.version, "3.0.0-beta");
+            assert_eq!(
+                info.server_info.title,
+                Some("Custom GraphQL Server".to_string())
+            );
+            assert_eq!(
+                info.server_info.website_url,
+                Some("https://my-server.example.com/docs".to_string())
+            );
+            assert_eq!(
+                info.server_info.description,
+                Some("A custom MCP server for testing".to_string())
+            );
         }
+
+        #[test]
+        fn advertises_default_version_when_output_schema_disabled() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let running = Running {
+                enable_output_schema: false,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let info = running.get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::default());
+        }
+
+        #[test]
+        fn advertises_v2025_06_18_when_output_schema_enabled() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let running = Running {
+                enable_output_schema: true,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let info = running.get_info();
+
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+        }
+    }
+
+    mod call_tool {
+        use super::*;
+        use crate::apps::app::{AppResource, AppResourceSource};
+        use crate::operations::RawOperation;
 
         #[tokio::test]
         async fn strips_structured_content_when_protocol_predates_it() {
@@ -2200,17 +1885,43 @@ mod tests {
                 .create_async()
                 .await;
 
-            let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
 
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = raw_op
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            let running = Running {
+                operations: Arc::new(RwLock::new(vec![operation])),
+                endpoint: server.url().parse().unwrap(),
+                enable_output_schema: true,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let request = CallToolRequestParams {
+                meta: None,
+                name: "Hello".into(),
+                arguments: Some(Default::default()),
+                task: None,
+            };
+
+            let result = running
+                .call_tool_impl(
+                    request,
+                    &Extensions::new(),
+                    Some(&ProtocolVersion::default()),
+                )
+                .await
+                .unwrap();
 
             mock.assert();
-            let result = &body["result"];
             assert!(
-                result.get("structuredContent").is_none() || result["structuredContent"].is_null(),
-                "structuredContent should be stripped with protocol 2025-03-26"
+                result.structured_content.is_none(),
+                "structured_content should be stripped with default protocol version"
             );
         }
 
@@ -2223,20 +1934,135 @@ mod tests {
                 .create_async()
                 .await;
 
-            let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
 
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = raw_op
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            let running = Running {
+                operations: Arc::new(RwLock::new(vec![operation])),
+                endpoint: server.url().parse().unwrap(),
+                enable_output_schema: true,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let request = CallToolRequestParams {
+                meta: None,
+                name: "Hello".into(),
+                arguments: Some(Default::default()),
+                task: None,
+            };
+
+            let result = running
+                .call_tool_impl(
+                    request,
+                    &Extensions::new(),
+                    Some(&ProtocolVersion::V_2025_06_18),
+                )
+                .await
+                .unwrap();
 
             mock.assert();
-            let result = &body["result"];
             assert!(
-                result
-                    .get("structuredContent")
-                    .is_some_and(|v| !v.is_null()),
-                "structuredContent should be preserved with protocol 2025-06-18"
+                result.structured_content.is_some(),
+                "structured_content should be preserved with protocol 2025-06-18"
             );
+        }
+
+        #[tokio::test]
+        async fn calls_app_tool_instead_of_operation_when_app_param_present() {
+            let mut server = mockito::Server::new_async().await;
+
+            // Mock for the operation "Hello" — should NOT be called
+            let operation_mock = server
+                .mock("POST", "/")
+                .match_body(mockito::Matcher::Regex(
+                    r#".*"operationName"\s*:\s*"Hello".*"#.to_string(),
+                ))
+                .with_body(r#"{"data": {"hello": "from operation"}}"#)
+                .with_header("Content-Type", "application/json")
+                .expect(0)
+                .create_async()
+                .await;
+
+            // Mock for the app tool's operation "AppHello" — should be called
+            let app_tool_mock = server
+                .mock("POST", "/")
+                .match_body(mockito::Matcher::Regex(
+                    r#".*"operationName"\s*:\s*"AppHello".*"#.to_string(),
+                ))
+                .with_body(r#"{"data": {"hello": "from app"}}"#)
+                .with_header("Content-Type", "application/json")
+                .expect(1)
+                .create_async()
+                .await;
+
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+
+            let operation: RawOperation = ("query Hello { hello }".to_string(), None).into();
+            let operation = operation
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("operation should be valid");
+
+            let app_operation: RawOperation = ("query AppHello { hello }".to_string(), None).into();
+            let app_operation = app_operation
+                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .unwrap()
+                .expect("app operation should be valid");
+
+            let app = App {
+                name: "MyApp".to_string(),
+                description: None,
+                resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
+                csp_settings: None,
+                widget_settings: None,
+                uri: "ui://MyApp".parse().unwrap(),
+                tools: vec![AppTool {
+                    operation: Arc::new(app_operation),
+                    labels: AppLabels::default(),
+                    tool: Tool::new("Hello", "app tool", JsonObject::new()),
+                }],
+                prefetch_operations: vec![],
+            };
+
+            let running = Running {
+                operations: Arc::new(RwLock::new(vec![operation])),
+                apps: vec![app],
+                endpoint: server.url().parse().unwrap(),
+                enable_output_schema: true,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let request = CallToolRequestParams {
+                meta: None,
+                name: "Hello".into(),
+                arguments: Some(Default::default()),
+                task: None,
+            };
+
+            let _result = running
+                .call_tool_impl(request, &extensions, None)
+                .await
+                .unwrap();
+
+            app_tool_mock.assert();
+            operation_mock.assert();
         }
     }
 
@@ -2555,263 +2381,6 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-        }
-    }
-
-    mod app_tool_collision {
-        use std::sync::Arc;
-
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::model::{JsonObject, Tool};
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
-        use serde_json::json;
-        use tokio::sync::RwLock;
-        use tower::ServiceExt;
-
-        use super::*;
-        use crate::apps::App;
-        use crate::apps::app::{AppResource, AppResourceSource, AppTool};
-        use crate::apps::manifest::AppLabels;
-        use crate::operations::{MutationMode, RawOperation};
-
-        fn create_running_with_collision(endpoint: url::Url) -> Running {
-            let schema =
-                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
-                    .unwrap();
-
-            // Create an operation named "Hello"
-            let operation: RawOperation = ("query Hello { hello }".to_string(), None).into();
-            let operation = operation
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
-                .unwrap()
-                .expect("operation should be valid");
-
-            // Create an app tool also named "Hello", but backed by a different operation
-            let app_operation: RawOperation = ("query AppHello { hello }".to_string(), None).into();
-            let app_operation = app_operation
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
-                .unwrap()
-                .expect("app operation should be valid");
-
-            let app = App {
-                name: "MyApp".to_string(),
-                description: None,
-                resource: AppResource::Single(AppResourceSource::Local("test".to_string())),
-                csp_settings: None,
-                widget_settings: None,
-                uri: "ui://MyApp".parse().unwrap(),
-                tools: vec![AppTool {
-                    operation: Arc::new(app_operation),
-                    labels: AppLabels::default(),
-                    tool: Tool::new("Hello", "app tool", JsonObject::new()),
-                }],
-                prefetch_operations: vec![],
-            };
-
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![operation])),
-                apps: vec![app],
-                headers: http::HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint,
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::None,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: true,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                health_check: None,
-                server_info: Default::default(),
-            }
-        }
-
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
-            )
-        }
-
-        fn build_initialize_request() -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-03-26",
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_call_tool_request_with_app(
-            session_id: &str,
-            tool_name: &str,
-            app_name: &str,
-        ) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": {}
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri(format!("/mcp?app={app_name}"))
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
-        }
-
-        async fn call_tool_with_app<B>(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-            tool_name: &str,
-            app_name: &str,
-        ) -> serde_json::Value
-        where
-            B: http_body_util::BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_call_tool_request_with_app(
-                    session_id, tool_name, app_name,
-                ))
-                .await
-                .unwrap();
-
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        #[tokio::test]
-        async fn app_tool_called_instead_of_operation_when_app_param_present() {
-            let mut server = mockito::Server::new_async().await;
-
-            // Mock for the operation "Hello" — should NOT be called
-            let operation_mock = server
-                .mock("POST", "/")
-                .match_body(mockito::Matcher::Regex(
-                    r#".*"operationName"\s*:\s*"Hello".*"#.to_string(),
-                ))
-                .with_body(r#"{"data": {"hello": "from operation"}}"#)
-                .with_header("Content-Type", "application/json")
-                .expect(0)
-                .create_async()
-                .await;
-
-            // Mock for the app tool's operation "AppHello" — should be called
-            let app_tool_mock = server
-                .mock("POST", "/")
-                .match_body(mockito::Matcher::Regex(
-                    r#".*"operationName"\s*:\s*"AppHello".*"#.to_string(),
-                ))
-                .with_body(r#"{"data": {"hello": "from app"}}"#)
-                .with_header("Content-Type", "application/json")
-                .expect(1)
-                .create_async()
-                .await;
-
-            let running = create_running_with_collision(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager).await;
-
-            let _body =
-                call_tool_with_app::<Body>(running, session_manager, &session_id, "Hello", "MyApp")
-                    .await;
-
-            app_tool_mock.assert();
-            operation_mock.assert();
         }
     }
 }
