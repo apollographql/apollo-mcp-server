@@ -70,7 +70,7 @@ operations:
   id: default
 ```
 
-The MCP Server supports hot reloading of the GraphOS operation collection, so it automatically picks up changes from GraphOS without restarting.
+The MCP Server supports hot reloading of the GraphOS operation collection, so it picks up changes from GraphOS without restarting. The MCP Server polls GraphOS for changes periodically, so expect up to **30–60 seconds** before new or modified operations appear as tools. See [Operation source polling](/apollo-mcp-server/config-file#operation-source) for details.
 
 #### Setting operation collection variables
 
@@ -100,6 +100,48 @@ And the Variables panel has `productId` set to `1234`:
 Then, every time the LLM calls the `GetProduct` operation, the `productId` variable is always set to `1234`. The same is true if `productId` is set to `null`.
 
 If you want to use dynamic variables that the LLM can modify, remove any variables from the Variables panel and save that operation to the collection.
+
+#### Tool descriptions for collection operations
+
+Add a `#` comment on the line immediately before the `query` or `mutation` keyword — the MCP Server uses it as the tool description.
+
+Tool descriptions help AI models understand when and how to use each tool. For operations loaded from a GraphOS operation collection, the MCP Server derives tool descriptions from **leading `#` comments** placed immediately before the `query` or `mutation` keyword in the operation body.
+
+<Note>
+Only leading comments (lines starting with `#` that appear **before** the operation definition) are used as tool descriptions. Comments placed **inside** the operation body — for example, above or beside field selections — are ignored.
+</Note>
+
+The following examples show correct and incorrect comment placement.
+
+**✅ Correct placement — leading comment becomes the tool description:**
+```graphql title="Good: comment before the operation definition"
+# Retrieve a single product by its ID, including pricing and inventory
+query GetProduct($productId: ID!) {
+  product(id: $productId) {
+    id
+    name
+    price
+    inStock
+  }
+}
+```
+
+**❌ Incorrect placement — inline and body comments are ignored:**
+```graphql title="Bad: comments inside the body are NOT used"
+query GetProduct($productId: ID!) {
+  # Fetch product details  ← ignored by the MCP Server
+  product(id: $productId) {
+    id
+    name
+    price
+    inStock
+  }
+}
+```
+
+<Note>
+If no leading comment is present, the MCP Server automatically generates a description from the schema's field and type descriptions.
+</Note>
 
 ### From persisted query manifests
 
