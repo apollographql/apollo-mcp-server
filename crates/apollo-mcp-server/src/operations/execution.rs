@@ -73,6 +73,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &"http://localhost:4000".parse().unwrap(),
+            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         )
         .await;
 
@@ -110,6 +111,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
+            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         )
         .await;
 

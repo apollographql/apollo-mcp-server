@@ -5,7 +5,7 @@ use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
 use tracing::info;
 
 use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
-use crate::rhai::functions::{Json, RhaiHttp, RhaiSha256};
+use crate::rhai::functions::{Json, RhaiEnv, RhaiHttp, RhaiSha256};
 use crate::rhai::types::{HttpResponse, Promise, RhaiErrorCode, RhaiHeaderMap};
 
 pub(crate) struct RhaiEngine {
@@ -54,6 +54,7 @@ impl RhaiEngine {
     }
 
     fn register_functions(engine: &mut Engine) {
+        RhaiEnv::register(engine);
         RhaiSha256::register(engine);
         RhaiHttp::register(engine);
         Json::register(engine);

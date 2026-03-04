@@ -602,6 +602,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         };
 
         let new_operations = vec![
@@ -662,6 +663,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         };
 
         let operations = vec![
@@ -740,6 +742,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         }
     }
 
@@ -1419,6 +1422,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         };
 
         let info = running.get_info();
@@ -1480,6 +1484,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: custom_config,
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         };
 
         let info = running.get_info();
@@ -1538,6 +1543,7 @@ mod tests {
                 disable_auth_token_passthrough: false,
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 

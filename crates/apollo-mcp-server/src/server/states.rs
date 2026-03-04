@@ -328,6 +328,7 @@ mod tests {
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
     use crate::operations::{MutationMode, RawOperation};
+    use crate::rhai::RhaiEngine;
     use crate::server::Transport;
     use crate::server_info::ServerInfoConfig;
 
@@ -361,6 +362,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         }
     }
 
