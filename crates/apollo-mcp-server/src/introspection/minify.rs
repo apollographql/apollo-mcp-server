@@ -259,7 +259,7 @@ mod tests {
     const TEST_SCHEMA: &str = include_str!("tools/testdata/schema.graphql");
 
     #[test]
-    fn test_minify_schema() {
+    fn minify_schema() {
         let schema = apollo_compiler::schema::Schema::parse(TEST_SCHEMA, "schema.graphql")
             .expect("Failed to parse schema")
             .validate()

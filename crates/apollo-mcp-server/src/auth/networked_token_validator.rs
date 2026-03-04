@@ -250,7 +250,7 @@ mod tests {
             "https://abb-123-staging.authkit.app/.well-known/openid-configuration",
         ]
     )]
-    fn test_build_discovery_urls(#[case] issuer: &str, #[case] expected: Vec<&str>) {
+    fn discovery_urls_match_expected(#[case] issuer: &str, #[case] expected: Vec<&str>) {
         let issuer_url = Url::parse(issuer).expect("valid test URL");
         let urls: Vec<String> = build_discovery_urls(&issuer_url)
             .expect("should build discovery URLs")
@@ -274,7 +274,7 @@ mod tests {
     }
 
     #[test]
-    fn build_discovery_urls_returns_error_for_missing_host() {
+    fn returns_error_for_missing_host() {
         // A file:// URL typically has no host
         let issuer =
             Url::parse("file:///path/to/something").expect("test file URL should be valid");

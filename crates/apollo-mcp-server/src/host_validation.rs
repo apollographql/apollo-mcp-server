@@ -167,6 +167,7 @@ mod tests {
     use super::*;
     use axum::{Router, routing::get};
     use http::{Method, Request, StatusCode};
+    use rstest::rstest;
     use tower::util::ServiceExt;
 
     fn test_router(config: HostValidationConfig, port: u16) -> Router {
@@ -181,255 +182,128 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn test_allows_localhost() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "localhost:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_allows_localhost_without_port() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "localhost")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_allows_127_0_0_1() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "127.0.0.1:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_allows_ipv6_localhost() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "[::1]:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_allows_0_0_0_0() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "0.0.0.0:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_rejects_attacker_host() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "attacker.com")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn test_rejects_attacker_host_with_port() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "attacker.com:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn test_rejects_wrong_port() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "localhost:9999")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn test_disabled_allows_any_host() {
-        let config = HostValidationConfig::disabled();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "attacker.com")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_custom_allowed_host() {
-        let config = HostValidationConfig {
-            enabled: true,
-            allowed_hosts: vec!["mcp.test.com".to_string()],
-        };
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "mcp.test.com")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_custom_allowed_host_with_port() {
-        let config = HostValidationConfig {
-            enabled: true,
-            allowed_hosts: vec!["mcp.test.com:8000".to_string()],
-        };
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "mcp.test.com:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn test_custom_allowed_host_wrong_port() {
-        let config = HostValidationConfig {
-            enabled: true,
-            allowed_hosts: vec!["mcp.test.com:8000".to_string()],
-        };
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "mcp.test.com:9000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn test_case_insensitive_hostname() {
-        let config = HostValidationConfig::default();
-        let app = test_router(config, 8000);
-
-        let request = Request::builder()
-            .method(Method::GET)
-            .uri("/test")
-            .header("Host", "LOCALHOST:8000")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = app.oneshot(request).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
-
-    #[test]
-    fn test_is_host_allowed() {
-        let state = HostValidationState {
+    fn default_state() -> HostValidationState {
+        HostValidationState {
             config: Arc::new(HostValidationConfig::default()),
             server_port: 8000,
-        };
+        }
+    }
 
-        assert!(state.is_host_allowed("localhost"));
-        assert!(state.is_host_allowed("localhost:8000"));
-        assert!(state.is_host_allowed("127.0.0.1:8000"));
-        assert!(state.is_host_allowed("[::1]:8000"));
+    mod is_host_allowed {
+        use super::*;
 
-        assert!(!state.is_host_allowed("localhost:9999"));
+        #[rstest]
+        #[case::localhost("localhost", true)]
+        #[case::localhost_with_port("localhost:8000", true)]
+        #[case::ipv4_loopback("127.0.0.1:8000", true)]
+        #[case::ipv6_loopback("[::1]:8000", true)]
+        #[case::unspecified_ipv4("0.0.0.0:8000", true)]
+        #[case::wrong_port("localhost:9999", false)]
+        #[case::attacker_without_port("attacker.com", false)]
+        #[case::attacker_with_port("attacker.com:8000", false)]
+        fn default_config(#[case] host: &str, #[case] expected: bool) {
+            assert_eq!(default_state().is_host_allowed(host), expected);
+        }
 
-        assert!(!state.is_host_allowed("attacker.com"));
-        assert!(!state.is_host_allowed("attacker.com:8000"));
+        #[test]
+        fn disabled_allows_any_host() {
+            let state = HostValidationState {
+                config: Arc::new(HostValidationConfig::disabled()),
+                server_port: 8000,
+            };
+            assert!(state.is_host_allowed("attacker.com"));
+        }
+    }
+
+    mod validate_host_middleware {
+        use super::*;
+
+        #[rstest]
+        #[case::localhost("localhost:8000", StatusCode::OK)]
+        #[case::localhost_without_port("localhost", StatusCode::OK)]
+        #[case::ipv4_loopback("127.0.0.1:8000", StatusCode::OK)]
+        #[case::ipv6_loopback("[::1]:8000", StatusCode::OK)]
+        #[case::unspecified_ipv4("0.0.0.0:8000", StatusCode::OK)]
+        #[case::case_insensitive("LOCALHOST:8000", StatusCode::OK)]
+        #[case::attacker("attacker.com", StatusCode::FORBIDDEN)]
+        #[case::attacker_with_port("attacker.com:8000", StatusCode::FORBIDDEN)]
+        #[case::wrong_port("localhost:9999", StatusCode::FORBIDDEN)]
+        #[tokio::test]
+        async fn default_config(#[case] host: &str, #[case] expected: StatusCode) {
+            let app = test_router(HostValidationConfig::default(), 8000);
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/test")
+                .header("Host", host)
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected);
+        }
+
+        #[tokio::test]
+        async fn disabled_allows_any_host() {
+            let app = test_router(HostValidationConfig::disabled(), 8000);
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/test")
+                .header("Host", "attacker.com")
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        #[rstest]
+        #[case::matching_host("mcp.test.com", StatusCode::OK)]
+        #[case::wrong_host("attacker.com", StatusCode::FORBIDDEN)]
+        #[tokio::test]
+        async fn custom_allowed_host(#[case] host: &str, #[case] expected: StatusCode) {
+            let config = HostValidationConfig {
+                enabled: true,
+                allowed_hosts: vec!["mcp.test.com".to_string()],
+            };
+            let app = test_router(config, 8000);
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/test")
+                .header("Host", host)
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected);
+        }
+
+        #[rstest]
+        #[case::matching_port("mcp.test.com:8000", StatusCode::OK)]
+        #[case::wrong_port("mcp.test.com:9000", StatusCode::FORBIDDEN)]
+        #[tokio::test]
+        async fn custom_allowed_host_with_port(#[case] host: &str, #[case] expected: StatusCode) {
+            let config = HostValidationConfig {
+                enabled: true,
+                allowed_hosts: vec!["mcp.test.com:8000".to_string()],
+            };
+            let app = test_router(config, 8000);
+            let request = Request::builder()
+                .method(Method::GET)
+                .uri("/test")
+                .header("Host", host)
+                .body(Body::empty())
+                .unwrap();
+            let response = app.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), expected);
+        }
     }
 
     #[test]
-    fn test_default_config_is_enabled() {
+    fn default_config_is_enabled() {
         let config = HostValidationConfig::default();
         assert!(config.enabled);
-        assert!(config.allowed_hosts.is_empty());
     }
 
     #[test]
-    fn test_disabled_config() {
-        let state = HostValidationState {
-            config: Arc::new(HostValidationConfig::disabled()),
-            server_port: 8000,
-        };
-        assert!(!state.config.enabled);
-        assert!(state.is_host_allowed("attacker.com"));
+    fn default_config_has_no_allowed_hosts() {
+        let config = HostValidationConfig::default();
+        assert!(config.allowed_hosts.is_empty());
     }
 }

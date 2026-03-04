@@ -169,7 +169,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_tool_description_is_not_minified(schema: Arc<RwLock<Valid<Schema>>>) {
+    async fn introspect_tool_description_is_not_minified(schema: Arc<RwLock<Valid<Schema>>>) {
         let introspect = Introspect::new(schema, None, None, false, None);
 
         let description = introspect.tool.description.unwrap();
@@ -187,7 +187,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_tool_description_is_minified_with_an_appropriate_legend(
+    async fn introspect_tool_description_is_minified_with_an_appropriate_legend(
         schema: Arc<RwLock<Valid<Schema>>>,
     ) {
         let introspect = Introspect::new(schema, None, None, true, None);
@@ -201,7 +201,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_query_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
+    async fn introspect_query_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
         let introspect = Introspect::new(
             schema,
             Some("Query".to_string()),
@@ -240,7 +240,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_mutation_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
+    async fn introspect_mutation_depth_1_returns_fields(schema: Arc<RwLock<Valid<Schema>>>) {
         let introspect = Introspect::new(
             schema,
             Some("Query".to_string()),
@@ -285,7 +285,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_introspect_mutation_depth_1_with_mutations_disabled(
+    async fn introspect_mutation_depth_1_with_mutations_disabled(
         schema: Arc<RwLock<Valid<Schema>>>,
     ) {
         // This test verifies the fix: when mutations are not allowed, mutation introspection should still work

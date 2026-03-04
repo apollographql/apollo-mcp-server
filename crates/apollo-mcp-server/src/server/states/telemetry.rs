@@ -76,7 +76,7 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test()]
-    async fn test_middleware_stores_span_context_and_handler_works() {
+    async fn middleware_stores_span_context_and_handler_works() {
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
@@ -116,7 +116,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_middleware_works_without_traceparent() {
+    async fn middleware_works_without_traceparent() {
         opentelemetry::global::set_text_map_propagator(
             opentelemetry_sdk::propagation::TraceContextPropagator::new(),
         );
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn test_header_extractor_gets_values() {
+    fn header_extractor_gets_values() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("traceparent", "test-value".parse().unwrap());
         headers.insert("x-custom", "custom-value".parse().unwrap());
@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn test_header_extractor_keys() {
+    fn header_extractor_keys() {
         let mut headers = axum::http::HeaderMap::new();
         headers.insert("traceparent", "test-value".parse().unwrap());
         headers.insert("x-custom", "custom-value".parse().unwrap());

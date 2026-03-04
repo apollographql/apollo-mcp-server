@@ -78,7 +78,7 @@ impl<'de> Deserialize<'de> for IdOrDefault {
 
 #[cfg(test)]
 mod test {
-    use super::IdOrDefault;
+    use super::*;
 
     #[test]
     fn id_parses() {
@@ -100,5 +100,21 @@ mod test {
         let expected = IdOrDefault::Default;
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn manifest_parses() {
+        let json = serde_json::json!({
+            "source": "manifest",
+            "path": "./manifest.json"
+        });
+
+        let source: OperationSource = serde_json::from_value(json).unwrap();
+        match source {
+            OperationSource::Manifest { path } => {
+                assert_eq!(path.to_str().unwrap(), "./manifest.json");
+            }
+            other => panic!("Expected Manifest variant, got {:?}", other),
+        }
     }
 }

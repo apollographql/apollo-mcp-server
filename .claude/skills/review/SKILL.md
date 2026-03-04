@@ -156,19 +156,29 @@ Reference Chapter 8:
 
 Post review comments directly on the PR using inline comments on specific lines of code:
 
+**CRITICAL: Inline comment parameters:**
+- Always use `line` and `side` parameters — **NEVER use `position`**. The `position` parameter refers to a diff hunk offset and will fail with HTTP 422 errors.
+- The `line` value must be a line number that appears in the PR diff for that file. If the line you want to comment on is not in the diff, comment on the nearest changed line and reference the actual line in the body, or use a general PR comment instead.
+- Use `-F line=N` (not `-f line=N`) so the value is sent as an integer.
+
 ```bash
 # For line-specific comments:
 gh api repos/{owner}/{repo}/pulls/{pr_number}/comments \
   -f body="**[Blocking]** Issue description here. See Chapter X for details." \
   -f commit_id="<commit_sha>" \
   -f path="src/foo.rs" \
-  # line MUST be an integer with -F
-  -F line=42 \
   -f side="RIGHT" \
-  -f subject_type="line"
+  -f subject_type="line" \
+  -F line=42
 
-# For general PR comments (summary, test coverage assessment):
-gh pr comment {pr_number} --body "## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
+# For the summary comment, always update an existing one if present (instead of creating a new one):
+COMMENT_ID=$(gh api repos/{owner}/{repo}/issues/{pr_number}/comments --jq '.[] | select(.body | contains("Reviewed by Claude Code")) | .id' | tail -1)
+BODY="## Review Summary\n\n...\n\n---\n_Reviewed by Claude Code {model}_"
+if [ -n "$COMMENT_ID" ]; then
+  gh api repos/{owner}/{repo}/issues/comments/$COMMENT_ID -X PATCH -f body="$BODY"
+else
+  gh pr comment {pr_number} --body "$BODY"
+fi
 ```
 
 Each inline comment should:
@@ -187,13 +197,7 @@ After posting inline comments, add a summary comment with:
 - Final recommendation (Approve / Approve with suggestions / Request changes)
 - Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
 
-If you have already posted a summary comment on this PR previously, any follow up summary comments should be concise and focused on what changed:
-
-- Overall assessment (summary of the changes, keep this to a couple of sentences maximum)
-- Any new findings (if any, if none do not include this section)
-- Changes to test coverage assessment (if any, if none do not include this section)
-- Final recommendation
-- Sign-off line at the end: `_Reviewed by Claude Code {model}_` where `{model}` is the current model name (e.g., "Opus 4.5")
+**Important:** Always update the existing summary comment rather than creating a new one. Use the find-and-update pattern shown above.
 
 ## Guidelines for High-Signal Reviews
 

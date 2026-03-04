@@ -40,7 +40,8 @@ impl From<Name<'_>> for JSONSchema {
         let result = match name.as_str() {
             // Basic types map nicely
             "String" | "ID" => json_schema!({"type": "string"}),
-            "Int" | "Float" => json_schema!({"type": "number"}),
+            "Float" => json_schema!({"type": "number"}),
+            "Int" => json_schema!({"type": "integer"}),
             "Boolean" => json_schema!({"type": "boolean"}),
 
             // If we've already cached it, then return the reference immediately
@@ -195,5 +196,42 @@ impl From<Name<'_>> for JSONSchema {
         };
 
         with_desc(result, description)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn builtin_type_schema(type_name: &str) -> JSONSchema {
+        let schema =
+            GraphQLSchema::parse_and_validate("type Query { dummy: String }", "schema.graphql")
+                .unwrap()
+                .into_inner();
+        let name = GraphQLName::new(type_name).unwrap();
+        let description = None;
+        let mut cache = Map::new();
+
+        Name {
+            cache: &mut cache,
+            custom_scalar_map: None,
+            description: &description,
+            name: &name,
+            schema: &schema,
+        }
+        .into()
+    }
+
+    #[test]
+    fn int_maps_to_integer() {
+        let schema = builtin_type_schema("Int");
+        assert_eq!(json!(schema), json!({"type": "integer"}));
+    }
+
+    #[test]
+    fn float_maps_to_number() {
+        let schema = builtin_type_schema("Float");
+        assert_eq!(json!(schema), json!({"type": "number"}));
     }
 }

@@ -202,16 +202,12 @@ mod tests {
             assert_eq!(result.get("mcp-session-id").unwrap(), "session-123");
         }
 
-        #[test]
-        fn combined_scenario() {
-            // Static headers
+        fn combined_scenario_headers() -> HeaderMap {
             let mut static_headers = HeaderMap::new();
             static_headers.insert("x-api-key", HeaderValue::from_static("static-key"));
 
-            // Forward specific headers
             let forward_header_names = vec!["x-tenant-id".to_string()];
 
-            // Incoming headers
             let mut incoming_headers = HeaderMap::new();
             incoming_headers.insert("x-tenant-id", HeaderValue::from_static("tenant-123"));
             incoming_headers.insert("mcp-session-id", HeaderValue::from_static("session-456"));
@@ -220,7 +216,6 @@ mod tests {
                 HeaderValue::from_static("should-not-appear"),
             );
 
-            // OAuth token
             let mut extensions = Extensions::new();
             let token = ValidToken {
                 token: Authorization::bearer("oauth-token").unwrap(),
@@ -228,19 +223,42 @@ mod tests {
             };
             extensions.insert(token);
 
-            let result = super::super::build_request_headers(
+            super::super::build_request_headers(
                 &static_headers,
                 &forward_header_names,
                 &incoming_headers,
                 &extensions,
                 false,
-            );
+            )
+        }
 
-            // Verify all parts combined correctly
+        #[test]
+        fn combined_includes_static_header() {
+            let result = combined_scenario_headers();
             assert_eq!(result.get("x-api-key").unwrap(), "static-key");
+        }
+
+        #[test]
+        fn combined_includes_forwarded_header() {
+            let result = combined_scenario_headers();
             assert_eq!(result.get("x-tenant-id").unwrap(), "tenant-123");
+        }
+
+        #[test]
+        fn combined_includes_session_id() {
+            let result = combined_scenario_headers();
             assert_eq!(result.get("mcp-session-id").unwrap(), "session-456");
+        }
+
+        #[test]
+        fn combined_includes_oauth_token() {
+            let result = combined_scenario_headers();
             assert_eq!(result.get("authorization").unwrap(), "Bearer oauth-token");
+        }
+
+        #[test]
+        fn combined_excludes_unconfigured_header() {
+            let result = combined_scenario_headers();
             assert!(result.get("ignored-header").is_none());
         }
     }
@@ -323,9 +341,7 @@ mod tests {
             assert_eq!(outgoing.get("x-tenant-id").unwrap(), "tenant-123");
         }
 
-        #[test]
-        #[traced_test]
-        fn warns_on_sensitive_headers() {
+        fn forward_with_sensitive_headers() -> HeaderMap {
             let names = vec![
                 "authorization".to_string(),
                 "cookie".to_string(),
@@ -344,16 +360,29 @@ mod tests {
 
             let mut outgoing = HeaderMap::new();
             super::super::forward_headers(&names, &incoming, &mut outgoing);
+            outgoing
+        }
 
+        #[test]
+        #[traced_test]
+        fn logs_warning_for_sensitive_headers() {
+            let _outgoing = forward_with_sensitive_headers();
             assert!(logs_contain("Forwarding sensitive header"));
             assert!(logs_contain("authorization"));
             assert!(logs_contain("cookie"));
-            // proxy-authorization is a hop-by-hop header so it's blocked from forwarding,
-            // but we still warn that it was configured as a forwarded header
             assert!(logs_contain("proxy-authorization"));
-            assert!(!logs_contain("x-tenant-id"));
+        }
 
-            // proxy-authorization should be blocked from the outgoing headers
+        #[test]
+        #[traced_test]
+        fn does_not_warn_for_non_sensitive_headers() {
+            let _outgoing = forward_with_sensitive_headers();
+            assert!(!logs_contain("x-tenant-id"));
+        }
+
+        #[test]
+        fn blocks_proxy_authorization_as_hop_by_hop() {
+            let outgoing = forward_with_sensitive_headers();
             assert!(outgoing.get("proxy-authorization").is_none());
         }
     }

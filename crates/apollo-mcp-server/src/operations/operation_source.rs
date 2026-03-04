@@ -13,6 +13,7 @@ use apollo_mcp_registry::{
     uplink::persisted_queries::{ManifestSource, event::Event as ManifestEvent},
 };
 use futures::{Stream, StreamExt as _};
+use regex::Regex;
 use tracing::warn;
 
 use crate::event::Event;
@@ -42,7 +43,7 @@ impl OperationSource {
     pub async fn into_stream(self) -> impl Stream<Item = Event> {
         match self {
             OperationSource::Files(paths) => Self::stream_file_changes(paths).boxed(),
-            OperationSource::Manifest(manifest_source) => manifest_source
+            OperationSource::Manifest(source) => source
                 .into_stream()
                 .await
                 .map(|event| {
@@ -199,6 +200,21 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
+#[allow(clippy::expect_used)]
+static OP_NAME_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r"(?:query|mutation|subscription)\s+([A-Za-z_]\w*)")
+        .expect("OP_NAME_RE is a valid regex")
+});
+
+/// Extract the operation name from a GraphQL operation body using a lightweight
+/// regex, avoiding a full parse. Returns `None` for anonymous operations.
+pub(crate) fn extract_operation_name(source_text: &str) -> Option<&str> {
+    OP_NAME_RE
+        .captures(source_text)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str())
+}
+
 impl From<Vec<PathBuf>> for OperationSource {
     fn from(paths: Vec<PathBuf>) -> Self {
         OperationSource::Files(paths)
@@ -214,7 +230,7 @@ mod tests {
     use std::io::Write;
 
     #[tokio::test]
-    async fn test_deduplication_of_overlapping_paths() {
+    async fn deduplication_of_overlapping_paths() {
         let temp_base = temp_dir();
         let test_id = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -253,5 +269,52 @@ mod tests {
         }
 
         let _ = fs::remove_dir_all(&tools_dir);
+    }
+
+    #[test]
+    fn extract_name_from_query() {
+        assert_eq!(
+            extract_operation_name("query GetAlerts($state: String!) { alerts { severity } }"),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn extract_name_from_mutation() {
+        assert_eq!(
+            extract_operation_name(
+                "mutation CreateUser($name: String!) { createUser(name: $name) { id } }"
+            ),
+            Some("CreateUser")
+        );
+    }
+
+    #[test]
+    fn extract_name_from_subscription() {
+        assert_eq!(
+            extract_operation_name("subscription OnMessage { messages { text } }"),
+            Some("OnMessage")
+        );
+    }
+
+    #[test]
+    fn extract_name_with_leading_comment() {
+        assert_eq!(
+            extract_operation_name("# Get alerts\nquery GetAlerts { alerts { severity } }"),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn extract_name_returns_none_for_anonymous() {
+        assert_eq!(extract_operation_name("{ alerts { severity } }"), None);
+    }
+
+    #[test]
+    fn extract_name_returns_none_for_anonymous_query() {
+        assert_eq!(
+            extract_operation_name("query { alerts { severity } }"),
+            None
+        );
     }
 }

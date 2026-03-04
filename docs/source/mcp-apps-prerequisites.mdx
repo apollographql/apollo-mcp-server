@@ -1,0 +1,41 @@
+---
+title: MCP Apps Prerequisites
+subtitle: What you need to get started
+---
+
+Before building MCP Apps with Apollo MCP Server, make sure you have these prerequisites.
+
+## Required prerequisites
+
+- Apollo MCP Server
+- GraphQL API endpoints that you want to expose through MCP Apps
+- An MCP Apps-compatible host (for example, ChatGPT with OpenAI Apps SDK access, or another host that supports the MCP specification)
+
+<Note>
+
+If you're using ChatGPT and want to test end-to-end, you'll need a ChatGPT Plus account with OpenAI Apps SDK access (currently in preview/beta). Apps SDK access might require enrollment or approval from OpenAI. Check the [OpenAI Apps SDK documentation](https://developers.openai.com/apps-sdk/quickstart/#add-your-app-to-chatgpt). 
+
+If you're using another host, make sure it complies with the [Model Context Protocol specifications](https://modelcontextprotocol.io/docs/getting-started/intro).
+
+</Note>
+
+## Template-specific prerequisites
+
+If you're using the [Apollo AI Apps Template](https://github.com/apollographql/ai-apps-template), you'll also need:
+
+- Node.js v18 or later
+- npm or yarn
+
+<note> 
+
+Tunneling tools, like [ngrok](https://ngrok.com/), can be helpful for local development with remote hosts if you want to test native interfaces.
+
+</note>
+
+## Next steps
+
+Once you have all prerequisites in place:
+
+1. Follow the [MCP Apps Quickstart](/apollo-mcp-server/mcp-apps-quickstart) to create your first app
+2. Review the [MCP Apps Overview](/apollo-mcp-server/mcp-apps) for architecture and concepts
+3. Explore the [MCP Apps Reference](/apollo-mcp-server/mcp-apps-reference) for detailed configuration

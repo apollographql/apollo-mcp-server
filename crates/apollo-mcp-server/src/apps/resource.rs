@@ -19,8 +19,12 @@ pub(crate) async fn get_app_resource(
     request: rmcp::model::ReadResourceRequestParams,
     request_uri: Url,
     app_target: &AppTarget,
+    app_name: &str,
 ) -> Result<ResourceContents, ErrorData> {
-    let Some(app) = apps.iter().find(|app| app.uri.path() == request_uri.path()) else {
+    let Some(app) = apps
+        .iter()
+        .find(|app| app.uri.path() == request_uri.path() && app.name == app_name)
+    else {
         return Err(ErrorData::resource_not_found(
             format!("Resource not found for URI: {}", request.uri),
             None,
@@ -130,6 +134,15 @@ pub(crate) async fn get_app_resource(
                 "prefersBorder".into(),
                 serde_json::to_value(prefers_border).unwrap_or_default(),
             );
+
+            // ChatGPT currently ignores _meta.ui.prefersBorder, so we set
+            // this field to ensure this setting is honored
+            if matches!(app_target, AppTarget::AppsSDK) {
+                meta.get_or_insert_with(Meta::new).insert(
+                    "openai/widgetPrefersBorder".into(),
+                    serde_json::to_value(prefers_border).unwrap_or_default(),
+                );
+            }
         }
     }
 
@@ -226,6 +239,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -246,6 +260,7 @@ mod tests {
         assert!(csp.get("redirect_domains").is_some());
         // OpenAI-specific description should be at root
         assert!(meta.get("openai/widgetDescription").is_some());
+        assert!(meta.get("openai/widgetPrefersBorder").is_some());
         // ui nesting should contain the common properties
         let ui_meta = meta.get("ui").unwrap();
         let ui_csp = ui_meta.get("csp").unwrap();
@@ -288,6 +303,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -314,6 +330,8 @@ mod tests {
         assert!(ui_meta.get("prefersBorder").is_some());
         // MCPApps should not have description
         assert!(ui_meta.get("description").is_none());
+        // MCPApps should not have openai-specific root meta keys
+        assert!(meta.get("openai/widgetPrefersBorder").is_none());
     }
 
     #[tokio::test]
@@ -337,6 +355,35 @@ mod tests {
             },
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn get_app_resource_returns_error_for_wrong_app_name() {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams {
+                uri: "ui://widget/TestApp".to_string(),
+                meta: None,
+            },
+            "ui://widget/TestApp".parse().unwrap(),
+            &AppTarget::AppsSDK,
+            "WrongApp",
         )
         .await;
 
@@ -367,6 +414,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -401,6 +449,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await
         .unwrap();
@@ -435,6 +484,7 @@ mod tests {
             },
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            "TestApp",
         )
         .await;
 

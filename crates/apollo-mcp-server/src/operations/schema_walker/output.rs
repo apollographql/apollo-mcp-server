@@ -527,7 +527,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_query_output_schema() {
+    fn simple_query_output_schema() {
         let schema = parse_schema(
             r#"
             type Query {
@@ -567,7 +567,7 @@ mod tests {
     }
 
     #[test]
-    fn test_nested_object_output_schema() {
+    fn nested_object_output_schema() {
         let schema = parse_schema(
             r#"
             type Query {

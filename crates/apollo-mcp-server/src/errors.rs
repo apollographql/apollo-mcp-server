@@ -110,9 +110,6 @@ pub enum ServerError {
     #[error("TLS configuration error: {0}")]
     Tls(#[from] crate::auth::TlsConfigError),
 
-    #[error("Unsupported transport: {0}")]
-    UnsupportedTransport(String),
-
     #[error("There was a problem parsing Rhai scripts on startup.")]
     RhaiError,
 }

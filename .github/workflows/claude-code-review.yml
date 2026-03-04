@@ -92,9 +92,26 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            github.rest.issues.createComment({
+            const body = '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.';
+            const marker = 'Claude Code Review';
+            const { data: comments } = await github.rest.issues.listComments({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '⚠️ Claude Code Review failed to complete. This could be due to API issues, rate limits, or insufficient credits. The PR can still be merged - manual review recommended.'
-            })
+            });
+            const existing = comments.reverse().find(c => c.body?.includes(marker) && c.user?.login === 'github-actions[bot]');
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body,
+              });
+            }

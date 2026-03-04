@@ -424,7 +424,7 @@ mod test {
     use url::Url;
 
     #[tokio::test]
-    async fn test_stream_from_uplink() {
+    async fn streams_schema_from_uplink() {
         for url in &[GCP_URL, AWS_URL] {
             if let (Ok(apollo_key), Ok(apollo_graph_ref)) = (
                 std::env::var("TEST_APOLLO_KEY"),
@@ -455,7 +455,7 @@ mod test {
     }
 
     #[test]
-    fn test_uplink_config_for_tests() {
+    fn uplink_config_for_tests() {
         let endpoints = Endpoints::fallback(vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -479,7 +479,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_fallback() {
+    fn endpoints_fallback() {
         let urls = vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -499,7 +499,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_round_robin() {
+    fn endpoints_round_robin() {
         let urls = vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -521,7 +521,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_url_count() {
+    fn endpoints_url_count() {
         let urls = vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -536,7 +536,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_iter_fallback() {
+    fn endpoints_iter_fallback() {
         let urls = vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -560,7 +560,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_iter_round_robin() {
+    fn endpoints_iter_round_robin() {
         let urls = vec![
             Url::from_str("http://test1.example.com").unwrap(),
             Url::from_str("http://test2.example.com").unwrap(),
@@ -591,7 +591,7 @@ mod test {
     }
 
     #[test]
-    fn test_endpoints_default() {
+    fn endpoints_default() {
         let endpoints = Endpoints::default();
         assert_eq!(endpoints.url_count(), 2); // GCP_URL and AWS_URL
 
@@ -608,7 +608,7 @@ mod test {
     }
 
     #[test]
-    fn test_uplink_config_default() {
+    fn uplink_config_default() {
         let config = UplinkConfig::default();
 
         assert_eq!(config.apollo_key.expose_secret(), "");
@@ -619,7 +619,7 @@ mod test {
     }
 
     #[test]
-    fn test_error_display() {
+    fn error_display() {
         let error1 = Error::FetchFailedSingle;
         assert_eq!(
             error1.to_string(),
@@ -652,7 +652,7 @@ mod test {
     }
 
     #[test]
-    fn test_uplink_request_debug() {
+    fn uplink_request_debug() {
         let request = UplinkRequest {
             api_key: "test_api_key".to_string(),
             graph_ref: "test@main".to_string(),
@@ -666,7 +666,7 @@ mod test {
     }
 
     #[test]
-    fn test_uplink_response_debug() {
+    fn uplink_response_debug() {
         let response_new = UplinkResponse::New {
             response: "test_response".to_string(),
             id: "test_id".to_string(),

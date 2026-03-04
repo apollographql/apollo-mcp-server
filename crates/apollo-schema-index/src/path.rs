@@ -313,7 +313,7 @@ mod test {
     use insta::assert_snapshot;
 
     #[test]
-    fn test_add_child() {
+    fn add_child() {
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
             Some(name!("child")),
@@ -324,7 +324,7 @@ mod test {
     }
 
     #[test]
-    fn test_add_parent() {
+    fn add_parent() {
         let path = PathNode::new(NamedType::new("Child").unwrap());
         let path = path.add_parent(
             Some(name!("child")),
@@ -335,7 +335,7 @@ mod test {
     }
 
     #[test]
-    fn test_len() {
+    fn len() {
         // Test path with no children
         let path = PathNode::new(NamedType::new("Root").unwrap());
         assert_eq!(path.len(), 1);
@@ -362,7 +362,7 @@ mod test {
     }
 
     #[test]
-    fn test_display() {
+    fn display() {
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
             Some(name!("child")),
@@ -384,7 +384,7 @@ mod test {
     }
 
     #[test]
-    fn test_has_cycle() {
+    fn has_cycle() {
         // Test path without cycle
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
@@ -407,7 +407,7 @@ mod test {
     }
 
     #[test]
-    fn test_referencing_type() {
+    fn referencing_type() {
         // Test single level path
         let path = PathNode::new(NamedType::new("Root").unwrap());
         assert_eq!(path.referencing_type(), None);
@@ -435,7 +435,7 @@ mod test {
     }
 
     #[test]
-    fn test_iteration() {
+    fn iteration() {
         // Test single node
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let nodes: Vec<_> = path.iter().collect();
@@ -472,7 +472,7 @@ mod test {
     }
 
     #[test]
-    fn test_iteration_mut() {
+    fn iteration_mut() {
         // Test mutable iteration
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
@@ -497,7 +497,7 @@ mod test {
     }
 
     #[test]
-    fn test_into_iter() {
+    fn into_iter() {
         // Test owned iteration
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
@@ -519,7 +519,7 @@ mod test {
     }
 
     #[test]
-    fn test_iteration_with_into_iter() {
+    fn iteration_with_into_iter() {
         // Test using IntoIterator trait
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let path = path.add_child(
@@ -557,7 +557,7 @@ mod test {
     }
 
     #[test]
-    fn test_iteration_empty_path() {
+    fn iteration_empty_path() {
         // Test iteration on a path with no children
         let path = PathNode::new(NamedType::new("Root").unwrap());
         let nodes: Vec<_> = path.iter().collect();

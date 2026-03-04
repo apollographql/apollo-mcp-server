@@ -12,6 +12,7 @@ description = "GraphQL schema indexing"
 [dependencies]
 apollo-compiler.workspace = true
 enumset = "1.1.6"
+heck = "0.5"
 itertools = "0.14.0"
 tantivy = "0.24.2"
 thiserror.workspace = true

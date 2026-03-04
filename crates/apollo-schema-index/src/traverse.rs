@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[rstest]
-    fn test_schema_traverse(schema: Valid<Schema>) {
+    fn schema_traverse(schema: Valid<Schema>) {
         let mut paths = vec![];
         for (_extended_type, path) in schema
             .traverse(OperationType::Query | OperationType::Mutation | OperationType::Subscription)

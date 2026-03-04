@@ -4,6 +4,73 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.2 (2026-03-04)
+
+### Fixes
+
+- App resources will now only be listed when the "app" query param is present
+- Fixed a scenario where operation tool names could collide with apps tool names
+
+## 1.8.1 (2026-03-02)
+
+### Fixes
+
+#### Fix panic with multibyte UTF-8 characters in GraphQL schemas
+
+Update `apollo-compiler` to 1.31.1, which upgrades the `ariadne` error reporting library from 0.5.1 to 0.6.0. This fixes a panic when handling GraphQL schemas containing CJK text or emoji in field names or descriptions, where byte-offset span calculations could land inside a multibyte character boundary.
+
+#### Use `openai/widgetPrefersBorder` when `prefersBorder` setting is provided
+
+Set `_meta['openai/widgetPrefersBorder']` for the resource because ChatGPT ignores `_meta.ui.prefersBorder` at the moment.
+
+## 1.8.0 (2026-02-26)
+
+### Features
+
+#### Allow server "description" to be configured
+
+Example:
+
+```yaml title="config.yaml"
+server_info:
+  name: "Acme Corp GraphQL Server"
+  version: "2.0.0"
+  title: "Acme MCP Server"
+  website_url: "https://acme.com/mcp-docs"
+  description: "MCP server for Acme Corp's GraphQL API"
+```
+
+#### Support custom tool descriptions for all operation sources
+
+Users can now provide custom tool descriptions via the `overrides.descriptions` config, regardless of the operation source (manifest, uplink, collection, local files). This lets AI models better understand when and how to use each tool, without requiring changes to operation files or manifests.
+
+```yaml
+overrides:
+  descriptions:
+    GetAlerts: "Get active weather alerts for a US state"
+    GetForecast: "Get a detailed weather forecast for a coordinate"
+```
+
+#### Support for MCP Apps and OpenAI AppsSDK
+
+This release includes support for MCP Apps and the OpenAI Apps SDK via our [AI Apps Template](https://github.com/apollographql/ai-apps-template) utilizing the [@apollo/client-ai-apps](https://github.com/apollographql/apollo-client-ai-apps) Apollo Client integration library.
+
+This pattern enables serving AI Apps built with Apollo Client to platforms like ChatGPT, Goose, and others via Apollo MCP Server.
+
+### Fixes
+
+#### Fix server crash on collection sync with invalid operations
+
+A single operation with malformed variables JSON in a collection would crash the entire server. Invalid operations are now skipped with a warning, and the server continues serving with the remaining valid operations.
+
+#### Fix JSON schema type mapping for GraphQL Int
+
+Map GraphQL `Int` to JSON schema `{ "type": "integer" }` instead of `{ "type": "number" }`. This tells MCP clients to send integer values rather than floats (e.g. `1234` instead of `1234.0`), fixing input coercion errors on GraphQL servers that strictly validate `Int` inputs.
+
+#### Gate outputSchema and structuredContent on negotiated MCP protocol version
+
+When `enable_output_schema` is configured, the server now advertises MCP protocol version `2025-06-18` and only includes `outputSchema` in `tools/list` and `structuredContent` in `tools/call` responses when the client negotiates a protocol version that supports them (`>= 2025-06-18`). Previously, these fields were sent regardless of the negotiated version, which could cause errors in clients that don't recognize them.
+
 ## 1.7.0 (2026-02-10)
 
 ### Features

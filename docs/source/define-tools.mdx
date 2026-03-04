@@ -147,6 +147,61 @@ operations:
   source: uplink
 ```
 
+## Tool descriptions
+
+Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates a tool description using the GraphQL schema's field and type descriptions.
+
+### GraphQL comments in operation bodies
+
+Embed `#` comments before the operation definition. MCP Server extracts leading comments and uses them as the tool description.
+
+MCP Server ignores comments placed inside the operation body — for example, above or beside field selections.
+
+**In local `.graphql` files**, add comments directly above the operation:
+
+```graphql title="operations/GetAlerts.graphql" {1}
+# Get active weather alerts for a US state
+query GetAlerts($state: String!) {
+  alerts(state: $state) {
+    severity
+    description
+    instruction
+  }
+}
+```
+**In GraphOS operation collections**, add comments above the operation in the Explorer editor before saving to the collection.
+
+**In persisted query manifests**, embed comments in the `body` field:
+
+```json title="persisted-queries-manifest.json" {7}
+{
+  "format": "apollo-persisted-query-manifest",
+  "version": 1,
+  "operations": [
+    {
+      "id": "f4d7c9e3...",
+      "body": "# Get active weather alerts for a US state\nquery GetAlerts($state: String!) { alerts(state: $state) { severity description instruction } }"
+    }
+  ]
+}
+```
+
+### Config-level descriptions
+
+If you can't modify the operation source directly, add a `descriptions` map under the `overrides` config key to map operation names to tool descriptions. These descriptions override auto-generated descriptions for the matching operations, regardless of the operation source.
+
+```yaml title="Config with tool descriptions" {4-6}
+operations:
+  source: local
+  paths: [./operations]
+overrides:
+  descriptions:
+    GetAlerts: "Get active weather alerts for a US state by its two-letter abbreviation"
+    GetForecast: "Get a detailed weather forecast for a geographic coordinate"
+```
+
+Config-level descriptions take priority over comment-based descriptions when both are present for the same operation.
+
 ## Introspection tools
 
 In addition to defining specific tools for pre-defined GraphQL operations, Apollo MCP Server supports introspection tools that enable AI agents to explore the graph schema and execute operations dynamically.

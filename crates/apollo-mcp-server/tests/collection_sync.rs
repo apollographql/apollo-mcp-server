@@ -1,6 +1,7 @@
 //! Integration test: a running MCP server survives when the collection
 //! poller syncs an operation with invalid variables JSON from Explorer.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use apollo_mcp_registry::{
@@ -146,6 +147,7 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
         .disable_schema_description(false)
         .enable_output_schema(false)
         .disable_auth_token_passthrough(false)
+        .descriptions(HashMap::new())
         .search_leaf_depth(5)
         .index_memory_bytes(1024 * 1024)
         .health_check(HealthCheckConfig::default())

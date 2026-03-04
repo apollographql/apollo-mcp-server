@@ -32,7 +32,7 @@ use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeMode {
     /// Skip scope enforcement entirely.
@@ -58,6 +58,8 @@ pub enum TlsConfigError {
     ClientBuild(#[from] reqwest::Error),
     #[error("Auth server URL at index {index} ({url}) has no host")]
     ServerUrlMissingHost { index: usize, url: String },
+    #[error("Resource URL has non-HTTP(S) scheme '{scheme}': {url}")]
+    ResourceUrlInvalidScheme { url: String, scheme: String },
 }
 
 impl TlsConfig {
@@ -159,11 +161,45 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
+/// Constructs the protected resource metadata URL per RFC 9728 Section 3.
+///
+/// The well-known URI is formed by inserting `/.well-known/oauth-protected-resource`
+/// between the host and path components of the resource identifier.
+/// Query strings and fragments are stripped per RFC 9728.
+fn build_resource_metadata_url(resource: &Url) -> Url {
+    let mut url = resource.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+
+    if url.host_str().is_none() {
+        warn!("resource URL has no host, falling back to root-level metadata path");
+        url.set_path("/.well-known/oauth-protected-resource");
+        return url;
+    }
+
+    let path = url
+        .path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/");
+
+    if path.is_empty() {
+        url.set_path("/.well-known/oauth-protected-resource");
+    } else {
+        url.set_path(&format!("/.well-known/oauth-protected-resource/{path}"));
+    }
+
+    url
+}
+
 /// Internal state for the auth middleware, containing both config and pre-built HTTP client
 #[derive(Clone)]
 struct AuthState {
     config: Config,
     client: reqwest::Client,
+    resource_metadata_url: Url,
 }
 
 impl Config {
@@ -181,6 +217,13 @@ impl Config {
             }
         }
 
+        let scheme = self.resource.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(TlsConfigError::ResourceUrlInvalidScheme {
+                url: self.resource.to_string(),
+                scheme: scheme.to_string(),
+            });
+        }
         if self.allow_any_audience {
             warn!(
                 "allow_any_audience is enabled - audience validation is disabled. This reduces security."
@@ -203,9 +246,12 @@ impl Config {
 
         // Build HTTP client with TLS configuration
         let client = self.tls.build_client()?;
+        let resource_metadata_url = build_resource_metadata_url(&self.resource);
+        let metadata_route_path = resource_metadata_url.path().to_string();
         let auth_state = AuthState {
             config: self.clone(),
             client,
+            resource_metadata_url,
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -214,10 +260,7 @@ impl Config {
             .allow_methods([Method::GET])
             .allow_origin(Any);
         let auth_router = Router::new()
-            .route(
-                "/.well-known/oauth-protected-resource",
-                get(protected_resource),
-            )
+            .route(&metadata_route_path, get(protected_resource))
             .with_state(auth_state.clone())
             .layer(cors);
 
@@ -237,13 +280,7 @@ async fn oauth_validate(
     next: Next,
 ) -> Result<Response, (StatusCode, TypedHeader<WwwAuthenticate>)> {
     let auth_config = &auth_state.config;
-
-    // Helper to construct the resource metadata URL
-    let resource_metadata_url = || {
-        let mut url = auth_config.resource.clone();
-        url.set_path("/.well-known/oauth-protected-resource");
-        url
-    };
+    let resource_metadata_url = &auth_state.resource_metadata_url;
 
     // Unauthorized error for missing or invalid tokens
     let unauthorized_error = || {
@@ -256,10 +293,10 @@ async fn oauth_validate(
         (
             StatusCode::UNAUTHORIZED,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: resource_metadata_url(),
+                resource_metadata: resource_metadata_url.clone(),
                 scope,
                 error: None,
-                scope_mode: Some(auth_config.scope_mode.clone()),
+                scope_mode: Some(auth_config.scope_mode),
             }),
         )
     };
@@ -269,10 +306,10 @@ async fn oauth_validate(
         (
             StatusCode::FORBIDDEN,
             TypedHeader(WwwAuthenticate::Bearer {
-                resource_metadata: resource_metadata_url(),
+                resource_metadata: resource_metadata_url.clone(),
                 scope: Some(required_scopes.join(" ")),
                 error: Some(BearerError::InsufficientScope),
-                scope_mode: Some(auth_config.scope_mode.clone()),
+                scope_mode: Some(auth_config.scope_mode),
             }),
         )
     };
@@ -377,9 +414,11 @@ mod tests {
     }
 
     fn test_auth_state(config: Config) -> AuthState {
+        let resource_metadata_url = build_resource_metadata_url(&config.resource);
         AuthState {
             config,
             client: reqwest::Client::new(),
+            resource_metadata_url,
         }
     }
 
@@ -389,68 +428,72 @@ mod tests {
             .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
     }
 
-    #[tokio::test]
-    async fn missing_token_returns_unauthorized() {
-        let config = test_config();
-        let app = test_router(config.clone());
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-    }
+    mod oauth_validate {
+        use super::*;
 
-    #[tokio::test]
-    async fn invalid_token_returns_unauthorized() {
-        let config = test_config();
-        let app = test_router(config.clone());
-        let req = Request::builder()
-            .uri("/test")
-            .header(AUTHORIZATION, "Bearer invalidtoken")
-            .body(Body::empty())
-            .unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-    }
+        #[tokio::test]
+        async fn missing_token_returns_unauthorized() {
+            let config = test_config();
+            let app = test_router(config.clone());
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+        }
 
-    #[tokio::test]
-    async fn missing_token_with_multiple_scopes() {
-        let mut config = test_config();
-        config.scopes = vec!["read".to_string(), "write".to_string()];
-        let app = test_router(config);
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains(r#"scope="read write""#));
-    }
+        #[tokio::test]
+        async fn invalid_token_returns_unauthorized() {
+            let config = test_config();
+            let app = test_router(config.clone());
+            let req = Request::builder()
+                .uri("/test")
+                .header(AUTHORIZATION, "Bearer invalidtoken")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+        }
 
-    #[tokio::test]
-    async fn missing_token_without_scopes_omits_scope_parameter() {
-        let mut config = test_config();
-        config.scopes = vec![];
-        let app = test_router(config);
-        let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-        let res = app.oneshot(req).await.unwrap();
-        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        let headers = res.headers();
-        let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
-        assert!(www_auth.contains("Bearer"));
-        assert!(www_auth.contains("resource_metadata"));
-        assert!(!www_auth.contains("scope="));
+        #[tokio::test]
+        async fn missing_token_with_multiple_scopes() {
+            let mut config = test_config();
+            config.scopes = vec!["read".to_string(), "write".to_string()];
+            let app = test_router(config);
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains(r#"scope="read write""#));
+        }
+
+        #[tokio::test]
+        async fn missing_token_without_scopes_omits_scope_parameter() {
+            let mut config = test_config();
+            config.scopes = vec![];
+            let app = test_router(config);
+            let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let headers = res.headers();
+            let www_auth = headers.get(WWW_AUTHENTICATE).unwrap().to_str().unwrap();
+            assert!(www_auth.contains("Bearer"));
+            assert!(www_auth.contains("resource_metadata"));
+            assert!(!www_auth.contains("scope="));
+        }
     }
 
     mod scope_validation {
         use super::*;
+        use rstest::rstest;
 
-        // Unified test helper for scope validation logic
         fn is_sufficient(mode: ScopeMode, required: &[String], present: &[String]) -> bool {
             if required.is_empty() {
                 return true;
@@ -462,53 +505,35 @@ mod tests {
             }
         }
 
-        #[test]
-        fn insufficient_scopes_fails() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
+        fn s(vals: &[&str]) -> Vec<String> {
+            vals.iter().map(|v| v.to_string()).collect()
         }
 
-        #[test]
-        fn all_required_scopes_succeeds() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
+        #[rstest]
+        #[case::all_present(ScopeMode::RequireAll, &["read", "write"], &["read", "write"], true)]
+        #[case::missing_one(ScopeMode::RequireAll, &["read", "write"], &["read"], false)]
+        #[case::none_present(ScopeMode::RequireAll, &["read"], &[], false)]
+        #[case::superset(ScopeMode::RequireAll, &["read"], &["read", "write", "admin"], true)]
+        #[case::reversed_order(ScopeMode::RequireAll, &["write", "read"], &["read", "write"], true)]
+        #[case::any_one_match(ScopeMode::RequireAny, &["read", "write"], &["read"], true)]
+        #[case::any_zero_matches(ScopeMode::RequireAny, &["read", "write"], &["admin"], false)]
+        #[case::any_none_present(ScopeMode::RequireAny, &["read"], &[], false)]
+        #[case::disabled_ignores_scopes(ScopeMode::Disabled, &["read", "write"], &[], true)]
+        fn scope_check(
+            #[case] mode: ScopeMode,
+            #[case] required: &[&str],
+            #[case] present: &[&str],
+            #[case] expected: bool,
+        ) {
+            assert_eq!(is_sufficient(mode, &s(required), &s(present)), expected);
         }
 
-        #[test]
-        fn no_scopes_when_required_fails() {
-            let required = vec!["read".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-        }
-
-        #[test]
-        fn superset_of_scopes_succeeds() {
-            let required = vec!["read".to_string()];
-            let present = vec!["read".to_string(), "write".to_string(), "admin".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-        }
-
-        #[test]
-        fn empty_required_scopes_always_succeeds() {
-            let required: Vec<String> = vec![];
-            let present = vec!["read".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-
-            let present_empty: Vec<String> = vec![];
-            assert!(is_sufficient(
-                ScopeMode::RequireAll,
-                &required,
-                &present_empty
-            ));
-        }
-
-        #[test]
-        fn scope_order_does_not_matter() {
-            let required = vec!["write".to_string(), "read".to_string()];
-            let present = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
+        #[rstest]
+        #[case::require_all(ScopeMode::RequireAll)]
+        #[case::require_any(ScopeMode::RequireAny)]
+        #[case::disabled(ScopeMode::Disabled)]
+        fn empty_required_scopes_is_sufficient(#[case] mode: ScopeMode) {
+            assert!(is_sufficient(mode, &[], &s(&["anything"])));
         }
 
         #[test]
@@ -528,60 +553,25 @@ mod tests {
             let encoded = values.first().unwrap().to_str().unwrap();
 
             assert!(encoded.contains(r#"error="insufficient_scope""#));
+        }
+
+        #[test]
+        fn forbidden_error_includes_required_scopes() {
+            let header = WwwAuthenticate::Bearer {
+                resource_metadata: Url::parse(
+                    "https://test.com/.well-known/oauth-protected-resource",
+                )
+                .unwrap(),
+                scope: Some("read write".to_string()),
+                error: Some(BearerError::InsufficientScope),
+                scope_mode: None,
+            };
+
+            let mut values = Vec::new();
+            headers::Header::encode(&header, &mut values);
+            let encoded = values.first().unwrap().to_str().unwrap();
+
             assert!(encoded.contains(r#"scope="read write""#));
-        }
-
-        #[test]
-        fn scope_mode_disabled_always_sufficient() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_require_all_needs_all_scopes() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-
-            let present_all = vec!["read".to_string(), "write".to_string()];
-            assert!(is_sufficient(
-                ScopeMode::RequireAll,
-                &required,
-                &present_all
-            ));
-        }
-
-        #[test]
-        fn scope_mode_require_any_accepts_one_match() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["read".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_require_any_rejects_zero_matches() {
-            let required = vec!["read".to_string(), "write".to_string()];
-            let present = vec!["admin".to_string()];
-            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_empty_scopes_is_sufficient_for_all_modes() {
-            let required: Vec<String> = vec![];
-            let present = vec!["anything".to_string()];
-            assert!(is_sufficient(ScopeMode::RequireAll, &required, &present));
-            assert!(is_sufficient(ScopeMode::RequireAny, &required, &present));
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
-        }
-
-        #[test]
-        fn scope_mode_token_with_no_scopes_fails_when_required() {
-            let required = vec!["read".to_string()];
-            let present: Vec<String> = vec![];
-            assert!(!is_sufficient(ScopeMode::RequireAll, &required, &present));
-            assert!(!is_sufficient(ScopeMode::RequireAny, &required, &present));
-            assert!(is_sufficient(ScopeMode::Disabled, &required, &present));
         }
 
         #[test]
@@ -765,6 +755,173 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
+        }
+    }
+
+    mod build_resource_metadata_url {
+        use super::*;
+        use rstest::rstest;
+
+        #[rstest]
+        #[case::no_path(
+            "https://mcp.example.com",
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        )]
+        #[case::single_path_segment(
+            "https://mcp.example.com/mcp",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::multi_path_segments(
+            "https://api.example.com/first-service/mcp",
+            "https://api.example.com/.well-known/oauth-protected-resource/first-service/mcp"
+        )]
+        #[case::trailing_slash_normalized(
+            "https://mcp.example.com/mcp/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::non_standard_port(
+            "https://localhost:8443/mcp",
+            "https://localhost:8443/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::no_path_with_port(
+            "https://localhost:4000",
+            "https://localhost:4000/.well-known/oauth-protected-resource"
+        )]
+        #[case::deep_path(
+            "https://api.example.com/v1/services/mcp",
+            "https://api.example.com/.well-known/oauth-protected-resource/v1/services/mcp"
+        )]
+        #[case::query_string_stripped(
+            "https://mcp.example.com/mcp?version=2",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::fragment_stripped(
+            "https://mcp.example.com/mcp#section",
+            "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+        )]
+        #[case::root_trailing_slash(
+            "https://mcp.example.com/",
+            "https://mcp.example.com/.well-known/oauth-protected-resource"
+        )]
+        fn constructs_correct_url(#[case] resource: &str, #[case] expected: &str) {
+            let resource_url = Url::parse(resource).unwrap();
+            let result = build_resource_metadata_url(&resource_url);
+            assert_eq!(result.as_str(), expected);
+        }
+    }
+
+    mod resource_url_validation {
+        use super::*;
+
+        #[test]
+        fn rejects_resource_url_with_file_scheme() {
+            let mut config = test_config();
+            config.resource = Url::parse("file:///some/path").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::ResourceUrlInvalidScheme { .. }
+            ));
+        }
+
+        #[test]
+        fn rejects_resource_url_with_non_http_scheme() {
+            let mut config = test_config();
+            config.resource = Url::parse("ftp://example.com/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                TlsConfigError::ResourceUrlInvalidScheme { .. }
+            ));
+        }
+
+        #[test]
+        fn accepts_http_resource_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        fn accepts_https_resource_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
+
+            let result = config.enable_middleware(Router::new());
+
+            assert!(result.is_ok());
+        }
+    }
+
+    mod enable_middleware_integration {
+        use super::*;
+
+        #[tokio::test]
+        async fn unauthorized_response_contains_path_scoped_resource_metadata_url() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
+
+            let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/my-service/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap();
+            assert!(www_auth.contains(
+                r#"resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/my-service/mcp""#
+            ));
+        }
+
+        #[tokio::test]
+        async fn get_resource_metadata_path_returns_ok() {
+            let mut config = test_config();
+            config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
+
+            let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/.well-known/oauth-protected-resource/my-service/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn root_resource_metadata_path_returns_ok() {
+            let config = test_config();
+
+            let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
+            let app = config.enable_middleware(base_router).unwrap();
+
+            let req = Request::builder()
+                .uri("/.well-known/oauth-protected-resource")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
         }
     }
 }

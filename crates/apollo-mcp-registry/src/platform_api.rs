@@ -49,7 +49,7 @@ mod test {
     use std::time::Duration;
 
     #[test]
-    fn test_platform_api_config_with_none_endpoints() {
+    fn platform_api_config_with_none_endpoints() {
         let config = PlatformApiConfig::new(
             SecretString::from("test_apollo_key"),
             Duration::from_secs(10),

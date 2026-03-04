@@ -212,7 +212,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_search_tool(schema: Valid<Schema>) {
+    async fn search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
@@ -230,7 +230,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_referencing_types_are_collected(schema: Valid<Schema>) {
+    async fn referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), true, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
@@ -252,7 +252,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_search_tool_description_is_not_minified(schema: Valid<Schema>) {
+    async fn search_tool_description_is_not_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
             .expect("Failed to create search tool");
@@ -271,7 +271,7 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
-    async fn test_tool_description_minified(schema: Valid<Schema>) {
+    async fn tool_description_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
         let search = Search::new(schema.clone(), false, 1, 15_000_000, true, None)
             .expect("Failed to create search tool");

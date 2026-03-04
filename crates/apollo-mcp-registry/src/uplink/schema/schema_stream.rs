@@ -102,7 +102,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_uplink_request_to_graphql_variables() {
+    fn uplink_request_to_graphql_variables() {
         let request = UplinkRequest {
             api_key: "test_key".to_string(),
             graph_ref: "test_ref".to_string(),
@@ -117,7 +117,7 @@ mod test {
     }
 
     #[test]
-    fn test_graphql_response_to_uplink_response_new() {
+    fn graphql_response_to_uplink_response_new() {
         let response = supergraph_sdl_query::ResponseData {
             router_config: SupergraphSdlQueryRouterConfig::RouterConfigResult(
                 supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnRouterConfigResult {
@@ -138,7 +138,7 @@ mod test {
     }
 
     #[test]
-    fn test_graphql_response_to_uplink_response_unchanged() {
+    fn graphql_response_to_uplink_response_unchanged() {
         let response = supergraph_sdl_query::ResponseData {
             router_config: SupergraphSdlQueryRouterConfig::Unchanged(
                 supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnUnchanged {
@@ -158,7 +158,7 @@ mod test {
     }
 
     #[test]
-    fn test_graphql_response_to_uplink_response_error() {
+    fn graphql_response_to_uplink_response_error() {
         let response = supergraph_sdl_query::ResponseData {
             router_config: SupergraphSdlQueryRouterConfig::FetchError(
                 supergraph_sdl_query::SupergraphSdlQueryRouterConfigOnFetchError {

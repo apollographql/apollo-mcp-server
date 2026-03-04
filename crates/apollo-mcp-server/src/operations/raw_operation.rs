@@ -18,6 +18,9 @@ pub struct RawOperation {
     pub(super) headers: Option<HeaderMap<HeaderValue>>,
     pub(crate) variables: Option<HashMap<String, Value>>,
     pub(super) source_path: Option<String>,
+    /// An explicit tool description provided via config.
+    /// When present, this takes priority over auto-generated descriptions.
+    pub(crate) description: Option<String>,
 }
 
 impl RawOperation {
@@ -50,6 +53,7 @@ impl From<(String, Option<String>)> for RawOperation {
             headers: None,
             variables: None,
             source_path,
+            description: None,
         }
     }
 }
@@ -62,6 +66,7 @@ impl From<(String, String)> for RawOperation {
             headers: None,
             variables: None,
             source_path: None,
+            description: None,
         }
     }
 }
@@ -102,6 +107,7 @@ impl TryFrom<&OperationData> for RawOperation {
             headers,
             variables,
             source_path: None,
+            description: None,
         })
     }
 }
@@ -139,6 +145,9 @@ impl serde::Serialize for RawOperation {
         }
         if let Some(ref path) = self.source_path {
             state.serialize_field("source_path", path)?;
+        }
+        if let Some(ref description) = self.description {
+            state.serialize_field("description", description)?;
         }
 
         state.end()
@@ -192,5 +201,27 @@ mod tests {
             .collect();
 
         assert_eq!(recovered.len(), 2);
+    }
+
+    #[test]
+    fn from_manifest_tuple_has_no_description() {
+        let raw_op = RawOperation::from((
+            "hash123".to_string(),
+            "query GetUser { user { name } }".to_string(),
+        ));
+
+        assert_eq!(raw_op.persisted_query_id.as_deref(), Some("hash123"));
+        assert!(raw_op.description.is_none());
+    }
+
+    #[test]
+    fn from_local_file_has_no_description() {
+        let raw_op = RawOperation::from((
+            "query GetUser { user { name } }".to_string(),
+            None::<String>,
+        ));
+
+        assert!(raw_op.persisted_query_id.is_none());
+        assert!(raw_op.description.is_none());
     }
 }
