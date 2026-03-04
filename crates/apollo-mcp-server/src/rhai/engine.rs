@@ -68,6 +68,10 @@ impl RhaiEngine {
         let mut main = PathBuf::from("rhai");
         main.push("main.rhai");
 
+        if !main.exists() {
+            return Ok(());
+        }
+
         self.ast = self
             .engine
             .compile_file(main.clone())
@@ -237,12 +241,12 @@ mod tests {
     }
 
     #[test]
-    fn should_return_error_when_script_file_not_found() {
+    fn should_return_ok_when_script_file_not_found() {
         let mut engine = RhaiEngine::new();
 
         let result = engine.load_from_path();
 
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
