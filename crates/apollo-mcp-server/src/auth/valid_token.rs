@@ -141,7 +141,7 @@ pub(super) trait ValidateToken {
                     // so we enforce it here.
                     if !self.allow_any_audience() && token_data.claims.aud.is_empty() {
                         warn!("Token is missing the required `aud` claim");
-                        continue;
+                        break;
                     }
                     let scopes = extract_scopes(token_data.claims.scope.as_deref());
                     return Some(ValidToken { token, scopes });
