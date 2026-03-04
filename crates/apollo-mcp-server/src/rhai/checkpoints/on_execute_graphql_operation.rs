@@ -24,7 +24,6 @@ pub(crate) struct OnExecuteGraphqlOperationContext {
 
 impl OnExecuteGraphqlOperationContext {
     pub(crate) fn register(engine: &mut Engine) {
-        //engine.build_type::<OnExecuteGraphqlOperationContext>();
         engine
             .register_type::<OnExecuteGraphqlOperationContext>()
             .register_get_set(
@@ -99,4 +98,162 @@ pub fn on_execute_graphql_operation(
     let headers = context.headers.as_header_map();
 
     Ok((url, headers))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use http::HeaderMap;
+    use parking_lot::Mutex;
+    use rmcp::model::ErrorCode;
+    use url::Url;
+
+    use super::on_execute_graphql_operation;
+    use crate::rhai::engine::RhaiEngine;
+
+    fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
+        let mut engine = RhaiEngine::new();
+        engine
+            .load_from_string(script)
+            .expect("Script should compile");
+        Arc::new(Mutex::new(engine))
+    }
+
+    #[test]
+    fn should_pass_through_when_no_hook_defined() {
+        let engine = create_engine("");
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let (result_url, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+
+        assert_eq!(result_url, url);
+        assert!(result_headers.is_empty());
+    }
+
+    #[test]
+    fn should_return_original_values_when_hook_does_not_modify_context() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                // no-op
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let (result_url, _result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+
+        assert_eq!(result_url, url);
+    }
+
+    #[test]
+    fn should_return_modified_endpoint() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                ctx.endpoint = "https://modified.example.com/graphql";
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let (result_url, _) =
+            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+
+        assert_eq!(
+            result_url,
+            Url::parse("https://modified.example.com/graphql").expect("Valid URL")
+        );
+    }
+
+    #[test]
+    fn should_return_modified_headers() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                let h = ctx.headers;
+                h["x-custom"] = "custom-value";
+                ctx.headers = h;
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let (_, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+
+        assert_eq!(result_headers.get("x-custom").unwrap(), "custom-value");
+    }
+
+    #[test]
+    fn should_return_error_with_message_and_code() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                throw #{
+                    message: "unauthorized request",
+                    code: ErrorCode::INVALID_REQUEST
+                };
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let err =
+            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+
+        assert_eq!(err.code, ErrorCode::INVALID_REQUEST);
+        assert_eq!(err.message, "unauthorized request");
+    }
+
+    #[test]
+    fn should_return_error_with_default_message_when_message_field_missing() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                throw #{
+                    code: ErrorCode::INVALID_REQUEST
+                };
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let err =
+            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+
+        assert_eq!(err.message, "Internal error");
+    }
+
+    #[test]
+    fn should_return_internal_error_when_throw_is_non_map() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                throw "something went wrong";
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let err =
+            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+        assert_eq!(err.message, "Internal error");
+    }
+
+    #[test]
+    fn should_return_error_when_hook_sets_invalid_url() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                ctx.endpoint = "not a valid url";
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let err =
+            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+
+        assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
 }

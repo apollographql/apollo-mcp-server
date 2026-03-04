@@ -112,4 +112,11 @@ impl RhaiEngine {
     pub fn ast_has_function(&self, name: &str) -> bool {
         self.ast.iter_functions().any(|fn_def| fn_def.name == name)
     }
+
+    #[cfg(test)]
+    pub fn load_from_string(&mut self, script: &str) -> Result<(), Box<EvalAltResult>> {
+        self.ast = self.engine.compile(script)?;
+        self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
+        Ok(())
+    }
 }
