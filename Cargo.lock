@@ -161,7 +161,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-registry"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "derive_more",
  "educe",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-server"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "anyhow",
  "apollo-compiler",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-schema-index"
-version = "1.8.1"
+version = "1.8.2"
 dependencies = [
  "apollo-compiler",
  "enumset",

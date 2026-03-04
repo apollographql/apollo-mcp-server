@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.8.2 (2026-03-04)
+
+### Fixes
+
+- App resources will now only be listed when the "app" query param is present
+- Fixed a scenario where operation tool names could collide with apps tool names
+
 ## 1.8.1 (2026-03-02)
 
 ### Fixes
