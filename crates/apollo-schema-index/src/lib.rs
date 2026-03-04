@@ -27,6 +27,7 @@ use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
 use enumset::{EnumSet, EnumSetType};
 use error::{IndexingError, SearchError};
+use heck::ToSnakeCase;
 use itertools::Itertools;
 use path::Scored;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -53,7 +54,7 @@ pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
 pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
-/// be included in an [`EnumSet`](EnumSet).
+/// be included in an [`EnumSet`].
 #[derive(EnumSetType, Debug)]
 pub enum OperationType {
     Query,
@@ -103,6 +104,58 @@ impl Default for Options {
             max_paths_per_type: 3,
             short_path_boost_factor: 0.5,
             parent_match_boost_factor: 0.2,
+        }
+    }
+}
+
+/// Splits camelCase and PascalCase identifiers in the given text into space-separated words.
+///
+/// Each word-like segment (contiguous alphanumeric characters) is converted from camelCase to
+/// snake_case using `heck`, then underscores are replaced with spaces. Non-alphanumeric
+/// characters are preserved as-is so that Tantivy's `SimpleTokenizer` can still split on them.
+///
+/// Examples:
+/// - `"CreatePostInput"` → `"create post input"`
+/// - `"fieldName: TypeName"` → `"field name: type name"`
+fn expand_identifiers(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() * 2);
+    let mut word_start = None;
+
+    for (i, ch) in text.char_indices() {
+        if ch.is_alphanumeric() || ch == '_' {
+            if word_start.is_none() {
+                word_start = Some(i);
+            }
+        } else {
+            if let Some(start) = word_start {
+                push_expanded_word(&mut result, &text[start..i]);
+                word_start = None;
+            }
+            result.push(ch);
+        }
+    }
+
+    if let Some(start) = word_start {
+        push_expanded_word(&mut result, &text[start..]);
+    }
+
+    result
+}
+
+/// Converts a single camelCase word to space-separated lowercase words and appends to `out`.
+/// Consecutive underscores are collapsed to a single space, matching Rover's
+/// `.filter(|w| !w.is_empty())` behavior.
+fn push_expanded_word(out: &mut String, word: &str) {
+    let mut prev_underscore = false;
+    for ch in word.to_snake_case().chars() {
+        if ch == '_' {
+            if !prev_underscore {
+                out.push(' ');
+            }
+            prev_underscore = true;
+        } else {
+            out.push(ch);
+            prev_underscore = false;
         }
     }
 }
@@ -217,13 +270,13 @@ impl SchemaIndex {
 
             // Create a document for each type
             let mut doc = TantivyDocument::default();
-            doc.add_text(type_name_field, extended_type.name());
+            doc.add_text(type_name_field, expand_identifiers(extended_type.name()));
             doc.add_text(raw_type_name_field, extended_type.name());
             doc.add_text(
                 description_field,
                 extended_type
                     .description()
-                    .map(|d| d.to_string())
+                    .map(|d| expand_identifiers(d))
                     .unwrap_or_default(),
             );
 
@@ -261,7 +314,7 @@ impl SchemaIndex {
                 ),
                 _ => String::new(),
             };
-            doc.add_text(fields_field, &fields);
+            doc.add_text(fields_field, expand_identifiers(&fields));
             let field_descriptions = match extended_type {
                 ExtendedType::Enum(enum_type) => enum_type
                     .values
@@ -293,7 +346,7 @@ impl SchemaIndex {
                     .join("\n"),
                 _ => String::new(),
             };
-            doc.add_text(description_field, &field_descriptions);
+            doc.add_text(description_field, expand_identifiers(&field_descriptions));
             index_writer.add_document(doc)?;
         }
         index_writer.commit()?;
@@ -492,8 +545,9 @@ impl SchemaIndex {
             terms
                 .into_iter()
                 .flat_map(|term| {
+                    let expanded = expand_identifiers(&term);
                     let mut terms: Vec<Term> = Vec::new();
-                    let mut token_stream = text_analyzer.token_stream(&term);
+                    let mut token_stream = text_analyzer.token_stream(&expanded);
                     token_stream.process(&mut |token| {
                         terms.push(Term::from_field_text(self.type_name_field, &token.text));
                         terms.push(Term::from_field_text(self.description_field, &token.text));
@@ -597,5 +651,98 @@ mod tests {
             "Should find Post type when searching for 'analytics' field (which only exists on Post, not on Node/Content interfaces).\nFound paths:\n{}",
             paths.join("\n")
         );
+    }
+
+    #[rstest]
+    fn search_camel_case_splitting(schema: Valid<Schema>) {
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
+
+        // Searching "post" should match camelCase identifiers like PostAnalytics and UpdatePostInput
+        // via word-boundary splitting (e.g. PostAnalytics -> "post analytics")
+        let results = search
+            .search(vec!["post".to_string()], Options::default())
+            .unwrap();
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        let has_post_analytics = paths.iter().any(|p| p.contains("PostAnalytics"));
+        let has_update_post_input = paths.iter().any(|p| p.contains("UpdatePostInput"));
+
+        assert!(
+            has_post_analytics,
+            "Should find PostAnalytics when searching for 'post' (camelCase split).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+        assert!(
+            has_update_post_input,
+            "Should find UpdatePostInput when searching for 'post' (camelCase split).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+    }
+
+    #[rstest]
+    fn search_camel_case_query_term(schema: Valid<Schema>) {
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
+
+        // Searching "CreatePost" should also work via camelCase splitting of the query term
+        let results = search
+            .search(vec!["CreatePost".to_string()], Options::default())
+            .unwrap();
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        let has_post = paths.iter().any(|p| p.contains("Post"));
+
+        assert!(
+            has_post,
+            "Should find Post-related types when searching for 'CreatePost' (query term camelCase split).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+    }
+
+    #[rstest]
+    fn search_camel_case_in_description(schema: Valid<Schema>) {
+        let search = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            15_000_000,
+        )
+        .unwrap();
+
+        // Tag's description contains "createPost", so searching "post" should match via
+        // camelCase splitting of the description at index time.
+        let results = search
+            .search(vec!["post".to_string()], Options::default())
+            .unwrap();
+
+        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        assert!(
+            paths.iter().any(|p| p.contains("Tag")),
+            "Should find Tag when searching for 'post' (camelCase in description).\nFound paths:\n{}",
+            paths.join("\n")
+        );
+    }
+
+    #[rstest]
+    #[case::pascal_case("CreatePostInput", "create post input")]
+    #[case::camel_case("createPost", "create post")]
+    #[case::camel_case_multi("getUserById", "get user by id")]
+    #[case::pascal_compound("PostConnection", "post connection")]
+    #[case::uppercase_run("HTMLParser", "html parser")]
+    #[case::single_word("post", "post")]
+    #[case::acronym("ID", "id")]
+    #[case::snake_case_input("get_user_by_id", "get user by id")]
+    #[case::with_colon_separator("fieldName: TypeName", "field name: type name")]
+    #[case::with_comma_separator("firstName, lastName", "first name, last name")]
+    fn expand_identifiers_splits_at_word_boundaries(#[case] input: &str, #[case] expected: &str) {
+        assert_eq!(expand_identifiers(input), expected);
     }
 }
