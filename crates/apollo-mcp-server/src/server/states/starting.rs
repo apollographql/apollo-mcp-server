@@ -155,7 +155,9 @@ impl Starting {
         })?;
         let engine = Arc::new(parking_lot::Mutex::new(engine));
 
-        checkpoints::on_startup(&engine)?;
+        if cfg!(feature = "experimental_rhai") {
+            checkpoints::on_startup(&engine)?;
+        }
 
         let running = Running {
             schema,

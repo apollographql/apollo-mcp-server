@@ -10,6 +10,8 @@ impl Json {
     }
 }
 
+// Rhai's #[export_module] macro generates code that uses unwrap internally
+#[allow(clippy::unwrap_used)]
 #[export_module]
 mod json_module {
     use serde_json::Value;

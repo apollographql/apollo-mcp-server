@@ -10,6 +10,8 @@ impl RhaiEnv {
     }
 }
 
+// Rhai's #[export_module] macro generates code that uses unwrap internally
+#[allow(clippy::unwrap_used)]
 #[export_module]
 mod rhai_env_module {
     use rhai::ImmutableString;

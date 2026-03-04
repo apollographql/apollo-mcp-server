@@ -10,6 +10,8 @@ impl RhaiSha256 {
     }
 }
 
+// Rhai's #[export_module] macro generates code that uses unwrap internally
+#[allow(clippy::unwrap_used)]
 #[export_module]
 mod rhai_sha256_module {
     use rhai::Dynamic;
