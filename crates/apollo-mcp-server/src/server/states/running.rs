@@ -299,6 +299,7 @@ impl Running {
         let start = std::time::Instant::now();
         let tool_name = request.name;
         let app_param = extract_app_param(extensions);
+        let axum_parts = extensions.get::<axum::http::request::Parts>();
 
         let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
@@ -330,7 +331,7 @@ impl Running {
         } else if tool_name == EXECUTE_TOOL_NAME
             && let Some(execute_tool) = &self.execute_tool
         {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -348,6 +349,7 @@ impl Running {
                 request.arguments.as_ref(),
                 &self.endpoint,
                 &self.rhai_engine,
+                axum_parts,
             )
             .await
         } else if tool_name == VALIDATE_TOOL_NAME
@@ -360,7 +362,7 @@ impl Running {
                 ))])),
             }
         } else {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -394,6 +396,7 @@ impl Running {
                 request.arguments.as_ref(),
                 &self.endpoint,
                 &self.rhai_engine,
+                axum_parts,
             )
             .await
             {

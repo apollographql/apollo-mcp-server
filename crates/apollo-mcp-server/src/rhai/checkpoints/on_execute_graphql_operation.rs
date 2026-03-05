@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use http::HeaderMap;
+use http::request::Parts;
 use parking_lot::Mutex;
 use rhai::{CustomType, Engine, EvalAltResult, TypeBuilder};
 use rmcp::model::ErrorCode;
@@ -12,7 +13,7 @@ use crate::{
     rhai::{
         engine::RhaiEngine,
         shared_mut::{SharedMut, WithMut},
-        types::{RhaiErrorCode, RhaiHeaderMap},
+        types::{RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts},
     },
 };
 
@@ -20,6 +21,7 @@ use crate::{
 pub(crate) struct OnExecuteGraphqlOperationContext {
     pub(crate) endpoint: String,
     pub(crate) headers: RhaiHeaderMap,
+    pub(crate) incoming_request: RhaiHttpParts,
 }
 
 impl OnExecuteGraphqlOperationContext {
@@ -43,6 +45,12 @@ impl OnExecuteGraphqlOperationContext {
                 |obj: &mut SharedMut<OnExecuteGraphqlOperationContext>, value: RhaiHeaderMap| {
                     obj.with_mut(|ctx| ctx.headers = value);
                 },
+            )
+            .register_get(
+                "incoming_request",
+                |obj: &mut SharedMut<OnExecuteGraphqlOperationContext>| -> RhaiHttpParts {
+                    obj.with_mut(|ctx| ctx.incoming_request.clone())
+                },
             );
     }
 }
@@ -51,10 +59,16 @@ pub fn on_execute_graphql_operation(
     engine: &Arc<Mutex<RhaiEngine>>,
     endpoint: &Url,
     headers: &HeaderMap,
+    axum_parts: Option<&Parts>,
 ) -> Result<(Url, HeaderMap), McpError> {
     let context = OnExecuteGraphqlOperationContext {
         endpoint: endpoint.to_string(),
         headers: RhaiHeaderMap::from(headers.clone()),
+        incoming_request: RhaiHttpParts::from(
+            axum_parts
+                .cloned()
+                .unwrap_or(axum::http::Request::new(()).into_parts().0),
+        ),
     };
 
     let shared_context = Arc::new(Mutex::new(context));
@@ -105,6 +119,7 @@ mod tests {
     use std::sync::Arc;
 
     use http::HeaderMap;
+    use http::request::Parts;
     use parking_lot::Mutex;
     use rmcp::model::ErrorCode;
     use url::Url;
@@ -120,6 +135,14 @@ mod tests {
         Arc::new(Mutex::new(engine))
     }
 
+    fn create_parts(method: &str, uri: &str, headers: HeaderMap) -> Parts {
+        let mut builder = http::Request::builder().method(method).uri(uri);
+        if let Some(h) = builder.headers_mut() {
+            *h = headers;
+        }
+        builder.body(()).unwrap().into_parts().0
+    }
+
     #[test]
     fn should_pass_through_when_no_hook_defined() {
         let engine = create_engine("");
@@ -127,7 +150,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (result_url, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
 
         assert_eq!(result_url, url);
         assert!(result_headers.is_empty());
@@ -144,7 +167,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (result_url, _result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
 
         assert_eq!(result_url, url);
     }
@@ -160,7 +183,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (result_url, _) =
-            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
 
         assert_eq!(
             result_url,
@@ -181,7 +204,7 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (_, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
 
         assert_eq!(result_headers.get("x-custom").unwrap(), "custom-value");
     }
@@ -199,8 +222,8 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err =
-            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+            .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INVALID_REQUEST);
         assert_eq!(err.message, "unauthorized request");
@@ -218,8 +241,8 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err =
-            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+            .expect_err("Should return error");
 
         assert_eq!(err.message, "Internal error");
     }
@@ -234,8 +257,8 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err =
-            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+            .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
         assert_eq!(err.message, "Internal error");
@@ -251,9 +274,74 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err =
-            on_execute_graphql_operation(&engine, &url, &headers).expect_err("Should return error");
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+            .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn should_read_incoming_request_method() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                let h = ctx.headers;
+                h["x-method"] = ctx.incoming_request.method;
+                ctx.headers = h;
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+        let parts = create_parts("POST", "/mcp", HeaderMap::new());
+
+        let (_, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+                .expect("Should not error");
+
+        assert_eq!(result_headers.get("x-method").unwrap(), "POST");
+    }
+
+    #[test]
+    fn should_read_incoming_request_uri() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                let h = ctx.headers;
+                h["x-uri"] = ctx.incoming_request.uri;
+                ctx.headers = h;
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+        let parts = create_parts("GET", "/mcp/sse", HeaderMap::new());
+
+        let (_, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+                .expect("Should not error");
+
+        assert_eq!(result_headers.get("x-uri").unwrap(), "/mcp/sse");
+    }
+
+    #[test]
+    fn should_read_incoming_request_headers() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                let h = ctx.headers;
+                h["x-forwarded"] = ctx.incoming_request.headers["authorization"];
+                ctx.headers = h;
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+        let mut incoming_headers = HeaderMap::new();
+        incoming_headers.insert("authorization", "Bearer token123".parse().unwrap());
+        let parts = create_parts("POST", "/mcp", incoming_headers);
+
+        let (_, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+                .expect("Should not error");
+
+        assert_eq!(
+            result_headers.get("x-forwarded").unwrap(),
+            "Bearer token123"
+        );
     }
 }
