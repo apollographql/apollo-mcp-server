@@ -2,10 +2,10 @@ use rhai::plugin::*;
 use rhai::{Engine, Module};
 use rhai::{export_module, exported_module};
 
-pub(crate) struct RhaiEnv {}
+pub struct RhaiEnv {}
 
 impl RhaiEnv {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine.register_static_module("Env", exported_module!(rhai_env_module).into());
     }
 }
@@ -35,7 +35,7 @@ mod tests {
 
     use tracing_test::traced_test;
 
-    use crate::rhai::functions::RhaiEnv;
+    use crate::functions::RhaiEnv;
 
     fn run_rhai_script<T: Clone + Send + Sync + 'static>(
         script: &str,

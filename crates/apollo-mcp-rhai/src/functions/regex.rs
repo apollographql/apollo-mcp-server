@@ -2,10 +2,10 @@ use rhai::plugin::*;
 use rhai::{Engine, Module};
 use rhai::{export_module, exported_module};
 
-pub(crate) struct RhaiRegex {}
+pub struct RhaiRegex {}
 
 impl RhaiRegex {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine.register_static_module("Regex", exported_module!(rhai_regex_module).into());
     }
 }
@@ -57,7 +57,7 @@ mod rhai_regex_module {
 mod tests {
     use rhai::{Engine, EvalAltResult, FuncArgs, Scope};
 
-    use crate::rhai::functions::RhaiRegex;
+    use crate::functions::RhaiRegex;
 
     fn run_rhai_script<T: Clone + Send + Sync + 'static>(
         script: &str,

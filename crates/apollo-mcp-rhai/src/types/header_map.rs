@@ -3,7 +3,7 @@ use http::{HeaderMap, HeaderValue};
 use rhai::{CustomType, Engine, EvalAltResult, Position, TypeBuilder};
 
 #[derive(Clone, Debug, CustomType)]
-pub(crate) struct RhaiHeaderMap {
+pub struct RhaiHeaderMap {
     header_map: HeaderMap,
 }
 
@@ -40,14 +40,14 @@ impl RhaiHeaderMap {
         Ok(())
     }
 
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type::<RhaiHeaderMap>()
             .register_indexer_get(RhaiHeaderMap::get_field)
             .register_indexer_set(RhaiHeaderMap::set_field);
     }
 
-    pub(crate) fn as_header_map(&self) -> HeaderMap {
+    pub fn as_header_map(&self) -> HeaderMap {
         self.header_map.clone()
     }
 }

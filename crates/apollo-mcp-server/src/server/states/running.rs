@@ -31,7 +31,6 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::rhai::RhaiEngine;
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -48,6 +47,7 @@ use crate::{
     },
     operations::{MutationMode, Operation, RawOperation, apply_description_override},
 };
+use apollo_mcp_rhai::RhaiEngine;
 
 #[derive(Clone)]
 pub(super) struct Running {

@@ -4,14 +4,20 @@ use rhai::module_resolvers::FileModuleResolver;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
 use tracing::info;
 
-use crate::rhai::checkpoints::OnExecuteGraphqlOperationContext;
-use crate::rhai::functions::{Json, RhaiEnv, RhaiHttp, RhaiRegex, RhaiSha256};
-use crate::rhai::types::{HttpResponse, Promise, RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts};
+use crate::checkpoints::OnExecuteGraphqlOperationContext;
+use crate::functions::{Json, RhaiEnv, RhaiHttp, RhaiRegex, RhaiSha256};
+use crate::types::{HttpResponse, Promise, RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts};
 
-pub(crate) struct RhaiEngine {
+pub struct RhaiEngine {
     engine: Engine,
     scope: Scope<'static>,
     ast: AST,
+}
+
+impl Default for RhaiEngine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl RhaiEngine {

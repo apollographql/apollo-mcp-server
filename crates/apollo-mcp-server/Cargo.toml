@@ -15,6 +15,7 @@ anyhow = "1.0.98"
 apollo-compiler.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
+apollo-mcp-rhai = { path = "../apollo-mcp-rhai" }
 apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
 axum-extra = { version = "0.12.0", features = ["typed-header"] }
@@ -68,10 +69,7 @@ tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
-rhai = { version = "1.24.0", features = ["sync", "serde"] }
 parking_lot = "0.12.5"
-sha2 = "0.10.9"
-hex = "0.4.3"
 
 [dev-dependencies]
 assert_fs = "1"

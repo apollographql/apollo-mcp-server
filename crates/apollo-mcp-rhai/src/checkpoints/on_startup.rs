@@ -1,18 +1,12 @@
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use tracing::error;
+use rhai::EvalAltResult;
 
-use crate::{errors::ServerError, rhai::engine::RhaiEngine};
+use crate::engine::RhaiEngine;
 
-pub fn on_startup(engine: &Arc<Mutex<RhaiEngine>>) -> Result<(), ServerError> {
-    engine
-        .lock()
-        .execute_hook("on_startup", ())
-        .map_err(|err| {
-            error!("Error when executing on_startup hook: {err}");
-            ServerError::RhaiError
-        })?;
+pub fn on_startup(engine: &Arc<Mutex<RhaiEngine>>) -> Result<(), Box<EvalAltResult>> {
+    engine.lock().execute_hook("on_startup", ())?;
     Ok(())
 }
 
@@ -23,7 +17,7 @@ mod tests {
     use parking_lot::Mutex;
 
     use super::on_startup;
-    use crate::rhai::engine::RhaiEngine;
+    use crate::engine::RhaiEngine;
 
     fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
         let mut engine = RhaiEngine::new();
@@ -56,7 +50,7 @@ mod tests {
     }
 
     #[test]
-    fn should_return_rhai_error_when_hook_throws() {
+    fn should_return_error_when_hook_throws() {
         let engine = create_engine(
             r#"fn on_startup() {
                 throw "startup failed";
@@ -65,6 +59,6 @@ mod tests {
 
         let result = on_startup(&engine);
 
-        assert!(matches!(result, Err(crate::errors::ServerError::RhaiError)));
+        assert!(result.is_err());
     }
 }

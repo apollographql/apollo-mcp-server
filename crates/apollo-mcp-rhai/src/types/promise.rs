@@ -5,7 +5,7 @@ use rhai::{CustomType, Dynamic, Engine, EvalAltResult, Position, TypeBuilder};
 use tokio::sync::oneshot;
 
 #[derive(Clone, Debug)]
-pub(crate) enum PromiseState {
+pub enum PromiseState {
     Pending,
     Resolved,
     Rejected,
@@ -14,14 +14,14 @@ pub(crate) enum PromiseState {
 type PromiseReceiver = Arc<Mutex<Option<oneshot::Receiver<Result<Dynamic, String>>>>>;
 
 #[derive(Clone, Debug, CustomType)]
-pub(crate) struct Promise {
-    pub(crate) state: PromiseState,
-    pub(crate) resolved_value: Option<Dynamic>,
-    pub(crate) receiver: PromiseReceiver,
+pub struct Promise {
+    pub state: PromiseState,
+    pub resolved_value: Option<Dynamic>,
+    pub receiver: PromiseReceiver,
 }
 
 impl Promise {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type::<Promise>()
             .register_fn("to_string", Promise::to_string)
@@ -29,7 +29,7 @@ impl Promise {
             .register_fn("wait", Promise::resolve);
     }
 
-    pub(crate) fn resolve(promise: &mut Self) -> Result<Dynamic, Box<EvalAltResult>> {
+    pub fn resolve(promise: &mut Self) -> Result<Dynamic, Box<EvalAltResult>> {
         if matches!(promise.state, PromiseState::Resolved)
             || matches!(promise.state, PromiseState::Rejected)
         {
@@ -70,11 +70,11 @@ impl Promise {
         }
     }
 
-    pub(crate) fn to_string(promise: &mut Self) -> String {
+    pub fn to_string(promise: &mut Self) -> String {
         format!("Promise {{ state: {:?} }}  ", promise.state)
     }
 
-    pub(crate) fn to_debug(promise: &mut Self) -> String {
+    pub fn to_debug(promise: &mut Self) -> String {
         format!("Promise {{ state: {:?} }}  ", promise.state)
     }
 }

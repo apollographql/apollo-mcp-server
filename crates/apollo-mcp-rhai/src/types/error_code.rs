@@ -3,13 +3,13 @@ use rhai::{export_module, exported_module};
 use rmcp::model::ErrorCode;
 
 #[derive(Clone, Debug)]
-pub(crate) enum RhaiErrorCode {
+pub enum RhaiErrorCode {
     InvalidRequest,
     InternalError,
 }
 
 impl RhaiErrorCode {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type_with_name::<RhaiErrorCode>("ErrorCode")
             .register_static_module("ErrorCode", exported_module!(rhai_error_code_module).into());
@@ -28,7 +28,7 @@ impl From<RhaiErrorCode> for ErrorCode {
 #[export_module]
 mod rhai_error_code_module {
 
-    use crate::rhai::types::RhaiErrorCode;
+    use crate::types::RhaiErrorCode;
 
     pub const INVALID_REQUEST: RhaiErrorCode = RhaiErrorCode::InvalidRequest;
     pub const INTERNAL_ERROR: RhaiErrorCode = RhaiErrorCode::InternalError;

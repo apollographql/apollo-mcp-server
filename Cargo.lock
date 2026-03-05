@@ -189,6 +189,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "apollo-mcp-rhai"
+version = "1.8.2"
+dependencies = [
+ "hex",
+ "http",
+ "mockito",
+ "parking_lot",
+ "regex",
+ "reqwest 0.13.2",
+ "rhai",
+ "rmcp",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tracing",
+ "tracing-test",
+ "url",
+]
+
+[[package]]
 name = "apollo-mcp-server"
 version = "1.8.2"
 dependencies = [
@@ -196,6 +216,7 @@ dependencies = [
  "apollo-compiler",
  "apollo-federation",
  "apollo-mcp-registry",
+ "apollo-mcp-rhai",
  "apollo-schema-index",
  "assert_fs",
  "axum",
@@ -209,7 +230,6 @@ dependencies = [
  "figment",
  "futures",
  "headers",
- "hex",
  "http",
  "http-body-util",
  "humantime-serde",
@@ -230,7 +250,6 @@ dependencies = [
  "reqwest 0.13.2",
  "reqwest-middleware",
  "reqwest-tracing",
- "rhai",
  "rmcp",
  "rstest",
  "rustls",
@@ -239,7 +258,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2",
  "shellexpand",
  "syn 2.0.114",
  "tempfile",

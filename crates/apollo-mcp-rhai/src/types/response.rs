@@ -1,17 +1,17 @@
 use rhai::{CustomType, Dynamic, Engine, EvalAltResult, TypeBuilder};
 
 #[derive(Clone, Debug, CustomType)]
-pub(crate) struct HttpResponse {
+pub struct HttpResponse {
     status: i64,
     text_body: String,
 }
 
 impl HttpResponse {
-    pub(crate) fn new(status: i64, text_body: String) -> Self {
+    pub fn new(status: i64, text_body: String) -> Self {
         Self { status, text_body }
     }
 
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type::<HttpResponse>()
             .register_get("status", HttpResponse::get_status)

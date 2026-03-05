@@ -333,9 +333,9 @@ mod tests {
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
     use crate::operations::{MutationMode, RawOperation};
-    use crate::rhai::RhaiEngine;
     use crate::server::Transport;
     use crate::server_info::ServerInfoConfig;
+    use apollo_mcp_rhai::RhaiEngine;
 
     use super::{Config, Configuring, Running, State};
 

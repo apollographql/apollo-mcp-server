@@ -9,23 +9,22 @@ use tracing::{error, warn};
 use url::Url;
 
 use crate::{
-    errors::McpError,
-    rhai::{
-        engine::RhaiEngine,
-        shared_mut::{SharedMut, WithMut},
-        types::{RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts},
-    },
+    engine::RhaiEngine,
+    shared_mut::{SharedMut, WithMut},
+    types::{RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts},
 };
 
+pub type McpError = rmcp::model::ErrorData;
+
 #[derive(Clone, Debug, CustomType)]
-pub(crate) struct OnExecuteGraphqlOperationContext {
-    pub(crate) endpoint: String,
-    pub(crate) headers: RhaiHeaderMap,
-    pub(crate) incoming_request: RhaiHttpParts,
+pub struct OnExecuteGraphqlOperationContext {
+    pub endpoint: String,
+    pub headers: RhaiHeaderMap,
+    pub incoming_request: RhaiHttpParts,
 }
 
 impl OnExecuteGraphqlOperationContext {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type::<OnExecuteGraphqlOperationContext>()
             .register_get_set(
@@ -67,7 +66,7 @@ pub fn on_execute_graphql_operation(
         incoming_request: RhaiHttpParts::from(
             axum_parts
                 .cloned()
-                .unwrap_or(axum::http::Request::new(()).into_parts().0),
+                .unwrap_or(http::Request::new(()).into_parts().0),
         ),
     };
 
@@ -125,7 +124,7 @@ mod tests {
     use url::Url;
 
     use super::on_execute_graphql_operation;
-    use crate::rhai::engine::RhaiEngine;
+    use crate::engine::RhaiEngine;
 
     fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
         let mut engine = RhaiEngine::new();

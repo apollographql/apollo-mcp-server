@@ -13,7 +13,6 @@ use tracing::{debug, error, info};
 
 use crate::host_validation::{HostValidationState, validate_host};
 use crate::operations::apply_description_override;
-use crate::rhai::{RhaiEngine, checkpoints};
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     errors::ServerError,
@@ -25,6 +24,7 @@ use crate::{
     operations::{MutationMode, RawOperation},
     server::Transport,
 };
+use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::{Config, Running, shutdown_signal};
 
@@ -154,7 +154,10 @@ impl Starting {
         let engine = Arc::new(parking_lot::Mutex::new(engine));
 
         if cfg!(feature = "experimental_rhai") {
-            checkpoints::on_startup(&engine)?;
+            checkpoints::on_startup(&engine).map_err(|err| {
+                error!("Error when executing on_startup hook: {err}");
+                ServerError::RhaiError
+            })?;
         }
 
         let running = Running {

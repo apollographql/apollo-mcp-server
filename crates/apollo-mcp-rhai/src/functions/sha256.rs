@@ -2,10 +2,10 @@ use rhai::plugin::*;
 use rhai::{Engine, Module};
 use rhai::{export_module, exported_module};
 
-pub(crate) struct RhaiSha256 {}
+pub struct RhaiSha256 {}
 
 impl RhaiSha256 {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine.register_static_module("Sha256", exported_module!(rhai_sha256_module).into());
     }
 }
@@ -30,7 +30,7 @@ mod rhai_sha256_module {
 mod tests {
     use rhai::{Engine, EvalAltResult, FuncArgs, Scope};
 
-    use crate::rhai::functions::RhaiSha256;
+    use crate::functions::RhaiSha256;
 
     fn run_rhai_script<T: Clone + Send + Sync + 'static>(
         script: &str,

@@ -4,20 +4,20 @@ use parking_lot::Mutex;
 use rhai::plugin::*;
 use rhai::{Engine, Module};
 
-pub(crate) struct RhaiHttp {}
+pub struct RhaiHttp {}
 
 impl RhaiHttp {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine.register_static_module("Http", exported_module!(http_module).into());
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct HttpOptions {}
+pub struct HttpOptions {}
 
 #[export_module]
 mod http_module {
-    use crate::rhai::types::{HttpResponse, Promise, PromiseState};
+    use crate::types::{HttpResponse, Promise, PromiseState};
     use tokio::sync::oneshot;
 
     #[rhai_fn(name = "get", return_raw)]
@@ -60,8 +60,8 @@ mod http_module {
 mod tests {
     use rhai::{Engine, EvalAltResult, FuncArgs, Scope};
 
-    use crate::rhai::functions::RhaiHttp;
-    use crate::rhai::types::{HttpResponse, Promise};
+    use crate::functions::RhaiHttp;
+    use crate::types::{HttpResponse, Promise};
 
     fn run_rhai_script<T: Clone + Send + Sync + 'static>(
         script: &str,

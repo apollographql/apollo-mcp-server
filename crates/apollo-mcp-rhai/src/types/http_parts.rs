@@ -4,7 +4,7 @@ use rhai::{CustomType, Engine, TypeBuilder};
 use super::RhaiHeaderMap;
 
 #[derive(Clone, Debug, CustomType)]
-pub(crate) struct RhaiHttpParts {
+pub struct RhaiHttpParts {
     method: String,
     uri: String,
     headers: RhaiHeaderMap,
@@ -21,7 +21,7 @@ impl From<Parts> for RhaiHttpParts {
 }
 
 impl RhaiHttpParts {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine
             .register_type::<RhaiHttpParts>()
             .register_get("method", RhaiHttpParts::get_method)

@@ -2,10 +2,10 @@ use rhai::plugin::*;
 use rhai::{Engine, Module};
 use rhai::{export_module, exported_module};
 
-pub(crate) struct Json {}
+pub struct Json {}
 
 impl Json {
-    pub(crate) fn register(engine: &mut Engine) {
+    pub fn register(engine: &mut Engine) {
         engine.register_static_module("JSON", exported_module!(json_module).into());
     }
 }
@@ -36,7 +36,7 @@ mod json_module {
 mod tests {
     use rhai::{Engine, EvalAltResult, FuncArgs, Scope};
 
-    use crate::rhai::functions::Json;
+    use crate::functions::Json;
 
     fn run_rhai_script<T: Clone + Send + Sync + 'static>(
         script: &str,

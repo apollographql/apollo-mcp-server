@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
-use crate::rhai::{RhaiEngine, checkpoints};
+use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::Operation;
 
