@@ -105,6 +105,11 @@ fn build_selection_set_schema(
     for selection in selection_set {
         match selection {
             Selection::Field(field) => {
+                // Skip fields marked @private from the output schema
+                if field.directives.0.iter().any(|d| d.name == "private") {
+                    continue;
+                }
+
                 let field_name = field.name.to_string();
                 let response_key = field
                     .alias
@@ -595,6 +600,43 @@ mod tests {
                         bio
                         avatar
                     }
+                }
+            }
+            "#,
+        );
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema =
+            selection_set_to_schema(&selection_set, query_type, &schema, None, &HashMap::new());
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
+    }
+
+    #[test]
+    fn private_fields_excluded_from_output_schema() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+                name: String!
+                email: String
+                secret: String
+            }
+            "#,
+        );
+
+        let (_, selection_set) = parse_operation(
+            r#"
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id
+                    name
+                    email @private
+                    secret @private
                 }
             }
             "#,

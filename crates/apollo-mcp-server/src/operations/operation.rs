@@ -21,7 +21,13 @@ use crate::{
     schema_tree_shake::{DepthLimit, SchemaTreeShaker},
 };
 
-use super::{MutationMode, RawOperation, schema_walker};
+use super::{
+    MutationMode, RawOperation,
+    private_fields::{
+        PrivateFieldTree, collect_named_fragments, collect_private_fields, strip_private_directives,
+    },
+    schema_walker,
+};
 
 /// A valid GraphQL operation
 #[derive(Debug, Clone, Serialize)]
@@ -29,6 +35,13 @@ pub struct Operation {
     pub(crate) tool: Tool,
     pub(crate) inner: RawOperation,
     operation_name: String,
+    /// Query text with `@private` directives stripped, sent downstream instead of `source_text`.
+    /// `None` when the operation has no `@private` directives.
+    stripped_source_text: Option<String>,
+    /// Tree of field paths marked `@private`, used for response filtering.
+    /// `None` when the operation has no `@private` directives.
+    #[serde(skip)]
+    pub(crate) private_fields: Option<PrivateFieldTree>,
 }
 
 impl AsRef<Tool> for Operation {
@@ -114,26 +127,27 @@ impl Operation {
                 ));
             };
 
+            // Collect named fragments for use by output schema and @private detection
+            let named_fragments = collect_named_fragments(&document);
+
+            // Detect @private directives and prepare stripped query text
+            let private_tree = collect_private_fields(&operation.selection_set, &named_fragments);
+            let (stripped_source_text, private_fields) = if private_tree.has_private_fields() {
+                let stripped_doc = strip_private_directives(&document);
+                (
+                    Some(stripped_doc.serialize().no_indent().to_string()),
+                    Some(private_tree),
+                )
+            } else {
+                (None, None)
+            };
+
             // Generate output schema from selection set (only if enabled)
             let output_schema = if enable_output_schema {
                 if let Some(root_type_name) =
                     graphql_schema.root_operation(operation.operation_type)
                 {
                     if let Some(root_type) = graphql_schema.types.get(root_type_name) {
-                        let named_fragments: HashMap<
-                            String,
-                            Node<apollo_compiler::ast::FragmentDefinition>,
-                        > = document
-                            .definitions
-                            .iter()
-                            .filter_map(|def| match def {
-                                Definition::FragmentDefinition(fragment_def) => {
-                                    Some((fragment_def.name.to_string(), fragment_def.clone()))
-                                }
-                                _ => None,
-                            })
-                            .collect();
-
                         serde_json::to_value(schema_walker::selection_set_to_schema(
                             &operation.selection_set,
                             root_type,
@@ -179,6 +193,8 @@ impl Operation {
                 tool,
                 inner: raw_operation,
                 operation_name,
+                stripped_source_text,
+                private_fields,
             }))
         } else {
             Ok(None)
@@ -326,8 +342,12 @@ impl graphql::Executable for Operation {
 
     fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
         Ok(OperationDetails {
-            query: self.inner.source_text.clone(),
+            query: self
+                .stripped_source_text
+                .clone()
+                .unwrap_or_else(|| self.inner.source_text.clone()),
             operation_name: Some(self.operation_name.clone()),
+            private_fields: self.private_fields.clone(),
         })
     }
 
@@ -4391,6 +4411,8 @@ mod tests {
                 description: None,
             },
             operation_name: "MutationName",
+            stripped_source_text: None,
+            private_fields: None,
         }
         "#);
     }
@@ -4523,6 +4545,8 @@ mod tests {
                 description: None,
             },
             operation_name: "MutationName",
+            stripped_source_text: None,
+            private_fields: None,
         }
         "#);
     }
@@ -4847,6 +4871,123 @@ mod tests {
             operation.tool.description.as_deref(),
             Some(explicit_desc),
             "explicit description should take priority over comment-based description"
+        );
+    }
+
+    #[test]
+    fn operation_without_private_has_no_stripped_text() {
+        let operation = RawOperation::from(("query TestOp { id }".to_string(), None))
+            .into_operation(&SCHEMA, None, MutationMode::All, false, false, true)
+            .unwrap()
+            .unwrap();
+
+        assert!(operation.stripped_source_text.is_none());
+        assert!(operation.private_fields.is_none());
+    }
+
+    #[test]
+    fn operation_with_private_has_stripped_text() {
+        let schema = Schema::parse(
+            "type Query { fieldA: String, fieldB: String, fieldC: String }",
+            "schema.graphql",
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+
+        let operation = RawOperation::from((
+            "query TestOp { fieldA fieldB @private fieldC }".to_string(),
+            None,
+        ))
+        .into_operation(&schema, None, MutationMode::All, false, false, true)
+        .unwrap()
+        .unwrap();
+
+        assert!(operation.stripped_source_text.is_some());
+        assert!(operation.private_fields.is_some());
+    }
+
+    #[test]
+    fn stripped_text_does_not_contain_private_directive() {
+        let schema = Schema::parse(
+            "type Query { fieldA: String, fieldB: String, fieldC: String }",
+            "schema.graphql",
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+
+        let operation = RawOperation::from((
+            "query TestOp { fieldA fieldB @private fieldC }".to_string(),
+            None,
+        ))
+        .into_operation(&schema, None, MutationMode::All, false, false, true)
+        .unwrap()
+        .unwrap();
+
+        let stripped = operation.stripped_source_text.unwrap();
+        assert!(!stripped.contains("@private"));
+        assert!(stripped.contains("fieldB"));
+    }
+
+    #[test]
+    fn operation_method_returns_stripped_text_when_private() {
+        let schema = Schema::parse(
+            "type Query { fieldA: String, fieldB: String }",
+            "schema.graphql",
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+
+        let operation =
+            RawOperation::from(("query TestOp { fieldA fieldB @private }".to_string(), None))
+                .into_operation(&schema, None, MutationMode::All, false, false, true)
+                .unwrap()
+                .unwrap();
+
+        let details = operation.operation(Value::Null).unwrap();
+        assert!(!details.query.contains("@private"));
+    }
+
+    #[test]
+    fn operation_method_returns_original_text_when_no_private() {
+        let operation = RawOperation::from(("query TestOp { id }".to_string(), None))
+            .into_operation(&SCHEMA, None, MutationMode::All, false, false, true)
+            .unwrap()
+            .unwrap();
+
+        let details = operation.operation(Value::Null).unwrap();
+        assert_eq!(details.query, "query TestOp { id }");
+    }
+
+    #[test]
+    fn stripped_text_includes_fragment_definitions() {
+        let schema = Schema::parse(
+            r#"
+            type Query { user: User }
+            type User { name: String, email: String }
+            "#,
+            "schema.graphql",
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+
+        let source = r#"
+            query GetUser { user { ...UserFields } }
+            fragment UserFields on User { name email @private }
+        "#;
+
+        let operation = RawOperation::from((source.to_string(), None))
+            .into_operation(&schema, None, MutationMode::All, false, false, true)
+            .unwrap()
+            .unwrap();
+
+        let stripped = operation.stripped_source_text.unwrap();
+        assert!(
+            stripped.contains("fragment UserFields"),
+            "stripped text should include fragment definitions, got: {stripped}"
         );
     }
 }
