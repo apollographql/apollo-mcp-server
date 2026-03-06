@@ -4,7 +4,7 @@ redirectFrom:
     - /apollo-mcp-server/guides/auth
 ---
 
-The Apollo MCP server supports authorizing clients (e.g., LLMs) in accordance with [the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+The Apollo MCP Server supports authorizing clients (e.g., LLMs) according to [the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
 
 The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs. You can read more about [security considerations](/apollo-mcp-server/limitations#oauth-token-passthrough) when using this feature.
 
@@ -150,7 +150,7 @@ WWW-Authenticate: Bearer error="insufficient_scope",
                          resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
 ```
 
-The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. Clients **SHOULD** use these scopes as the target scope set when initiating or re-initiating authorization.
+Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. 
 
 ## Performance considerations
 
@@ -177,7 +177,7 @@ transport:
 
 ### OIDC Discovery compatibility
 
-Per the MCP specification, authorization servers **MUST** provide at least one of:
+Per the MCP specification, authorization servers must provide at least one of:
 
 - [OAuth 2.0 Authorization Server Metadata (RFC 8414)](https://datatracker.ietf.org/doc/html/rfc8414) — served at `/.well-known/oauth-authorization-server`
 - [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html) — served at `/.well-known/openid-configuration`
