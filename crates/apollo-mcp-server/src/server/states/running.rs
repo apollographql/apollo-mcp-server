@@ -44,7 +44,10 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{MutationMode, Operation, RawOperation, apply_description_override},
+    operations::{
+        MutationMode, Operation, RawOperation, apply_description_override,
+        apply_required_scopes_override,
+    },
 };
 
 #[derive(Clone)]
@@ -69,6 +72,7 @@ pub(super) struct Running {
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) descriptions: HashMap<String, String>,
+    pub(super) required_scopes: HashMap<String, Vec<String>>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
 }
@@ -146,6 +150,7 @@ impl Running {
             operations
                 .into_iter()
                 .map(|operation| apply_description_override(operation, &self.descriptions))
+                .map(|operation| apply_required_scopes_override(operation, &self.required_scopes))
                 .filter_map(|operation| {
                     operation
                         .into_operation(
@@ -368,6 +373,9 @@ impl Running {
                 self.headers.clone()
             };
 
+            // Acquire the lock once: reused for scope check and execution.
+            let ops = self.operations.read().await;
+
             if let Some(app_param) = &app_param {
                 if let Some(res) = find_and_execute_app_tool(
                     &self.apps,
@@ -384,7 +392,7 @@ impl Running {
                     Err(tool_not_found(&tool_name))
                 }
             } else if let Some(res) = find_and_execute_operation(
-                &self.operations.read().await,
+                &ops,
                 &tool_name,
                 &headers,
                 request.arguments.as_ref(),
@@ -656,6 +664,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
+            required_scopes: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
         }
@@ -2118,6 +2127,7 @@ mod integration_tests {
                 enable_output_schema: true,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                required_scopes: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
             }
@@ -2343,6 +2353,7 @@ mod integration_tests {
                 enable_output_schema: true,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                required_scopes: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
             }
@@ -2571,6 +2582,7 @@ mod integration_tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                required_scopes: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
             }
