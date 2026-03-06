@@ -6,7 +6,7 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::get,
 };
 use axum_extra::{
@@ -297,14 +297,14 @@ struct JsonRpcMethodPeek {
 /// Peeks at the request body to determine if it is an anonymous-eligible MCP
 /// discovery call. The body is consumed and then reconstructed on the request
 /// so downstream handlers receive the full payload.
-async fn is_anonymous_discovery_request(request: &mut Request) -> bool {
+async fn is_anonymous_discovery_request(request: &mut Request) -> Result<bool, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
     let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
         Ok(bytes) => bytes,
         Err(e) => {
-            tracing::warn!(error = %e, "anonymous discovery peek: body exceeds size limit");
-            return false;
+            tracing::error!(error = %e, "anonymous discovery peek: failed to read body");
+            return Err(StatusCode::PAYLOAD_TOO_LARGE);
         }
     };
 
@@ -316,7 +316,7 @@ async fn is_anonymous_discovery_request(request: &mut Request) -> bool {
 
     *request.body_mut() = axum::body::Body::from(bytes);
 
-    is_discovery
+    Ok(is_discovery)
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
@@ -367,11 +367,17 @@ async fn oauth_validate(
     if auth_config.allow_anonymous_mcp_discovery
         && token.is_none()
         && request.method() == http::Method::POST
-        && is_anonymous_discovery_request(&mut request).await
     {
-        let response = next.run(request).await;
-        tracing::Span::current().record("status_code", response.status().as_u16());
-        return Ok(response);
+        let discovery_result = is_anonymous_discovery_request(&mut request).await;
+        if let Err(status) = discovery_result {
+            tracing::Span::current().record("status_code", status.as_u16());
+            return Ok(status.into_response());
+        }
+        if let Ok(true) = discovery_result {
+            let response = next.run(request).await;
+            tracing::Span::current().record("status_code", response.status().as_u16());
+            return Ok(response);
+        }
     }
 
     let discovery_timeout = auth_config
@@ -1125,6 +1131,19 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
             assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn oversized_body_without_token_returns_payload_too_large() {
+            let app = discovery_router(true);
+            let body = Body::from("x".repeat(super::ANONYMOUS_PEEK_BODY_LIMIT + 1));
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(body)
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
         }
 
         #[tokio::test]
