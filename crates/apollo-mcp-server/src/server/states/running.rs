@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
+use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
@@ -46,6 +47,7 @@ use crate::{
     },
     operations::{MutationMode, Operation, RawOperation, apply_description_override},
 };
+use apollo_mcp_rhai::RhaiEngine;
 
 #[derive(Clone)]
 pub(super) struct Running {
@@ -71,6 +73,7 @@ pub(super) struct Running {
     pub(super) descriptions: HashMap<String, String>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
+    pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
 }
 
 impl Running {
@@ -296,6 +299,7 @@ impl Running {
         let start = std::time::Instant::now();
         let tool_name = request.name;
         let app_param = extract_app_param(extensions);
+        let axum_parts = extensions.get::<axum::http::request::Parts>();
 
         let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
@@ -327,7 +331,7 @@ impl Running {
         } else if tool_name == EXECUTE_TOOL_NAME
             && let Some(execute_tool) = &self.execute_tool
         {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -344,6 +348,8 @@ impl Running {
                 &headers,
                 request.arguments.as_ref(),
                 &self.endpoint,
+                &self.rhai_engine,
+                axum_parts,
             )
             .await
         } else if tool_name == VALIDATE_TOOL_NAME
@@ -356,7 +362,7 @@ impl Running {
                 ))])),
             }
         } else {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -389,6 +395,8 @@ impl Running {
                 &headers,
                 request.arguments.as_ref(),
                 &self.endpoint,
+                &self.rhai_engine,
+                axum_parts,
             )
             .await
             {
@@ -658,6 +666,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         }
     }
 
@@ -2120,6 +2129,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
@@ -2345,6 +2355,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
@@ -2573,6 +2584,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
