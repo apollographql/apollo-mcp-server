@@ -1,0 +1,24 @@
+# stdio transport — use when the MCP server is invoked as a subprocess by the
+# MCP client (e.g. Claude Desktop, VS Code, Cursor).
+# Communication happens over stdin/stdout; no HTTP port is opened.
+endpoint: https://thespacedevs-production.up.railway.app/
+transport:
+  type: stdio
+operations:
+  source: local
+  paths:
+    - ./examples/TheSpaceDevs/operations
+schema:
+  source: local
+  path: ./examples/TheSpaceDevs/api.graphql
+overrides:
+  mutation_mode: all
+introspection:
+  execute:
+    enabled: true
+  introspect:
+    enabled: true
+  search:
+    enabled: true
+  validate:
+    enabled: true
