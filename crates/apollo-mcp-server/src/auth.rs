@@ -129,6 +129,14 @@ pub struct Config {
     #[serde(default)]
     pub disable_auth_token_passthrough: bool,
 
+    /// Allow unauthenticated access to MCP discovery methods (e.g. `tools/list`).
+    ///
+    /// When enabled, requests without a bearer token that contain a discovery
+    /// JSON-RPC method call will be allowed through without authentication.
+    /// All other requests still require valid authentication.
+    #[serde(default)]
+    pub allow_anonymous_mcp_discovery: bool,
+
     /// TLS configuration for connecting to OAuth servers
     #[serde(default)]
     pub tls: TlsConfig,
@@ -271,6 +279,46 @@ impl Config {
     }
 }
 
+/// MCP discovery methods that are allowed without authentication when
+/// `allow_anonymous_mcp_discovery` is enabled.
+const ANONYMOUS_DISCOVERY_METHODS: &[&str] = &["initialize", "tools/list", "resources/list"];
+
+/// Maximum body size to buffer when peeking at the JSON-RPC method.
+/// A typical `tools/list` request is under 100 bytes; 16 KiB gives generous
+/// headroom while preventing abuse from unauthenticated clients.
+const ANONYMOUS_PEEK_BODY_LIMIT: usize = 16 * 1024;
+
+/// Minimal struct for deserializing just the `method` field from a JSON-RPC request.
+#[derive(Deserialize)]
+struct JsonRpcMethodPeek {
+    method: String,
+}
+
+/// Peeks at the request body to determine if it is an anonymous-eligible MCP
+/// discovery call. The body is consumed and then reconstructed on the request
+/// so downstream handlers receive the full payload.
+async fn is_anonymous_discovery_request(request: &mut Request) -> bool {
+    let body = std::mem::take(request.body_mut());
+
+    let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(error = %e, "anonymous discovery peek: body exceeds size limit");
+            return false;
+        }
+    };
+
+    let is_discovery = match serde_json::from_slice::<JsonRpcMethodPeek>(&bytes) {
+        Ok(peek) => ANONYMOUS_DISCOVERY_METHODS.contains(&peek.method.as_str()),
+        // Batch requests (JSON arrays) or malformed JSON are not eligible
+        Err(_) => false,
+    };
+
+    *request.body_mut() = axum::body::Body::from(bytes);
+
+    is_discovery
+}
+
 /// Validate that requests made have a corresponding bearer JWT token
 #[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
@@ -313,6 +361,18 @@ async fn oauth_validate(
             }),
         )
     };
+
+    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
+    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
+    if auth_config.allow_anonymous_mcp_discovery
+        && token.is_none()
+        && request.method() == http::Method::POST
+        && is_anonymous_discovery_request(&mut request).await
+    {
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
+    }
 
     let discovery_timeout = auth_config
         .discovery_timeout
@@ -408,6 +468,7 @@ mod tests {
             scopes: vec!["read".to_string()],
             scope_mode: ScopeMode::default(),
             disable_auth_token_passthrough: false,
+            allow_anonymous_mcp_discovery: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
         }
@@ -922,6 +983,192 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let res = app.oneshot(req).await.unwrap();
 
             assert_eq!(res.status(), StatusCode::OK);
+        }
+    }
+
+    mod anonymous_mcp_discovery {
+        use super::*;
+        use axum::routing::post;
+
+        fn discovery_router(allow: bool) -> Router {
+            let mut config = test_config();
+            config.allow_anonymous_mcp_discovery = allow;
+            Router::new()
+                .route("/mcp", post(|| async { "ok" }))
+                .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
+        }
+
+        fn tools_list_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+        }
+
+        fn tools_call_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test"}}"#)
+        }
+
+        fn initialize_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
+        }
+
+        fn resources_list_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#)
+        }
+
+        #[tokio::test]
+        async fn initialize_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(initialize_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn resources_list_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(resources_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn tools_list_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn tools_list_without_token_rejected_when_disabled() {
+            let app = discovery_router(false);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn tools_call_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_call_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn get_without_token_rejected_when_enabled() {
+            // Anonymous discovery bypass only applies to POST requests;
+            // GET requests are rejected by the auth middleware before routing.
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn batch_request_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let body = Body::from(
+                r#"[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"tools/call"}]"#,
+            );
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(body)
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn malformed_json_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(Body::from("not json"))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn empty_body_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn tools_list_with_invalid_token_still_validates_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header(AUTHORIZATION, "Bearer invalidtoken")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[test]
+        fn yaml_with_allow_anonymous_mcp_discovery() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                allow_anonymous_mcp_discovery: true
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.allow_anonymous_mcp_discovery);
+        }
+
+        #[test]
+        fn yaml_defaults_allow_anonymous_mcp_discovery_to_false() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(!config.allow_anonymous_mcp_discovery);
         }
     }
 }
