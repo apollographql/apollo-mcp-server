@@ -124,10 +124,10 @@ Use `scope_mode: disabled` only when downstream services, such as subgraphs, han
 
 Apollo MCP Server returns different HTTP status codes depending on the type of authorization failure, following [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-3.1) and the MCP specification.
 
-| Status | Meaning | When returned |
-|--------|---------|---------------|
-| `401 Unauthorized` | No valid token | Token is missing, malformed, expired, has an invalid signature, or fails audience validation |
-| `403 Forbidden` | Valid token with insufficient permissions | Token is authentic but lacks the required scopes (global or per-operation) |
+| Status | When returned |
+|--------|---------------|
+| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails audience validation |
+| `403 Forbidden` | Token is authentic but lacks the required scopes (global or per-operation) |
 
 ### WWW-Authenticate header
 
