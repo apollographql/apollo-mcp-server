@@ -82,45 +82,113 @@ async fn execute_app_tool(
     ))
 }
 
-/// For prefetch App data, there will potentially be 0 or multiple results.
-/// We key any results based on a manifest-defined `prefetchID` so the UI can distinguish between different prefetches.
+/// Extract the full (unfiltered) result for use in the `meta.structuredContent` wrapper.
+///
+/// If the operation had `@private` fields, the full result was stashed in
+/// `meta.structuredContent` by `execute()` — remove and return it.
+/// Otherwise, fall back to cloning `structured_content` (which *is* the full result
+/// when no fields were filtered).
+fn take_full_result(result: &mut CallToolResult) -> Option<Value> {
+    result
+        .meta
+        .as_mut()
+        .and_then(|meta| meta.remove("structuredContent"))
+        .or_else(|| result.structured_content.clone())
+}
+
+/// Wraps the primary tool result and any prefetch results into a single nested structure.
+///
+/// Prefetch results are keyed by a manifest-defined `prefetchID` so the UI can
+/// distinguish between different prefetches.
+///
+/// When operations contain `@private` fields, the result is split into two tracks:
+/// - `structured_content` holds the **restricted** result (private fields removed),
+///   which is what the AI model sees.
+/// - `meta.structuredContent` preserves the **full** result (including private fields),
+///   accessible to the host client but hidden from the model.
 fn nest_app_tool_result(
     mut result: CallToolResult,
     tool_name: &str,
-    prefetch_results: Vec<(String, CallToolResult)>,
+    mut prefetch_results: Vec<(String, CallToolResult)>,
 ) -> CallToolResult {
-    if let Some(structured_content) = result.structured_content.take() {
-        let mut map = Map::new();
+    let Some(restricted_content) = result.structured_content.take() else {
+        return result;
+    };
 
-        // Main tool result
-        map.insert("result".into(), structured_content);
+    // Build the full (unfiltered) result if the primary has @private fields.
+    // When @private fields were filtered, the full result (from meta) will differ
+    // from the restricted content, so we use that difference to detect the split.
+    let full_result = take_full_result(&mut result);
+    let primary_has_private = full_result
+        .as_ref()
+        .is_some_and(|full| full != &restricted_content);
 
-        // Prefetch results
-        let mut prefetch = Map::new();
-        for (prefetch_id, result) in prefetch_results.into_iter() {
-            if let Some(structured_content) = result.structured_content {
-                prefetch.insert(prefetch_id, structured_content);
+    // Build restricted wrapped object (always)
+    let mut restricted_map = Map::new();
+    restricted_map.insert("result".into(), restricted_content.clone());
+
+    // Lazily initialized when any result (primary or prefetch) has @private fields.
+    // When only a prefetch has @private, we still need the full map so the host
+    // client can access unfiltered prefetch data.
+    let mut full_map: Option<Map<String, Value>> = if primary_has_private {
+        let mut m = Map::new();
+        // full_result is always Some when primary_has_private is true
+        m.insert("result".into(), full_result.unwrap_or_default());
+        Some(m)
+    } else {
+        None
+    };
+
+    // Prefetch results
+    let mut restricted_prefetch = Map::new();
+    let mut full_prefetch = Map::new();
+    for (prefetch_id, prefetch_result) in &mut prefetch_results {
+        let prefetch_full = take_full_result(prefetch_result);
+        if let Some(ref restricted) = prefetch_result.structured_content {
+            restricted_prefetch.insert(prefetch_id.clone(), restricted.clone());
+        }
+        if let Some(full) = prefetch_full {
+            let prefetch_has_private = prefetch_result
+                .structured_content
+                .as_ref()
+                .is_some_and(|r| *r != full);
+            if prefetch_has_private {
+                // Lazily initialize full_map if this is the first result with @private.
+                // Only prefetch data is included; the primary result is omitted since
+                // it has no private fields and doesn't need a full/restricted split.
+                full_map.get_or_insert_with(Map::new);
+                full_prefetch.insert(prefetch_id.clone(), full);
             }
         }
-        if !prefetch.is_empty() {
-            map.insert("prefetch".into(), Value::Object(prefetch));
-        }
-
-        // This is a temporary workaround because some MCP hosts don't properly expose _meta so we need the tool name to be available here as a backup
-        map.insert("toolName".into(), Value::String(tool_name.to_string()));
-
-        let wrapped = Value::Object(map);
-        result.content =
-            vec![Content::json(&wrapped).unwrap_or(Content::text(wrapped.to_string()))];
-        result.structured_content = Some(wrapped);
-
-        // Attach tool name to the result meta
-        result.meta = Some({
-            let mut meta = Meta::new();
-            meta.insert("toolName".into(), Value::String(tool_name.to_string()));
-            meta
-        });
     }
+    if !restricted_prefetch.is_empty() {
+        restricted_map.insert("prefetch".into(), Value::Object(restricted_prefetch));
+    }
+    if let Some(ref mut full_m) = full_map
+        && !full_prefetch.is_empty()
+    {
+        full_m.insert("prefetch".into(), Value::Object(full_prefetch));
+    }
+
+    // This is a temporary workaround because some MCP hosts don't properly expose _meta so we need the tool name to be available here as a backup
+    restricted_map.insert("toolName".into(), Value::String(tool_name.to_string()));
+    if let Some(ref mut full_m) = full_map {
+        full_m.insert("toolName".into(), Value::String(tool_name.to_string()));
+    }
+
+    let wrapped_restricted = Value::Object(restricted_map);
+    result.content = vec![
+        Content::json(&wrapped_restricted).unwrap_or(Content::text(wrapped_restricted.to_string())),
+    ];
+    result.structured_content = Some(wrapped_restricted);
+
+    // Attach tool name (and full structured content if private fields exist) to meta
+    let meta = result.meta.get_or_insert_with(Meta::new);
+    meta.insert("toolName".into(), Value::String(tool_name.to_string()));
+    if let Some(full_m) = full_map {
+        meta.insert("structuredContent".into(), Value::Object(full_m));
+    }
+
     result
 }
 
@@ -777,5 +845,194 @@ mod tests {
         let meta = result.meta.unwrap();
         assert!(meta.get("openai/outputTemplate").is_none());
         assert!(meta.get("openai/widgetAccessible").is_none());
+    }
+
+    #[test]
+    fn nest_app_tool_result_no_private_no_prefetch() {
+        let primary_data = json!({"data": {"fieldA": "a"}});
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: None,
+            structured_content: Some(primary_data.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![]);
+
+        // structured_content: primary result present, no prefetch
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("result").unwrap(), &primary_data);
+        assert!(sc.get("prefetch").is_none());
+
+        // meta: no structuredContent at all
+        let meta = nested.meta.unwrap();
+        assert!(meta.get("structuredContent").is_none());
+        assert!(meta.get("toolName").is_some());
+    }
+
+    #[test]
+    fn nest_app_tool_result_primary_private_no_prefetch() {
+        let restricted = json!({"data": {"fieldA": "a"}});
+        let full = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
+
+        let mut meta = Meta::new();
+        meta.insert("structuredContent".into(), full.clone());
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(meta),
+            structured_content: Some(restricted.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![]);
+
+        // structured_content: restricted primary, no prefetch
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("result").unwrap(), &restricted);
+        assert!(sc.get("prefetch").is_none());
+
+        // meta.structuredContent: full primary, no prefetch
+        let meta = nested.meta.unwrap();
+        let meta_sc = meta.get("structuredContent").unwrap();
+        assert_eq!(meta_sc.get("result").unwrap(), &full);
+        assert!(meta_sc.get("prefetch").is_none());
+    }
+
+    #[test]
+    fn nest_app_tool_result_both_primary_and_prefetch_private() {
+        let restricted_primary = json!({"data": {"fieldA": "a"}});
+        let full_primary = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
+
+        let mut primary_meta = Meta::new();
+        primary_meta.insert("structuredContent".into(), full_primary.clone());
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(primary_meta),
+            structured_content: Some(restricted_primary.clone()),
+        };
+
+        let restricted_prefetch = json!({"data": {"x": 1}});
+        let full_prefetch = json!({"data": {"x": 1, "y": 2}});
+
+        let mut prefetch_meta = Meta::new();
+        prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
+
+        let prefetch_result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(prefetch_meta),
+            structured_content: Some(restricted_prefetch.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+
+        // structured_content: restricted primary and restricted prefetch
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("result").unwrap(), &restricted_primary);
+        assert_eq!(
+            sc.get("prefetch").unwrap().get("pf1").unwrap(),
+            &restricted_prefetch
+        );
+
+        // meta.structuredContent: full primary and full prefetch
+        let meta = nested.meta.unwrap();
+        let meta_sc = meta.get("structuredContent").unwrap();
+        assert_eq!(meta_sc.get("result").unwrap(), &full_primary);
+        assert_eq!(
+            meta_sc.get("prefetch").unwrap().get("pf1").unwrap(),
+            &full_prefetch
+        );
+    }
+
+    #[test]
+    fn nest_app_tool_result_only_prefetch_private() {
+        // Primary has no @private fields
+        let primary_data = json!({"data": {"fieldA": "a"}});
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: None,
+            structured_content: Some(primary_data.clone()),
+        };
+
+        // Prefetch has @private fields
+        let restricted_prefetch = json!({"data": {"x": 1}});
+        let full_prefetch = json!({"data": {"x": 1, "y": 2}});
+
+        let mut prefetch_meta = Meta::new();
+        prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
+
+        let prefetch_result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(prefetch_meta),
+            structured_content: Some(restricted_prefetch.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+
+        // structured_content: primary result and restricted prefetch
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("result").unwrap(), &primary_data);
+        assert_eq!(
+            sc.get("prefetch").unwrap().get("pf1").unwrap(),
+            &restricted_prefetch
+        );
+
+        // meta.structuredContent: no primary (no private), full prefetch only
+        let meta = nested.meta.unwrap();
+        let meta_sc = meta.get("structuredContent").unwrap();
+        assert!(meta_sc.get("result").is_none());
+        assert_eq!(
+            meta_sc.get("prefetch").unwrap().get("pf1").unwrap(),
+            &full_prefetch
+        );
+    }
+
+    #[test]
+    fn nest_app_tool_result_only_primary_private() {
+        // Primary has @private fields
+        let restricted_primary = json!({"data": {"fieldA": "a"}});
+        let full_primary = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
+
+        let mut primary_meta = Meta::new();
+        primary_meta.insert("structuredContent".into(), full_primary.clone());
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(primary_meta),
+            structured_content: Some(restricted_primary.clone()),
+        };
+
+        // Prefetch has no @private fields
+        let prefetch_data = json!({"data": {"x": 1}});
+        let prefetch_result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: None,
+            structured_content: Some(prefetch_data.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+
+        // structured_content: restricted primary and prefetch
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("result").unwrap(), &restricted_primary);
+        assert_eq!(
+            sc.get("prefetch").unwrap().get("pf1").unwrap(),
+            &prefetch_data
+        );
+
+        // meta.structuredContent: full primary, no prefetch (prefetch has no private)
+        let meta = nested.meta.unwrap();
+        let meta_sc = meta.get("structuredContent").unwrap();
+        assert_eq!(meta_sc.get("result").unwrap(), &full_primary);
+        assert!(meta_sc.get("prefetch").is_none());
     }
 }
