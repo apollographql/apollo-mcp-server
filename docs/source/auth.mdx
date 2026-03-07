@@ -177,7 +177,7 @@ WWW-Authenticate: Bearer error="insufficient_scope",
                          resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
 ```
 
-Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`.
+Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. 
 
 ## Performance considerations
 
