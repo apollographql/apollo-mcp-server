@@ -335,6 +335,18 @@ struct MethodOnly<'a> {
     method: &'a str,
 }
 
+// Used to extract the operation name from a `tools/call` body for per-operation scope checks.
+#[derive(Deserialize)]
+struct JsonRpcToolsCall<'a> {
+    method: &'a str,
+    params: Option<JsonRpcToolsCallParams<'a>>,
+}
+
+#[derive(Deserialize)]
+struct JsonRpcToolsCallParams<'a> {
+    name: &'a str,
+}
+
 // Maximum body size buffered when checking per-operation scopes (1 MiB).
 const MAX_TOOLS_CALL_BODY: usize = 1024 * 1024;
 
@@ -347,17 +359,7 @@ fn missing_scopes_for_operation<'a>(
     required_scopes: &'a HashMap<String, Vec<String>>,
     token_scopes: &[String],
 ) -> Option<&'a Vec<String>> {
-    #[derive(Deserialize)]
-    struct Params<'b> {
-        name: &'b str,
-    }
-    #[derive(Deserialize)]
-    struct Request<'b> {
-        method: &'b str,
-        params: Option<Params<'b>>,
-    }
-
-    let req = serde_json::from_slice::<Request<'_>>(body).ok()?;
+    let req = serde_json::from_slice::<JsonRpcToolsCall>(body).ok()?;
     if req.method != "tools/call" {
         return None;
     }
