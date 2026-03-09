@@ -25,6 +25,3 @@ target/
 
 # Generated e2e test configs
 e2e/**/config.generated.yaml
-
-# insta snapshot review files (ephemeral, not source artifacts)
-*.pending-snap

@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    body::Body,
+    body::{Body, Bytes},
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -16,6 +16,7 @@ use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
 };
+use futures::{StreamExt, TryStreamExt};
 use http::Method;
 use networked_token_validator::NetworkedTokenValidator;
 use schemars::JsonSchema;
@@ -333,6 +334,46 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
     Ok(json_rpc_body_peek)
 }
 
+// Used to detect the JSON-RPC method field without parsing the full payload.
+#[derive(Deserialize)]
+struct MethodOnly<'a> {
+    method: &'a str,
+}
+
+// Maximum body size buffered when checking per-operation scopes (1 MiB).
+const MAX_TOOLS_CALL_BODY: usize = 1024 * 1024;
+
+/// Checks if a `tools/call` request body is missing required scopes for the named operation.
+///
+/// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
+/// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
+fn missing_scopes_for_operation<'a>(
+    body: &[u8],
+    required_scopes: &'a HashMap<String, Vec<String>>,
+    token_scopes: &[String],
+) -> Option<&'a Vec<String>> {
+    #[derive(Deserialize)]
+    struct Params<'b> {
+        name: &'b str,
+    }
+    #[derive(Deserialize)]
+    struct Request<'b> {
+        method: &'b str,
+        params: Option<Params<'b>>,
+    }
+
+    let req = serde_json::from_slice::<Request<'_>>(body).ok()?;
+    if req.method != "tools/call" {
+        return None;
+    }
+    let op_name = req.params?.name;
+    let required = required_scopes.get(op_name)?;
+    if required.iter().all(|s| token_scopes.contains(s)) {
+        return None;
+    }
+    Some(required)
+}
+
 /// Validate that requests made have a corresponding bearer JWT token
 #[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
@@ -458,51 +499,94 @@ async fn oauth_validate(
         }
     }
 
-    // Per-operation scope check: buffer the request body to extract the operation
-    // name before SSE streaming begins, so we can return HTTP 403 before the
-    // response headers are committed.
-    let (parts, body) = request.into_parts();
-    let bytes = axum::body::to_bytes(body, 1024 * 1024)
-        .await
-        .inspect_err(|err| tracing::warn!(%err, "Failed to read request body for scope check; skipping per-operation enforcement"))
-        .unwrap_or_default();
+    // Per-operation scope check: peek at a small prefix to detect `tools/call` before
+    // committing to a full 1 MiB buffer. Other JSON-RPC methods (initialize, tools/list,
+    // resources/list, …) are forwarded without any body buffering.
+    // Skip entirely when no per-operation scopes are configured.
+    let mut request = if !auth_state.required_scopes.is_empty() {
+        let (parts, body) = request.into_parts();
+        let mut stream = body.into_data_stream();
 
-    // Minimal view of a tools/call JSON-RPC request — avoids allocating a full Value tree.
-    #[derive(Deserialize)]
-    struct ToolCallParams<'a> {
-        name: &'a str,
-    }
-    #[derive(Deserialize)]
-    struct ToolCallRequest<'a> {
-        method: &'a str,
-        params: Option<ToolCallParams<'a>>,
-    }
+        // Accumulate up to 512 bytes — enough to find the JSON-RPC `method` field,
+        // which always appears in the first few dozen bytes of any real payload.
+        let mut prefix: Vec<u8> = Vec::new();
+        let mut seen: Vec<Bytes> = Vec::new();
+        while prefix.len() < 512 {
+            match stream.try_next().await {
+                Ok(Some(chunk)) => {
+                    prefix.extend_from_slice(&chunk);
+                    seen.push(chunk);
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    tracing::warn!(%err, "Failed to read request body for scope check");
+                    return Ok(StatusCode::BAD_REQUEST.into_response());
+                }
+            }
+        }
 
-    if let Ok(req) = serde_json::from_slice::<ToolCallRequest<'_>>(&bytes)
-        && req.method == "tools/call"
-        && let Some(op_name) = req.params.as_ref().map(|p| p.name)
-        && let Some(required) = auth_state.required_scopes.get(op_name)
-        && !required.iter().all(|s| valid_token.scopes.contains(s))
-    {
-        tracing::warn!(
-            op = op_name,
-            required = ?required,
-            present = ?valid_token.scopes,
-            "Token has insufficient scopes for operation"
+        // Try a full parse for small bodies. For large bodies where the prefix is
+        // incomplete JSON, fall back to a byte scan. The method field always appears
+        // within the first few hundred bytes so 512 bytes is a safe upper bound.
+        // False positives (string match in arguments) are safe — they just trigger
+        // unnecessary buffering. False negatives would silently skip scope checks.
+        let is_tools_call = serde_json::from_slice::<MethodOnly<'_>>(&prefix).map_or_else(
+            |_| {
+                std::str::from_utf8(&prefix).is_ok_and(|s| {
+                    s.contains(r#""method":"tools/call""#)
+                        || s.contains(r#""method": "tools/call""#)
+                })
+            },
+            |r| r.method == "tools/call",
         );
-        tracing::Span::current().record("reason", "insufficient_scope");
-        tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-        return Err(forbidden_error(required));
-    }
 
-    let mut request = Request::from_parts(parts, Body::from(bytes));
+        // Reconstruct the body: already-read chunks prepended to the remaining stream.
+        let seen_stream = futures::stream::iter(seen.into_iter().map(Ok::<_, axum::Error>));
+        let full_stream = seen_stream.chain(stream);
+
+        if is_tools_call {
+            // Buffer the complete body to check per-operation scopes before any
+            // response headers are committed.
+            let full_bytes =
+                match axum::body::to_bytes(Body::from_stream(full_stream), MAX_TOOLS_CALL_BODY)
+                    .await
+                {
+                    Ok(b) => b,
+                    Err(err) => {
+                        tracing::warn!(%err, "Failed to read request body for scope check");
+                        return Ok(StatusCode::BAD_REQUEST.into_response());
+                    }
+                };
+
+            if let Some(required) = missing_scopes_for_operation(
+                &full_bytes,
+                &auth_state.required_scopes,
+                &valid_token.scopes,
+            ) {
+                tracing::warn!(
+                    required = ?required,
+                    present = ?valid_token.scopes,
+                    "Token has insufficient scopes for operation"
+                );
+                tracing::Span::current().record("reason", "insufficient_scope");
+                tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+                return Err(forbidden_error(required));
+            }
+
+            Request::from_parts(parts, Body::from(full_bytes))
+        } else {
+            // Not a tools/call; no scope check needed. Forward without full buffering.
+            Request::from_parts(parts, Body::from_stream(full_stream))
+        }
+    } else {
+        request
+    };
 
     // Insert new context to ensure that handlers only use our enforced token verification
-    // for propagation.
+    // for propagation
     request.extensions_mut().insert(valid_token);
 
     let response = next.run(request).await;
-
     tracing::Span::current().record("status_code", response.status().as_u16());
     Ok(response)
 }
@@ -1231,6 +1315,84 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             "#;
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
+        }
+    }
+
+    mod per_operation_scope_enforcement {
+        use super::*;
+
+        fn required() -> HashMap<String, Vec<String>> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                vec!["sensitive:read".to_string()],
+            )])
+        }
+
+        fn tools_call_body(op: &str) -> Vec<u8> {
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": { "name": op, "arguments": {} }
+            })
+            .to_string()
+            .into_bytes()
+        }
+
+        #[test]
+        fn returns_required_scopes_when_token_missing_scope() {
+            let body = tools_call_body("RestrictedOp");
+            let scopes = vec!["other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&body, &required, &scopes);
+            assert_eq!(result, Some(&vec!["sensitive:read".to_string()]));
+        }
+
+        #[test]
+        fn returns_none_when_token_has_required_scope() {
+            let body = tools_call_body("RestrictedOp");
+            let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&body, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_unrestricted_operation() {
+            let body = tools_call_body("PublicOp");
+            let required = required();
+            let result = missing_scopes_for_operation(&body, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_non_tools_call_method() {
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+                "params": {}
+            })
+            .to_string()
+            .into_bytes();
+            let required = required();
+            let result = missing_scopes_for_operation(&body, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_invalid_body() {
+            let required = required();
+            let result = missing_scopes_for_operation(b"not json", &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_required_scopes_map_is_empty() {
+            let body = tools_call_body("RestrictedOp");
+            let empty = HashMap::new();
+            let result = missing_scopes_for_operation(&body, &empty, &[]);
+            assert!(result.is_none());
         }
     }
 }
