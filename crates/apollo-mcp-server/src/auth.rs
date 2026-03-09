@@ -217,14 +217,9 @@ struct AuthState {
 }
 
 impl Config {
-    /// Enable auth middleware on the router.
+    /// Enable auth middleware with per-operation scope requirements.
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
-    pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
-        self.enable_middleware_with_scopes(router, HashMap::new())
-    }
-
-    /// Enable auth middleware with per-operation scope requirements.
     pub fn enable_middleware_with_scopes(
         &self,
         router: Router,
@@ -829,11 +824,12 @@ mod tests {
             config.servers = vec![Url::parse("file:///some/path").unwrap()];
 
             let router = Router::new();
-            let result = config.enable_middleware(router);
+            let err = config
+                .enable_middleware_with_scopes(router, HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ServerUrlMissingHost { index: 0, .. }
             ));
         }
@@ -1027,11 +1023,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("file:///some/path").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware_with_scopes(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -1041,11 +1038,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware_with_scopes(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -1055,7 +1053,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware_with_scopes(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -1065,7 +1063,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware_with_scopes(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -1080,7 +1078,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/my-service/mcp")
@@ -1106,7 +1106,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource/my-service/mcp")
@@ -1122,7 +1124,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let config = test_config();
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource")
