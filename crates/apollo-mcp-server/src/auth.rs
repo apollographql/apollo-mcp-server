@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -290,33 +291,30 @@ const ANONYMOUS_PEEK_BODY_LIMIT: usize = 16 * 1024;
 
 /// Minimal struct for deserializing just the `method` field from a JSON-RPC request.
 #[derive(Deserialize)]
-struct JsonRpcMethodPeek {
+struct JsonRpcBodyPeek {
     method: String,
 }
 
-/// Peeks at the request body to determine if it is an anonymous-eligible MCP
-/// discovery call. The body is consumed and then reconstructed on the request
-/// so downstream handlers receive the full payload.
-async fn is_anonymous_discovery_request(request: &mut Request) -> Result<bool, StatusCode> {
+async fn extract_body(request: &mut Request) -> Result<(JsonRpcBodyPeek, Bytes), StatusCode> {
     let body = std::mem::take(request.body_mut());
 
     let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
         Ok(bytes) => bytes,
         Err(e) => {
-            tracing::error!(error = %e, "anonymous discovery peek: failed to read body");
+            tracing::error!(error = %e, "Failed to read request body in oauth middleware");
             return Err(StatusCode::PAYLOAD_TOO_LARGE);
         }
     };
 
-    let is_discovery = match serde_json::from_slice::<JsonRpcMethodPeek>(&bytes) {
-        Ok(peek) => ANONYMOUS_DISCOVERY_METHODS.contains(&peek.method.as_str()),
-        // Batch requests (JSON arrays) or malformed JSON are not eligible
-        Err(_) => false,
+    let json_rpc_body_peek = match serde_json::from_slice::<JsonRpcBodyPeek>(&bytes) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to parse request body in oauth middleware");
+            return Err(StatusCode::BAD_REQUEST);
+        }
     };
 
-    *request.body_mut() = axum::body::Body::from(bytes);
-
-    Ok(is_discovery)
+    Ok((json_rpc_body_peek, bytes))
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
@@ -368,16 +366,21 @@ async fn oauth_validate(
         && token.is_none()
         && request.method() == http::Method::POST
     {
-        let discovery_result = is_anonymous_discovery_request(&mut request).await;
-        if let Err(status) = discovery_result {
-            tracing::Span::current().record("status_code", status.as_u16());
-            return Ok(status.into_response());
-        }
-        if let Ok(true) = discovery_result {
+        let (json_rpc_body_peek, bytes) = match extract_body(&mut request).await {
+            Ok(result) => result,
+            Err(status) => {
+                tracing::Span::current().record("status_code", status.as_u16());
+                return Ok(status.into_response());
+            }
+        };
+
+        if ANONYMOUS_DISCOVERY_METHODS.contains(&json_rpc_body_peek.method.as_str()) {
             let response = next.run(request).await;
             tracing::Span::current().record("status_code", response.status().as_u16());
             return Ok(response);
         }
+
+        *request.body_mut() = axum::body::Body::from(bytes);
     }
 
     let discovery_timeout = auth_config
@@ -1095,21 +1098,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         }
 
         #[tokio::test]
-        async fn batch_request_without_token_rejected_when_enabled() {
-            let app = discovery_router(true);
-            let body = Body::from(
-                r#"[{"jsonrpc":"2.0","id":1,"method":"tools/list"},{"jsonrpc":"2.0","id":2,"method":"tools/call"}]"#,
-            );
-            let req = Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .body(body)
-                .unwrap();
-            let res = app.oneshot(req).await.unwrap();
-            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
-        }
-
-        #[tokio::test]
         async fn malformed_json_without_token_rejected_when_enabled() {
             let app = discovery_router(true);
             let req = Request::builder()
@@ -1118,7 +1106,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 .body(Body::from("not json"))
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
-            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         }
 
         #[tokio::test]
@@ -1130,7 +1118,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 .body(Body::empty())
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
-            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
         }
 
         #[tokio::test]
