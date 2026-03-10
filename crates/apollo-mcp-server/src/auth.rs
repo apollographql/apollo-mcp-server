@@ -375,6 +375,7 @@ async fn oauth_validate(
         };
 
         if ANONYMOUS_DISCOVERY_METHODS.contains(&json_rpc_body_peek.method.as_str()) {
+            *request.body_mut() = axum::body::Body::from(bytes);
             let response = next.run(request).await;
             tracing::Span::current().record("status_code", response.status().as_u16());
             return Ok(response);
