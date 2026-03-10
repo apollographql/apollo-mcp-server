@@ -290,6 +290,7 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | `scopes`                          | `List<string>` |         | List of queryable OAuth scopes from the upstream OAuth servers                                                                                    |
 | `scope_mode`                      | `string`       | `require_all` | Scope enforcement mode: `disabled`, `require_all`, or `require_any`                                                                         |
 | `disable_auth_token_passthrough`  | `bool`         | `false` | Optional flag to disable passing validated Authorization header to downstream API                                                                 |
+| `allow_anonymous_mcp_discovery`   | `bool`         | `false` | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery). |
 | `discovery_timeout`               | `Duration`     | `5s`    | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                       |
 | `tls.ca_cert`                     | `string`       |         | Path to a CA certificate to trust (PEM format).                                                                                                   |
 | `tls.danger_accept_invalid_certs` | `bool`         | `false` | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.                                                    |
@@ -331,6 +332,10 @@ transport:
 
     # Timeout for authorization server metadata discovery (default: 5s)
     discovery_timeout: 5s
+
+    # Allow unauthenticated clients to call MCP discovery methods
+    # (initialize, tools/list, resources/list). All other methods still require auth.
+    # allow_anonymous_mcp_discovery: false
 
     # Optional TLS configuration for connecting to OAuth servers
     tls:
