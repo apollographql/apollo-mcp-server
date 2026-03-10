@@ -179,7 +179,7 @@ has_required_glibc() {
             && [ "${_glibc_min_version}" -ge "${_min_minor_version}" ]; }; then
             return 0
         else
-            say "This operating system needs glibc >= ${_min_major_version}.${_min_minor_version}, but only has ${_libc_version} installed."
+            say "This operating system needs glibc >= ${_min_major_version}.${_min_minor_version}, but only has ${_glibc_version} installed."
         fi
     else
         say "This operating system does not support dynamic linking to glibc."
