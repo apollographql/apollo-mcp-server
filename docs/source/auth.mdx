@@ -206,7 +206,13 @@ transport:
     allow_anonymous_mcp_discovery: true
 ```
 
-The following MCP methods will be enabled:
+<Caution>
+
+Enabling this option deviates from the [MCP specification's requirement](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) that authorization be present on every request. Unauthenticated clients will be able to discover which tools and resources the server exposes without providing a token. Only enable this when your deployment requires unauthenticated discovery, for example to support agent frameworks or platform registrations that list tools before initiating an OAuth flow.
+
+</Caution>
+
+The following MCP methods are allowed without authentication when this option is enabled:
 
 | Method           | Description                          |
 | ---------------- | ------------------------------------ |
