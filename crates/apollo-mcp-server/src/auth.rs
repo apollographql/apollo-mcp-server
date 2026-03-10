@@ -295,7 +295,7 @@ struct JsonRpcBodyPeek {
     method: String,
 }
 
-async fn extract_body(request: &mut Request) -> Result<(JsonRpcBodyPeek, Bytes), StatusCode> {
+async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
     let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
@@ -314,7 +314,9 @@ async fn extract_body(request: &mut Request) -> Result<(JsonRpcBodyPeek, Bytes),
         }
     };
 
-    Ok((json_rpc_body_peek, bytes))
+    *request.body_mut() = axum::body::Body::from(bytes);
+
+    Ok(json_rpc_body_peek)
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
@@ -366,7 +368,7 @@ async fn oauth_validate(
         && token.is_none()
         && request.method() == http::Method::POST
     {
-        let (json_rpc_body_peek, bytes) = match extract_body(&mut request).await {
+        let json_rpc_body_peek = match extract_body(&mut request).await {
             Ok(result) => result,
             Err(status) => {
                 tracing::Span::current().record("status_code", status.as_u16());
@@ -375,13 +377,10 @@ async fn oauth_validate(
         };
 
         if ANONYMOUS_DISCOVERY_METHODS.contains(&json_rpc_body_peek.method.as_str()) {
-            *request.body_mut() = axum::body::Body::from(bytes);
             let response = next.run(request).await;
             tracing::Span::current().record("status_code", response.status().as_u16());
             return Ok(response);
         }
-
-        *request.body_mut() = axum::body::Body::from(bytes);
     }
 
     let discovery_timeout = auth_config
