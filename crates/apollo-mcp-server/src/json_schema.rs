@@ -38,7 +38,7 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "field": {
-                        "type": ["string","null"]
+                        "type": "string"
                     }
                 },
                 "required": ["field"]
