@@ -95,7 +95,6 @@ impl Operation {
                 )
             });
 
-            // here!
             let mut object = serde_json::to_value(get_json_schema(
                 &operation,
                 tree_shaker.argument_descriptions(),
