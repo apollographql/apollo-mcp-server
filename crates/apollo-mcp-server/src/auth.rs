@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    body::Body,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -216,10 +215,10 @@ struct AuthState {
 }
 
 impl Config {
-    /// Enable auth middleware with per-operation scope requirements.
+    /// Enable auth middleware on the router.
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
-    pub fn enable_middleware_with_scopes(
+    pub fn enable_middleware(
         &self,
         router: Router,
         required_scopes: HashMap<String, Vec<String>>,
@@ -298,10 +297,17 @@ const ANONYMOUS_DISCOVERY_METHODS: &[&str] = &["initialize", "tools/list", "reso
 /// headroom while preventing abuse from unauthenticated clients.
 const ANONYMOUS_PEEK_BODY_LIMIT: usize = 16 * 1024;
 
-/// Minimal struct for deserializing just the `method` field from a JSON-RPC request.
+/// Struct for deserializing the JSON-RPC `method` and optional `params.name`
+/// from a request body. Used by both anonymous discovery and per-operation scope checks.
 #[derive(Deserialize)]
 struct JsonRpcBodyPeek {
     method: String,
+    params: Option<JsonRpcParams>,
+}
+
+#[derive(Deserialize)]
+struct JsonRpcParams {
+    name: Option<String>,
 }
 
 async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
@@ -325,32 +331,19 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
     Ok(peek)
 }
 
-// Used to extract the operation name from a `tools/call` body for per-operation scope checks.
-#[derive(Deserialize)]
-struct JsonRpcToolsCall<'a> {
-    method: &'a str,
-    params: Option<JsonRpcToolsCallParams<'a>>,
-}
-
-#[derive(Deserialize)]
-struct JsonRpcToolsCallParams<'a> {
-    name: &'a str,
-}
-
-/// Checks if a `tools/call` request body is missing required scopes for the named operation.
+/// Checks if a `tools/call` request is missing required scopes for the named operation.
 ///
 /// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
 /// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
 fn missing_scopes_for_operation<'a>(
-    body: &[u8],
+    peek: &JsonRpcBodyPeek,
     required_scopes: &'a HashMap<String, Vec<String>>,
     token_scopes: &[String],
 ) -> Option<&'a [String]> {
-    let req = serde_json::from_slice::<JsonRpcToolsCall>(body).ok()?;
-    if req.method != "tools/call" {
+    if peek.method != "tools/call" {
         return None;
     }
-    let op_name = req.params?.name;
+    let op_name = peek.params.as_ref()?.name.as_deref()?;
     let required = required_scopes.get(op_name)?;
     if required.iter().all(|s| token_scopes.contains(s)) {
         return None;
@@ -401,25 +394,34 @@ async fn oauth_validate(
         )
     };
 
-    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
-    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
-    if auth_config.allow_anonymous_mcp_discovery
-        && token.is_none()
-        && request.method() == http::Method::POST
+    // Extract the body once if we need to inspect the JSON-RPC method for either
+    // anonymous discovery or per-operation scope checks.
+    let body_peek = if request.method() == http::Method::POST
+        && ((auth_config.allow_anonymous_mcp_discovery && token.is_none())
+            || !auth_state.required_scopes.is_empty())
     {
-        let json_rpc_body_peek = match extract_body(&mut request).await {
-            Ok(result) => result,
+        match extract_body(&mut request).await {
+            Ok(peek) => Some(peek),
             Err(status) => {
                 tracing::Span::current().record("status_code", status.as_u16());
                 return Ok(status.into_response());
             }
-        };
-
-        if ANONYMOUS_DISCOVERY_METHODS.contains(&json_rpc_body_peek.method.as_str()) {
-            let response = next.run(request).await;
-            tracing::Span::current().record("status_code", response.status().as_u16());
-            return Ok(response);
         }
+    } else {
+        None
+    };
+
+    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
+    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
+    if auth_config.allow_anonymous_mcp_discovery
+        && token.is_none()
+        && body_peek
+            .as_ref()
+            .is_some_and(|peek| ANONYMOUS_DISCOVERY_METHODS.contains(&peek.method.as_str()))
+    {
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
     }
 
     let discovery_timeout = auth_config
@@ -483,32 +485,18 @@ async fn oauth_validate(
         }
     }
 
-    // Per-operation scope check: buffer the body to inspect the JSON-RPC method and
-    // operation name. Skip entirely when no per-operation scopes are configured.
-    if !auth_state.required_scopes.is_empty() {
-        let body = std::mem::take(request.body_mut());
-        let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
-            Ok(b) => b,
-            Err(err) => {
-                tracing::warn!(%err, "Failed to read request body for scope check");
-                return Ok(StatusCode::BAD_REQUEST.into_response());
-            }
-        };
-
-        if let Some(required) =
-            missing_scopes_for_operation(&bytes, &auth_state.required_scopes, &valid_token.scopes)
-        {
-            tracing::warn!(
-                required = ?required,
-                present = ?valid_token.scopes,
-                "Token has insufficient scopes for operation"
-            );
-            tracing::Span::current().record("reason", "insufficient_scope");
-            tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-            return Err(forbidden_error(required));
-        }
-
-        *request.body_mut() = Body::from(bytes);
+    // Per-operation scope check using the already-extracted body peek.
+    if let Some(required) = body_peek.as_ref().and_then(|peek| {
+        missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
+    }) {
+        tracing::warn!(
+            required = ?required,
+            present = ?valid_token.scopes,
+            "Token has insufficient scopes for operation"
+        );
+        tracing::Span::current().record("reason", "insufficient_scope");
+        tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+        return Err(forbidden_error(required));
     }
 
     // Insert new context to ensure that handlers only use our enforced token verification
@@ -759,7 +747,7 @@ mod tests {
 
             let router = Router::new();
             let err = config
-                .enable_middleware_with_scopes(router, HashMap::new())
+                .enable_middleware(router, HashMap::new())
                 .unwrap_err();
 
             assert!(matches!(
@@ -958,7 +946,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("file:///some/path").unwrap();
 
             let err = config
-                .enable_middleware_with_scopes(Router::new(), HashMap::new())
+                .enable_middleware(Router::new(), HashMap::new())
                 .unwrap_err();
 
             assert!(matches!(
@@ -973,7 +961,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
             let err = config
-                .enable_middleware_with_scopes(Router::new(), HashMap::new())
+                .enable_middleware(Router::new(), HashMap::new())
                 .unwrap_err();
 
             assert!(matches!(
@@ -987,7 +975,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware_with_scopes(Router::new(), HashMap::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -997,7 +985,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware_with_scopes(Router::new(), HashMap::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -1013,7 +1001,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new())
                 .unwrap();
 
             let req = Request::builder()
@@ -1041,7 +1029,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new())
                 .unwrap();
 
             let req = Request::builder()
@@ -1059,7 +1047,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware_with_scopes(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new())
                 .unwrap();
 
             let req = Request::builder()
@@ -1266,70 +1254,57 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             )])
         }
 
-        fn tools_call_body(op: &str) -> Vec<u8> {
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": { "name": op, "arguments": {} }
-            })
-            .to_string()
-            .into_bytes()
+        fn tools_call_peek(op: &str) -> JsonRpcBodyPeek {
+            JsonRpcBodyPeek {
+                method: "tools/call".to_string(),
+                params: Some(JsonRpcParams {
+                    name: Some(op.to_string()),
+                }),
+            }
         }
 
         #[test]
         fn returns_required_scopes_when_token_missing_scope() {
-            let body = tools_call_body("RestrictedOp");
+            let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["other:scope".to_string()];
             let required = required();
-            let result = missing_scopes_for_operation(&body, &required, &scopes);
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
         }
 
         #[test]
         fn returns_none_when_token_has_required_scope() {
-            let body = tools_call_body("RestrictedOp");
+            let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
             let required = required();
-            let result = missing_scopes_for_operation(&body, &required, &scopes);
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert!(result.is_none());
         }
 
         #[test]
         fn returns_none_for_unrestricted_operation() {
-            let body = tools_call_body("PublicOp");
+            let peek = tools_call_peek("PublicOp");
             let required = required();
-            let result = missing_scopes_for_operation(&body, &required, &[]);
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
             assert!(result.is_none());
         }
 
         #[test]
         fn returns_none_for_non_tools_call_method() {
-            let body = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/list",
-                "params": {}
-            })
-            .to_string()
-            .into_bytes();
+            let peek = JsonRpcBodyPeek {
+                method: "tools/list".to_string(),
+                params: None,
+            };
             let required = required();
-            let result = missing_scopes_for_operation(&body, &required, &[]);
-            assert!(result.is_none());
-        }
-
-        #[test]
-        fn returns_none_for_invalid_body() {
-            let required = required();
-            let result = missing_scopes_for_operation(b"not json", &required, &[]);
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
             assert!(result.is_none());
         }
 
         #[test]
         fn returns_none_when_required_scopes_map_is_empty() {
-            let body = tools_call_body("RestrictedOp");
+            let peek = tools_call_peek("RestrictedOp");
             let empty = HashMap::new();
-            let result = missing_scopes_for_operation(&body, &empty, &[]);
+            let result = missing_scopes_for_operation(&peek, &empty, &[]);
             assert!(result.is_none());
         }
     }
