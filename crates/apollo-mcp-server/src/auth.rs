@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    body::{Body, Bytes},
+    body::Body,
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
@@ -16,7 +16,6 @@ use axum_extra::{
     TypedHeader,
     headers::{Authorization, authorization::Bearer},
 };
-use futures::{StreamExt, TryStreamExt};
 use http::Method;
 use networked_token_validator::NetworkedTokenValidator;
 use schemars::JsonSchema;
@@ -329,12 +328,6 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
     Ok(json_rpc_body_peek)
 }
 
-// Used to detect the JSON-RPC method field without parsing the full payload.
-#[derive(Deserialize)]
-struct MethodOnly<'a> {
-    method: &'a str,
-}
-
 // Used to extract the operation name from a `tools/call` body for per-operation scope checks.
 #[derive(Deserialize)]
 struct JsonRpcToolsCall<'a> {
@@ -346,9 +339,6 @@ struct JsonRpcToolsCall<'a> {
 struct JsonRpcToolsCallParams<'a> {
     name: &'a str,
 }
-
-// Maximum body size buffered when checking per-operation scopes (1 MiB).
-const MAX_TOOLS_CALL_BODY: usize = 1024 * 1024;
 
 /// Checks if a `tools/call` request body is missing required scopes for the named operation.
 ///
@@ -496,88 +486,33 @@ async fn oauth_validate(
         }
     }
 
-    // Per-operation scope check: peek at a small prefix to detect `tools/call` before
-    // committing to a full 1 MiB buffer. Other JSON-RPC methods (initialize, tools/list,
-    // resources/list, …) are forwarded without any body buffering.
-    // Skip entirely when no per-operation scopes are configured.
-    let mut request = if !auth_state.required_scopes.is_empty() {
-        let (parts, body) = request.into_parts();
-        let mut stream = body.into_data_stream();
-
-        // Accumulate up to 512 bytes — enough to find the JSON-RPC `method` field,
-        // which always appears in the first few dozen bytes of any real payload.
-        let mut prefix: Vec<u8> = Vec::new();
-        let mut seen: Vec<Bytes> = Vec::new();
-        while prefix.len() < 512 {
-            match stream.try_next().await {
-                Ok(Some(chunk)) => {
-                    prefix.extend_from_slice(&chunk);
-                    seen.push(chunk);
-                }
-                Ok(None) => break,
-                Err(err) => {
-                    tracing::warn!(%err, "Failed to read request body for scope check");
-                    return Ok(StatusCode::BAD_REQUEST.into_response());
-                }
+    // Per-operation scope check: buffer the body to inspect the JSON-RPC method and
+    // operation name. Skip entirely when no per-operation scopes are configured.
+    if !auth_state.required_scopes.is_empty() {
+        let body = std::mem::take(request.body_mut());
+        let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
+            Ok(b) => b,
+            Err(err) => {
+                tracing::warn!(%err, "Failed to read request body for scope check");
+                return Ok(StatusCode::BAD_REQUEST.into_response());
             }
+        };
+
+        if let Some(required) =
+            missing_scopes_for_operation(&bytes, &auth_state.required_scopes, &valid_token.scopes)
+        {
+            tracing::warn!(
+                required = ?required,
+                present = ?valid_token.scopes,
+                "Token has insufficient scopes for operation"
+            );
+            tracing::Span::current().record("reason", "insufficient_scope");
+            tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+            return Err(forbidden_error(required));
         }
 
-        // Try a full parse for small bodies. For large bodies where the prefix is
-        // incomplete JSON, fall back to a byte scan. The method field always appears
-        // within the first few hundred bytes so 512 bytes is a safe upper bound.
-        // False positives (string match in arguments) are safe — they just trigger
-        // unnecessary buffering. False negatives would silently skip scope checks.
-        let is_tools_call = serde_json::from_slice::<MethodOnly<'_>>(&prefix).map_or_else(
-            |_| {
-                std::str::from_utf8(&prefix).is_ok_and(|s| {
-                    s.contains(r#""method":"tools/call""#)
-                        || s.contains(r#""method": "tools/call""#)
-                })
-            },
-            |r| r.method == "tools/call",
-        );
-
-        // Reconstruct the body: already-read chunks prepended to the remaining stream.
-        let seen_stream = futures::stream::iter(seen.into_iter().map(Ok::<_, axum::Error>));
-        let full_stream = seen_stream.chain(stream);
-
-        if is_tools_call {
-            // Buffer the complete body to check per-operation scopes before any
-            // response headers are committed.
-            let full_bytes =
-                match axum::body::to_bytes(Body::from_stream(full_stream), MAX_TOOLS_CALL_BODY)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(err) => {
-                        tracing::warn!(%err, "Failed to read request body for scope check");
-                        return Ok(StatusCode::BAD_REQUEST.into_response());
-                    }
-                };
-
-            if let Some(required) = missing_scopes_for_operation(
-                &full_bytes,
-                &auth_state.required_scopes,
-                &valid_token.scopes,
-            ) {
-                tracing::warn!(
-                    required = ?required,
-                    present = ?valid_token.scopes,
-                    "Token has insufficient scopes for operation"
-                );
-                tracing::Span::current().record("reason", "insufficient_scope");
-                tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-                return Err(forbidden_error(required));
-            }
-
-            Request::from_parts(parts, Body::from(full_bytes))
-        } else {
-            // Not a tools/call; no scope check needed. Forward without full buffering.
-            Request::from_parts(parts, Body::from_stream(full_stream))
-        }
-    } else {
-        request
-    };
+        *request.body_mut() = Body::from(bytes);
+    }
 
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
