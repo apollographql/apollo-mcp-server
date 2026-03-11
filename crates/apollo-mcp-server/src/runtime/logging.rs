@@ -72,16 +72,10 @@ impl Logging {
     }
 
     pub fn logging_layer(logging: &Logging) -> Result<LoggingLayerResult, anyhow::Error> {
-        macro_rules! log_error {
-            () => {
-                |e| eprintln!("Failed to setup logging: {e:?}")
-            };
-        }
-
         let (writer, guard, with_ansi) = match logging.path.clone() {
             Some(path) => std::fs::create_dir_all(&path)
                 .map(|_| path)
-                .inspect_err(log_error!())
+                .inspect_err(|e| eprintln!("Failed to setup logging: {e:?}"))
                 .ok()
                 .and_then(|path| {
                     RollingFileAppender::builder()
@@ -89,7 +83,7 @@ impl Logging {
                         .filename_prefix("apollo_mcp_server")
                         .filename_suffix("log")
                         .build(path)
-                        .inspect_err(log_error!())
+                        .inspect_err(|e| eprintln!("Failed to setup logging: {e:?}"))
                         .ok()
                 })
                 .map(|appender| {

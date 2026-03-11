@@ -15,6 +15,7 @@ use crate::host_validation::{HostValidationState, validate_host};
 use crate::operations::apply_description_override;
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
+    cors::CorsConfig,
     errors::ServerError,
     explorer::Explorer,
     health::HealthCheck,
@@ -169,43 +170,6 @@ impl Starting {
             server_info: self.config.server_info.clone(),
         };
 
-        // Helper to enable auth
-        macro_rules! with_auth {
-            ($router:expr, $auth:ident) => {{
-                let mut router = $router;
-                if let Some(auth) = $auth {
-                    match auth.enable_middleware(router) {
-                        Ok(r) => router = r,
-                        Err(e) => {
-                            error!("Failed to enable auth middleware: {}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-
-                router
-            }};
-        }
-
-        // Helper to enable CORS
-        macro_rules! with_cors {
-            ($router:expr, $config:expr) => {{
-                let mut router = $router;
-                if $config.enabled {
-                    match $config.build_cors_layer() {
-                        Ok(cors_layer) => {
-                            router = router.layer(cors_layer);
-                        }
-                        Err(e) => {
-                            error!("Failed to build CORS layer: {}", e);
-                            return Err(e);
-                        }
-                    }
-                }
-                router
-            }};
-        }
-
         match self.config.transport {
             Transport::StreamableHttp {
                 auth,
@@ -225,27 +189,30 @@ impl Starting {
                         ..Default::default()
                     },
                 );
-                let mut router = with_cors!(
-                    with_auth!(axum::Router::new().nest_service("/mcp", service), auth),
-                    self.config.cors
-                )
-                .layer(HttpMetricsLayerBuilder::new().build())
-                // include trace context as header into the response
-                .layer(OtelInResponseLayer)
-                // start OpenTelemetry trace on incoming request
-                .layer(axum::middleware::from_fn(otel_context_middleware))
-                // Host header validation to prevent DNS rebinding attacks
-                .layer(axum::middleware::from_fn_with_state(
-                    HostValidationState {
-                        config: Arc::new(host_validation),
-                        server_port: port,
-                    },
-                    validate_host,
-                ));
+                let mut router = axum::Router::new().nest_service("/mcp", service);
+                if let Some(auth) = auth {
+                    router = auth.enable_middleware(router).inspect_err(|e| {
+                        error!("Failed to enable auth middleware: {}", e);
+                    })?;
+                }
+                let mut router = with_cors(router, &self.config.cors)?
+                    .layer(HttpMetricsLayerBuilder::new().build())
+                    // include trace context as header into the response
+                    .layer(OtelInResponseLayer)
+                    // start OpenTelemetry trace on incoming request
+                    .layer(axum::middleware::from_fn(otel_context_middleware))
+                    // Host header validation to prevent DNS rebinding attacks
+                    .layer(axum::middleware::from_fn_with_state(
+                        HostValidationState {
+                            config: Arc::new(host_validation),
+                            server_port: port,
+                        },
+                        validate_host,
+                    ));
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
-                    router = with_cors!(health_check.enable_router(router), self.config.cors);
+                    router = with_cors(health_check.enable_router(router), &self.config.cors)?;
                 }
 
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
@@ -275,6 +242,17 @@ impl Starting {
         }
 
         Ok(running)
+    }
+}
+
+fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
+    if config.enabled {
+        let cors_layer = config.build_cors_layer().inspect_err(|e| {
+            error!("Failed to build CORS layer: {}", e);
+        })?;
+        Ok(router.layer(cors_layer))
+    } else {
+        Ok(router)
     }
 }
 
