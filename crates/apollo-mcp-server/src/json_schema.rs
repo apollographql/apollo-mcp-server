@@ -16,14 +16,19 @@ macro_rules! schema_from_type {
 
 #[cfg(test)]
 mod tests {
-    use schemars::JsonSchema;
+    use schemars::{JsonSchema, Schema, SchemaGenerator};
     use serde::Deserialize;
     use serde_json::Value;
 
     #[derive(JsonSchema, Deserialize)]
     struct TestInput {
         #[allow(dead_code)]
-        field: String,
+        #[schemars(schema_with = "option_schema")]
+        pub field: Option<String>,
+    }
+
+    fn option_schema(generator: &mut SchemaGenerator) -> Schema {
+        Option::<String>::json_schema(generator)
     }
 
     #[test]
@@ -38,7 +43,7 @@ mod tests {
                 "type": "object",
                 "properties": {
                     "field": {
-                        "type": "string"
+                        "type": ["string","null"]
                     }
                 },
                 "required": ["field"]

@@ -95,6 +95,7 @@ impl Operation {
                 )
             });
 
+            // here!
             let mut object = serde_json::to_value(get_json_schema(
                 &operation,
                 tree_shaker.argument_descriptions(),
@@ -605,6 +606,13 @@ fn get_json_schema(
                 custom_scalar_map,
                 description,
             );
+
+            let nested = if variable.ty.is_non_null() {
+                nested
+            } else {
+                json_schema!({"oneOf": [nested, {"type": "null"}]})
+            };
+
             schema
                 .ensure_object()
                 .entry("properties")
@@ -613,15 +621,18 @@ fn get_json_schema(
                 .get_or_insert(&mut Map::default())
                 .insert(variable_name.clone(), nested.into());
 
-            if variable.ty.is_non_null() {
-                schema
-                    .ensure_object()
-                    .entry("required")
-                    .or_insert(serde_json::Value::Array(Vec::new()))
-                    .as_array_mut()
-                    .get_or_insert(&mut Vec::default())
-                    .push(variable_name.into());
-            }
+            schema
+                .ensure_object()
+                .entry("additionalProperties")
+                .or_insert(serde_json::Value::Bool(false));
+
+            schema
+                .ensure_object()
+                .entry("required")
+                .or_insert(serde_json::Value::Array(Vec::new()))
+                .as_array_mut()
+                .get_or_insert(&mut Vec::default())
+                .push(variable_name.into());
         }
     });
 
@@ -754,9 +765,20 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "type": String("string"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("string"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
+                "additionalProperties": Bool(false),
+                "required": Array [
+                    String("id"),
+                ],
             },
             output_schema: Some(
                 {
@@ -849,11 +871,22 @@ mod tests {
         let json = to_sorted_json!(tool.input_schema);
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
+          "additionalProperties": false,
           "properties": {
             "id": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
+          "required": [
+            "id"
+          ],
           "type": "object"
         }
         "#);
@@ -895,6 +928,7 @@ mod tests {
                         "type": String("string"),
                     },
                 },
+                "additionalProperties": Bool(false),
                 "required": Array [
                     String("id"),
                 ],
@@ -994,6 +1028,7 @@ mod tests {
               "type": "string"
             }
           },
+          "additionalProperties": false,
           "required": [
             "id"
           ]
