@@ -307,25 +307,22 @@ struct JsonRpcBodyPeek {
 async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
-    let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to read request body in oauth middleware");
-            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-        }
-    };
+    let bytes = axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT)
+        .await
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to read request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
 
-    let json_rpc_body_peek = match serde_json::from_slice::<JsonRpcBodyPeek>(&bytes) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse request body in oauth middleware");
-            return Err(StatusCode::BAD_REQUEST);
-        }
-    };
+    let peek = serde_json::from_slice::<JsonRpcBodyPeek>(&bytes)
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to parse request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     *request.body_mut() = axum::body::Body::from(bytes);
 
-    Ok(json_rpc_body_peek)
+    Ok(peek)
 }
 
 // Used to extract the operation name from a `tools/call` body for per-operation scope checks.
@@ -348,7 +345,7 @@ fn missing_scopes_for_operation<'a>(
     body: &[u8],
     required_scopes: &'a HashMap<String, Vec<String>>,
     token_scopes: &[String],
-) -> Option<&'a Vec<String>> {
+) -> Option<&'a [String]> {
     let req = serde_json::from_slice::<JsonRpcToolsCall>(body).ok()?;
     if req.method != "tools/call" {
         return None;
@@ -1286,7 +1283,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let scopes = vec!["other:scope".to_string()];
             let required = required();
             let result = missing_scopes_for_operation(&body, &required, &scopes);
-            assert_eq!(result, Some(&vec!["sensitive:read".to_string()]));
+            assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
         }
 
         #[test]

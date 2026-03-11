@@ -367,7 +367,6 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
-            required_scopes: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
         }
