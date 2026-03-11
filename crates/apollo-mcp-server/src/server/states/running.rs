@@ -685,6 +685,7 @@ mod tests {
                 ),
                 labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
+                extra_outputs: None,
             }],
             resource,
             uri: RESOURCE_URI.parse().unwrap(),
@@ -2029,6 +2030,7 @@ mod tests {
                     operation: Arc::new(app_operation),
                     labels: AppLabels::default(),
                     tool: Tool::new("Hello", "app tool", JsonObject::new()),
+                    extra_outputs: None,
                 }],
                 prefetch_operations: vec![],
             };

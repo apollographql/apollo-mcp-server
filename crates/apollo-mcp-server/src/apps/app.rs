@@ -54,6 +54,8 @@ pub(crate) struct AppTool {
     pub(crate) labels: AppLabels,
     /// The MCP tool definition
     pub(crate) tool: Tool,
+    /// Arbitrary extra data to include in the structured content response
+    pub(crate) extra_outputs: Option<Value>,
 }
 
 /// An operation that should be executed for every invocation of an app.
