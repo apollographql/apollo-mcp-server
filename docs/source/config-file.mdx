@@ -184,11 +184,15 @@ The default value for `source` is `"infer"`. Learn more about [defining tools as
 | Infer              | `source` | `"infer"`        | Infer where to load operations based on other configuration options.                                                                                    |
 
 <Note>
+
 When using `source: collection` or `source: uplink`, the MCP Server polls GraphOS for changes periodically. Expect up to **30–60 seconds** before new or modified operations appear as tools.
+
 </Note>
 
 <Tip>
+
 Some MCP clients cache the tool list independently. If tools don't refresh after the polling interval, reconnect or restart your MCP client.
+
 </Tip>
 
 ### Overrides
