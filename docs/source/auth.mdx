@@ -193,6 +193,23 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 
 The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
 
+## Discovery headers
+
+Some OAuth servers or web application firewalls (WAFs) require specific HTTP headers on requests. Use `discovery_headers` to attach custom headers to all OIDC discovery and JWKS requests made by the MCP Server.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    discovery_headers:
+      User-Agent: apollo-mcp-server
+      X-Custom-Header: custom-value
+```
+
+These headers are sent with every request the server makes to discover authorization server metadata and fetch JSON Web Key Sets (JWKS). They are _not_ sent to downstream GraphQL APIs.
+
 ## Anonymous MCP discovery
 
 Some MCP clients need to call discovery methods before they have obtained an OAuth token. By default, these methods require authentication like every other request. You can allow unauthenticated access to these methods by setting `allow_anonymous_mcp_discovery` to `true`:
