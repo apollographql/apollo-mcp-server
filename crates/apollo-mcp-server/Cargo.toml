@@ -38,6 +38,7 @@ opentelemetry-otlp = { version = "0.31.0", features = [
   "http-proto",
   "metrics",
   "trace",
+  "reqwest-rustls",
 ] }
 opentelemetry-semantic-conventions = "0.31.0"
 opentelemetry_sdk = { version = "0.31.0", features = [
