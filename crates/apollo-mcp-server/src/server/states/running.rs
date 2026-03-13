@@ -385,6 +385,8 @@ impl Running {
                     &headers,
                     request.arguments.as_ref(),
                     &self.endpoint,
+                    &self.rhai_engine,
+                    axum_parts,
                 )
                 .await
                 {

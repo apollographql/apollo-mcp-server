@@ -18,6 +18,8 @@ impl RhaiHttp {
 #[derive(Clone, Debug)]
 pub struct HttpOptions {}
 
+// Rhai's #[export_module] macro generates code that uses unwrap internally
+#[allow(clippy::unwrap_used)]
 #[export_module]
 mod http_module {
     use crate::types::{HttpResponse, Promise, PromiseState};

@@ -30,15 +30,17 @@ impl Promise {
     }
 
     pub fn resolve(promise: &mut Self) -> Result<Dynamic, Box<EvalAltResult>> {
-        if matches!(promise.state, PromiseState::Resolved)
-            || matches!(promise.state, PromiseState::Rejected)
-        {
-            return match &promise.resolved_value {
-                Some(value) => Ok(value.clone()),
-                None => Err(
+        match (&promise.state, &promise.resolved_value) {
+            (PromiseState::Resolved, Some(value)) => return Ok(value.clone()),
+            (PromiseState::Rejected, Some(value)) => {
+                return Err(value.clone().cast::<String>().into())
+            }
+            (PromiseState::Resolved | PromiseState::Rejected, None) => {
+                return Err(
                     "Unexpected state: Promise was resolved or rejected but contained no resolved value.".into(),
-                ),
-            };
+                )
+            }
+            _ => {}
         }
 
         let receiver = promise
