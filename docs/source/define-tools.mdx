@@ -202,6 +202,24 @@ overrides:
 
 Config-level descriptions take priority over comment-based descriptions when both are present for the same operation.
 
+### Config-level scope requirements
+
+To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, the server returns HTTP 403 and the client can re-authorize with the precise scopes needed. See [Per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
+
+```yaml title="Config with per-operation scope requirements" {4-9}
+operations:
+  source: local
+  paths: [./operations]
+overrides:
+  required_scopes:
+    GetAlerts: []         # No extra scopes needed
+    CreateAlert:
+      - alerts:write
+    DeleteAlert:
+      - alerts:write
+      - admin
+```
+
 ## Introspection tools
 
 In addition to defining specific tools for pre-defined GraphQL operations, Apollo MCP Server supports introspection tools that enable AI agents to explore the graph schema and execute operations dynamically.

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -208,13 +210,19 @@ struct AuthState {
     config: Config,
     client: reqwest::Client,
     resource_metadata_url: Url,
+    /// Per-operation required scopes, keyed by operation name.
+    required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
 
 impl Config {
     /// Enable auth middleware on the router.
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
-    pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
+    pub fn enable_middleware(
+        &self,
+        router: Router,
+        required_scopes: HashMap<String, Vec<String>>,
+    ) -> Result<Router, TlsConfigError> {
         // Validate server URLs have hosts (fail fast on config errors)
         for (i, server) in self.servers.iter().enumerate() {
             if server.host_str().is_none() {
@@ -260,6 +268,7 @@ impl Config {
             config: self.clone(),
             client,
             resource_metadata_url,
+            required_scopes: Arc::new(required_scopes),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -288,34 +297,58 @@ const ANONYMOUS_DISCOVERY_METHODS: &[&str] = &["initialize", "tools/list", "reso
 /// headroom while preventing abuse from unauthenticated clients.
 const ANONYMOUS_PEEK_BODY_LIMIT: usize = 16 * 1024;
 
-/// Minimal struct for deserializing just the `method` field from a JSON-RPC request.
+/// Struct for deserializing the JSON-RPC `method` and optional `params.name`
+/// from a request body. Used by both anonymous discovery and per-operation scope checks.
 #[derive(Deserialize)]
 struct JsonRpcBodyPeek {
     method: String,
+    params: Option<JsonRpcParams>,
+}
+
+#[derive(Deserialize)]
+struct JsonRpcParams {
+    name: Option<String>,
 }
 
 async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
-    let bytes = match axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT).await {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to read request body in oauth middleware");
-            return Err(StatusCode::PAYLOAD_TOO_LARGE);
-        }
-    };
+    let bytes = axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT)
+        .await
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to read request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
 
-    let json_rpc_body_peek = match serde_json::from_slice::<JsonRpcBodyPeek>(&bytes) {
-        Ok(bytes) => bytes,
-        Err(e) => {
-            tracing::error!(error = %e, "Failed to parse request body in oauth middleware");
-            return Err(StatusCode::BAD_REQUEST);
-        }
-    };
+    let peek = serde_json::from_slice::<JsonRpcBodyPeek>(&bytes)
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to parse request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
 
     *request.body_mut() = axum::body::Body::from(bytes);
 
-    Ok(json_rpc_body_peek)
+    Ok(peek)
+}
+
+/// Checks if a `tools/call` request is missing required scopes for the named operation.
+///
+/// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
+/// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
+fn missing_scopes_for_operation<'a>(
+    peek: &JsonRpcBodyPeek,
+    required_scopes: &'a HashMap<String, Vec<String>>,
+    token_scopes: &[String],
+) -> Option<&'a [String]> {
+    if peek.method != "tools/call" {
+        return None;
+    }
+    let op_name = peek.params.as_ref()?.name.as_deref()?;
+    let required = required_scopes.get(op_name)?;
+    if required.iter().all(|s| token_scopes.contains(s)) {
+        return None;
+    }
+    Some(required)
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
@@ -361,25 +394,34 @@ async fn oauth_validate(
         )
     };
 
-    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
-    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
-    if auth_config.allow_anonymous_mcp_discovery
-        && token.is_none()
-        && request.method() == http::Method::POST
+    // Extract the body once if we need to inspect the JSON-RPC method for either
+    // anonymous discovery or per-operation scope checks.
+    let body_peek = if request.method() == http::Method::POST
+        && ((auth_config.allow_anonymous_mcp_discovery && token.is_none())
+            || !auth_state.required_scopes.is_empty())
     {
-        let json_rpc_body_peek = match extract_body(&mut request).await {
-            Ok(result) => result,
+        match extract_body(&mut request).await {
+            Ok(peek) => Some(peek),
             Err(status) => {
                 tracing::Span::current().record("status_code", status.as_u16());
                 return Ok(status.into_response());
             }
-        };
-
-        if ANONYMOUS_DISCOVERY_METHODS.contains(&json_rpc_body_peek.method.as_str()) {
-            let response = next.run(request).await;
-            tracing::Span::current().record("status_code", response.status().as_u16());
-            return Ok(response);
         }
+    } else {
+        None
+    };
+
+    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
+    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
+    if auth_config.allow_anonymous_mcp_discovery
+        && token.is_none()
+        && body_peek
+            .as_ref()
+            .is_some_and(|peek| ANONYMOUS_DISCOVERY_METHODS.contains(&peek.method.as_str()))
+    {
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
     }
 
     let discovery_timeout = auth_config
@@ -443,6 +485,20 @@ async fn oauth_validate(
         }
     }
 
+    // Per-operation scope check using the already-extracted body peek.
+    if let Some(required) = body_peek.as_ref().and_then(|peek| {
+        missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
+    }) {
+        tracing::warn!(
+            required = ?required,
+            present = ?valid_token.scopes,
+            "Token has insufficient scopes for operation"
+        );
+        tracing::Span::current().record("reason", "insufficient_scope");
+        tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+        return Err(forbidden_error(required));
+    }
+
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
     request.extensions_mut().insert(valid_token);
@@ -488,6 +544,7 @@ mod tests {
             config,
             client: reqwest::Client::new(),
             resource_metadata_url,
+            required_scopes: Arc::new(HashMap::new()),
         }
     }
 
@@ -689,11 +746,12 @@ mod tests {
             config.servers = vec![Url::parse("file:///some/path").unwrap()];
 
             let router = Router::new();
-            let result = config.enable_middleware(router);
+            let err = config
+                .enable_middleware(router, HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ServerUrlMissingHost { index: 0, .. }
             ));
         }
@@ -887,11 +945,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("file:///some/path").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -901,11 +960,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -915,7 +975,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -925,7 +985,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -940,7 +1000,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/my-service/mcp")
@@ -966,7 +1028,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource/my-service/mcp")
@@ -982,7 +1046,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let config = test_config();
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource")
@@ -1175,6 +1241,71 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             "#;
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
+        }
+    }
+
+    mod per_operation_scope_enforcement {
+        use super::*;
+
+        fn required() -> HashMap<String, Vec<String>> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                vec!["sensitive:read".to_string()],
+            )])
+        }
+
+        fn tools_call_peek(op: &str) -> JsonRpcBodyPeek {
+            JsonRpcBodyPeek {
+                method: "tools/call".to_string(),
+                params: Some(JsonRpcParams {
+                    name: Some(op.to_string()),
+                }),
+            }
+        }
+
+        #[test]
+        fn returns_required_scopes_when_token_missing_scope() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
+        }
+
+        #[test]
+        fn returns_none_when_token_has_required_scope() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_unrestricted_operation() {
+            let peek = tools_call_peek("PublicOp");
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_non_tools_call_method() {
+            let peek = JsonRpcBodyPeek {
+                method: "tools/list".to_string(),
+                params: None,
+            };
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_required_scopes_map_is_empty() {
+            let peek = tools_call_peek("RestrictedOp");
+            let empty = HashMap::new();
+            let result = missing_scopes_for_operation(&peek, &empty, &[]);
+            assert!(result.is_none());
         }
     }
 }

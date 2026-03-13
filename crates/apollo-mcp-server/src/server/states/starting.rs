@@ -191,9 +191,11 @@ impl Starting {
                 );
                 let mut router = axum::Router::new().nest_service("/mcp", service);
                 if let Some(auth) = auth {
-                    router = auth.enable_middleware(router).inspect_err(|e| {
-                        error!("Failed to enable auth middleware: {}", e);
-                    })?;
+                    router = auth
+                        .enable_middleware(router, self.config.required_scopes.clone())
+                        .inspect_err(|e| {
+                            error!("Failed to enable auth middleware: {}", e);
+                        })?;
                 }
                 let mut router = with_cors(router, &self.config.cors)?
                     .layer(HttpMetricsLayerBuilder::new().build())
@@ -298,6 +300,7 @@ mod tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: std::collections::HashMap::new(),
+                required_scopes: std::collections::HashMap::new(),
                 search_leaf_depth: 5,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {
