@@ -1,10 +1,10 @@
 ---
 title: Authorization with Apollo MCP Server
 redirectFrom:
-    - /apollo-mcp-server/guides/auth
+  - /apollo-mcp-server/guides/auth
 ---
 
-The Apollo MCP server supports authorizing clients (e.g., LLMs) in accordance with [the MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization).
+The Apollo MCP Server supports authorizing clients (e.g., LLMs) according to [the MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
 
 The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs. You can read more about [security considerations](/apollo-mcp-server/limitations#oauth-token-passthrough) when using this feature.
 
@@ -62,11 +62,11 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 Use the `scope_mode` option to control how the MCP Server validates scopes from OAuth tokens.
 
-| Mode | Behavior |
-|------|----------|
-| `require_all` | Token must have all configured scopes (default) |
+| Mode          | Behavior                                                  |
+| ------------- | --------------------------------------------------------- |
+| `require_all` | Token must have all configured scopes (default)           |
 | `require_any` | Token must have **at least one** of the configured scopes |
-| `disabled` | Skip scope checks entirely |
+| `disabled`    | Skip scope checks entirely                                |
 
 ### Require all scopes (default)
 
@@ -79,7 +79,7 @@ transport:
     scopes:
       - read
       - write
-    scope_mode: require_all  # This is the default
+    scope_mode: require_all # This is the default
 ```
 
 The token must have **all** configured scopes. This is the most restrictive mode.
@@ -120,6 +120,65 @@ Use `scope_mode: disabled` only when downstream services, such as subgraphs, han
 
 </Caution>
 
+## Per-operation scope requirements
+
+The global `scopes` and `scope_mode` settings apply uniformly to every request. For finer-grained control, you can declare required OAuth scopes per operation using `overrides.required_scopes`. This enables _step-up authorization_: a client with a limited token can call most tools freely, but is prompted to re-authorize with elevated scopes when it tries to call a more sensitive operation.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+overrides:
+  required_scopes:
+    GetUser:
+      - user:read
+    DeleteUser:
+      - user:write
+      - admin
+```
+
+When a tool call is made and the token is missing one or more required scopes, the server returns HTTP 403 with a `WWW-Authenticate` header:
+
+```
+WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
+```
+
+The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
+
+## HTTP error responses
+
+Apollo MCP Server returns different HTTP status codes depending on the type of authorization failure, following [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-3.1) and the MCP specification.
+
+| Status             | When returned                                                                                |
+| ------------------ | -------------------------------------------------------------------------------------------- |
+| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails audience validation |
+| `403 Forbidden`    | Token is authentic but lacks the required scopes (global or per-operation)                   |
+
+### WWW-Authenticate header
+
+Every `401` and `403` response includes a `WWW-Authenticate` header to guide clients through the authorization flow.
+
+**401 response** — directs the client to the Protected Resource Metadata document and indicates the scopes to request:
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource",
+                         scope="read write"
+```
+
+**403 response** — includes `error="insufficient_scope"` along with the scopes required for the specific operation:
+
+```http
+HTTP/1.1 403 Forbidden
+WWW-Authenticate: Bearer error="insufficient_scope",
+                         scope="user:write admin",
+                         resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
+```
+
+Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. 
+
 ## Performance considerations
 
 ### Discovery timeout
@@ -134,11 +193,73 @@ transport:
   auth:
     servers:
       - https://auth.example.com
-    discovery_timeout: 10s  # Increase timeout for slower networks (default: 5s)
+    discovery_timeout: 10s # Increase timeout for slower networks (default: 5s)
 ```
 
 **Considerations:**
+
 - Discovery happens during token validation and can add latency to the first authorized request.
 - With multiple fallback URLs (RFC 8414, OIDC Discovery), the cumulative timeout can be 10-15 seconds if all URLs fail.
 - Increase the timeout if your OAuth server is on a slow network or responds slowly.
 - Decrease the timeout in high-performance environments where fast failure is preferred.
+
+### OIDC Discovery compatibility
+
+Per the MCP specification, authorization servers must provide at least one of:
+
+- [OAuth 2.0 Authorization Server Metadata (RFC 8414)](https://datatracker.ietf.org/doc/html/rfc8414) — served at `/.well-known/oauth-authorization-server`
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html) — served at `/.well-known/openid-configuration`
+
+Apollo MCP Server supports both and tries them in the following order to maximize compatibility:
+
+| Priority | URL pattern                                                              | Standard                               |
+| -------- | ------------------------------------------------------------------------ | -------------------------------------- |
+| 1        | `https://auth.example.com/.well-known/oauth-authorization-server/tenant` | RFC 8414 (path-insertion)              |
+| 2        | `https://auth.example.com/.well-known/openid-configuration/tenant`       | OIDC Discovery (path-insertion)        |
+| 3        | `https://auth.example.com/tenant/.well-known/openid-configuration`       | OIDC Discovery (legacy path-appending) |
+
+The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
+
+## Discovery headers
+
+Some OAuth servers or web application firewalls (WAFs) require specific HTTP headers on requests. Use `discovery_headers` to attach custom headers to all OIDC discovery and JWKS requests made by the MCP Server.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    discovery_headers:
+      User-Agent: apollo-mcp-server
+      X-Custom-Header: custom-value
+```
+
+These headers are sent with every request the server makes to discover authorization server metadata and fetch JSON Web Key Sets (JWKS). They are _not_ sent to downstream GraphQL APIs.
+
+## Anonymous MCP discovery
+
+Some MCP clients need to call discovery methods before they have obtained an OAuth token. By default, these methods require authentication like every other request. You can allow unauthenticated access to these methods by setting `allow_anonymous_mcp_discovery` to `true`:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    allow_anonymous_mcp_discovery: true
+```
+
+<Caution>
+
+Enabling this option deviates from the [MCP specification's requirement](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) that authorization be present on every request. Unauthenticated clients will be able to discover which tools and resources the server exposes without providing a token. Only enable this when your deployment requires unauthenticated discovery, for example to support agent frameworks or platform registrations that list tools before initiating an OAuth flow.
+
+</Caution>
+
+The following MCP methods are allowed without authentication when this option is enabled:
+
+| Method           | Description                          |
+| ---------------- | ------------------------------------ |
+| `initialize`     | MCP session initialization handshake |
+| `tools/list`     | List available MCP tools             |
+| `resources/list` | List available MCP resources         |

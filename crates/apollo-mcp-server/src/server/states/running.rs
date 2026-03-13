@@ -374,6 +374,9 @@ impl Running {
                 self.headers.clone()
             };
 
+            // Acquire the lock once: reused for scope check and execution.
+            let ops = self.operations.read().await;
+
             if let Some(app_param) = &app_param {
                 if let Some(res) = find_and_execute_app_tool(
                     &self.apps,
@@ -390,7 +393,7 @@ impl Running {
                     Err(tool_not_found(&tool_name))
                 }
             } else if let Some(res) = find_and_execute_operation(
-                &self.operations.read().await,
+                &ops,
                 &tool_name,
                 &headers,
                 request.arguments.as_ref(),
@@ -590,9 +593,9 @@ impl ServerHandler for Running {
         };
 
         let protocol_version = if self.enable_output_schema {
-            ProtocolVersion::V_2025_06_18
-        } else {
             ProtocolVersion::default()
+        } else {
+            ProtocolVersion::V_2025_03_26
         };
 
         ServerInfo {
@@ -1721,7 +1724,11 @@ mod tests {
             };
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, Some(&ProtocolVersion::default()))
+                .list_tools_impl(
+                    Extensions::new(),
+                    None,
+                    Some(&ProtocolVersion::V_2025_03_26),
+                )
                 .await
                 .unwrap();
 
@@ -1859,7 +1866,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::default());
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_03_26);
         }
 
         #[test]
@@ -1876,7 +1883,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+            assert_eq!(info.protocol_version, ProtocolVersion::default());
         }
     }
 
@@ -1922,7 +1929,7 @@ mod tests {
                 .call_tool_impl(
                     request,
                     &Extensions::new(),
-                    Some(&ProtocolVersion::default()),
+                    Some(&ProtocolVersion::V_2025_03_26),
                 )
                 .await
                 .unwrap();
@@ -2727,17 +2734,17 @@ mod integration_tests {
                 .oneshot(build_get_request(None, None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
         #[tokio::test]
-        async fn get_request_with_invalid_session_returns_unauthorized() {
+        async fn get_request_with_invalid_session_returns_not_found() {
             let service = create_test_service(true);
             let response = service
                 .oneshot(build_get_request(Some("non-existent-session"), None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
 
         async fn initialize_and_get_session_id(
@@ -2850,7 +2857,7 @@ mod integration_tests {
                 .oneshot(build_get_request(Some(&session_id), None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
 
         #[tokio::test]

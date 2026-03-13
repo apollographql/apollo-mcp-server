@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.9.0 (2026-03-10)
+
+### Features
+
+#### Add camelCase-aware search tokenization to schema index
+
+Split camelCase and PascalCase identifiers into individual words before indexing and querying, so searching for "post" now matches types like `PostAnalytics`, `CreatePostInput`, and `createPost`. Uses `heck::ToSnakeCase` to split identifiers at word boundaries, matching Rover's existing behavior.
+
+### Fixes
+
+#### Allow missing `aud` claim in access tokens for AWS Cognito compatibility
+
+AWS Cognito access tokens omit the `aud` claim entirely unless resource binding with managed login is used. Previously, this caused JWT validation to fail with "missing field `aud`" even when `allow_any_audience: true` was configured. The `aud` claim is now optional during deserialization, and tokens without it are accepted when `allow_any_audience` is enabled. When `allow_any_audience` is false, tokens missing `aud` are still explicitly rejected.
+
+#### Fix unbound variable in install script glibc check
+
+The `has_required_glibc` function in the nix install script referenced an undefined `_libc_version` variable in its error message. Because the script runs with `set -u`, this caused a crash instead of printing the intended diagnostic on systems with glibc < 2.38 (e.g. Red Hat UBI9). The variable is now correctly referenced as `_glibc_version`.
+
+#### Fix isError for partial-success GraphQL responses
+
+When a GraphQL resolver fails at runtime, servers often return a response where `errors` is populated alongside a non-null `data` object (e.g. `{"errors": [...], "data": {"createUsers": null}}`). The `execute` tool was incorrectly treating these responses as successes because its `isError` logic required `data` to be absent or null. The check now only requires the presence of a non-null `errors` array, which is the correct signal per the [GraphQL spec §7.1.6](https://spec.graphql.org/draft/#sec-Errors).
+
+#### Fix path-aware OAuth protected resource metadata URL per RFC 9728
+
+The `resource_metadata` URL in the `WWW-Authenticate` header and the `.well-known` endpoint route were ignoring the path component of the configured `resource` URL. Per [RFC 9728 Section 3](https://datatracker.ietf.org/doc/html/rfc9728#name-obtaining-protected-resourc), the well-known URI must be formed by inserting `/.well-known/oauth-protected-resource` between the host and path components. This fixes OAuth metadata discovery for MCP servers deployed behind reverse proxies with path-based routing, where clients like VS Code and Claude could not authenticate.
+
 ## 1.8.2 (2026-03-04)
 
 ### Fixes
