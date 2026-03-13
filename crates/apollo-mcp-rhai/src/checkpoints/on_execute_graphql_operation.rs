@@ -60,6 +60,14 @@ pub fn on_execute_graphql_operation(
     headers: &HeaderMap,
     axum_parts: Option<&Parts>,
 ) -> Result<(Url, HeaderMap), McpError> {
+    let hook_name = "on_execute_graphql_operation";
+    let mut engine_guard = engine.lock();
+
+    // Exit early if method doesn't exist, allow us to skip some more expensive cloning later in this method
+    if !engine_guard.ast_has_function(hook_name) {
+        return Ok((endpoint.clone(), headers.clone()));
+    }
+
     let context = OnExecuteGraphqlOperationContext {
         endpoint: endpoint.to_string(),
         headers: RhaiHeaderMap::from(headers.clone()),
@@ -71,9 +79,8 @@ pub fn on_execute_graphql_operation(
 
     let shared_context = Arc::new(Mutex::new(context));
 
-    engine
-        .lock()
-        .execute_hook("on_execute_graphql_operation", (shared_context.clone(),))
+    engine_guard
+        .execute_hook(hook_name, (shared_context.clone(),))
         // TODO: How much of this could be made generic and/or moved into execute_hook?
         .map_err(|err| match *err {
             EvalAltResult::ErrorRuntime(error_data, _) => {
@@ -145,13 +152,17 @@ mod tests {
     fn should_pass_through_when_no_hook_defined() {
         let engine = create_engine("");
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
-        let headers = HeaderMap::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer token123".parse().unwrap());
 
         let (result_url, result_headers) =
             on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
 
         assert_eq!(result_url, url);
-        assert!(result_headers.is_empty());
+        assert_eq!(
+            result_headers.get("authorization").unwrap(),
+            "Bearer token123"
+        );
     }
 
     #[test]

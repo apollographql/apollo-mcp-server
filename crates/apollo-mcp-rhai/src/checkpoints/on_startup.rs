@@ -6,7 +6,14 @@ use rhai::EvalAltResult;
 use crate::engine::RhaiEngine;
 
 pub fn on_startup(engine: &Arc<Mutex<RhaiEngine>>) -> Result<(), Box<EvalAltResult>> {
-    engine.lock().execute_hook("on_startup", ())?;
+    let hook_name = "on_startup";
+    let mut engine_guard = engine.lock();
+
+    if !engine_guard.ast_has_function(hook_name) {
+        return Ok(());
+    }
+
+    engine_guard.execute_hook(hook_name, ())?;
     Ok(())
 }
 
