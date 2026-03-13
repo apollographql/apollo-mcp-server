@@ -17,6 +17,7 @@ use axum_extra::{
 };
 use http::Method;
 use networked_token_validator::NetworkedTokenValidator;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -65,9 +66,12 @@ pub enum TlsConfigError {
 }
 
 impl TlsConfig {
-    /// Build a reqwest client configured with the TLS settings
-    pub fn build_client(&self) -> Result<reqwest::Client, TlsConfigError> {
-        let mut builder = reqwest::Client::builder();
+    /// Build a reqwest client configured with the TLS settings and default headers
+    pub fn build_client(
+        &self,
+        default_headers: HeaderMap,
+    ) -> Result<reqwest::Client, TlsConfigError> {
+        let mut builder = reqwest::Client::builder().default_headers(default_headers);
 
         // Add custom CA certificate if provided
         if let Some(ca_cert_path) = &self.ca_cert {
@@ -95,6 +99,23 @@ impl TlsConfig {
 
         Ok(builder.build()?)
     }
+}
+
+/// Deserialize a `HeaderMap` from a map of string keys and values.
+fn deserialize_header_map<'de, D>(deserializer: D) -> Result<HeaderMap, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = HashMap::<String, String>::deserialize(deserializer)?;
+    let mut headers = HeaderMap::with_capacity(map.len());
+    for (key, value) in map {
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        let value =
+            HeaderValue::from_str(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        headers.insert(name, value);
+    }
+    Ok(headers)
 }
 
 /// Auth configuration options
@@ -151,6 +172,14 @@ pub struct Config {
     #[serde(serialize_with = "humantime_serde::serialize")]
     #[schemars(with = "Option<String>")]
     pub discovery_timeout: Option<Duration>,
+
+    /// Headers to include in OIDC discovery and JWKS requests.
+    ///
+    /// Use this to set headers like `User-Agent` that may be required
+    /// by upstream OAuth servers or web application firewalls.
+    #[serde(default, deserialize_with = "deserialize_header_map")]
+    #[schemars(with = "HashMap<String, String>")]
+    pub discovery_headers: HeaderMap,
 }
 
 /// TLS configuration for OAuth server connections
@@ -260,8 +289,8 @@ impl Config {
             Json(auth_state.config.into())
         }
 
-        // Build HTTP client with TLS configuration
-        let client = self.tls.build_client()?;
+        // Build HTTP client with TLS configuration and discovery headers
+        let client = self.tls.build_client(self.discovery_headers.clone())?;
         let resource_metadata_url = build_resource_metadata_url(&self.resource);
         let metadata_route_path = resource_metadata_url.path().to_string();
         let auth_state = AuthState {
@@ -535,6 +564,7 @@ mod tests {
             allow_anonymous_mcp_discovery: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
+            discovery_headers: HeaderMap::new(),
         }
     }
 
@@ -759,7 +789,7 @@ mod tests {
         #[test]
         fn default_config_builds_client() {
             let config = TlsConfig::default();
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -769,7 +799,7 @@ mod tests {
                 ca_cert: None,
                 danger_accept_invalid_certs: true,
             };
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -815,7 +845,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some(temp_file.path().to_path_buf()),
                 danger_accept_invalid_certs: false,
             };
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -825,7 +855,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some("/nonexistent/path/to/cert.pem".into()),
                 danger_accept_invalid_certs: false,
             };
-            let result = config.build_client();
+            let result = config.build_client(HeaderMap::new());
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),
@@ -843,7 +873,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some(temp_file.path().to_path_buf()),
                 danger_accept_invalid_certs: false,
             };
-            let result = config.build_client();
+            let result = config.build_client(HeaderMap::new());
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),
@@ -882,6 +912,77 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
+        }
+
+        #[test]
+        fn yaml_deserialization_with_discovery_headers() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              discovery_headers:
+                User-Agent: apollo-mcp-server
+                X-Custom-Header: custom-value
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(
+                config
+                    .discovery_headers
+                    .get("user-agent")
+                    .map(|v| v.to_str().unwrap()),
+                Some("apollo-mcp-server")
+            );
+            assert_eq!(
+                config
+                    .discovery_headers
+                    .get("x-custom-header")
+                    .map(|v| v.to_str().unwrap()),
+                Some("custom-value")
+            );
+        }
+
+        #[test]
+        fn yaml_deserialization_without_discovery_headers_defaults_to_empty() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(config.discovery_headers.is_empty());
+        }
+
+        #[tokio::test]
+        async fn build_client_with_discovery_headers() {
+            let mut mock_server = mockito::Server::new_async().await;
+            let mock = mock_server
+                .mock("GET", "/test")
+                .match_header("user-agent", "apollo-mcp-server")
+                .create_async()
+                .await;
+
+            let config = TlsConfig::default();
+            let mut headers = HeaderMap::new();
+            headers.insert("user-agent", HeaderValue::from_static("apollo-mcp-server"));
+            let client = config.build_client(headers).unwrap();
+
+            client
+                .get(format!("{}/test", mock_server.url()))
+                .send()
+                .await
+                .unwrap();
+
+            mock.assert_async().await;
         }
     }
 
