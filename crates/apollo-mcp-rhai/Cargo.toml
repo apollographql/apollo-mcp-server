@@ -14,7 +14,7 @@ parking_lot = "0.12.5"
 regex = "1.11.1"
 reqwest.workspace = true
 rhai = { version = "1.24.0", features = ["sync", "serde"] }
-rmcp = { version = "0.16", features = ["server"] }
+rmcp.workspace = true
 serde_json.workspace = true
 sha2 = "0.10.9"
 tokio.workspace = true

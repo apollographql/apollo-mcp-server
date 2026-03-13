@@ -25,6 +25,11 @@ insta = { version = "1.43.1", features = [
   "yaml",
   "glob",
 ] }
+rmcp = { version = "0.17", features = [
+  "server",
+  "transport-io",
+  "transport-streamable-http-server",
+] }
 reqwest = { version = "0.13.0", default-features = false, features = [
   "gzip",
   "json",
