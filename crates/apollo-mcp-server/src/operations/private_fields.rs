@@ -138,11 +138,7 @@ pub(crate) fn process_private_directives(query: &str) -> Option<(String, Private
     }
 
     let stripped_doc = strip_private_directives(&document);
-    let stripped_op = stripped_doc.definitions.iter().find_map(|def| match def {
-        Definition::OperationDefinition(op) => Some(op),
-        _ => None,
-    })?;
-    let stripped_query = stripped_op.serialize().no_indent().to_string();
+    let stripped_query = stripped_doc.serialize().no_indent().to_string();
 
     Some((stripped_query, tree))
 }
@@ -410,5 +406,17 @@ mod tests {
         });
         let filtered = filter_private_fields(&response, &tree);
         assert_eq!(filtered, response);
+    }
+
+    #[test]
+    fn process_private_directives_includes_fragment_definitions() {
+        let query = "query Q { ...F } fragment F on Query { name email @private }";
+        let (stripped, tree) = process_private_directives(query).unwrap();
+        assert!(tree.children.get("email").unwrap().is_private);
+        assert!(
+            stripped.contains("fragment F"),
+            "stripped query should include fragment definitions, got: {stripped}"
+        );
+        assert!(!stripped.contains("@private"));
     }
 }
