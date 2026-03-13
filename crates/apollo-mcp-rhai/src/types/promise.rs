@@ -71,10 +71,10 @@ impl Promise {
     }
 
     pub fn to_string(promise: &mut Self) -> String {
-        format!("Promise {{ state: {:?} }}  ", promise.state)
+        format!("Promise {{ state: {:?} }}", promise.state)
     }
 
     pub fn to_debug(promise: &mut Self) -> String {
-        format!("Promise {{ state: {:?} }}  ", promise.state)
+        format!("Promise {{ state: {:?} }}", promise.state)
     }
 }

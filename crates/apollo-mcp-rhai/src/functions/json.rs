@@ -18,7 +18,7 @@ mod json_module {
 
     #[rhai_fn(name = "stringify", pure)]
     pub(crate) fn from_value(x: &mut Value) -> String {
-        format!("{x:?}")
+        x.to_string()
     }
 
     #[rhai_fn(name = "stringify", pure, return_raw)]

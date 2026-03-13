@@ -24,7 +24,7 @@ impl RhaiEngine {
     pub fn new() -> Self {
         let mut engine = Engine::new();
 
-        let resolver = FileModuleResolver::new_with_path("/rhai");
+        let resolver = FileModuleResolver::new_with_path("rhai");
         engine.set_module_resolver(resolver);
 
         let scope = Self::create_scope();

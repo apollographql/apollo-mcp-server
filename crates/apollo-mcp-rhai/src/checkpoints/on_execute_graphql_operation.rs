@@ -63,11 +63,10 @@ pub fn on_execute_graphql_operation(
     let context = OnExecuteGraphqlOperationContext {
         endpoint: endpoint.to_string(),
         headers: RhaiHeaderMap::from(headers.clone()),
-        incoming_request: RhaiHttpParts::from(
-            axum_parts
-                .cloned()
-                .unwrap_or(http::Request::new(()).into_parts().0),
-        ),
+        incoming_request: match axum_parts {
+            Some(parts) => RhaiHttpParts::from(parts.clone()),
+            None => RhaiHttpParts::default(),
+        },
     };
 
     let shared_context = Arc::new(Mutex::new(context));

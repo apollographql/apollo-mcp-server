@@ -10,6 +10,16 @@ pub struct RhaiHttpParts {
     headers: RhaiHeaderMap,
 }
 
+impl Default for RhaiHttpParts {
+    fn default() -> Self {
+        Self {
+            method: String::new(),
+            uri: String::new(),
+            headers: RhaiHeaderMap::from(http::HeaderMap::new()),
+        }
+    }
+}
+
 impl From<Parts> for RhaiHttpParts {
     fn from(parts: Parts) -> Self {
         Self {
