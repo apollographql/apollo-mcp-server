@@ -9,7 +9,7 @@ pub struct RhaiHttp {}
 impl RhaiHttp {
     pub fn register(engine: &mut Engine) {
         // Incomplete (needs POST and to implement options), mark as experimental for now
-        if cfg!(feature = "experimental_rhai") {
+        if cfg!(any(feature = "experimental_rhai", test)) {
             engine.register_static_module("Http", exported_module!(http_module).into());
         }
     }
