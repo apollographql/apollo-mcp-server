@@ -96,7 +96,7 @@ syn = "2.0.106"
 toml = "1.0.0"
 
 [features]
-experimental_rhai = []
+experimental_rhai = ["apollo-mcp-rhai/experimental_rhai"]
 
 [lints]
 workspace = true

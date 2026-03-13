@@ -8,7 +8,10 @@ pub struct RhaiHttp {}
 
 impl RhaiHttp {
     pub fn register(engine: &mut Engine) {
-        engine.register_static_module("Http", exported_module!(http_module).into());
+        // Incomplete (needs POST and to implement options), mark as experimental for now
+        if cfg!(feature = "experimental_rhai") {
+            engine.register_static_module("Http", exported_module!(http_module).into());
+        }
     }
 }
 
@@ -28,6 +31,7 @@ mod http_module {
     #[rhai_fn(name = "get", return_raw)]
     pub(crate) fn get(
         url: ImmutableString,
+        // TODO: Implement options
         _options: HttpOptions,
     ) -> Result<Promise, Box<EvalAltResult>> {
         let (tx, rx) = oneshot::channel();

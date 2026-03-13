@@ -25,5 +25,8 @@ url.workspace = true
 mockito = "1.7.0"
 tracing-test = "0.2.5"
 
+[features]
+experimental_rhai = []
+
 [lints]
 workspace = true
