@@ -132,17 +132,9 @@ impl Operation {
 
             // Detect @private directives and prepare stripped query text
             let private_tree = collect_private_fields(&operation.selection_set, &named_fragments);
-            let (stripped_source_text, private_fields) = if private_tree.has_private_fields() {
-                let stripped_doc = strip_private_directives(&document);
-                (
-                    Some(stripped_doc.serialize().no_indent().to_string()),
-                    Some(private_tree),
-                )
-            } else {
-                (None, None)
-            };
+            let has_private_fields = private_tree.has_private_fields();
 
-            // Generate output schema from selection set (only if enabled)
+            // Generate output schema from selection set (only if enabled).
             let output_schema = if enable_output_schema {
                 if let Some(root_type_name) =
                     graphql_schema.root_operation(operation.operation_type)
@@ -154,6 +146,11 @@ impl Operation {
                             graphql_schema,
                             custom_scalar_map,
                             &named_fragments,
+                            if has_private_fields {
+                                Some(&private_tree)
+                            } else {
+                                None
+                            },
                         ))
                         .ok()
                         .and_then(|v| match v {
@@ -168,6 +165,16 @@ impl Operation {
                 }
             } else {
                 None
+            };
+
+            let (stripped_source_text, private_fields) = if has_private_fields {
+                let stripped_doc = strip_private_directives(&document);
+                (
+                    Some(stripped_doc.serialize().no_indent().to_string()),
+                    Some(private_tree),
+                )
+            } else {
+                (None, None)
             };
 
             let mut tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(

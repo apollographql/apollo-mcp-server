@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use apollo_compiler::{
     Node,
@@ -31,7 +31,8 @@ pub(crate) fn collect_private_fields(
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
 ) -> PrivateFieldTree {
     let mut tree = PrivateFieldTree::default();
-    collect_from_selections(selection_set, named_fragments, &mut tree);
+    let mut visited = HashSet::new();
+    collect_from_selections(selection_set, named_fragments, &mut tree, &mut visited);
     tree
 }
 
@@ -39,6 +40,7 @@ fn collect_from_selections(
     selection_set: &[Selection],
     named_fragments: &HashMap<String, Node<FragmentDefinition>>,
     tree: &mut PrivateFieldTree,
+    visited: &mut HashSet<String>,
 ) {
     for selection in selection_set {
         match selection {
@@ -57,20 +59,34 @@ fn collect_from_selections(
                 {
                     tree.children.entry(response_key).or_default().is_private = true;
                 } else if !field.selection_set.is_empty() {
-                    let mut child = PrivateFieldTree::default();
-                    collect_from_selections(&field.selection_set, named_fragments, &mut child);
-                    if child.has_private_fields() {
-                        tree.children.insert(response_key, child);
+                    let child = tree.children.entry(response_key.clone()).or_default();
+                    collect_from_selections(&field.selection_set, named_fragments, child, visited);
+                    // Remove if no private fields were found, to avoid false positives
+                    // from has_private_fields() seeing an empty entry.
+                    if !tree
+                        .children
+                        .get(&response_key)
+                        .is_some_and(|c| c.has_private_fields())
+                    {
+                        tree.children.remove(&response_key);
                     }
                 }
             }
             Selection::FragmentSpread(spread) => {
-                if let Some(fragment) = named_fragments.get(spread.fragment_name.as_str()) {
-                    collect_from_selections(&fragment.selection_set, named_fragments, tree);
+                let name = spread.fragment_name.to_string();
+                if visited.insert(name.clone())
+                    && let Some(fragment) = named_fragments.get(&name)
+                {
+                    collect_from_selections(
+                        &fragment.selection_set,
+                        named_fragments,
+                        tree,
+                        visited,
+                    );
                 }
             }
             Selection::InlineFragment(inline) => {
-                collect_from_selections(&inline.selection_set, named_fragments, tree);
+                collect_from_selections(&inline.selection_set, named_fragments, tree, visited);
             }
         }
     }
@@ -138,11 +154,7 @@ pub(crate) fn process_private_directives(query: &str) -> Option<(String, Private
     }
 
     let stripped_doc = strip_private_directives(&document);
-    let stripped_op = stripped_doc.definitions.iter().find_map(|def| match def {
-        Definition::OperationDefinition(op) => Some(op),
-        _ => None,
-    })?;
-    let stripped_query = stripped_op.serialize().no_indent().to_string();
+    let stripped_query = stripped_doc.serialize().no_indent().to_string();
 
     Some((stripped_query, tree))
 }
@@ -292,10 +304,30 @@ mod tests {
     }
 
     #[test]
+    fn cyclic_fragments_do_not_stack_overflow() {
+        let tree = parse_and_collect(
+            "query Q { ...A } fragment A on Query { ...B fieldA @private } fragment B on Query { ...A fieldB }",
+        );
+        assert!(tree.has_private_fields());
+        assert!(tree.children.get("fieldA").unwrap().is_private);
+    }
+
+    #[test]
     fn inline_fragment_private_field() {
         let tree = parse_and_collect("query Q { ... on Query { name email @private } }");
         assert!(tree.has_private_fields());
         assert!(tree.children.get("email").unwrap().is_private);
+    }
+
+    #[test]
+    fn multiple_fragments_merge_nested_private_children() {
+        let tree = parse_and_collect(
+            "query Q { ...F1 ...F2 } fragment F1 on Query { user { name @private } } fragment F2 on Query { user { email @private } }",
+        );
+        assert!(tree.has_private_fields());
+        let user = tree.children.get("user").unwrap();
+        assert!(user.children.get("name").unwrap().is_private);
+        assert!(user.children.get("email").unwrap().is_private);
     }
 
     #[test]
@@ -410,5 +442,17 @@ mod tests {
         });
         let filtered = filter_private_fields(&response, &tree);
         assert_eq!(filtered, response);
+    }
+
+    #[test]
+    fn process_private_directives_includes_fragment_definitions() {
+        let query = "query Q { ...F } fragment F on Query { name email @private }";
+        let (stripped, tree) = process_private_directives(query).unwrap();
+        assert!(tree.children.get("email").unwrap().is_private);
+        assert!(
+            stripped.contains("fragment F"),
+            "stripped query should include fragment definitions, got: {stripped}"
+        );
+        assert!(!stripped.contains("@private"));
     }
 }
