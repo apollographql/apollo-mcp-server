@@ -25,6 +25,7 @@ use crate::{
     operations::{MutationMode, RawOperation},
     server::Transport,
 };
+use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::{Config, Running, shutdown_signal};
 
@@ -145,6 +146,20 @@ impl Starting {
             _ => None, // No health checks for Stdio or when disabled.
         };
 
+        let mut engine = RhaiEngine::new();
+        engine.load_from_path().map_err(|err| {
+            error!("Error loading Rhai scripts: {err}");
+            ServerError::RhaiError
+        })?;
+        let engine = Arc::new(parking_lot::Mutex::new(engine));
+
+        if cfg!(feature = "experimental_rhai") {
+            checkpoints::on_startup(&engine).map_err(|err| {
+                error!("Error when executing on_startup hook: {err}");
+                ServerError::RhaiError
+            })?;
+        }
+
         let running = Running {
             schema,
             operations: Arc::new(RwLock::new(operations)),
@@ -168,6 +183,7 @@ impl Starting {
             descriptions: self.config.descriptions,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
+            rhai_engine: engine,
         };
 
         match self.config.transport {

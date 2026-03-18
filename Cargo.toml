@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/apollo-mcp-server",
   "crates/apollo-mcp-registry",
+  "crates/apollo-mcp-rhai",
   "crates/apollo-schema-index",
 ]
 
@@ -23,6 +24,11 @@ insta = { version = "1.43.1", features = [
   "redactions",
   "yaml",
   "glob",
+] }
+rmcp = { version = "0.17", features = [
+  "server",
+  "transport-io",
+  "transport-streamable-http-server",
 ] }
 reqwest = { version = "0.13.0", default-features = false, features = [
   "gzip",

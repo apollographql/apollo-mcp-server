@@ -3,8 +3,10 @@ use std::sync::Arc;
 use futures::TryFutureExt;
 use futures::future::try_join_all;
 use http::HeaderMap;
+use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
+use parking_lot::Mutex;
 use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Tool};
 use serde_json::{Map, Value, json};
 use url::Url;
@@ -13,9 +15,11 @@ use crate::apps::app::{AppTarget, AppTool};
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::operations::Operation;
+use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::App;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn find_and_execute_app_tool(
     apps: &[App],
     app_name: &str,
@@ -23,12 +27,25 @@ pub(crate) async fn find_and_execute_app_tool(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    axum_parts: Option<&Parts>,
 ) -> Option<Result<CallToolResult, McpError>> {
     let app = apps.iter().find(|app| app.name == app_name)?;
 
     for tool in &app.tools {
         if tool.tool.name == tool_name {
-            return Some(execute_app_tool(app, tool, headers, arguments, endpoint).await);
+            return Some(
+                execute_app_tool(
+                    app,
+                    tool,
+                    headers,
+                    arguments,
+                    endpoint,
+                    rhai_engine,
+                    axum_parts,
+                )
+                .await,
+            );
         }
     }
     None
@@ -40,11 +57,16 @@ async fn execute_app_tool(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    axum_parts: Option<&Parts>,
 ) -> Result<CallToolResult, McpError> {
+    let (endpoint, headers) =
+        checkpoints::on_execute_graphql_operation(rhai_engine, endpoint, headers, axum_parts)?;
+
     let graphql_request = graphql::Request {
         input: Value::from(filter_inputs_for_operation(arguments, &tool.operation)),
-        endpoint,
-        headers,
+        endpoint: &endpoint,
+        headers: &headers,
     };
 
     let result = tool
@@ -62,8 +84,8 @@ async fn execute_app_tool(
 
         let graphql_request = graphql::Request {
             input: Value::from(filter_inputs_for_operation(arguments, &prefetch.operation)),
-            endpoint,
-            headers,
+            endpoint: &endpoint,
+            headers: &headers,
         };
         prefetch_calls.push(
             prefetch
@@ -299,6 +321,8 @@ mod tests {
             &HeaderMap::new(),
             Some(&object!({"apples": 1, "oranges": 2, "bananas": 3})),
             &server.url().parse().unwrap(),
+            &Arc::new(Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await
         .unwrap();
@@ -393,6 +417,8 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
+            &Arc::new(Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await;
 
@@ -436,6 +462,8 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
+            &Arc::new(Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await;
 
@@ -478,6 +506,8 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
+            &Arc::new(Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await;
 
