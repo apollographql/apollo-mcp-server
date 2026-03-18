@@ -1,0 +1,142 @@
+---
+title: Lifecycle Hooks
+subtitle: Hook into the Apollo MCP Server request lifecycle with Rhai
+---
+
+Lifecycle hooks let your Rhai scripts run at specific points during request processing. To use a hook, define a function in `rhai/main.rhai` with the hook's name. The server calls your function automatically when it reaches that lifecycle event.
+
+If a hook function isn't defined, the server skips it with no performance cost.
+
+## on_execute_graphql_operation
+
+Called before every outgoing GraphQL HTTP request. Use this hook to inspect or modify the request endpoint and headers before they're sent to your GraphQL API.
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    // ctx gives you access to the outgoing request
+}
+```
+
+### Context object
+
+The `ctx` parameter provides the following properties:
+
+| Property | Type | Access | Description |
+|----------|------|--------|-------------|
+| `endpoint` | `String` | read/write | The URL of the GraphQL endpoint the request will be sent to. |
+| `headers` | `HeaderMap` | read/write | The HTTP headers that will be sent with the GraphQL request. |
+| `incoming_request` | `HttpParts` | read-only | The original HTTP request received by the MCP server. Only available when using HTTP transport. |
+
+### Working with headers
+
+Headers use index syntax for reading and writing:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    // Read a header value (returns empty string if not present)
+    let auth = ctx.headers["authorization"];
+
+    // Set a header
+    ctx.headers["x-request-id"] = "abc-123";
+}
+```
+
+### The incoming_request object
+
+When the MCP server uses HTTP transport (`streamable_http`), `ctx.incoming_request` gives you read-only access to the original request that the MCP client sent to the server.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `method` | `String` | The HTTP method (for example, `"POST"`). |
+| `uri` | `String` | The request URI path (for example, `"/mcp"`). |
+| `headers` | `HeaderMap` | The HTTP headers from the incoming request. |
+
+<Note>
+
+When using `stdio` transport, `incoming_request` is empty because there is no HTTP request.
+
+</Note>
+
+### Example: Copy a header to a different name
+
+You can read a header from the incoming request and write it to the outgoing request under a different name:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    let token = ctx.incoming_request.headers["authorization"];
+
+    if token != "" {
+        ctx.headers["x-forwarded-auth"] = token;
+    }
+}
+```
+
+### Example: Route to a different endpoint
+
+You can change the target GraphQL endpoint based on request properties:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    let env = Env::get("GRAPHQL_REGION");
+
+    if env == "eu" {
+        ctx.endpoint = "https://eu.api.example.com/graphql";
+    }
+}
+```
+
+## Error handling with throw
+
+Use `throw` inside a hook to abort the current request and return an error to the MCP client. Throw a map with `message` and `code` fields for a structured error response:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    let token = ctx.incoming_request.headers["authorization"];
+
+    if token == "" {
+        throw #{
+            message: "Missing authorization header",
+            code: ErrorCode::INVALID_REQUEST
+        };
+    }
+}
+```
+
+### Error codes
+
+| Constant | Description |
+|----------|-------------|
+| `ErrorCode::INVALID_REQUEST` | The request is invalid. Use this for client errors like missing headers or bad input. |
+| `ErrorCode::INTERNAL_ERROR` | An internal server error. This is the default if no code is provided. |
+
+### Throw behavior
+
+- Throwing a map with `message` and `code` returns a structured error to the client with those values.
+- Throwing a map without a `message` field defaults the message to `"Internal error"`.
+- Throwing a non-map value (for example, a plain string) returns a generic internal error. The thrown value is logged server-side but not sent to the client.
+
+<Caution>
+
+When you throw a non-map value, the actual error message is not forwarded to the MCP client. Always throw a map with a `message` field if you want the client to see a specific error message.
+
+</Caution>
+
+## Global state
+
+Variables defined at the top level of `main.rhai` persist across all hook calls for the lifetime of the server. This is useful for values that don't change between requests, like environment-based configuration:
+
+```rhai
+let backend_url = Env::get("BACKEND_URL");
+let api_key = Env::get("API_KEY");
+
+fn on_execute_graphql_operation(ctx) {
+    ctx.endpoint = backend_url;
+    ctx.headers["x-api-key"] = api_key;
+}
+```
+
+<Note>
+
+Global variables are shared across all hook invocations. Avoid relying on mutable global state, as the order in which concurrent requests execute hooks is not guaranteed.
+
+</Note>

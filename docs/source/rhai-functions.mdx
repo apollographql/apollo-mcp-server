@@ -1,0 +1,115 @@
+---
+title: Functions Reference
+subtitle: Built-in functions available in Rhai scripts
+---
+
+Apollo MCP Server provides several built-in function namespaces in the Rhai scripting environment. These functions are available in all Rhai scripts without any imports.
+
+## Env
+
+Read environment variables from the server process.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `Env::get(name)` | Returns the value of an environment variable. Returns an empty string if the variable is not set. | `let key = Env::get("API_KEY");` |
+
+<Note>
+
+When an environment variable is not set, `Env::get` logs a warning and returns an empty string. It does not throw an error.
+
+</Note>
+
+```rhai
+let api_key = Env::get("API_KEY");
+let region = Env::get("AWS_REGION");
+
+fn on_execute_graphql_operation(ctx) {
+    ctx.headers["x-api-key"] = api_key;
+}
+```
+
+## JSON
+
+Parse and serialize JSON data.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `JSON::parse(input)` | Parses a JSON string into a Rhai value (map, array, string, number, etc.). Throws on invalid JSON. | `let obj = JSON::parse("{\"key\": \"value\"}");` |
+| `JSON::stringify(value)` | Converts a Rhai value into a JSON string. | `let s = JSON::stringify(#{name: "apollo"});` |
+
+```rhai
+// Parse a JSON string into an object
+let data = JSON::parse("{\"name\": \"Apollo\", \"version\": 1}");
+print(data.name);    // "Apollo"
+print(data.version); // 1
+
+// Convert a Rhai map to a JSON string
+let obj = #{status: "ok", count: 42};
+let json_string = JSON::stringify(obj);
+print(json_string);  // {"count":42,"status":"ok"}
+```
+
+## Sha256
+
+Compute SHA-256 cryptographic hashes.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `Sha256::digest(input)` | Returns the hex-encoded SHA-256 hash of the input string. | `let hash = Sha256::digest("hello");` |
+
+```rhai
+let hash = Sha256::digest("hello");
+// hash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+```
+
+## Regex
+
+Perform regular expression operations on strings.
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `Regex::is_match(string, pattern)` | Returns `true` if the pattern matches anywhere in the string. Throws on invalid pattern. | `Regex::is_match("hello123", "\\d+")` |
+| `Regex::replace(string, pattern, replacement)` | Replaces all matches of the pattern with the replacement string. Supports numbered (`$1`) and named (`$name`) capture groups. Throws on invalid pattern. | `Regex::replace("foo bar", "foo", "baz")` |
+| `Regex::matches(string, pattern)` | Returns an array of all matching substrings. Returns an empty array if there are no matches. Throws on invalid pattern. | `Regex::matches("abc 123 def 456", "\\d+")` |
+
+```rhai
+// Check if a string contains digits
+let has_numbers = Regex::is_match("order-123", "\\d+");
+// has_numbers = true
+
+// Replace all matches
+let result = Regex::replace("foo bar foo", "foo", "baz");
+// result = "baz bar baz"
+
+// Use capture groups to reformat a date
+let reformatted = Regex::replace("2025-01-15", "(\\d{4})-(\\d{2})-(\\d{2})", "$2/$3/$1");
+// reformatted = "01/15/2025"
+
+// Use named capture groups
+let swapped = Regex::replace("John Smith", "(?P<first>\\w+) (?P<last>\\w+)", "$last, $first");
+// swapped = "Smith, John"
+
+// Find all matches
+let numbers = Regex::matches("abc 123 def 456", "\\d+");
+// numbers = ["123", "456"]
+```
+
+## ErrorCode
+
+Constants for structured error responses when using `throw` in lifecycle hooks. See [Lifecycle Hooks](/apollo-mcp-server/rhai-lifecycle#error-handling-with-throw) for details on error handling.
+
+| Constant | Description |
+|----------|-------------|
+| `ErrorCode::INVALID_REQUEST` | Indicates a client error, such as a missing header or invalid input. |
+| `ErrorCode::INTERNAL_ERROR` | Indicates a server-side error. This is the default when no code is specified. |
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    if ctx.incoming_request.headers["authorization"] == "" {
+        throw #{
+            message: "Authorization required",
+            code: ErrorCode::INVALID_REQUEST
+        };
+    }
+}
+```

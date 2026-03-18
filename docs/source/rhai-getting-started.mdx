@@ -1,0 +1,88 @@
+---
+title: Rhai Scripting
+subtitle: Customize Apollo MCP Server behavior with Rhai scripts
+---
+
+Apollo MCP Server supports [Rhai](https://rhai.rs), a lightweight embedded scripting language. Rhai scripts let you hook into the server's request lifecycle to inspect and modify outgoing GraphQL requests, all without recompiling or rebuilding the server.
+
+Common use cases include:
+
+- Forwarding authentication headers from incoming MCP requests to your GraphQL endpoint
+- Routing requests to different GraphQL endpoints based on request properties
+- Rejecting requests that don't meet certain criteria
+
+## Setup
+
+Create a `rhai/` directory alongside your server configuration, and add a `main.rhai` file inside it:
+
+```
+your-project/
+├── config.yaml
+└── rhai/
+    └── main.rhai
+```
+
+The `rhai/main.rhai` file is the entry point for all Rhai scripting. The server loads this file on startup. If the file doesn't exist, the server starts normally without any scripting.
+
+## Writing your first hook
+
+Hooks are regular Rhai functions with specific names. When the server reaches a lifecycle event, it calls the matching function if one is defined.
+
+The following example adds a custom header to every outgoing GraphQL request:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    ctx.headers["x-custom-header"] = "my-value";
+}
+```
+
+For a full list of available hooks and their context objects, see [Lifecycle Hooks](/apollo-mcp-server/rhai-lifecycle).
+
+## Logging
+
+Rhai's built-in `print` and `debug` statements write to the server's log output. Use them for debugging your scripts:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    print("Outgoing request to: " + ctx.endpoint);
+}
+```
+
+## Global variables
+
+Variables defined at the top level of `main.rhai` persist in scope across all hook invocations. You can use this to store configuration or state that your hooks need:
+
+```rhai
+// Top-level variables persist across hook calls
+let api_key = Env::get("MY_API_KEY");
+
+fn on_execute_graphql_operation(ctx) {
+    ctx.headers["x-api-key"] = api_key;
+}
+```
+
+## Modules
+
+You can organize your scripts into multiple files using Rhai's module system. Place additional `.rhai` files in the `rhai/` directory and import them:
+
+```rhai
+// rhai/main.rhai
+import "helpers" as helpers;
+
+fn on_execute_graphql_operation(ctx) {
+    helpers::add_auth_headers(ctx);
+}
+```
+
+```rhai
+// rhai/helpers.rhai
+fn add_auth_headers(ctx) {
+    ctx.headers["authorization"] = "Bearer " + Env::get("AUTH_TOKEN");
+}
+```
+
+## Next steps
+
+- [Lifecycle Hooks](/apollo-mcp-server/rhai-lifecycle): Learn about available hooks and their context objects
+- [Functions Reference](/apollo-mcp-server/rhai-functions): See all built-in functions available in Rhai scripts
+- [Rhai Language Reference](https://rhai.rs/book/): Full documentation for the Rhai scripting language
