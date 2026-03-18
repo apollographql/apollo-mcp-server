@@ -114,9 +114,7 @@ pub(crate) fn load_from_path(
                         .or(labels.tool_invocation_invoked);
                 }
 
-                let extra_outputs = tool.extra_outputs;
-
-                let tool = Tool {
+                let mcp_tool = Tool {
                     name: tool.name.into(),
                     meta: None,
                     description: Some(if let Some(app_description) = description.clone() {
@@ -141,8 +139,8 @@ pub(crate) fn load_from_path(
                 tools.push(AppTool {
                     operation: operation.clone(),
                     labels,
-                    tool,
-                    extra_outputs,
+                    tool: mcp_tool,
+                    extra_outputs: tool.extra_outputs,
                 })
             }
 
