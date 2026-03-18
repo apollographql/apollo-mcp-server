@@ -5,7 +5,7 @@ subtitle: Hook into the Apollo MCP Server request lifecycle with Rhai
 
 Lifecycle hooks enable your Rhai scripts run at specific points during request processing. To use a hook, define a function in `rhai/main.rhai` with the hook's name. The server calls that function automatically when it reaches the lifecycle event.
 
-If a hook function isn't defined, the server skips it with no performance cost.
+If a hook function isn't defined, the server skips it.
 
 ## on_execute_graphql_operation
 
@@ -21,11 +21,11 @@ fn on_execute_graphql_operation(ctx) {
 
 The `ctx` parameter provides these properties:
 
-| Property | Type | Access | Description |
-|----------|------|--------|-------------|
-| `endpoint` | `String` | read/write | The URL of the GraphQL endpoint for the request. |
-| `headers` | `HeaderMap` | read/write | The HTTP headers for the request. |
-| `incoming_request` | `HttpParts` | read-only | The original HTTP request received by the MCP server. Only available when using HTTP transport. |
+| Property           | Type        | Access     | Description                                                                                     |
+| ------------------ | ----------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| `endpoint`         | `String`    | read/write | The URL of the GraphQL endpoint for the request.                                                |
+| `headers`          | `HeaderMap` | read/write | The HTTP headers for the request.                                                               |
+| `incoming_request` | `HttpParts` | read-only  | The original HTTP request received by the MCP server. Only available when using HTTP transport. |
 
 ### Working with headers
 
@@ -45,11 +45,11 @@ fn on_execute_graphql_operation(ctx) {
 
 When the MCP server uses HTTP transport (`streamable_http`), `ctx.incoming_request` gives you read-only access to the original request that the MCP client sent to the server.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `method` | `String` | The HTTP method (for example, `"POST"`). |
-| `uri` | `String` | The request URI path (for example, `"/mcp"`). |
-| `headers` | `HeaderMap` | The HTTP headers from the incoming request. |
+| Property  | Type        | Description                                   |
+| --------- | ----------- | --------------------------------------------- |
+| `method`  | `String`    | The HTTP method (for example, `"POST"`).      |
+| `uri`     | `String`    | The request URI path (for example, `"/mcp"`). |
+| `headers` | `HeaderMap` | The HTTP headers from the incoming request.   |
 
 <Note>
 
@@ -104,10 +104,10 @@ fn on_execute_graphql_operation(ctx) {
 
 ### Error codes
 
-| Constant | Description |
-|----------|-------------|
+| Constant                     | Description                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
 | `ErrorCode::INVALID_REQUEST` | The request is invalid. Use this for client errors like missing headers or bad input. |
-| `ErrorCode::INTERNAL_ERROR` | An internal server error. This is the default if no code is provided. |
+| `ErrorCode::INTERNAL_ERROR`  | An internal server error. This is the default if no code is provided.                 |
 
 ### Throw behavior
 
@@ -135,8 +135,8 @@ fn on_execute_graphql_operation(ctx) {
 }
 ```
 
-<Note>
+<Caution>
 
 Global variables are shared across all hook invocations. Avoid relying on a mutable global state because the order in which concurrent requests execute hooks can vary.
 
-</Note>
+</Caution>
