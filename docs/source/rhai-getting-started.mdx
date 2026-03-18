@@ -3,9 +3,9 @@ title: Rhai Scripting
 subtitle: Customize Apollo MCP Server behavior with Rhai scripts
 ---
 
-Apollo MCP Server supports [Rhai](https://rhai.rs), a lightweight embedded scripting language. Rhai scripts let you hook into the server's request lifecycle to inspect and modify outgoing GraphQL requests, all without recompiling or rebuilding the server.
+Apollo MCP Server supports [Rhai](https://rhai.rs), a lightweight embedded scripting language. Rhai scripts let you hook into the server's request lifecycle to inspect and modify outgoing GraphQL requests without needing to recompile or rebuild the server.
 
-Common use cases include:
+Common use-cases include:
 
 - Forwarding authentication headers from incoming MCP requests to your GraphQL endpoint
 - Routing requests to different GraphQL endpoints based on request properties
@@ -22,13 +22,13 @@ your-project/
     └── main.rhai
 ```
 
-The `rhai/main.rhai` file is the entry point for all Rhai scripting. The server loads this file on startup. If the file doesn't exist, the server starts normally without any scripting.
+The `rhai/main.rhai` file is the entry point for all Rhai scripting. The server loads the file on startup. If the file doesn't exist, the server starts normally, without any scripting.
 
 ## Writing your first hook
 
-Hooks are regular Rhai functions with specific names. When the server reaches a lifecycle event, it calls the matching function if one is defined.
+Hooks are regular Rhai functions with specific names. When a lifecycle event occurs on the server, it calls the matching function if one is defined.
 
-The following example adds a custom header to every outgoing GraphQL request:
+This example adds a custom header to every outgoing GraphQL request:
 
 ```rhai
 fn on_execute_graphql_operation(ctx) {
@@ -40,7 +40,7 @@ For a full list of available hooks and their context objects, see [Lifecycle Hoo
 
 ## Logging
 
-Rhai's built-in `print` and `debug` statements write to the server's log output. Use them for debugging your scripts:
+Rhai's built-in `print` and `debug` statements write to the server's log output. Use them to debug your scripts:
 
 ```rhai
 fn on_execute_graphql_operation(ctx) {
@@ -50,7 +50,7 @@ fn on_execute_graphql_operation(ctx) {
 
 ## Global variables
 
-Variables defined at the top level of `main.rhai` persist in scope across all hook invocations. You can use this to store configuration or state that your hooks need:
+Variables defined at the top level of `main.rhai` persist across all hook invocations. Use it to store the configuration or state that your hooks need:
 
 ```rhai
 // Top-level variables persist across hook calls
@@ -63,7 +63,7 @@ fn on_execute_graphql_operation(ctx) {
 
 ## Modules
 
-You can organize your scripts into multiple files using Rhai's module system. Place additional `.rhai` files in the `rhai/` directory and import them:
+Organize your scripts into multiple files using Rhai's module system. Place additional `.rhai` files in the `rhai/` directory and import them:
 
 ```rhai
 // rhai/main.rhai
