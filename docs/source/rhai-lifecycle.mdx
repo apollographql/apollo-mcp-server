@@ -137,6 +137,6 @@ fn on_execute_graphql_operation(ctx) {
 
 <Note>
 
-Global variables are shared across all hook invocations. Avoid relying on mutable global state, as the order in which concurrent requests execute hooks is not guaranteed.
+Global variables are shared across all hook invocations. Avoid relying on a mutable global state because the order in which concurrent requests execute hooks can vary.
 
 </Note>
