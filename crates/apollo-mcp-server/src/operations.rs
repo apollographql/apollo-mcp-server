@@ -7,6 +7,7 @@ mod execution;
 mod mutation_mode;
 mod operation;
 mod operation_source;
+pub(crate) mod private_fields;
 mod raw_operation;
 mod schema_walker;
 
