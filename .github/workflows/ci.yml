@@ -46,6 +46,12 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: cargo build
+  installer:
+    name: Check Installer Target Selection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: bash ./scripts/nix/test-install.sh
   test:
     name: Run Tests
     runs-on: ubuntu-latest
