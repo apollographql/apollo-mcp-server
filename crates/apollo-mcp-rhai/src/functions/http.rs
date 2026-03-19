@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -7,6 +7,8 @@ use rhai::plugin::*;
 use rhai::{Engine, EvalAltResult, Map, Module};
 
 use crate::types::{HttpResponse, Promise, PromiseState};
+
+static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
 pub struct RhaiHttp {}
 
@@ -49,7 +51,10 @@ impl HttpOptions {
                 .ok_or_else(|| -> Box<EvalAltResult> {
                     "options.timeout must be an integer (seconds)".into()
                 })?;
-            timeout_secs = Some(secs as u64);
+            let secs = u64::try_from(secs).map_err(|_| -> Box<EvalAltResult> {
+                "options.timeout must be a positive integer (seconds)".into()
+            })?;
+            timeout_secs = Some(secs);
         }
 
         Ok(Self {
@@ -81,8 +86,7 @@ async fn execute_request(
     url: String,
     options: HttpOptions,
 ) -> Result<HttpResponse, String> {
-    let client = reqwest::Client::new();
-    let mut builder = client.request(method, &url);
+    let mut builder = HTTP_CLIENT.request(method, &url);
 
     for (k, v) in &options.headers {
         builder = builder.header(k.as_str(), v.as_str());
@@ -322,6 +326,20 @@ mod tests {
 
         assert_eq!(result, 200);
         mock.assert_async().await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn should_return_error_for_negative_timeout() {
+        let script = r#"fn test() {
+            let response = Http::get("http://127.0.0.1:1", #{
+                timeout: -1
+            }).wait();
+            return response.status;
+        }"#;
+
+        let result = run_rhai_script::<i64>(script, ());
+
+        assert!(result.is_err());
     }
 
     #[tokio::test(flavor = "multi_thread")]
