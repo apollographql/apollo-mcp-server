@@ -15,6 +15,7 @@ use serde_json::{Map, Value};
 use tracing::warn;
 
 use crate::custom_scalar_map::CustomScalarMap;
+use crate::operations::private_fields::PrivateFieldTree;
 
 /// Generate a JSON Schema for the output of a GraphQL operation.
 ///
@@ -26,6 +27,7 @@ pub fn selection_set_to_schema(
     graphql_schema: &GraphQLSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
+    private_tree: Option<&PrivateFieldTree>,
 ) -> JSONSchema {
     let mut definitions = Map::new();
 
@@ -36,6 +38,7 @@ pub fn selection_set_to_schema(
         custom_scalar_map,
         named_fragments,
         &mut definitions,
+        private_tree.unwrap_or(&PrivateFieldTree::default()),
     );
 
     // Wrap in standard GraphQL response envelope
@@ -88,6 +91,7 @@ pub fn selection_set_to_schema(
 }
 
 /// Build a schema for a selection set (object fields)
+#[allow(clippy::too_many_arguments)]
 fn build_selection_set_schema(
     selection_set: &[Selection],
     parent_type: &ExtendedType,
@@ -95,6 +99,7 @@ fn build_selection_set_schema(
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
+    private_tree: &PrivateFieldTree,
 ) -> JSONSchema {
     let mut properties = Map::new();
     let mut required = Vec::new();
@@ -112,6 +117,15 @@ fn build_selection_set_schema(
                     .map(|a| a.to_string())
                     .unwrap_or_else(|| field_name.clone());
 
+                // Skip fields marked @private from the output schema
+                if private_tree
+                    .children
+                    .get(&response_key)
+                    .is_some_and(|child| child.is_private)
+                {
+                    continue;
+                }
+
                 // Skip __typename - it's always a string
                 if field_name == "__typename" {
                     properties.insert(
@@ -120,6 +134,13 @@ fn build_selection_set_schema(
                     );
                     continue;
                 }
+
+                // Get the child private tree for nested fields
+                let child_private_tree = private_tree
+                    .children
+                    .get(&response_key)
+                    .cloned()
+                    .unwrap_or_default();
 
                 // Get field definition from parent type
                 if let Some(field_def) = get_field_definition(parent_type, &field_name) {
@@ -131,6 +152,7 @@ fn build_selection_set_schema(
                         named_fragments,
                         definitions,
                         field_def.description.as_ref().map(|n| n.to_string()),
+                        &child_private_tree,
                     );
 
                     properties.insert(response_key.clone(), field_schema.into());
@@ -162,6 +184,7 @@ fn build_selection_set_schema(
                         custom_scalar_map,
                         named_fragments,
                         definitions,
+                        private_tree,
                     );
 
                     // Merge properties from fragment
@@ -192,6 +215,7 @@ fn build_selection_set_schema(
                         custom_scalar_map,
                         named_fragments,
                         definitions,
+                        private_tree,
                     );
 
                     // Merge properties from inline fragment
@@ -231,6 +255,7 @@ fn build_selection_set_schema(
 }
 
 /// Build schema for a specific field based on its type
+#[allow(clippy::too_many_arguments)]
 fn build_field_schema(
     field: &Node<Field>,
     field_type: &GraphQLType,
@@ -239,6 +264,7 @@ fn build_field_schema(
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     description: Option<String>,
+    private_tree: &PrivateFieldTree,
 ) -> JSONSchema {
     let schema = type_to_output_schema(
         field_type,
@@ -247,6 +273,7 @@ fn build_field_schema(
         custom_scalar_map,
         named_fragments,
         definitions,
+        private_tree,
     );
 
     with_description(schema, description)
@@ -260,6 +287,7 @@ fn type_to_output_schema(
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
+    private_tree: &PrivateFieldTree,
 ) -> JSONSchema {
     match graphql_type {
         // Non-null types - just unwrap
@@ -270,6 +298,7 @@ fn type_to_output_schema(
             custom_scalar_map,
             named_fragments,
             definitions,
+            private_tree,
         ),
         GraphQLType::NonNullList(inner) => {
             let items = type_to_output_schema(
@@ -279,6 +308,7 @@ fn type_to_output_schema(
                 custom_scalar_map,
                 named_fragments,
                 definitions,
+                private_tree,
             );
             json_schema!({
                 "type": "array",
@@ -295,6 +325,7 @@ fn type_to_output_schema(
                 custom_scalar_map,
                 named_fragments,
                 definitions,
+                private_tree,
             );
             json_schema!({
                 "oneOf": [inner, {"type": "null"}]
@@ -308,6 +339,7 @@ fn type_to_output_schema(
                 custom_scalar_map,
                 named_fragments,
                 definitions,
+                private_tree,
             );
             json_schema!({
                 "oneOf": [
@@ -327,6 +359,7 @@ fn named_type_to_output_schema(
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
+    private_tree: &PrivateFieldTree,
 ) -> JSONSchema {
     match name.as_str() {
         // Built-in scalars
@@ -361,6 +394,7 @@ fn named_type_to_output_schema(
                         custom_scalar_map,
                         named_fragments,
                         definitions,
+                        private_tree,
                     )
                 }
             }
@@ -377,6 +411,7 @@ fn named_type_to_output_schema(
                         custom_scalar_map,
                         named_fragments,
                         definitions,
+                        private_tree,
                     )
                 }
             }
@@ -402,6 +437,7 @@ fn named_type_to_output_schema(
                                 custom_scalar_map,
                                 named_fragments,
                                 definitions,
+                                private_tree,
                             );
                             type_schemas.push(member_schema);
                         }
@@ -505,6 +541,8 @@ mod tests {
     use super::*;
     use apollo_compiler::parser::Parser;
 
+    use crate::operations::private_fields::{collect_named_fragments, collect_private_fields};
+
     fn parse_schema(sdl: &str) -> GraphQLSchema {
         GraphQLSchema::parse_and_validate(sdl, "schema.graphql")
             .unwrap()
@@ -560,8 +598,14 @@ mod tests {
         );
 
         let query_type = schema.types.get("Query").unwrap();
-        let output_schema =
-            selection_set_to_schema(&selection_set, query_type, &schema, None, &HashMap::new());
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            None,
+        );
 
         insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
     }
@@ -601,9 +645,162 @@ mod tests {
         );
 
         let query_type = schema.types.get("Query").unwrap();
-        let output_schema =
-            selection_set_to_schema(&selection_set, query_type, &schema, None, &HashMap::new());
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            None,
+        );
 
         insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
+    }
+
+    #[test]
+    fn private_fields_excluded_from_output_schema() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+                name: String!
+                email: String
+                secret: String
+            }
+            "#,
+        );
+
+        let (doc, selection_set) = parse_operation(
+            r#"
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id
+                    name
+                    email @private
+                    secret @private
+                }
+            }
+            "#,
+        );
+
+        let named_fragments = collect_named_fragments(&doc);
+        let private_tree = collect_private_fields(&selection_set, &named_fragments);
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            Some(&private_tree),
+        );
+
+        insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
+    }
+
+    #[test]
+    fn private_field_in_operation_excluded_when_fragment_spread_reintroduces_it() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+                name: String!
+                email: String
+            }
+            "#,
+        );
+
+        let query = r#"
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id
+                    name
+                    email @private
+                    ...UserFields
+                }
+            }
+            fragment UserFields on User {
+                email
+            }
+        "#;
+
+        let (doc, selection_set) = parse_operation(query);
+        let named_fragments = collect_named_fragments(&doc);
+        let private_tree = collect_private_fields(&selection_set, &named_fragments);
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &named_fragments,
+            Some(&private_tree),
+        );
+
+        let output_str = serde_json::to_string_pretty(&output_schema).unwrap();
+        assert!(
+            !output_str.contains("email"),
+            "email should be excluded from schema because it is marked @private, but got: {output_str}"
+        );
+    }
+
+    #[test]
+    fn private_field_in_operation_excluded_when_inline_fragment_reintroduces_it() {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+                name: String!
+                email: String
+            }
+            "#,
+        );
+
+        let query = r#"
+            query GetUser($id: ID!) {
+                user(id: $id) {
+                    id
+                    name
+                    email @private
+                    ... on User {
+                        email
+                    }
+                }
+            }
+        "#;
+
+        let (doc, selection_set) = parse_operation(query);
+        let named_fragments = collect_named_fragments(&doc);
+        let private_tree = collect_private_fields(&selection_set, &named_fragments);
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            Some(&private_tree),
+        );
+
+        let output_str = serde_json::to_string_pretty(&output_schema).unwrap();
+        assert!(
+            !output_str.contains("email"),
+            "email should be excluded from schema because it is marked @private, but got: {output_str}"
+        );
     }
 }

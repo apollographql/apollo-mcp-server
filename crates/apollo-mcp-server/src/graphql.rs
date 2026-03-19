@@ -5,11 +5,12 @@ use std::sync::LazyLock;
 use crate::errors::McpError;
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
+use crate::operations::private_fields::{PrivateFieldTree, filter_private_fields};
 use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
-use rmcp::model::{CallToolResult, Content};
+use rmcp::model::{CallToolResult, Content, Meta};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -24,6 +25,9 @@ pub struct Request<'a> {
 pub struct OperationDetails {
     pub query: String,
     pub operation_name: Option<String>,
+    /// When present, the query has `@private` fields. The query text should already
+    /// be stripped of `@private` directives, and this tree is used to filter the response.
+    pub private_fields: Option<PrivateFieldTree>,
 }
 
 static GRAPHQL_CLIENT: LazyLock<ClientWithMiddleware> = LazyLock::new(|| {
@@ -72,6 +76,7 @@ pub trait Executable {
         };
 
         let mut request_body = Map::from_iter([(String::from("variables"), variables)]);
+        let mut private_field_tree = None;
 
         if let Some(id) = self.persisted_query_id() {
             request_body.insert(
@@ -89,12 +94,15 @@ pub trait Executable {
             let OperationDetails {
                 query,
                 operation_name,
+                private_fields,
             } = match self.operation(request.input) {
                 Ok(details) => details,
                 Err(ValidationError(msg)) => {
                     return Ok(CallToolResult::error(vec![Content::text(msg)]));
                 }
             };
+
+            private_field_tree = private_fields;
 
             request_body.insert(String::from("query"), Value::String(query));
             request_body.insert(
@@ -126,16 +134,35 @@ pub trait Executable {
         };
 
         let result = match response.json::<Value>().await {
-            Ok(json) => Ok(CallToolResult {
-                content: vec![Content::json(&json).unwrap_or(Content::text(json.to_string()))],
-                is_error: Some(
+            Ok(json) => {
+                let is_error = Some(
                     json.get("errors")
                         .filter(|value| !matches!(value, Value::Null))
                         .is_some(),
-                ),
-                meta: None,
-                structured_content: Some(json),
-            }),
+                );
+
+                // When the operation has @private fields, split the response:
+                // - restricted (without @private fields) goes to structured_content
+                // - full response is preserved in meta for the client to access
+                let (structured_content, meta) = if let Some(tree) = private_field_tree.as_ref() {
+                    let restricted = filter_private_fields(&json, tree);
+                    let mut meta = Meta::new();
+                    meta.insert("structuredContent".into(), json);
+                    (restricted, Some(meta))
+                } else {
+                    (json, None)
+                };
+
+                Ok(CallToolResult {
+                    content: vec![
+                        Content::json(&structured_content)
+                            .unwrap_or(Content::text(structured_content.to_string())),
+                    ],
+                    is_error,
+                    meta,
+                    structured_content: Some(structured_content),
+                })
+            }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read GraphQL response body: {e}"
             ))])),
@@ -197,6 +224,7 @@ mod test {
             Ok(OperationDetails {
                 query: "query MockOp { mockOp { id } }".to_string(),
                 operation_name: Some("mock_operation".to_string()),
+                private_fields: None,
             })
         }
 
@@ -226,6 +254,7 @@ mod test {
             Ok(OperationDetails {
                 query: "query MockOp { mockOp { id } }".to_string(),
                 operation_name: Some("mock_operation".to_string()),
+                private_fields: None,
             })
         }
 

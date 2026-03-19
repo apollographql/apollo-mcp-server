@@ -1,3 +1,4 @@
+use crate::operations::private_fields::process_private_directives;
 use crate::operations::{MutationMode, operation_defs, operation_name};
 use crate::{
     graphql::{self, OperationDetails, ValidationError},
@@ -59,9 +60,18 @@ impl graphql::Executable for Execute {
                 .map_err(|e| ValidationError(e.to_string()))?
                 .ok_or_else(|| ValidationError("Invalid operation type".into()))?;
 
+        let op_name = operation_name(&operation_def, source_path).ok();
+
+        // Check for @private directives and strip them from the query sent downstream
+        let (query, private_fields) = match process_private_directives(&input.query) {
+            Some((stripped_query, tree)) => (stripped_query, Some(tree)),
+            None => (input.query, None),
+        };
+
         Ok(OperationDetails {
-            query: input.query,
-            operation_name: operation_name(&operation_def, source_path).ok(),
+            query,
+            operation_name: op_name,
+            private_fields,
         })
     }
 
@@ -109,6 +119,7 @@ mod tests {
             Ok(OperationDetails {
                 query: query.to_string(),
                 operation_name: Some("GetUser".to_string()),
+                private_fields: None,
             })
         );
         assert_eq!(Executable::variables(&execute, input), Ok(variables));
@@ -131,6 +142,7 @@ mod tests {
             Ok(OperationDetails {
                 query: query.to_string(),
                 operation_name: Some("GetUser".to_string()),
+                private_fields: None,
             })
         );
         assert_eq!(Executable::variables(&execute, input), Ok(variables));
@@ -151,6 +163,7 @@ mod tests {
             Ok(OperationDetails {
                 query: query.to_string(),
                 operation_name: Some("GetUser".to_string()),
+                private_fields: None,
             })
         );
         assert_eq!(Executable::variables(&execute, input), Ok(Value::Null));
@@ -170,6 +183,7 @@ mod tests {
             Ok(OperationDetails {
                 query: query.to_string(),
                 operation_name: None,
+                private_fields: None,
             })
         );
     }
@@ -201,6 +215,7 @@ mod tests {
             Ok(OperationDetails {
                 query: query.to_string(),
                 operation_name: Some("MutationName".to_string()),
+                private_fields: None,
             })
         );
     }
