@@ -134,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         .disable_schema_description(config.overrides.disable_schema_description)
         .enable_output_schema(config.overrides.enable_output_schema)
         .descriptions(config.overrides.descriptions)
+        .required_scopes(config.overrides.required_scopes)
         .disable_auth_token_passthrough(
             if let apollo_mcp_server::server::Transport::StreamableHttp {
                 auth: Some(auth), ..

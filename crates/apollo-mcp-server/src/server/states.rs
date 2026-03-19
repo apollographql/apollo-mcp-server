@@ -58,6 +58,7 @@ struct Config {
     enable_output_schema: bool,
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
+    required_scopes: HashMap<String, Vec<String>>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
@@ -100,6 +101,7 @@ impl StateMachine {
                 enable_output_schema: server.enable_output_schema,
                 disable_auth_token_passthrough: server.disable_auth_token_passthrough,
                 descriptions: server.descriptions,
+                required_scopes: server.required_scopes,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
                 health_check: server.health_check,
@@ -335,6 +337,7 @@ mod tests {
     use crate::operations::{MutationMode, RawOperation};
     use crate::server::Transport;
     use crate::server_info::ServerInfoConfig;
+    use apollo_mcp_rhai::RhaiEngine;
 
     use super::{Config, Configuring, Running, State};
 
@@ -367,6 +370,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         }
     }
 
@@ -400,6 +404,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
+            required_scopes: HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024,
             health_check: HealthCheckConfig::default(),

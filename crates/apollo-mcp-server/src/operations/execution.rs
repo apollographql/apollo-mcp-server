@@ -1,12 +1,17 @@
+use std::sync::Arc;
+
 use http::HeaderMap;
+use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
+use parking_lot::Mutex;
 use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::Value;
 use url::Url;
 
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
+use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::Operation;
 
@@ -16,9 +21,21 @@ pub(crate) async fn find_and_execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    axum_parts: Option<&Parts>,
 ) -> Option<Result<CallToolResult, McpError>> {
     let operation = operations.iter().find(|op| op.as_ref().name == tool_name)?;
-    Some(execute_operation(operation, headers, arguments, endpoint).await)
+    Some(
+        execute_operation(
+            operation,
+            headers,
+            arguments,
+            endpoint,
+            rhai_engine,
+            axum_parts,
+        )
+        .await,
+    )
 }
 
 pub(crate) async fn execute_operation(
@@ -26,11 +43,16 @@ pub(crate) async fn execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
+    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    axum_parts: Option<&Parts>,
 ) -> Result<CallToolResult, McpError> {
+    let (endpoint, headers) =
+        checkpoints::on_execute_graphql_operation(rhai_engine, endpoint, headers, axum_parts)?;
+
     let graphql_request = graphql::Request {
         input: Value::from(arguments.cloned()),
-        endpoint,
-        headers,
+        endpoint: &endpoint,
+        headers: &headers,
     };
 
     executable
@@ -64,6 +86,8 @@ mod tests {
             &HeaderMap::new(),
             None,
             &"http://localhost:4000".parse().unwrap(),
+            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await;
 
@@ -101,6 +125,8 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
+            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+            None,
         )
         .await;
 

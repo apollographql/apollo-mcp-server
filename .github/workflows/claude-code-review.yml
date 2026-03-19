@@ -1,9 +1,11 @@
 name: Code Review
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review]
-    paths:
-      - "**/*.rs"
+  # pull_request:
+  #   types: [opened, synchronize, ready_for_review]
+  #   paths:
+  #     - "**/*.rs"
+  # TEMPORARY: Disabling this workflow on reviews while we try out Claude new code review product
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number }}

@@ -109,6 +109,9 @@ pub enum ServerError {
 
     #[error("TLS configuration error: {0}")]
     Tls(#[from] crate::auth::TlsConfigError),
+
+    #[error("There was a problem parsing Rhai scripts on startup.")]
+    RhaiError,
 }
 
 /// An MCP tool error

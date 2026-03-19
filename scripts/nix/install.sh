@@ -14,7 +14,7 @@ BINARY_DOWNLOAD_PREFIX="${APOLLO_MCP_SERVER_BINARY_DOWNLOAD_PREFIX:="https://git
 
 # Apollo MCP Server version defined in apollo-mcp-server's Cargo.toml
 # Note: Change this line manually during the release steps.
-PACKAGE_VERSION="v1.8.2"
+PACKAGE_VERSION="v1.10.0"
 
 download_binary_and_run_installer() {
     downloader --check
@@ -179,7 +179,7 @@ has_required_glibc() {
             && [ "${_glibc_min_version}" -ge "${_min_minor_version}" ]; }; then
             return 0
         else
-            say "This operating system needs glibc >= ${_min_major_version}.${_min_minor_version}, but only has ${_libc_version} installed."
+            say "This operating system needs glibc >= ${_min_major_version}.${_min_minor_version}, but only has ${_glibc_version} installed."
         fi
     else
         say "This operating system does not support dynamic linking to glibc."

@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
@@ -6,7 +8,7 @@ use axum::{
     extract::{Request, State},
     http::StatusCode,
     middleware::Next,
-    response::Response,
+    response::{IntoResponse, Response},
     routing::get,
 };
 use axum_extra::{
@@ -15,6 +17,7 @@ use axum_extra::{
 };
 use http::Method;
 use networked_token_validator::NetworkedTokenValidator;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -63,9 +66,12 @@ pub enum TlsConfigError {
 }
 
 impl TlsConfig {
-    /// Build a reqwest client configured with the TLS settings
-    pub fn build_client(&self) -> Result<reqwest::Client, TlsConfigError> {
-        let mut builder = reqwest::Client::builder();
+    /// Build a reqwest client configured with the TLS settings and default headers
+    pub fn build_client(
+        &self,
+        default_headers: HeaderMap,
+    ) -> Result<reqwest::Client, TlsConfigError> {
+        let mut builder = reqwest::Client::builder().default_headers(default_headers);
 
         // Add custom CA certificate if provided
         if let Some(ca_cert_path) = &self.ca_cert {
@@ -93,6 +99,23 @@ impl TlsConfig {
 
         Ok(builder.build()?)
     }
+}
+
+/// Deserialize a `HeaderMap` from a map of string keys and values.
+fn deserialize_header_map<'de, D>(deserializer: D) -> Result<HeaderMap, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let map = HashMap::<String, String>::deserialize(deserializer)?;
+    let mut headers = HeaderMap::with_capacity(map.len());
+    for (key, value) in map {
+        let name = HeaderName::from_bytes(key.as_bytes())
+            .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        let value =
+            HeaderValue::from_str(&value).map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        headers.insert(name, value);
+    }
+    Ok(headers)
 }
 
 /// Auth configuration options
@@ -129,6 +152,14 @@ pub struct Config {
     #[serde(default)]
     pub disable_auth_token_passthrough: bool,
 
+    /// Allow unauthenticated access to MCP discovery methods (e.g. `tools/list`).
+    ///
+    /// When enabled, requests without a bearer token that contain a discovery
+    /// JSON-RPC method call will be allowed through without authentication.
+    /// All other requests still require valid authentication.
+    #[serde(default)]
+    pub allow_anonymous_mcp_discovery: bool,
+
     /// TLS configuration for connecting to OAuth servers
     #[serde(default)]
     pub tls: TlsConfig,
@@ -141,6 +172,14 @@ pub struct Config {
     #[serde(serialize_with = "humantime_serde::serialize")]
     #[schemars(with = "Option<String>")]
     pub discovery_timeout: Option<Duration>,
+
+    /// Headers to include in OIDC discovery and JWKS requests.
+    ///
+    /// Use this to set headers like `User-Agent` that may be required
+    /// by upstream OAuth servers or web application firewalls.
+    #[serde(default, deserialize_with = "deserialize_header_map")]
+    #[schemars(with = "HashMap<String, String>")]
+    pub discovery_headers: HeaderMap,
 }
 
 /// TLS configuration for OAuth server connections
@@ -200,13 +239,19 @@ struct AuthState {
     config: Config,
     client: reqwest::Client,
     resource_metadata_url: Url,
+    /// Per-operation required scopes, keyed by operation name.
+    required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
 
 impl Config {
     /// Enable auth middleware on the router.
     ///
     /// Builds the HTTP client at startup to validate TLS configuration eagerly.
-    pub fn enable_middleware(&self, router: Router) -> Result<Router, TlsConfigError> {
+    pub fn enable_middleware(
+        &self,
+        router: Router,
+        required_scopes: HashMap<String, Vec<String>>,
+    ) -> Result<Router, TlsConfigError> {
         // Validate server URLs have hosts (fail fast on config errors)
         for (i, server) in self.servers.iter().enumerate() {
             if server.host_str().is_none() {
@@ -244,14 +289,15 @@ impl Config {
             Json(auth_state.config.into())
         }
 
-        // Build HTTP client with TLS configuration
-        let client = self.tls.build_client()?;
+        // Build HTTP client with TLS configuration and discovery headers
+        let client = self.tls.build_client(self.discovery_headers.clone())?;
         let resource_metadata_url = build_resource_metadata_url(&self.resource);
         let metadata_route_path = resource_metadata_url.path().to_string();
         let auth_state = AuthState {
             config: self.clone(),
             client,
             resource_metadata_url,
+            required_scopes: Arc::new(required_scopes),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -269,6 +315,69 @@ impl Config {
             axum::middleware::from_fn_with_state(auth_state, oauth_validate),
         )))
     }
+}
+
+/// MCP discovery methods that are allowed without authentication when
+/// `allow_anonymous_mcp_discovery` is enabled.
+const ANONYMOUS_DISCOVERY_METHODS: &[&str] = &["initialize", "tools/list", "resources/list"];
+
+/// Maximum body size to buffer when peeking at the JSON-RPC method.
+/// A typical `tools/list` request is under 100 bytes; 16 KiB gives generous
+/// headroom while preventing abuse from unauthenticated clients.
+const ANONYMOUS_PEEK_BODY_LIMIT: usize = 16 * 1024;
+
+/// Struct for deserializing the JSON-RPC `method` and optional `params.name`
+/// from a request body. Used by both anonymous discovery and per-operation scope checks.
+#[derive(Deserialize)]
+struct JsonRpcBodyPeek {
+    method: String,
+    params: Option<JsonRpcParams>,
+}
+
+#[derive(Deserialize)]
+struct JsonRpcParams {
+    name: Option<String>,
+}
+
+async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
+    let body = std::mem::take(request.body_mut());
+
+    let bytes = axum::body::to_bytes(body, ANONYMOUS_PEEK_BODY_LIMIT)
+        .await
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to read request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
+
+    let peek = serde_json::from_slice::<JsonRpcBodyPeek>(&bytes)
+        .inspect_err(
+            |e| tracing::error!(error = %e, "Failed to parse request body in oauth middleware"),
+        )
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+    *request.body_mut() = axum::body::Body::from(bytes);
+
+    Ok(peek)
+}
+
+/// Checks if a `tools/call` request is missing required scopes for the named operation.
+///
+/// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
+/// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
+fn missing_scopes_for_operation<'a>(
+    peek: &JsonRpcBodyPeek,
+    required_scopes: &'a HashMap<String, Vec<String>>,
+    token_scopes: &[String],
+) -> Option<&'a [String]> {
+    if peek.method != "tools/call" {
+        return None;
+    }
+    let op_name = peek.params.as_ref()?.name.as_deref()?;
+    let required = required_scopes.get(op_name)?;
+    if required.iter().all(|s| token_scopes.contains(s)) {
+        return None;
+    }
+    Some(required)
 }
 
 /// Validate that requests made have a corresponding bearer JWT token
@@ -313,6 +422,36 @@ async fn oauth_validate(
             }),
         )
     };
+
+    // Extract the body once if we need to inspect the JSON-RPC method for either
+    // anonymous discovery or per-operation scope checks.
+    let body_peek = if request.method() == http::Method::POST
+        && ((auth_config.allow_anonymous_mcp_discovery && token.is_none())
+            || !auth_state.required_scopes.is_empty())
+    {
+        match extract_body(&mut request).await {
+            Ok(peek) => Some(peek),
+            Err(status) => {
+                tracing::Span::current().record("status_code", status.as_u16());
+                return Ok(status.into_response());
+            }
+        }
+    } else {
+        None
+    };
+
+    // Anonymous discovery bypass: when enabled, unauthenticated POST requests
+    // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
+    if auth_config.allow_anonymous_mcp_discovery
+        && token.is_none()
+        && body_peek
+            .as_ref()
+            .is_some_and(|peek| ANONYMOUS_DISCOVERY_METHODS.contains(&peek.method.as_str()))
+    {
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
+    }
 
     let discovery_timeout = auth_config
         .discovery_timeout
@@ -375,6 +514,20 @@ async fn oauth_validate(
         }
     }
 
+    // Per-operation scope check using the already-extracted body peek.
+    if let Some(required) = body_peek.as_ref().and_then(|peek| {
+        missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
+    }) {
+        tracing::warn!(
+            required = ?required,
+            present = ?valid_token.scopes,
+            "Token has insufficient scopes for operation"
+        );
+        tracing::Span::current().record("reason", "insufficient_scope");
+        tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
+        return Err(forbidden_error(required));
+    }
+
     // Insert new context to ensure that handlers only use our enforced token verification
     // for propagation
     request.extensions_mut().insert(valid_token);
@@ -408,8 +561,10 @@ mod tests {
             scopes: vec!["read".to_string()],
             scope_mode: ScopeMode::default(),
             disable_auth_token_passthrough: false,
+            allow_anonymous_mcp_discovery: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
+            discovery_headers: HeaderMap::new(),
         }
     }
 
@@ -419,6 +574,7 @@ mod tests {
             config,
             client: reqwest::Client::new(),
             resource_metadata_url,
+            required_scopes: Arc::new(HashMap::new()),
         }
     }
 
@@ -620,11 +776,12 @@ mod tests {
             config.servers = vec![Url::parse("file:///some/path").unwrap()];
 
             let router = Router::new();
-            let result = config.enable_middleware(router);
+            let err = config
+                .enable_middleware(router, HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ServerUrlMissingHost { index: 0, .. }
             ));
         }
@@ -632,7 +789,7 @@ mod tests {
         #[test]
         fn default_config_builds_client() {
             let config = TlsConfig::default();
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -642,7 +799,7 @@ mod tests {
                 ca_cert: None,
                 danger_accept_invalid_certs: true,
             };
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -688,7 +845,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some(temp_file.path().to_path_buf()),
                 danger_accept_invalid_certs: false,
             };
-            let client = config.build_client();
+            let client = config.build_client(HeaderMap::new());
             assert!(client.is_ok());
         }
 
@@ -698,7 +855,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some("/nonexistent/path/to/cert.pem".into()),
                 danger_accept_invalid_certs: false,
             };
-            let result = config.build_client();
+            let result = config.build_client(HeaderMap::new());
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),
@@ -716,7 +873,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 ca_cert: Some(temp_file.path().to_path_buf()),
                 danger_accept_invalid_certs: false,
             };
-            let result = config.build_client();
+            let result = config.build_client(HeaderMap::new());
             assert!(result.is_err());
             assert!(matches!(
                 result.unwrap_err(),
@@ -755,6 +912,77 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
+        }
+
+        #[test]
+        fn yaml_deserialization_with_discovery_headers() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              discovery_headers:
+                User-Agent: apollo-mcp-server
+                X-Custom-Header: custom-value
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(
+                config
+                    .discovery_headers
+                    .get("user-agent")
+                    .map(|v| v.to_str().unwrap()),
+                Some("apollo-mcp-server")
+            );
+            assert_eq!(
+                config
+                    .discovery_headers
+                    .get("x-custom-header")
+                    .map(|v| v.to_str().unwrap()),
+                Some("custom-value")
+            );
+        }
+
+        #[test]
+        fn yaml_deserialization_without_discovery_headers_defaults_to_empty() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(config.discovery_headers.is_empty());
+        }
+
+        #[tokio::test]
+        async fn build_client_with_discovery_headers() {
+            let mut mock_server = mockito::Server::new_async().await;
+            let mock = mock_server
+                .mock("GET", "/test")
+                .match_header("user-agent", "apollo-mcp-server")
+                .create_async()
+                .await;
+
+            let config = TlsConfig::default();
+            let mut headers = HeaderMap::new();
+            headers.insert("user-agent", HeaderValue::from_static("apollo-mcp-server"));
+            let client = config.build_client(headers).unwrap();
+
+            client
+                .get(format!("{}/test", mock_server.url()))
+                .send()
+                .await
+                .unwrap();
+
+            mock.assert_async().await;
         }
     }
 
@@ -818,11 +1046,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("file:///some/path").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -832,11 +1061,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let err = config
+                .enable_middleware(Router::new(), HashMap::new())
+                .unwrap_err();
 
-            assert!(result.is_err());
             assert!(matches!(
-                result.unwrap_err(),
+                err,
                 TlsConfigError::ResourceUrlInvalidScheme { .. }
             ));
         }
@@ -846,7 +1076,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -856,7 +1086,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new());
 
             assert!(result.is_ok());
         }
@@ -871,7 +1101,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/my-service/mcp")
@@ -897,7 +1129,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/my-service/mcp").unwrap();
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource/my-service/mcp")
@@ -913,7 +1147,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let config = test_config();
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
-            let app = config.enable_middleware(base_router).unwrap();
+            let app = config
+                .enable_middleware(base_router, HashMap::new())
+                .unwrap();
 
             let req = Request::builder()
                 .uri("/.well-known/oauth-protected-resource")
@@ -922,6 +1158,255 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let res = app.oneshot(req).await.unwrap();
 
             assert_eq!(res.status(), StatusCode::OK);
+        }
+    }
+
+    mod anonymous_mcp_discovery {
+        use super::*;
+        use axum::routing::post;
+
+        fn discovery_router(allow: bool) -> Router {
+            let mut config = test_config();
+            config.allow_anonymous_mcp_discovery = allow;
+            Router::new()
+                .route("/mcp", post(|| async { "ok" }))
+                .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
+        }
+
+        fn tools_list_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#)
+        }
+
+        fn tools_call_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"test"}}"#)
+        }
+
+        fn initialize_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#)
+        }
+
+        fn resources_list_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#)
+        }
+
+        #[tokio::test]
+        async fn initialize_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(initialize_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn resources_list_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(resources_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn tools_list_without_token_allowed_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn tools_list_without_token_rejected_when_disabled() {
+            let app = discovery_router(false);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn tools_call_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tools_call_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn get_without_token_rejected_when_enabled() {
+            // Anonymous discovery bypass only applies to POST requests;
+            // GET requests are rejected by the auth middleware before routing.
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn malformed_json_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(Body::from("not json"))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        }
+
+        #[tokio::test]
+        async fn empty_body_without_token_rejected_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        }
+
+        #[tokio::test]
+        async fn oversized_body_without_token_returns_payload_too_large() {
+            let app = discovery_router(true);
+            let body = Body::from("x".repeat(super::ANONYMOUS_PEEK_BODY_LIMIT + 1));
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(body)
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        }
+
+        #[tokio::test]
+        async fn tools_list_with_invalid_token_still_validates_when_enabled() {
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header(AUTHORIZATION, "Bearer invalidtoken")
+                .body(tools_list_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[test]
+        fn yaml_with_allow_anonymous_mcp_discovery() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                allow_anonymous_mcp_discovery: true
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.allow_anonymous_mcp_discovery);
+        }
+
+        #[test]
+        fn yaml_defaults_allow_anonymous_mcp_discovery_to_false() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(!config.allow_anonymous_mcp_discovery);
+        }
+    }
+
+    mod per_operation_scope_enforcement {
+        use super::*;
+
+        fn required() -> HashMap<String, Vec<String>> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                vec!["sensitive:read".to_string()],
+            )])
+        }
+
+        fn tools_call_peek(op: &str) -> JsonRpcBodyPeek {
+            JsonRpcBodyPeek {
+                method: "tools/call".to_string(),
+                params: Some(JsonRpcParams {
+                    name: Some(op.to_string()),
+                }),
+            }
+        }
+
+        #[test]
+        fn returns_required_scopes_when_token_missing_scope() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
+        }
+
+        #[test]
+        fn returns_none_when_token_has_required_scope() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_unrestricted_operation() {
+            let peek = tools_call_peek("PublicOp");
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_for_non_tools_call_method() {
+            let peek = JsonRpcBodyPeek {
+                method: "tools/list".to_string(),
+                params: None,
+            };
+            let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_required_scopes_map_is_empty() {
+            let peek = tools_call_peek("RestrictedOp");
+            let empty = HashMap::new();
+            let result = missing_scopes_for_operation(&peek, &empty, &[]);
+            assert!(result.is_none());
         }
     }
 }

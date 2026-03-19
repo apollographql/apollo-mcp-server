@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
+use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
@@ -46,6 +47,7 @@ use crate::{
     },
     operations::{MutationMode, Operation, RawOperation, apply_description_override},
 };
+use apollo_mcp_rhai::RhaiEngine;
 
 #[derive(Clone)]
 pub(super) struct Running {
@@ -71,6 +73,7 @@ pub(super) struct Running {
     pub(super) descriptions: HashMap<String, String>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
+    pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
 }
 
 impl Running {
@@ -296,6 +299,7 @@ impl Running {
         let start = std::time::Instant::now();
         let tool_name = request.name;
         let app_param = extract_app_param(extensions);
+        let axum_parts = extensions.get::<axum::http::request::Parts>();
 
         let mut result = if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
@@ -327,7 +331,7 @@ impl Running {
         } else if tool_name == EXECUTE_TOOL_NAME
             && let Some(execute_tool) = &self.execute_tool
         {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -344,6 +348,8 @@ impl Running {
                 &headers,
                 request.arguments.as_ref(),
                 &self.endpoint,
+                &self.rhai_engine,
+                axum_parts,
             )
             .await
         } else if tool_name == VALIDATE_TOOL_NAME
@@ -356,7 +362,7 @@ impl Running {
                 ))])),
             }
         } else {
-            let headers = if let Some(axum_parts) = extensions.get::<axum::http::request::Parts>() {
+            let headers = if let Some(axum_parts) = axum_parts {
                 build_request_headers(
                     &self.headers,
                     &self.forward_headers,
@@ -368,6 +374,9 @@ impl Running {
                 self.headers.clone()
             };
 
+            // Acquire the lock once: reused for scope check and execution.
+            let ops = self.operations.read().await;
+
             if let Some(app_param) = &app_param {
                 if let Some(res) = find_and_execute_app_tool(
                     &self.apps,
@@ -376,6 +385,8 @@ impl Running {
                     &headers,
                     request.arguments.as_ref(),
                     &self.endpoint,
+                    &self.rhai_engine,
+                    axum_parts,
                 )
                 .await
                 {
@@ -384,11 +395,13 @@ impl Running {
                     Err(tool_not_found(&tool_name))
                 }
             } else if let Some(res) = find_and_execute_operation(
-                &self.operations.read().await,
+                &ops,
                 &tool_name,
                 &headers,
                 request.arguments.as_ref(),
                 &self.endpoint,
+                &self.rhai_engine,
+                axum_parts,
             )
             .await
             {
@@ -582,9 +595,9 @@ impl ServerHandler for Running {
         };
 
         let protocol_version = if self.enable_output_schema {
-            ProtocolVersion::V_2025_06_18
-        } else {
             ProtocolVersion::default()
+        } else {
+            ProtocolVersion::V_2025_03_26
         };
 
         ServerInfo {
@@ -658,6 +671,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
         }
     }
 
@@ -1713,7 +1727,11 @@ mod tests {
             };
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, Some(&ProtocolVersion::default()))
+                .list_tools_impl(
+                    Extensions::new(),
+                    None,
+                    Some(&ProtocolVersion::V_2025_03_26),
+                )
                 .await
                 .unwrap();
 
@@ -1851,7 +1869,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::default());
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_03_26);
         }
 
         #[test]
@@ -1868,7 +1886,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+            assert_eq!(info.protocol_version, ProtocolVersion::default());
         }
     }
 
@@ -1914,7 +1932,7 @@ mod tests {
                 .call_tool_impl(
                     request,
                     &Extensions::new(),
-                    Some(&ProtocolVersion::default()),
+                    Some(&ProtocolVersion::V_2025_03_26),
                 )
                 .await
                 .unwrap();
@@ -2122,6 +2140,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
@@ -2347,6 +2366,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
@@ -2575,6 +2595,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
             }
         }
 
@@ -2717,17 +2738,17 @@ mod integration_tests {
                 .oneshot(build_get_request(None, None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         }
 
         #[tokio::test]
-        async fn get_request_with_invalid_session_returns_unauthorized() {
+        async fn get_request_with_invalid_session_returns_not_found() {
             let service = create_test_service(true);
             let response = service
                 .oneshot(build_get_request(Some("non-existent-session"), None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
 
         async fn initialize_and_get_session_id(
@@ -2840,7 +2861,7 @@ mod integration_tests {
                 .oneshot(build_get_request(Some(&session_id), None))
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
         }
 
         #[tokio::test]
