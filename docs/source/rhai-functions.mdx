@@ -9,8 +9,8 @@ Apollo MCP Server provides several built-in function namespaces in the Rhai scri
 
 Read environment variables from the server process.
 
-| Function | Description | Example |
-|----------|-------------|---------|
+| Function         | Description                                                                                | Example                          |
+| ---------------- | ------------------------------------------------------------------------------------------ | -------------------------------- |
 | `Env::get(name)` | Returns the value of an environment variable or an empty string if the variable isn't set. | `let key = Env::get("API_KEY");` |
 
 <Note>
@@ -32,10 +32,10 @@ fn on_execute_graphql_operation(ctx) {
 
 Parse and serialize JSON data.
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `JSON::parse(input)` | Parses a JSON string into a Rhai value (for example, a map, array, string, or number). Throws on invalid JSON. | `let obj = JSON::parse("{\"key\": \"value\"}");` |
-| `JSON::stringify(value)` | Converts a Rhai value into a JSON string. | `let s = JSON::stringify(#{name: "apollo"});` |
+| Function                 | Description                                                                                                    | Example                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `JSON::parse(input)`     | Parses a JSON string into a Rhai value (for example, a map, array, string, or number). Throws on invalid JSON. | `let obj = JSON::parse("{\"key\": \"value\"}");` |
+| `JSON::stringify(value)` | Converts a Rhai value into a JSON string.                                                                      | `let s = JSON::stringify(#{name: "apollo"});`    |
 
 ```rhai
 // Parse a JSON string into an object
@@ -53,8 +53,8 @@ print(json_string);  // {"count":42,"status":"ok"}
 
 Compute SHA-256 cryptographic hashes.
 
-| Function | Description | Example |
-|----------|-------------|---------|
+| Function                | Description                                              | Example                               |
+| ----------------------- | -------------------------------------------------------- | ------------------------------------- |
 | `Sha256::digest(input)` | Returns the hex-encoded SHA-256 hash of an input string. | `let hash = Sha256::digest("hello");` |
 
 ```rhai
@@ -66,11 +66,11 @@ let hash = Sha256::digest("hello");
 
 Perform regular-expression operations on strings.
 
-| Function | Description | Example |
-|----------|-------------|---------|
-| `Regex::is_match(string, pattern)` | Returns `true` if the pattern matches anywhere in the string. Throws on invalid pattern. | `Regex::is_match("hello123", "\\d+")` |
-| `Regex::replace(string, pattern, replacement)` | Replaces all matching patterns with the replacement string. Supports numbered (`$1`) and named (`$name`) capture groups. Throws on invalid pattern. | `Regex::replace("foo bar", "foo", "baz")` |
-| `Regex::matches(string, pattern)` | Returns an array of all matching substrings or an empty array if there are no matches. Throws on invalid pattern. | `Regex::matches("abc 123 def 456", "\\d+")` |
+| Function                                       | Description                                                                                                                                         | Example                                     |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `Regex::is_match(string, pattern)`             | Returns `true` if the pattern matches anywhere in the string. Throws on invalid pattern.                                                            | `Regex::is_match("hello123", "\\d+")`       |
+| `Regex::replace(string, pattern, replacement)` | Replaces all matching patterns with the replacement string. Supports numbered (`$1`) and named (`$name`) capture groups. Throws on invalid pattern. | `Regex::replace("foo bar", "foo", "baz")`   |
+| `Regex::matches(string, pattern)`              | Returns an array of all matching substrings or an empty array if there are no matches. Throws on invalid pattern.                                   | `Regex::matches("abc 123 def 456", "\\d+")` |
 
 ```rhai
 // Check if a string contains digits
@@ -94,14 +94,86 @@ let numbers = Regex::matches("abc 123 def 456", "\\d+");
 // numbers = ["123", "456"]
 ```
 
+## Http
+
+Make HTTP requests from Rhai scripts.
+
+### Functions
+
+| Function                   | Description                                                          | Example                                               |
+| -------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------- |
+| `Http::get(url)`           | Sends a GET request to the given URL. Returns a `Promise`.           | `Http::get("https://api.example.com/data")`           |
+| `Http::get(url, options)`  | Sends a GET request with the provided options. Returns a `Promise`.  | `Http::get(url, #{ headers: #{ "x-api-key": key } })` |
+| `Http::post(url)`          | Sends a POST request to the given URL. Returns a `Promise`.          | `Http::post("https://api.example.com/data")`          |
+| `Http::post(url, options)` | Sends a POST request with the provided options. Returns a `Promise`. | `Http::post(url, #{ body: payload })`                 |
+
+All `Http` functions return a `Promise`. Call `.wait()` on the promise to block until the response is available.
+
+### Options
+
+The optional `options` parameter is a map that can contain any of the following keys:
+
+| Key       | Type    | Description                      |
+| --------- | ------- | -------------------------------- |
+| `headers` | Map     | A map of header names to values. |
+| `body`    | String  | The request body.                |
+| `timeout` | Integer | Request timeout in seconds. Defaults to 30. |
+
+### Response
+
+Calling `.wait()` on a `Promise` returns an `HttpResponse` with these properties and methods:
+
+| Property / Method | Return type | Description                                                             |
+| ----------------- | ----------- | ----------------------------------------------------------------------- |
+| `.status`         | Integer     | The HTTP status code.                                                   |
+| `.text()`         | String      | The response body as a string.                                          |
+| `.json()`         | Dynamic     | Parses the response body as JSON. Throws if the body is not valid JSON. |
+
+### Examples
+
+```rhai
+// Simple GET request
+let response = Http::get("https://api.example.com/health").wait();
+print(response.status); // 200
+print(response.text()); // "OK"
+
+// GET with custom headers
+let response = Http::get("https://api.example.com/data", #{
+    headers: #{
+        "authorization": "Bearer " + token,
+        "accept": "application/json"
+    },
+    timeout: 30
+}).wait();
+
+// Parse a JSON response
+let data = response.json();
+print(data.name); // access fields directly
+
+// POST with a JSON body
+let response = Http::post("https://api.example.com/items", #{
+    headers: #{
+        "content-type": "application/json"
+    },
+    body: JSON::stringify(#{ name: "new item", count: 1 })
+}).wait();
+
+if response.status != 201 {
+    throw #{
+        message: "Failed to create item: " + response.text(),
+        code: ErrorCode::INTERNAL_ERROR
+    };
+}
+```
+
 ## ErrorCode
 
 These are the constants for structured error responses when using `throw` in lifecycle hooks. Go to [Lifecycle Hooks](/apollo-mcp-server/rhai-lifecycle#error-handling-with-throw) for details about error handling.
 
-| Constant | Description |
-|----------|-------------|
-| `ErrorCode::INVALID_REQUEST` | Indicates a client error, like a missing header or invalid input. |
-| `ErrorCode::INTERNAL_ERROR` | Indicates a server-side error. This is the default when no other error code is specified. |
+| Constant                     | Description                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| `ErrorCode::INVALID_REQUEST` | Indicates a client error, like a missing header or invalid input.                         |
+| `ErrorCode::INTERNAL_ERROR`  | Indicates a server-side error. This is the default when no other error code is specified. |
 
 ```rhai
 fn on_execute_graphql_operation(ctx) {
