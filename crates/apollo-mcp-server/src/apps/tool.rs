@@ -101,6 +101,7 @@ async fn execute_app_tool(
         result,
         &tool.tool.name,
         prefetch_results,
+        tool.extra_outputs.as_ref(),
     ))
 }
 
@@ -132,6 +133,7 @@ fn nest_app_tool_result(
     mut result: CallToolResult,
     tool_name: &str,
     mut prefetch_results: Vec<(String, CallToolResult)>,
+    extra_outputs: Option<&Value>,
 ) -> CallToolResult {
     let Some(restricted_content) = result.structured_content.take() else {
         return result;
@@ -196,6 +198,10 @@ fn nest_app_tool_result(
     restricted_map.insert("toolName".into(), Value::String(tool_name.to_string()));
     if let Some(ref mut full_m) = full_map {
         full_m.insert("toolName".into(), Value::String(tool_name.to_string()));
+    }
+
+    if let Some(extra) = extra_outputs {
+        restricted_map.insert("extra".into(), extra.clone());
     }
 
     let wrapped_restricted = Value::Object(restricted_map);
@@ -370,6 +376,7 @@ mod tests {
                 operation: primary_operation.clone(),
                 tool: Tool::new("ATool", "", JsonObject::new()),
                 labels: AppLabels::default(),
+                extra_outputs: None,
             }],
             prefetch_operations: vec![
                 PrefetchOperation {
@@ -465,6 +472,7 @@ mod tests {
                 ),
                 labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
+                extra_outputs: None,
             }],
             prefetch_operations: vec![],
         };
@@ -517,6 +525,7 @@ mod tests {
                 ),
                 labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
+                extra_outputs: None,
             }],
             prefetch_operations: vec![],
         };
@@ -561,6 +570,7 @@ mod tests {
                 ),
                 labels: AppLabels::default(),
                 tool: Tool::new("GetId", "a description", JsonObject::new()),
+                extra_outputs: None,
             }],
             prefetch_operations: vec![],
         };
@@ -641,6 +651,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
@@ -678,6 +689,7 @@ mod tests {
                 tool_invocation_invoked: Some("Done!".to_string()),
             },
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
@@ -707,6 +719,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
@@ -742,6 +755,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: tool_def,
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::AppsSDK);
@@ -768,6 +782,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
@@ -809,6 +824,7 @@ mod tests {
                 tool_invocation_invoked: Some("Done!".to_string()),
             },
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
@@ -841,6 +857,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: tool_def,
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
@@ -868,6 +885,7 @@ mod tests {
             operation: create_test_operation(),
             labels: AppLabels::default(),
             tool: Tool::new("TestTool", "description", JsonObject::new()),
+            extra_outputs: None,
         };
 
         let result = attach_tool_metadata(&app, &tool, &AppTarget::MCPApps);
@@ -888,7 +906,7 @@ mod tests {
             structured_content: Some(primary_data.clone()),
         };
 
-        let nested = nest_app_tool_result(result, "MyTool", vec![]);
+        let nested = nest_app_tool_result(result, "MyTool", vec![], None);
 
         // structured_content: primary result present, no prefetch
         let sc = nested.structured_content.unwrap();
@@ -916,7 +934,7 @@ mod tests {
             structured_content: Some(restricted.clone()),
         };
 
-        let nested = nest_app_tool_result(result, "MyTool", vec![]);
+        let nested = nest_app_tool_result(result, "MyTool", vec![], None);
 
         // structured_content: restricted primary, no prefetch
         let sc = nested.structured_content.unwrap();
@@ -958,7 +976,12 @@ mod tests {
             structured_content: Some(restricted_prefetch.clone()),
         };
 
-        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+        let nested = nest_app_tool_result(
+            result,
+            "MyTool",
+            vec![("pf1".into(), prefetch_result)],
+            None,
+        );
 
         // structured_content: restricted primary and restricted prefetch
         let sc = nested.structured_content.unwrap();
@@ -1004,7 +1027,12 @@ mod tests {
             structured_content: Some(restricted_prefetch.clone()),
         };
 
-        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+        let nested = nest_app_tool_result(
+            result,
+            "MyTool",
+            vec![("pf1".into(), prefetch_result)],
+            None,
+        );
 
         // structured_content: primary result and restricted prefetch
         let sc = nested.structured_content.unwrap();
@@ -1049,7 +1077,12 @@ mod tests {
             structured_content: Some(prefetch_data.clone()),
         };
 
-        let nested = nest_app_tool_result(result, "MyTool", vec![("pf1".into(), prefetch_result)]);
+        let nested = nest_app_tool_result(
+            result,
+            "MyTool",
+            vec![("pf1".into(), prefetch_result)],
+            None,
+        );
 
         // structured_content: restricted primary and prefetch
         let sc = nested.structured_content.unwrap();
@@ -1064,5 +1097,49 @@ mod tests {
         let meta_sc = meta.get("structuredContent").unwrap();
         assert_eq!(meta_sc.get("result").unwrap(), &full_primary);
         assert!(meta_sc.get("prefetch").is_none());
+    }
+
+    #[test]
+    fn nest_app_tool_result_with_extra_outputs() {
+        let primary_data = json!({"data": {"fieldA": "a"}});
+        let extra = json!({"widgetUrl": "https://example.com", "version": 2});
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: None,
+            structured_content: Some(primary_data.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![], Some(&extra));
+
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("extra").unwrap(), &extra);
+    }
+
+    #[test]
+    fn nest_app_tool_result_with_extra_outputs_and_private() {
+        let restricted = json!({"data": {"fieldA": "a"}});
+        let full = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
+        let extra = json!({"widgetUrl": "https://example.com"});
+
+        let mut meta = Meta::new();
+        meta.insert("structuredContent".into(), full.clone());
+
+        let result = CallToolResult {
+            content: vec![],
+            is_error: None,
+            meta: Some(meta),
+            structured_content: Some(restricted.clone()),
+        };
+
+        let nested = nest_app_tool_result(result, "MyTool", vec![], Some(&extra));
+
+        let sc = nested.structured_content.unwrap();
+        assert_eq!(sc.get("extra").unwrap(), &extra);
+
+        let meta = nested.meta.unwrap();
+        let meta_sc = meta.get("structuredContent").unwrap();
+        assert!(meta_sc.get("extra").is_none());
     }
 }

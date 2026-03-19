@@ -114,7 +114,7 @@ pub(crate) fn load_from_path(
                         .or(labels.tool_invocation_invoked);
                 }
 
-                let tool = Tool {
+                let mcp_tool = Tool {
                     name: tool.name.into(),
                     meta: None,
                     description: Some(if let Some(app_description) = description.clone() {
@@ -139,7 +139,8 @@ pub(crate) fn load_from_path(
                 tools.push(AppTool {
                     operation: operation.clone(),
                     labels,
-                    tool,
+                    tool: mcp_tool,
+                    extra_outputs: tool.extra_outputs,
                 })
             }
 
@@ -318,6 +319,8 @@ struct ToolDefinition {
     description: String,
     #[serde(rename = "extraInputs", default)]
     extra_inputs: Option<Vec<ExtraInputDefinition>>,
+    #[serde(rename = "extraOutputs", default)]
+    extra_outputs: Option<Value>,
     labels: Option<AppLabels>,
 }
 
@@ -1073,5 +1076,82 @@ mod test_load_from_path {
             }
             other => panic!("expected targeted resource, found: {other:?}"),
         }
+    }
+
+    #[test]
+    fn should_store_extra_outputs_on_app_tool() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("ExtraOutputsApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation { hello }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1", "extraOutputs": {"widgetUrl": "https://example.com", "version": 2}}
+                        ]}
+                    ]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+
+        let extra_outputs = apps[0].tools[0]
+            .extra_outputs
+            .as_ref()
+            .expect("extra_outputs should be present");
+        assert_eq!(
+            extra_outputs,
+            &serde_json::json!({"widgetUrl": "https://example.com", "version": 2})
+        );
+    }
+
+    #[test]
+    fn should_have_none_extra_outputs_when_not_specified() {
+        let temp = TempDir::new().expect("Could not create temporary directory for test");
+        let app_dir = temp.child("NoExtraOutputsApp");
+        app_dir
+            .child(MANIFEST_FILE_NAME)
+            .write_str(
+                r#"{"format": "apollo-ai-app-manifest",
+                    "version": "1",
+                    "hash": "abcdef",
+                    "resource": "https://example.com/widget/index.html",
+                    "operations": [
+                        {"body": "query MyOperation { hello }", "tools": [
+                          {"name": "Tool1", "description": "Description for Tool1"}
+                        ]}
+                    ]}"#,
+            )
+            .unwrap();
+        let apps = load_from_path(
+            temp.path(),
+            &Schema::parse("type Query { hello: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap(),
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+        )
+        .expect("Failed to load apps");
+
+        assert!(apps[0].tools[0].extra_outputs.is_none());
     }
 }
