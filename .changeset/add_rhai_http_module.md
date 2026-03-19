@@ -31,7 +31,7 @@ let response = Http::post("https://api.example.com/data", #{
     headers: #{
         "Content-Type": "application/json"
     },
-    body: Json::stringify(#{
+    body: JSON::stringify(#{
         key: "value"
     })
 }).wait();
