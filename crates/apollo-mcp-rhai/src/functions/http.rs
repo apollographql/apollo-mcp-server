@@ -10,6 +10,8 @@ use crate::types::{HttpResponse, Promise, PromiseState};
 
 static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
 
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
 pub struct RhaiHttp {}
 
 impl RhaiHttp {
@@ -94,9 +96,8 @@ async fn execute_request(
     if let Some(body) = options.body {
         builder = builder.body(body);
     }
-    if let Some(secs) = options.timeout_secs {
-        builder = builder.timeout(Duration::from_secs(secs));
-    }
+    let timeout_secs = options.timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS);
+    builder = builder.timeout(Duration::from_secs(timeout_secs));
 
     let resp = builder.send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16() as i64;
