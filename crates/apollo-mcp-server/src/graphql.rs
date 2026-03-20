@@ -153,15 +153,12 @@ pub trait Executable {
                     (json, None)
                 };
 
-                Ok(CallToolResult {
-                    content: vec![
-                        Content::json(&structured_content)
-                            .unwrap_or(Content::text(structured_content.to_string())),
-                    ],
-                    is_error,
-                    meta,
-                    structured_content: Some(structured_content),
-                })
+                let result = if is_error == Some(true) {
+                    CallToolResult::structured_error(structured_content)
+                } else {
+                    CallToolResult::structured(structured_content)
+                };
+                Ok(result.with_meta(meta))
             }
             Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
                 "Failed to read GraphQL response body: {e}"

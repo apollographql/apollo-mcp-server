@@ -148,8 +148,8 @@ impl Search {
 
         let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
-        Ok(CallToolResult {
-            content: shaken
+        Ok(CallToolResult::success(
+            shaken
                 .types
                 .iter()
                 .filter(|(_name, extended_type)| {
@@ -169,12 +169,7 @@ impl Search {
                 })
                 .map(Content::text)
                 .collect(),
-            is_error: None,
-            meta: None,
-
-            // Note: The returned content is treated as text, so no need to structure its output
-            structured_content: None,
-        })
+        ))
     }
 }
 

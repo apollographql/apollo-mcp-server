@@ -77,18 +77,13 @@ impl Introspect {
                 },
             ),
             None => {
-                return Ok(CallToolResult {
-                    content: vec![],
-                    is_error: None,
-                    meta: None,
-                    structured_content: None,
-                });
+                return Ok(CallToolResult::success(vec![]));
             }
         }
         let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
-        Ok(CallToolResult {
-            content: shaken
+        Ok(CallToolResult::success(
+            shaken
                 .types
                 .iter()
                 .filter(|(_name, extended_type)| {
@@ -109,11 +104,7 @@ impl Introspect {
                 .map(|extended_type| self.serialize(extended_type))
                 .map(Content::text)
                 .collect(),
-            is_error: None,
-            meta: None,
-            // The content being returned is a raw string, so no need to create structured content for it
-            structured_content: None,
-        })
+        ))
     }
 
     fn serialize(&self, extended_type: &ExtendedType) -> String {
