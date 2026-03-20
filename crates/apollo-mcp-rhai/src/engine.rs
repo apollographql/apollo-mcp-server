@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rhai::module_resolvers::FileModuleResolver;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::checkpoints::OnExecuteGraphqlOperationContext;
 use crate::functions::{Json, RhaiEnv, RhaiHttp, RhaiRegex, RhaiSha256};
@@ -122,11 +122,7 @@ impl RhaiEngine {
     /// clearing hooks during atomic editor saves (delete-then-create).
     pub fn reload(&mut self) -> Result<(), Box<EvalAltResult>> {
         if !self.main_file.exists() {
-            warn!(
-                "Rhai script {} not found, preserving existing hooks",
-                self.main_file.display()
-            );
-            return Ok(());
+            return Err(format!("Rhai script {} not found", self.main_file.display()).into());
         }
 
         let mut new_scope = Self::create_scope();
@@ -329,8 +325,7 @@ mod tests {
             .load_from_string("fn original() { 1 }")
             .expect("Should compile");
 
-        engine.reload().expect("Should reload successfully");
-
+        assert!(engine.reload().is_err());
         assert!(engine.ast_has_function("original"));
     }
 

@@ -227,7 +227,8 @@ impl StateMachine {
     fn rhai_watch_stream() -> impl Stream<Item = ServerEvent> {
         let rhai_dir = Path::new("rhai");
 
-        // Limitation: the rhai directory must exist on startup for hot reloading to work. If the user creates it after the fact, they will need to restart the server.
+        // Limitation: the rhai directory must exist on startup for hot reloading to work.
+        // If the user creates it after the fact, they will need to restart the server.
         if rhai_dir.is_dir() {
             files::watch_recursive(rhai_dir)
                 .map(|_| ServerEvent::RhaiScriptsChanged)
