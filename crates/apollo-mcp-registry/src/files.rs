@@ -154,11 +154,12 @@ pub(crate) mod tests {
 
     #[test(tokio::test)]
     async fn recursive_watch_detects_subdir_changes() {
-        let dir = temp_dir().join(format!("{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(dir.join("subdir")).unwrap();
-        let mut file = File::create(dir.join("subdir").join("test.txt")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("subdir")).unwrap();
+        let mut file = File::create(dir.path().join("subdir").join("test.txt")).unwrap();
 
-        let mut watch = watch_inner(&dir, Duration::from_millis(100), RecursiveMode::Recursive);
+        let mut watch =
+            watch_inner(dir.path(), Duration::from_millis(100), RecursiveMode::Recursive);
 
         // Initial event is always emitted
         assert!(futures::poll!(watch.next()).is_ready());

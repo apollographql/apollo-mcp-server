@@ -33,6 +33,7 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
+tempfile.workspace = true
 test-log = { version = "0.2.16", default-features = false, features = [
   "trace",
 ] }
