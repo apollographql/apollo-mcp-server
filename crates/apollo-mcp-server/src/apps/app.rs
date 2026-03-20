@@ -252,10 +252,8 @@ mod tests {
                 .unwrap()
                 .clone(),
         );
-        let client_capabilities = ClientCapabilities {
-            extensions: Some(extension_capabilities),
-            ..Default::default()
-        };
+        let mut client_capabilities = ClientCapabilities::default();
+        client_capabilities.extensions = Some(extension_capabilities);
 
         let app_target = AppTarget::try_from((extensions, Some(&client_capabilities))).unwrap();
         assert!(matches!(app_target, AppTarget::MCPApps));

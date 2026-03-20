@@ -81,12 +81,9 @@ impl Explorer {
         };
         let url = self.create_explorer_url(input)?;
         debug!(?url, input=?pretty, "Created URL to open operation in Apollo Explorer");
-        Ok(CallToolResult {
-            content: vec![Content::text(url.clone())],
-            meta: None,
-            is_error: None,
-            structured_content: Some(Value::Array(vec![url.into()])),
-        })
+        let mut result = CallToolResult::success(vec![Content::text(url.clone())]);
+        result.structured_content = Some(Value::Array(vec![url.into()]));
+        Ok(result)
     }
 }
 

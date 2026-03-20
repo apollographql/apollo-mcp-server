@@ -899,12 +899,8 @@ mod tests {
     fn nest_app_tool_result_no_private_no_prefetch() {
         let primary_data = json!({"data": {"fieldA": "a"}});
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: None,
-            structured_content: Some(primary_data.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(primary_data.clone());
 
         let nested = nest_app_tool_result(result, "MyTool", vec![], None);
 
@@ -927,12 +923,9 @@ mod tests {
         let mut meta = Meta::new();
         meta.insert("structuredContent".into(), full.clone());
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(meta),
-            structured_content: Some(restricted.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(restricted.clone());
+        result.meta = Some(meta);
 
         let nested = nest_app_tool_result(result, "MyTool", vec![], None);
 
@@ -956,12 +949,9 @@ mod tests {
         let mut primary_meta = Meta::new();
         primary_meta.insert("structuredContent".into(), full_primary.clone());
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(primary_meta),
-            structured_content: Some(restricted_primary.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(restricted_primary.clone());
+        result.meta = Some(primary_meta);
 
         let restricted_prefetch = json!({"data": {"x": 1}});
         let full_prefetch = json!({"data": {"x": 1, "y": 2}});
@@ -969,12 +959,9 @@ mod tests {
         let mut prefetch_meta = Meta::new();
         prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
 
-        let prefetch_result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(prefetch_meta),
-            structured_content: Some(restricted_prefetch.clone()),
-        };
+        let mut prefetch_result = CallToolResult::success(vec![]);
+        prefetch_result.structured_content = Some(restricted_prefetch.clone());
+        prefetch_result.meta = Some(prefetch_meta);
 
         let nested = nest_app_tool_result(
             result,
@@ -1006,12 +993,8 @@ mod tests {
         // Primary has no @private fields
         let primary_data = json!({"data": {"fieldA": "a"}});
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: None,
-            structured_content: Some(primary_data.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(primary_data.clone());
 
         // Prefetch has @private fields
         let restricted_prefetch = json!({"data": {"x": 1}});
@@ -1020,12 +1003,9 @@ mod tests {
         let mut prefetch_meta = Meta::new();
         prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
 
-        let prefetch_result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(prefetch_meta),
-            structured_content: Some(restricted_prefetch.clone()),
-        };
+        let mut prefetch_result = CallToolResult::success(vec![]);
+        prefetch_result.structured_content = Some(restricted_prefetch.clone());
+        prefetch_result.meta = Some(prefetch_meta);
 
         let nested = nest_app_tool_result(
             result,
@@ -1061,21 +1041,14 @@ mod tests {
         let mut primary_meta = Meta::new();
         primary_meta.insert("structuredContent".into(), full_primary.clone());
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(primary_meta),
-            structured_content: Some(restricted_primary.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(restricted_primary.clone());
+        result.meta = Some(primary_meta);
 
         // Prefetch has no @private fields
         let prefetch_data = json!({"data": {"x": 1}});
-        let prefetch_result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: None,
-            structured_content: Some(prefetch_data.clone()),
-        };
+        let mut prefetch_result = CallToolResult::success(vec![]);
+        prefetch_result.structured_content = Some(prefetch_data.clone());
 
         let nested = nest_app_tool_result(
             result,
@@ -1104,12 +1077,8 @@ mod tests {
         let primary_data = json!({"data": {"fieldA": "a"}});
         let extra = json!({"widgetUrl": "https://example.com", "version": 2});
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: None,
-            structured_content: Some(primary_data.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(primary_data.clone());
 
         let nested = nest_app_tool_result(result, "MyTool", vec![], Some(&extra));
 
@@ -1126,12 +1095,9 @@ mod tests {
         let mut meta = Meta::new();
         meta.insert("structuredContent".into(), full.clone());
 
-        let result = CallToolResult {
-            content: vec![],
-            is_error: None,
-            meta: Some(meta),
-            structured_content: Some(restricted.clone()),
-        };
+        let mut result = CallToolResult::success(vec![]);
+        result.structured_content = Some(restricted.clone());
+        result.meta = Some(meta);
 
         let nested = nest_app_tool_result(result, "MyTool", vec![], Some(&extra));
 

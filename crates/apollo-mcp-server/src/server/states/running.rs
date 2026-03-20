@@ -491,9 +491,7 @@ impl Running {
         if let Some(app_name) = app_param {
             let resource =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
-            Ok(ReadResourceResult {
-                contents: vec![resource],
-            })
+            Ok(ReadResourceResult::new(vec![resource]))
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -586,13 +584,11 @@ impl ServerHandler for Running {
             .build()
             .add(1, &[]);
 
-        let capabilities = ServerCapabilities {
-            tools: Some(ToolsCapability {
-                list_changed: Some(true),
-            }),
-            resources: (!self.apps.is_empty()).then(ResourcesCapability::default),
-            ..Default::default()
-        };
+        let mut capabilities = ServerCapabilities::default();
+        capabilities.tools = Some(ToolsCapability {
+            list_changed: Some(true),
+        });
+        capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
 
         let protocol_version = if self.enable_output_schema {
             ProtocolVersion::default()
@@ -600,19 +596,22 @@ impl ServerHandler for Running {
             ProtocolVersion::V_2025_03_26
         };
 
-        ServerInfo {
-            protocol_version,
-            server_info: Implementation {
-                name: self.server_info.name().to_string(),
-                icons: None,
-                title: self.server_info.title().map(|s| s.to_string()),
-                version: self.server_info.version().to_string(),
-                website_url: self.server_info.website_url().map(|s| s.to_string()),
-                description: self.server_info.description().map(|s| s.to_string()),
-            },
-            capabilities,
-            instructions: None,
+        let mut impl_ = Implementation::new(
+            self.server_info.name().to_string(),
+            self.server_info.version().to_string(),
+        );
+        if let Some(t) = self.server_info.title() {
+            impl_ = impl_.with_title(t);
         }
+        if let Some(d) = self.server_info.description() {
+            impl_ = impl_.with_description(d);
+        }
+        if let Some(u) = self.server_info.website_url() {
+            impl_ = impl_.with_website_url(u);
+        }
+        InitializeResult::new(capabilities)
+            .with_protocol_version(protocol_version)
+            .with_server_info(impl_)
     }
 }
 
@@ -982,12 +981,9 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource#a_different_fragment"
-                            .parse()
-                            .unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new(
+                        "http://localhost:4000/resource#a_different_fragment",
+                    ),
                     extensions,
                     None,
                 )
@@ -1028,10 +1024,7 @@ mod tests {
 
             let result = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/invalid_resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/invalid_resource"),
                     extensions,
                     None,
                 )
@@ -1056,10 +1049,7 @@ mod tests {
 
             let result = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "not a uri".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("not a uri"),
                     extensions,
                     None,
                 )
@@ -1076,10 +1066,7 @@ mod tests {
             );
             let result = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     Extensions::new(),
                     None,
                 )
@@ -1104,10 +1091,7 @@ mod tests {
 
             let result = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1144,10 +1128,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: RESOURCE_URI.to_string(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
                     None,
                 )
@@ -1191,10 +1172,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1267,10 +1245,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1309,10 +1284,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1350,10 +1322,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1399,10 +1368,7 @@ mod tests {
 
             let mut resource = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1451,10 +1417,7 @@ mod tests {
 
             let result = running
                 .read_resource_impl(
-                    ReadResourceRequestParams {
-                        uri: "http://localhost:4000/resource".parse().unwrap(),
-                        meta: None,
-                    },
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
                 )
@@ -1660,10 +1623,8 @@ mod tests {
                     .unwrap()
                     .clone(),
             );
-            let client_capabilities = ClientCapabilities {
-                extensions: Some(extension_capabilities),
-                ..Default::default()
-            };
+            let mut client_capabilities = ClientCapabilities::default();
+            client_capabilities.extensions = Some(extension_capabilities);
 
             let result = running
                 .list_tools_impl(extensions, Some(&client_capabilities), None)
@@ -1921,12 +1882,8 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let request = CallToolRequestParams {
-                meta: None,
-                name: "Hello".into(),
-                arguments: Some(Default::default()),
-                task: None,
-            };
+            let mut request = CallToolRequestParams::new("Hello");
+            request.arguments = Some(Default::default());
 
             let result = running
                 .call_tool_impl(
@@ -1970,12 +1927,8 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let request = CallToolRequestParams {
-                meta: None,
-                name: "Hello".into(),
-                arguments: Some(Default::default()),
-                task: None,
-            };
+            let mut request = CallToolRequestParams::new("Hello");
+            request.arguments = Some(Default::default());
 
             let result = running
                 .call_tool_impl(
@@ -2069,12 +2022,8 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let request = CallToolRequestParams {
-                meta: None,
-                name: "Hello".into(),
-                arguments: Some(Default::default()),
-                task: None,
-            };
+            let mut request = CallToolRequestParams::new("Hello");
+            request.arguments = Some(Default::default());
 
             let _result = running
                 .call_tool_impl(request, &extensions, None)

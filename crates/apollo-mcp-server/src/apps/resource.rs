@@ -233,10 +233,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
             "TestApp",
@@ -297,10 +294,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
             "TestApp",
@@ -349,10 +343,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/NonExistent".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/NonExistent"),
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
             "TestApp",
@@ -377,10 +368,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
             "WrongApp",
@@ -408,10 +396,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
             "TestApp",
@@ -443,10 +428,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
             "TestApp",
@@ -478,10 +460,7 @@ mod tests {
 
         let result = get_app_resource(
             &[app],
-            rmcp::model::ReadResourceRequestParams {
-                uri: "ui://widget/TestApp".to_string(),
-                meta: None,
-            },
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
             "TestApp",

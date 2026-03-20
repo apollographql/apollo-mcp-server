@@ -114,27 +114,25 @@ pub(crate) fn load_from_path(
                         .or(labels.tool_invocation_invoked);
                 }
 
-                let mcp_tool = Tool {
-                    name: tool.name.into(),
-                    meta: None,
-                    description: Some(if let Some(app_description) = description.clone() {
+                let mut mcp_tool = Tool::new_with_raw(
+                    tool.name,
+                    Some(if let Some(app_description) = description.clone() {
                         format!("{} {}", app_description, tool.description).into()
                     } else {
                         tool.description.into()
                     }),
-                    input_schema: if let Some(extra_inputs) = tool.extra_inputs {
+                    if let Some(extra_inputs) = tool.extra_inputs {
                         let mut merged = operation.tool.input_schema.as_ref().clone();
                         merge_inputs(&mut merged, extra_inputs)?;
                         Arc::new(merged)
                     } else {
                         operation.tool.input_schema.clone()
                     },
-                    title: operation.tool.title.clone(),
-                    output_schema: operation.tool.output_schema.clone(),
-                    annotations: operation.tool.annotations.clone(),
-                    icons: operation.tool.icons.clone(),
-                    execution: None,
-                };
+                );
+                mcp_tool.title = operation.tool.title.clone();
+                mcp_tool.output_schema = operation.tool.output_schema.clone();
+                mcp_tool.annotations = operation.tool.annotations.clone();
+                mcp_tool.icons = operation.tool.icons.clone();
 
                 tools.push(AppTool {
                     operation: operation.clone(),
