@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rhai::module_resolvers::FileModuleResolver;
 use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::checkpoints::OnExecuteGraphqlOperationContext;
 use crate::functions::{Json, RhaiEnv, RhaiHttp, RhaiRegex, RhaiSha256};
@@ -118,14 +118,18 @@ impl RhaiEngine {
     /// Reloads the Rhai scripts from disk atomically.
     /// On success, replaces the current scope and AST.
     /// On failure, returns an error and preserves the existing scope and AST.
+    /// When the script file is absent, the existing scope and AST are preserved to avoid
+    /// clearing hooks during atomic editor saves (delete-then-create).
     pub fn reload(&mut self) -> Result<(), Box<EvalAltResult>> {
-        let mut new_scope = Self::create_scope();
-
         if !self.main_file.exists() {
-            self.scope = new_scope;
-            self.ast = AST::empty();
+            warn!(
+                "Rhai script {} not found, preserving existing hooks",
+                self.main_file.display()
+            );
             return Ok(());
         }
+
+        let mut new_scope = Self::create_scope();
 
         let new_ast = self
             .engine
@@ -316,7 +320,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_should_clear_ast_when_script_file_missing() {
+    fn reload_should_preserve_state_when_script_file_missing() {
         let dir = tempfile::tempdir().expect("Should create temp dir");
         let script_dir = dir.path().join("rhai");
 
@@ -327,7 +331,7 @@ mod tests {
 
         engine.reload().expect("Should reload successfully");
 
-        assert!(!engine.ast_has_function("original"));
+        assert!(engine.ast_has_function("original"));
     }
 
     #[test]
