@@ -21,6 +21,7 @@ pub struct OnExecuteGraphqlOperationContext {
     pub endpoint: String,
     pub headers: RhaiHeaderMap,
     pub incoming_request: RhaiHttpParts,
+    pub tool_name: String,
 }
 
 impl OnExecuteGraphqlOperationContext {
@@ -50,6 +51,12 @@ impl OnExecuteGraphqlOperationContext {
                 |obj: &mut SharedMut<OnExecuteGraphqlOperationContext>| -> RhaiHttpParts {
                     obj.with_mut(|ctx| ctx.incoming_request.clone())
                 },
+            )
+            .register_get(
+                "tool_name",
+                |obj: &mut SharedMut<OnExecuteGraphqlOperationContext>| -> String {
+                    obj.with_mut(|ctx| ctx.tool_name.clone())
+                },
             );
     }
 }
@@ -59,6 +66,7 @@ pub fn on_execute_graphql_operation(
     endpoint: &Url,
     headers: &HeaderMap,
     axum_parts: Option<&Parts>,
+    tool_name: &str,
 ) -> Result<(Url, HeaderMap), McpError> {
     let hook_name = "on_execute_graphql_operation";
     let mut engine_guard = engine.lock();
@@ -75,6 +83,7 @@ pub fn on_execute_graphql_operation(
             Some(parts) => RhaiHttpParts::from(parts.clone()),
             None => RhaiHttpParts::default(),
         },
+        tool_name: tool_name.to_string(),
     };
 
     let shared_context = Arc::new(Mutex::new(context));
@@ -156,7 +165,8 @@ mod tests {
         headers.insert("authorization", "Bearer token123".parse().unwrap());
 
         let (result_url, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
+                .expect("Should not error");
 
         assert_eq!(result_url, url);
         assert_eq!(
@@ -176,7 +186,8 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (result_url, _result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
+                .expect("Should not error");
 
         assert_eq!(result_url, url);
     }
@@ -192,7 +203,8 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (result_url, _) =
-            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
+                .expect("Should not error");
 
         assert_eq!(
             result_url,
@@ -213,7 +225,8 @@ mod tests {
         let headers = HeaderMap::new();
 
         let (_, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, None).expect("Should not error");
+            on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
+                .expect("Should not error");
 
         assert_eq!(result_headers.get("x-custom").unwrap(), "custom-value");
     }
@@ -231,7 +244,7 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
             .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INVALID_REQUEST);
@@ -250,7 +263,7 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
             .expect_err("Should return error");
 
         assert_eq!(err.message, "Internal error");
@@ -266,7 +279,7 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
             .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
@@ -283,10 +296,29 @@ mod tests {
         let url = Url::parse("https://example.com/graphql").expect("Valid URL");
         let headers = HeaderMap::new();
 
-        let err = on_execute_graphql_operation(&engine, &url, &headers, None)
+        let err = on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
             .expect_err("Should return error");
 
         assert_eq!(err.code, ErrorCode::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn should_read_tool_name() {
+        let engine = create_engine(
+            r#"fn on_execute_graphql_operation(ctx) {
+                let h = ctx.headers;
+                h["x-tool-name"] = ctx.tool_name;
+                ctx.headers = h;
+            }"#,
+        );
+        let url = Url::parse("https://example.com/graphql").expect("Valid URL");
+        let headers = HeaderMap::new();
+
+        let (_, result_headers) =
+            on_execute_graphql_operation(&engine, &url, &headers, None, "my-tool")
+                .expect("Should not error");
+
+        assert_eq!(result_headers.get("x-tool-name").unwrap(), "my-tool");
     }
 
     #[test]
@@ -303,7 +335,7 @@ mod tests {
         let parts = create_parts("POST", "/mcp", HeaderMap::new());
 
         let (_, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts), "my-tool")
                 .expect("Should not error");
 
         assert_eq!(result_headers.get("x-method").unwrap(), "POST");
@@ -323,7 +355,7 @@ mod tests {
         let parts = create_parts("GET", "/mcp/sse", HeaderMap::new());
 
         let (_, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts), "my-tool")
                 .expect("Should not error");
 
         assert_eq!(result_headers.get("x-uri").unwrap(), "/mcp/sse");
@@ -345,7 +377,7 @@ mod tests {
         let parts = create_parts("POST", "/mcp", incoming_headers);
 
         let (_, result_headers) =
-            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts))
+            on_execute_graphql_operation(&engine, &url, &headers, Some(&parts), "my-tool")
                 .expect("Should not error");
 
         assert_eq!(

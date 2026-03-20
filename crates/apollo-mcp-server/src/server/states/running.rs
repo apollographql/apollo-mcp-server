@@ -350,6 +350,7 @@ impl Running {
                 &self.endpoint,
                 &self.rhai_engine,
                 axum_parts,
+                &tool_name,
             )
             .await
         } else if tool_name == VALIDATE_TOOL_NAME
