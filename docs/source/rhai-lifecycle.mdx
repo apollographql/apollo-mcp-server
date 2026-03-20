@@ -26,6 +26,7 @@ The `ctx` parameter provides these properties:
 | `endpoint`         | `String`    | read/write | The URL of the GraphQL endpoint for the request.                                                |
 | `headers`          | `HeaderMap` | read/write | The HTTP headers for the request.                                                               |
 | `incoming_request` | `HttpParts` | read-only  | The original HTTP request received by the MCP server. Only available when using HTTP transport. |
+| `tool_name`        | `String`    | read-only  | The name of the MCP tool that triggered this GraphQL operation.                                 |
 
 ### Working with headers
 

@@ -60,8 +60,13 @@ async fn execute_app_tool(
     rhai_engine: &Arc<Mutex<RhaiEngine>>,
     axum_parts: Option<&Parts>,
 ) -> Result<CallToolResult, McpError> {
-    let (endpoint, headers) =
-        checkpoints::on_execute_graphql_operation(rhai_engine, endpoint, headers, axum_parts)?;
+    let (endpoint, headers) = checkpoints::on_execute_graphql_operation(
+        rhai_engine,
+        endpoint,
+        headers,
+        axum_parts,
+        &tool.tool.name,
+    )?;
 
     let graphql_request = graphql::Request {
         input: Value::from(filter_inputs_for_operation(arguments, &tool.operation)),
