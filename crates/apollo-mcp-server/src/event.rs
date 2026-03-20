@@ -20,6 +20,9 @@ pub enum Event {
     /// An error occurred when loading operations from collection
     CollectionError(CollectionError),
 
+    /// Rhai scripts in the rhai/ directory have changed
+    RhaiScriptsChanged,
+
     /// The server should gracefully shut down
     Shutdown,
 }
@@ -38,6 +41,9 @@ impl Debug for Event {
             }
             Event::CollectionError(e) => {
                 write!(f, "OperationError({e:?})")
+            }
+            Event::RhaiScriptsChanged => {
+                write!(f, "RhaiScriptsChanged")
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")
@@ -79,6 +85,13 @@ mod tests {
         let event = Event::CollectionError(CollectionError::Response("TEST".to_string()));
         let output = format!("{:?}", event);
         assert_eq!(output, r#"OperationError(Response("TEST"))"#);
+    }
+
+    #[test]
+    fn debug_event_rhai_scripts_changed() {
+        let event = Event::RhaiScriptsChanged;
+        let output = format!("{:?}", event);
+        assert_eq!(output, "RhaiScriptsChanged");
     }
 
     #[test]

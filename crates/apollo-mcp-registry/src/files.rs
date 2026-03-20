@@ -29,11 +29,21 @@ const DEFAULT_WATCH_DURATION: Duration = Duration::from_millis(100);
 /// returns: impl Stream<Item=()>
 ///
 pub fn watch(path: &Path) -> impl Stream<Item = ()> + use<> {
-    watch_with_duration(path, DEFAULT_WATCH_DURATION)
+    watch_inner(path, DEFAULT_WATCH_DURATION, RecursiveMode::NonRecursive)
+}
+
+/// Creates a stream of events whenever a file within the directory tree rooted at `path` changes.
+/// Unlike [`watch`], this watches subdirectories recursively.
+pub fn watch_recursive(path: &Path) -> impl Stream<Item = ()> + use<> {
+    watch_inner(path, DEFAULT_WATCH_DURATION, RecursiveMode::Recursive)
 }
 
 #[allow(clippy::panic)] // TODO: code copied from router contained existing panics
-fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()> + use<> {
+fn watch_inner(
+    path: &Path,
+    duration: Duration,
+    recursive_mode: RecursiveMode,
+) -> impl Stream<Item = ()> + use<> {
     let path = PathBuf::from(path);
     let is_dir = path.is_dir();
     let watched_path = path.clone();
@@ -94,7 +104,7 @@ fn watch_with_duration(path: &Path, duration: Duration) -> impl Stream<Item = ()
     )
     .unwrap_or_else(|_| panic!("could not create watch on: {path:?}"));
     watcher
-        .watch(&path, RecursiveMode::NonRecursive)
+        .watch(&path, recursive_mode)
         .unwrap_or_else(|_| panic!("could not watch: {path:?}"));
     // Tell watchers once they should read the file once,
     // then listen to fs events.
@@ -126,7 +136,11 @@ pub(crate) mod tests {
     #[test(tokio::test)]
     async fn basic_watch() {
         let (path, mut file) = create_temp_file();
-        let mut watch = watch_with_duration(&path, Duration::from_millis(100));
+        let mut watch = watch_inner(
+            &path,
+            Duration::from_millis(100),
+            RecursiveMode::NonRecursive,
+        );
         // This test can be very racy. Without synchronisation, all
         // we can hope is that if we wait long enough between each
         // write/flush then the future will become ready.
@@ -136,6 +150,22 @@ pub(crate) mod tests {
         assert!(futures::poll!(watch.next()).is_ready());
         write_and_flush(&mut file, "Some data 2").await;
         assert!(futures::poll!(watch.next()).is_ready())
+    }
+
+    #[test(tokio::test)]
+    async fn recursive_watch_detects_subdir_changes() {
+        let dir = temp_dir().join(format!("{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("subdir")).unwrap();
+        let mut file = File::create(dir.join("subdir").join("test.txt")).unwrap();
+
+        let mut watch = watch_inner(&dir, Duration::from_millis(100), RecursiveMode::Recursive);
+
+        // Initial event is always emitted
+        assert!(futures::poll!(watch.next()).is_ready());
+
+        // Modify the file in the subdirectory
+        write_and_flush(&mut file, "changed content").await;
+        assert!(futures::poll!(watch.next()).is_ready());
     }
 
     pub(crate) fn create_temp_file() -> (PathBuf, File) {
