@@ -158,8 +158,11 @@ pub(crate) mod tests {
         std::fs::create_dir_all(dir.path().join("subdir")).unwrap();
         let mut file = File::create(dir.path().join("subdir").join("test.txt")).unwrap();
 
-        let mut watch =
-            watch_inner(dir.path(), Duration::from_millis(100), RecursiveMode::Recursive);
+        let mut watch = watch_inner(
+            dir.path(),
+            Duration::from_millis(100),
+            RecursiveMode::Recursive,
+        );
 
         // Initial event is always emitted
         assert!(futures::poll!(watch.next()).is_ready());
