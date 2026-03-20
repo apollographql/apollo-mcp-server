@@ -23,6 +23,7 @@ url.workspace = true
 
 [dev-dependencies]
 mockito = "1.7.0"
+tempfile.workspace = true
 tracing-test = "0.2.5"
 
 [features]

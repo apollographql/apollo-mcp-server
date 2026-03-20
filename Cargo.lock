@@ -202,6 +202,7 @@ dependencies = [
  "rmcp",
  "serde_json",
  "sha2",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-test",

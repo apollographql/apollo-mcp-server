@@ -146,7 +146,7 @@ impl Starting {
             _ => None, // No health checks for Stdio or when disabled.
         };
 
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
         engine.load_from_path().map_err(|err| {
             error!("Error loading Rhai scripts: {err}");
             ServerError::RhaiError

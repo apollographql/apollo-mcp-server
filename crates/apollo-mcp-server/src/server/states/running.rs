@@ -684,7 +684,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         }
     }
 
@@ -2103,7 +2103,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
@@ -2329,7 +2329,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
@@ -2558,7 +2558,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
