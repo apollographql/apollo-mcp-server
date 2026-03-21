@@ -13,6 +13,7 @@ pub struct RhaiEngine {
     scope: Scope<'static>,
     ast: AST,
     main_file: PathBuf,
+    script_dir: PathBuf,
 }
 
 impl Default for RhaiEngine {
@@ -42,6 +43,7 @@ impl RhaiEngine {
             scope,
             ast: AST::empty(),
             main_file,
+            script_dir,
         }
     }
 
@@ -124,6 +126,11 @@ impl RhaiEngine {
         if !self.main_file.exists() {
             return Err(format!("Rhai script {} not found", self.main_file.display()).into());
         }
+
+        // Reset the module resolver to clear cached modules so that
+        // changes to imported Rhai module files are picked up.
+        let resolver = FileModuleResolver::new_with_path(&self.script_dir);
+        self.engine.set_module_resolver(resolver);
 
         let mut new_scope = Self::create_scope();
 
@@ -315,6 +322,13 @@ mod tests {
         std::fs::write(rhai_dir.join("main.rhai"), content).expect("Should write script");
     }
 
+    fn write_rhai_module(base: &std::path::Path, module_name: &str, content: &str) {
+        let rhai_dir = base.join("rhai");
+        std::fs::create_dir_all(&rhai_dir).expect("Should create rhai dir");
+        std::fs::write(rhai_dir.join(format!("{module_name}.rhai")), content)
+            .expect("Should write module");
+    }
+
     #[test]
     fn reload_should_preserve_state_when_script_file_missing() {
         let dir = tempfile::tempdir().expect("Should create temp dir");
@@ -393,6 +407,34 @@ mod tests {
 
         assert!(result.is_err());
         assert!(engine.ast_has_function("original"));
+    }
+
+    #[test]
+    fn reload_should_pick_up_changes_to_imported_modules() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 1 }");
+        write_rhai_script(
+            dir.path(),
+            r#"import "helpers" as h; fn get_value() { h::helper_value() }"#,
+        );
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine.load_from_path().expect("Should load");
+
+        let result = engine
+            .execute_hook("get_value", ())
+            .expect("Should not error");
+        assert_eq!(result.unwrap().as_int().unwrap(), 1);
+
+        // Update the module file and reload
+        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 42 }");
+        engine.reload().expect("Should reload successfully");
+
+        let result = engine
+            .execute_hook("get_value", ())
+            .expect("Should not error");
+        assert_eq!(result.unwrap().as_int().unwrap(), 42);
     }
 
     #[test]
