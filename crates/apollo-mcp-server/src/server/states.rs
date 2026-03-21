@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
+use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
@@ -75,7 +77,13 @@ impl StateMachine {
             .boxed();
         let operation_stream = server.operation_source.into_stream().await.boxed();
         let ctrl_c_stream = Self::ctrl_c_stream().boxed();
-        let mut stream = stream::select_all(vec![schema_stream, operation_stream, ctrl_c_stream]);
+        let rhai_stream = Self::rhai_watch_stream().boxed();
+        let mut stream = stream::select_all(vec![
+            schema_stream,
+            operation_stream,
+            ctrl_c_stream,
+            rhai_stream,
+        ]);
 
         let mut state = State::Configuring(Configuring {
             config: Config {
@@ -168,6 +176,13 @@ impl StateMachine {
                     }
                     _ => State::Error(ServerError::Operation(OperationError::Collection(e))),
                 },
+                ServerEvent::RhaiScriptsChanged => match state {
+                    State::Running(running) => {
+                        running.reload_rhai_scripts();
+                        running.into()
+                    }
+                    other => other,
+                },
                 ServerEvent::Shutdown => match state {
                     State::Running(running) => {
                         running.cancellation_token.cancel();
@@ -207,6 +222,20 @@ impl StateMachine {
             .map(|_| ServerEvent::Shutdown)
             .into_stream()
             .boxed()
+    }
+
+    fn rhai_watch_stream() -> impl Stream<Item = ServerEvent> {
+        let rhai_dir = Path::new("rhai");
+
+        // Limitation: the rhai directory must exist on startup for hot reloading to work.
+        // If the user creates it after the fact, they will need to restart the server.
+        if rhai_dir.is_dir() {
+            files::watch_recursive(rhai_dir)
+                .map(|_| ServerEvent::RhaiScriptsChanged)
+                .boxed()
+        } else {
+            stream::empty().boxed()
+        }
     }
 }
 
@@ -370,7 +399,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         }
     }
 
@@ -433,6 +462,13 @@ mod tests {
                     OperationError::Collection(e),
                 )),
             },
+            ServerEvent::RhaiScriptsChanged => match state {
+                State::Running(running) => {
+                    running.reload_rhai_scripts();
+                    running.into()
+                }
+                other => other,
+            },
             _ => state,
         }
     }
@@ -489,6 +525,22 @@ mod tests {
         assert!(
             matches!(new_state, State::Running(_)),
             "expected server to remain Running after API collection error"
+        );
+    }
+
+    // A RhaiScriptsChanged event while Running should NOT kill the server.
+    #[tokio::test]
+    async fn rhai_scripts_changed_keeps_running_server_alive() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let event = ServerEvent::RhaiScriptsChanged;
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running after RhaiScriptsChanged"
         );
     }
 

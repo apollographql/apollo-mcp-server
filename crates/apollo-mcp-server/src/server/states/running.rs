@@ -22,7 +22,7 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -179,6 +179,20 @@ impl Running {
 
         // Now that clients have been notified, drop the lock so they can get the updated operations
         drop(operations_lock);
+    }
+
+    /// Reload Rhai scripts from the rhai/ directory.
+    /// On failure, logs the error and keeps the previous scripts.
+    pub(super) fn reload_rhai_scripts(&self) {
+        let mut engine = self.rhai_engine.lock();
+        match engine.reload() {
+            Ok(()) => {
+                info!("Rhai scripts reloaded successfully");
+            }
+            Err(err) => {
+                error!("Failed to reload Rhai scripts, keeping previous version: {err}");
+            }
+        }
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
@@ -670,7 +684,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         }
     }
 
@@ -2089,7 +2103,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
@@ -2315,7 +2329,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
@@ -2544,7 +2558,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new())),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
 
