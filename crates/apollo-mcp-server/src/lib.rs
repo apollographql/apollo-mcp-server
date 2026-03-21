@@ -16,6 +16,7 @@ mod introspection;
 pub(crate) mod json_schema;
 pub(crate) mod meter;
 pub mod operations;
+pub mod prompts;
 pub(crate) mod schema_tree_shake;
 pub mod server;
 pub mod server_info;
