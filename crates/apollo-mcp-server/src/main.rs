@@ -156,6 +156,7 @@ async fn main() -> anyhow::Result<()> {
         .health_check(config.health_check)
         .cors(config.cors)
         .server_info(config.server_info)
+        .prompts(config.prompts)
         .build()
         .start()
         .await?)
