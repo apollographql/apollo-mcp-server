@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use url::Url;
 
+use apollo_mcp_server::prompts::PromptConfig;
 use apollo_mcp_server::server_info::ServerInfoConfig;
 
 use super::{
@@ -69,6 +70,10 @@ pub struct Config {
 
     /// The type of server transport to use
     pub transport: Transport,
+
+    /// Prompt definitions for MCP prompts support
+    #[serde(default)]
+    pub prompts: Vec<PromptConfig>,
 }
 
 mod parsers {
@@ -170,5 +175,35 @@ mod test {
         let result = serde_yaml::from_str::<Config>(yaml);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown field"));
+    }
+
+    #[test]
+    fn it_parses_config_with_no_prompts_section() {
+        let config = serde_json::from_str::<Config>("{}").unwrap();
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn it_parses_config_with_empty_prompts() {
+        let yaml = r#"
+            prompts: []
+        "#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.prompts.is_empty());
+    }
+
+    #[test]
+    fn it_parses_config_with_prompts() {
+        let yaml = r#"
+            prompts:
+              - name: test_prompt
+                messages:
+                  - content:
+                      type: text
+                      text: "Hello"
+        "#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.prompts.len(), 1);
+        assert_eq!(config.prompts[0].name, "test_prompt");
     }
 }

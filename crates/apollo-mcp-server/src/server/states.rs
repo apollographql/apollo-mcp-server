@@ -16,6 +16,7 @@ use crate::{
     headers::ForwardHeaders,
     health::HealthCheckConfig,
     operations::MutationMode,
+    prompts::PromptConfig,
     server_info::ServerInfoConfig,
 };
 
@@ -66,6 +67,7 @@ struct Config {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    prompts: Vec<PromptConfig>,
 }
 
 impl StateMachine {
@@ -115,6 +117,7 @@ impl StateMachine {
                 health_check: server.health_check,
                 cors: server.cors,
                 server_info: server.server_info,
+                prompts: server.prompts,
             },
         });
 
@@ -400,6 +403,7 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            prompts: None,
         }
     }
 
@@ -439,6 +443,7 @@ mod tests {
             health_check: HealthCheckConfig::default(),
             cors: CorsConfig::default(),
             server_info: ServerInfoConfig::default(),
+            prompts: vec![],
         }
     }
 

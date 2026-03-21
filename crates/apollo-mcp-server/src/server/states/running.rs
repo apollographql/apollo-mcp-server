@@ -6,16 +6,14 @@ use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
-use rmcp::model::{
-    ClientCapabilities, Extensions, Implementation, ListResourcesResult, ReadResourceResult,
-    ResourcesCapability, ToolsCapability,
-};
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ErrorCode, InitializeRequestParams,
-        InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        CallToolRequestParams, CallToolResult, ClientCapabilities, Content, ErrorCode, Extensions,
+        GetPromptRequestParams, GetPromptResult, Implementation, InitializeRequestParams,
+        InitializeResult, JsonObject, ListPromptsResult, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParams, PromptsCapability, ProtocolVersion, ReadResourceResult,
+        ResourcesCapability, ServerCapabilities, ServerInfo, ToolsCapability,
     },
     service::RequestContext,
 };
@@ -31,6 +29,7 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::prompts::Prompts;
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -74,6 +73,7 @@ pub(super) struct Running {
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
     pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) prompts: Option<Prompts>,
 }
 
 impl Running {
@@ -544,6 +544,64 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
+    #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name.as_str()))]
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        let prompt = self.prompts.as_ref().ok_or_else(|| {
+            McpError::new(
+                ErrorCode::INVALID_PARAMS,
+                format!("Prompt not found: {}", request.name),
+                None,
+            )
+        })?;
+
+        let args = convert_prompt_arguments(request.arguments);
+        prompt
+            .get(&request.name, &args)
+            .map_err(|e| McpError::new(ErrorCode::INVALID_PARAMS, e.to_string(), None))
+    }
+
+    #[tracing::instrument(skip_all)]
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        let prompts = self
+            .prompts
+            .as_ref()
+            .map(|store| store.list().to_vec())
+            .unwrap_or_default();
+        Ok(ListPromptsResult {
+            prompts,
+            ..Default::default()
+        })
+    }
+
+    #[tracing::instrument(skip_all)]
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        self.list_resources_impl(&context.extensions)
+    }
+
+    #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
+    async fn read_resource(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+
+        self.read_resource_impl(request, context.extensions, client_capabilities)
+            .await
+    }
+
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
     async fn call_tool(
         &self,
@@ -571,27 +629,6 @@ impl ServerHandler for Running {
             .await
     }
 
-    #[tracing::instrument(skip_all)]
-    async fn list_resources(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl(&context.extensions)
-    }
-
-    #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
-    async fn read_resource(
-        &self,
-        request: rmcp::model::ReadResourceRequestParams,
-        context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
-        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
-
-        self.read_resource_impl(request, context.extensions, client_capabilities)
-            .await
-    }
-
     fn get_info(&self) -> ServerInfo {
         let meter = &meter::METER;
         meter
@@ -604,6 +641,11 @@ impl ServerHandler for Running {
             list_changed: Some(true),
         });
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
+        if self.prompts.is_some() {
+            capabilities.prompts = Some(PromptsCapability {
+                list_changed: Some(false),
+            });
+        }
 
         let protocol_version = if self.enable_output_schema {
             ProtocolVersion::default()
@@ -649,6 +691,23 @@ fn tool_not_found(name: &str) -> McpError {
     )
 }
 
+fn convert_prompt_arguments(arguments: Option<JsonObject>) -> HashMap<String, String> {
+    arguments
+        .map(|obj| {
+            obj.into_iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| {
+                    let value = match v {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    (k, value)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use rmcp::model::{JsonObject, Tool};
@@ -686,6 +745,7 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            prompts: None,
         }
     }
 
@@ -2105,6 +2165,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                prompts: None,
             }
         }
 
@@ -2331,6 +2392,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                prompts: None,
             }
         }
 
@@ -2560,6 +2622,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                prompts: None,
             }
         }
 
@@ -2837,5 +2900,47 @@ mod integration_tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         }
+    }
+
+    #[test]
+    fn convert_prompt_arguments_none_returns_empty() {
+        let result = convert_prompt_arguments(None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn convert_prompt_arguments_empty_object() {
+        let obj = JsonObject::new();
+        let result = convert_prompt_arguments(Some(obj));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn convert_prompt_arguments_string_values() {
+        let mut obj = JsonObject::new();
+        obj.insert("email".to_string(), Value::String("a@b.com".to_string()));
+        let result = convert_prompt_arguments(Some(obj));
+        assert_eq!(result.get("email").unwrap(), "a@b.com");
+    }
+
+    #[test]
+    fn convert_prompt_arguments_null_values_filtered() {
+        let mut obj = JsonObject::new();
+        obj.insert("present".to_string(), Value::String("val".to_string()));
+        obj.insert("absent".to_string(), Value::Null);
+        let result = convert_prompt_arguments(Some(obj));
+        assert_eq!(result.len(), 1);
+        assert!(result.contains_key("present"));
+        assert!(!result.contains_key("absent"));
+    }
+
+    #[test]
+    fn convert_prompt_arguments_non_string_types_stringified() {
+        let mut obj = JsonObject::new();
+        obj.insert("num".to_string(), Value::Number(42.into()));
+        obj.insert("bool".to_string(), Value::Bool(true));
+        let result = convert_prompt_arguments(Some(obj));
+        assert_eq!(result.get("num").unwrap(), "42");
+        assert_eq!(result.get("bool").unwrap(), "true");
     }
 }

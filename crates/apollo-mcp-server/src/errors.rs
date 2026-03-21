@@ -41,6 +41,25 @@ pub enum OperationError {
     Collection(CollectionError),
 }
 
+/// An error in prompt configuration
+#[derive(Debug, thiserror::Error)]
+pub enum PromptError {
+    #[error("Prompt definition has an empty name")]
+    EmptyName,
+
+    #[error("Duplicate prompt name '{0}'")]
+    DuplicateName(String),
+
+    #[error("Prompt not found: '{0}'")]
+    NotFound(String),
+
+    #[error("Missing required argument '{argument}' for prompt '{prompt_name}'")]
+    MissingRequiredArgument {
+        prompt_name: String,
+        argument: String,
+    },
+}
+
 /// An error in server initialization
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {
@@ -112,6 +131,9 @@ pub enum ServerError {
 
     #[error("There was a problem parsing Rhai scripts on startup.")]
     RhaiError,
+
+    #[error("Invalid prompt configuration: {0}")]
+    Prompt(#[from] PromptError),
 }
 
 /// An MCP tool error

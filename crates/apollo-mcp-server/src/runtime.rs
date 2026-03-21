@@ -81,6 +81,7 @@ fn apollo_common_env() -> Env {
 #[cfg(test)]
 mod test {
     use super::read_config;
+    use apollo_mcp_server::prompts::PromptContentConfig;
 
     #[test]
     fn it_prioritizes_env_vars() {
@@ -320,6 +321,7 @@ mod test {
                 },
                 schema: Uplink,
                 transport: Stdio,
+                prompts: [],
             }
             "#);
             Ok(())
@@ -434,6 +436,51 @@ mod test {
                 config.overrides.descriptions.get("GetForecast").unwrap(),
                 "Get the 7-day forecast"
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_expands_env_vars_in_prompt_text() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                prompts:
+                  - name: env_prompt
+                    messages:
+                      - content:
+                          type: text
+                          text: ${env.TEST_PROMPT_TEXT}
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("TEST_PROMPT_TEXT", "Hello from env!");
+
+            let config = read_config(path)?;
+            assert_eq!(config.prompts.len(), 1);
+            assert_eq!(config.prompts[0].name, "env_prompt");
+            match &config.prompts[0].messages[0].content {
+                PromptContentConfig::Text { text } => {
+                    assert_eq!(text, "Hello from env!");
+                }
+                _ => panic!("Expected text content"),
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_parses_config_without_prompts_backward_compat() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+            assert!(config.prompts.is_empty());
             Ok(())
         });
     }

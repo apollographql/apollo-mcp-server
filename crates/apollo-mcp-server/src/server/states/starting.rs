@@ -11,8 +11,10 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use super::{Config, Running, shutdown_signal};
 use crate::host_validation::{HostValidationState, validate_host};
 use crate::operations::apply_description_override;
+use crate::prompts::Prompts;
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     cors::CorsConfig,
@@ -26,8 +28,6 @@ use crate::{
     server::Transport,
 };
 use apollo_mcp_rhai::{RhaiEngine, checkpoints};
-
-use super::{Config, Running, shutdown_signal};
 
 pub(super) struct Starting {
     pub(super) config: Config,
@@ -160,6 +160,14 @@ impl Starting {
             })?;
         }
 
+        let prompts = if self.config.prompts.is_empty() {
+            None
+        } else {
+            Some(Prompts::new(self.config.prompts).inspect_err(|err| {
+                error!("Invalid prompt configuration: {err}");
+            })?)
+        };
+
         let running = Running {
             schema,
             operations: Arc::new(RwLock::new(operations)),
@@ -184,6 +192,7 @@ impl Starting {
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
             rhai_engine: engine,
+            prompts,
         };
 
         match self.config.transport {
@@ -325,6 +334,7 @@ mod tests {
                 },
                 cors: Default::default(),
                 server_info: Default::default(),
+                prompts: vec![],
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),

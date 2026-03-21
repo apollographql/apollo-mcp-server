@@ -17,6 +17,7 @@ use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::host_validation::HostValidationConfig;
 use crate::operations::{MutationMode, OperationSource};
+use crate::prompts::PromptConfig;
 use crate::server_info::ServerInfoConfig;
 
 mod states;
@@ -55,6 +56,7 @@ pub struct Server {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    prompts: Vec<PromptConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -136,6 +138,7 @@ impl Server {
         health_check: HealthCheckConfig,
         cors: CorsConfig,
         server_info: ServerInfoConfig,
+        #[builder(default)] prompts: Vec<PromptConfig>,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -173,6 +176,7 @@ impl Server {
             health_check,
             cors,
             server_info,
+            prompts,
         }
     }
 
