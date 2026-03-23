@@ -33,6 +33,7 @@ pub(crate) async fn find_and_execute_operation(
             endpoint,
             rhai_engine,
             axum_parts,
+            tool_name,
         )
         .await,
     )
@@ -45,9 +46,15 @@ pub(crate) async fn execute_operation(
     endpoint: &Url,
     rhai_engine: &Arc<Mutex<RhaiEngine>>,
     axum_parts: Option<&Parts>,
+    tool_name: &str,
 ) -> Result<CallToolResult, McpError> {
-    let (endpoint, headers) =
-        checkpoints::on_execute_graphql_operation(rhai_engine, endpoint, headers, axum_parts)?;
+    let (endpoint, headers) = checkpoints::on_execute_graphql_operation(
+        rhai_engine,
+        endpoint,
+        headers,
+        axum_parts,
+        tool_name,
+    )?;
 
     let graphql_request = graphql::Request {
         input: Value::from(arguments.cloned()),
