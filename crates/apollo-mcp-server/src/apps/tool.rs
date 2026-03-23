@@ -401,7 +401,7 @@ mod tests {
             &HeaderMap::new(),
             Some(&object!({"apples": 1, "oranges": 2, "bananas": 3})),
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new())),
+            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
             None,
         )
         .await
@@ -498,7 +498,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new())),
+            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
             None,
         )
         .await;
@@ -544,7 +544,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new())),
+            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
             None,
         )
         .await;
@@ -589,7 +589,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new())),
+            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
             None,
         )
         .await;

@@ -142,7 +142,7 @@ mod tests {
     use crate::engine::RhaiEngine;
 
     fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
         engine
             .load_from_string(script)
             .expect("Script should compile");

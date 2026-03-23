@@ -12,19 +12,18 @@ pub struct RhaiEngine {
     engine: Engine,
     scope: Scope<'static>,
     ast: AST,
-}
-
-impl Default for RhaiEngine {
-    fn default() -> Self {
-        Self::new()
-    }
+    main_file: PathBuf,
+    script_dir: PathBuf,
 }
 
 impl RhaiEngine {
-    pub fn new() -> Self {
+    pub fn new(script_dir: impl Into<PathBuf>) -> Self {
+        let script_dir = script_dir.into();
+        let main_file = script_dir.join("main.rhai");
+
         let mut engine = Engine::new();
 
-        let resolver = FileModuleResolver::new_with_path("rhai");
+        let resolver = FileModuleResolver::new_with_path(&script_dir);
         engine.set_module_resolver(resolver);
 
         let scope = Self::create_scope();
@@ -37,6 +36,8 @@ impl RhaiEngine {
             engine,
             scope,
             ast: AST::empty(),
+            main_file,
+            script_dir,
         }
     }
 
@@ -73,17 +74,14 @@ impl RhaiEngine {
     }
 
     pub fn load_from_path(&mut self) -> Result<(), Box<EvalAltResult>> {
-        let mut main = PathBuf::from("rhai");
-        main.push("main.rhai");
-
-        if !main.exists() {
+        if !self.main_file.exists() {
             return Ok(());
         }
 
         self.ast = self
             .engine
-            .compile_file(main.clone())
-            .map_err(|err| format!("in Rhai script {}: {}", main.display(), err))?;
+            .compile_file(self.main_file.clone())
+            .map_err(|err| format!("in Rhai script {}: {}", self.main_file.display(), err))?;
 
         // Run the AST with our scope to put any global variables
         // defined in scripts into scope.
@@ -113,6 +111,35 @@ impl RhaiEngine {
         self.ast.iter_functions().any(|fn_def| fn_def.name == name)
     }
 
+    /// Reloads the Rhai scripts from disk atomically.
+    /// On success, replaces the current scope and AST.
+    /// On failure, returns an error and preserves the existing scope and AST.
+    /// When the script file is absent, the existing scope and AST are preserved to avoid
+    /// clearing hooks during atomic editor saves (delete-then-create).
+    pub fn reload(&mut self) -> Result<(), Box<EvalAltResult>> {
+        if !self.main_file.exists() {
+            return Err(format!("Rhai script {} not found", self.main_file.display()).into());
+        }
+
+        // Reset the module resolver to clear cached modules so that
+        // changes to imported Rhai module files are picked up.
+        let resolver = FileModuleResolver::new_with_path(&self.script_dir);
+        self.engine.set_module_resolver(resolver);
+
+        let mut new_scope = Self::create_scope();
+
+        let new_ast = self
+            .engine
+            .compile_file(self.main_file.clone())
+            .map_err(|err| format!("in Rhai script {}: {}", self.main_file.display(), err))?;
+
+        self.engine.run_ast_with_scope(&mut new_scope, &new_ast)?;
+
+        self.scope = new_scope;
+        self.ast = new_ast;
+        Ok(())
+    }
+
     #[cfg(test)]
     pub fn load_from_string(&mut self, script: &str) -> Result<(), Box<EvalAltResult>> {
         self.ast = self.engine.compile(script)?;
@@ -126,7 +153,7 @@ mod tests {
     use super::*;
 
     fn create_engine(script: &str) -> RhaiEngine {
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
         engine
             .load_from_string(script)
             .expect("Script should compile");
@@ -135,7 +162,7 @@ mod tests {
 
     #[test]
     fn should_compile_and_run_valid_script() {
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
 
         let result = engine.load_from_string("let x = 1 + 2;");
 
@@ -144,7 +171,7 @@ mod tests {
 
     #[test]
     fn should_return_error_for_invalid_script() {
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
 
         let result = engine.load_from_string("this is not valid rhai {{{");
 
@@ -167,7 +194,7 @@ mod tests {
 
     #[test]
     fn should_return_false_for_empty_ast() {
-        let engine = RhaiEngine::new();
+        let engine = RhaiEngine::new("rhai");
 
         assert!(!engine.ast_has_function("anything"));
     }
@@ -250,7 +277,7 @@ mod tests {
 
     #[test]
     fn should_return_ok_when_script_file_not_found() {
-        let mut engine = RhaiEngine::new();
+        let mut engine = RhaiEngine::new("rhai");
 
         let result = engine.load_from_path();
 
@@ -281,5 +308,145 @@ mod tests {
             .expect("Should not error");
 
         assert_eq!(result.unwrap().as_int().unwrap(), 100);
+    }
+
+    fn write_rhai_script(base: &std::path::Path, content: &str) {
+        let rhai_dir = base.join("rhai");
+        std::fs::create_dir_all(&rhai_dir).expect("Should create rhai dir");
+        std::fs::write(rhai_dir.join("main.rhai"), content).expect("Should write script");
+    }
+
+    fn write_rhai_module(base: &std::path::Path, module_name: &str, content: &str) {
+        let rhai_dir = base.join("rhai");
+        std::fs::create_dir_all(&rhai_dir).expect("Should create rhai dir");
+        std::fs::write(rhai_dir.join(format!("{module_name}.rhai")), content)
+            .expect("Should write module");
+    }
+
+    #[test]
+    fn reload_should_preserve_state_when_script_file_missing() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("fn original() { 1 }")
+            .expect("Should compile");
+
+        assert!(engine.reload().is_err());
+        assert!(engine.ast_has_function("original"));
+    }
+
+    #[test]
+    fn reload_should_load_new_script_from_disk() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_script(dir.path(), "fn reloaded() { 99 }");
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("fn original() { 1 }")
+            .expect("Should compile");
+
+        engine.reload().expect("Should reload successfully");
+
+        assert!(engine.ast_has_function("reloaded"));
+    }
+
+    #[test]
+    fn reload_should_remove_old_functions_after_loading_new_script() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_script(dir.path(), "fn reloaded() { 99 }");
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("fn original() { 1 }")
+            .expect("Should compile");
+
+        engine.reload().expect("Should reload successfully");
+
+        assert!(!engine.ast_has_function("original"));
+    }
+
+    #[test]
+    fn reload_should_preserve_state_on_compile_error() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_script(dir.path(), "this is not valid {{{");
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("fn original() { 1 }")
+            .expect("Should compile");
+
+        let result = engine.reload();
+
+        assert!(result.is_err());
+        assert!(engine.ast_has_function("original"));
+    }
+
+    #[test]
+    fn reload_should_preserve_state_on_runtime_error() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_script(dir.path(), r#"throw "init error";"#);
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("fn original() { 1 }")
+            .expect("Should compile");
+
+        let result = engine.reload();
+
+        assert!(result.is_err());
+        assert!(engine.ast_has_function("original"));
+    }
+
+    #[test]
+    fn reload_should_pick_up_changes_to_imported_modules() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 1 }");
+        write_rhai_script(
+            dir.path(),
+            r#"import "helpers" as h; fn get_value() { h::helper_value() }"#,
+        );
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine.load_from_path().expect("Should load");
+
+        let result = engine
+            .execute_hook("get_value", ())
+            .expect("Should not error");
+        assert_eq!(result.unwrap().as_int().unwrap(), 1);
+
+        // Update the module file and reload
+        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 42 }");
+        engine.reload().expect("Should reload successfully");
+
+        let result = engine
+            .execute_hook("get_value", ())
+            .expect("Should not error");
+        assert_eq!(result.unwrap().as_int().unwrap(), 42);
+    }
+
+    #[test]
+    fn reload_should_reset_scope_with_new_globals() {
+        let dir = tempfile::tempdir().expect("Should create temp dir");
+        write_rhai_script(dir.path(), "let new_var = 200;\nfn get_new() { new_var }");
+        let script_dir = dir.path().join("rhai");
+
+        let mut engine = RhaiEngine::new(&script_dir);
+        engine
+            .load_from_string("let old_var = 100;")
+            .expect("Should compile");
+
+        engine.reload().expect("Should reload successfully");
+
+        let result = engine
+            .execute_hook("get_new", ())
+            .expect("Should not error");
+        assert_eq!(result.unwrap().as_int().unwrap(), 200);
     }
 }
