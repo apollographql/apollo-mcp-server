@@ -4,6 +4,88 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.11.0 (2026-03-23)
+
+### Features
+
+#### Add hot reloading for Rhai scripts
+
+Rhai scripts in the `rhai/` directory are now automatically reloaded when changes are detected. You no longer need to restart the server after editing your Rhai hook scripts. Modifications to `main.rhai` or any file in the `rhai/` directory, including subdirectories, are picked up automatically.
+
+If a script fails to compile during a reload, the server logs the error and continues running with the previous version of your scripts.
+
+#### Add Rhai HTTP module with `Http::get` and `Http::post`
+
+You can now make HTTP requests from within your Rhai scripts using `Http::get` and `Http::post`. Both methods return a `Promise` that you can `.wait()` on to get the response.
+
+Each method accepts an optional options map with support for `headers`, `body`, and `timeout`:
+
+```rhai
+// Simple GET request
+let response = Http::get("https://api.example.com/data").wait();
+print(response.status);
+print(response.text());
+
+// GET with custom headers and a timeout
+let response = Http::get("https://api.example.com/data", #{
+    headers: #{
+        "Authorization": "Bearer my-token"
+    },
+    timeout: 30
+}).wait();
+
+let data = response.json();
+```
+
+```rhai
+// POST with a JSON body
+let response = Http::post("https://api.example.com/data", #{
+    headers: #{
+        "Content-Type": "application/json"
+    },
+    body: JSON::stringify(#{
+        key: "value"
+    })
+}).wait();
+
+print(response.status);
+```
+
+#### Expose `tool_name` in the `on_execute_graphql_operation` Rhai hook
+
+The `on_execute_graphql_operation` lifecycle hook now includes a read-only `tool_name` property on the context object. This lets you customize request behavior based on which MCP tool triggered the GraphQL operation.
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    if ctx.tool_name == "get_launch" {
+        ctx.headers["x-priority"] = "high";
+    }
+}
+```
+
+#### Support `extraOutputs` on tools in manifest file
+
+Tools can now provide an `extraOutputs` argument. The content of this property is written as-is to the `extra` property under `structuredContent` on tool responses.
+
+#### Support @private in operations to hide parts of a query result from LLMs
+
+In MCP Apps, you may have data that you want made available to your app but hidden from the LLM.
+
+```
+query ProductsQuery {
+  topProducts {
+    sku
+    title
+    meta @private {
+      createdAt
+      barcode
+    }
+  }
+}
+```
+
+This will result in the non-private portions of the result being passed back in `structuredContent` as usual, and the entire result, including private portions, in `_meta.structuredContent`.
+
 ## 1.10.0 (2026-03-19)
 
 ### Features
