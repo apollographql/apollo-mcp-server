@@ -16,12 +16,6 @@ pub struct RhaiEngine {
     script_dir: PathBuf,
 }
 
-impl Default for RhaiEngine {
-    fn default() -> Self {
-        Self::new("rhai")
-    }
-}
-
 impl RhaiEngine {
     pub fn new(script_dir: impl Into<PathBuf>) -> Self {
         let script_dir = script_dir.into();
