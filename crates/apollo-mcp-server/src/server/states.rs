@@ -7,6 +7,7 @@ use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
+use tracing::info;
 use url::Url;
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
     server_info::ServerInfoConfig,
 };
 
-use super::{Server, ServerEvent, Transport};
+use super::{Server, ServerEvent, ShutdownReason, Transport};
 
 mod configuring;
 mod operations_configured;
@@ -69,7 +70,7 @@ struct Config {
 }
 
 impl StateMachine {
-    pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
+    pub(crate) async fn start(self, server: Server) -> Result<ShutdownReason, ServerError> {
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -78,11 +79,15 @@ impl StateMachine {
         let operation_stream = server.operation_source.into_stream().await.boxed();
         let ctrl_c_stream = Self::ctrl_c_stream().boxed();
         let rhai_stream = Self::rhai_watch_stream().boxed();
+        let config_stream = Self::config_watch_stream(server.config_path.as_deref()).boxed();
+        let sighup_stream = Self::sighup_stream().boxed();
         let mut stream = stream::select_all(vec![
             schema_stream,
             operation_stream,
             ctrl_c_stream,
             rhai_stream,
+            config_stream,
+            sighup_stream,
         ]);
 
         let mut state = State::Configuring(Configuring {
@@ -183,6 +188,13 @@ impl StateMachine {
                     }
                     other => other,
                 },
+                ServerEvent::ConfigChanged => {
+                    info!("Config file changed, triggering server restart");
+                    if let State::Running(ref running) = state {
+                        running.cancellation_token.cancel();
+                    }
+                    State::Restarting
+                }
                 ServerEvent::Shutdown => match state {
                     State::Running(running) => {
                         running.cancellation_token.cancel();
@@ -194,13 +206,17 @@ impl StateMachine {
             if let State::Starting(starting) = state {
                 state = starting.start().await.into();
             }
-            if matches!(&state, State::Error(_) | State::Stopping) {
+            if matches!(
+                &state,
+                State::Error(_) | State::Stopping | State::Restarting
+            ) {
                 break;
             }
         }
         match state {
             State::Error(e) => Err(e),
-            _ => Ok(()),
+            State::Restarting => Ok(ShutdownReason::Restart),
+            _ => Ok(ShutdownReason::Shutdown),
         }
     }
 
@@ -222,6 +238,43 @@ impl StateMachine {
             .map(|_| ServerEvent::Shutdown)
             .into_stream()
             .boxed()
+    }
+
+    /// Watch the config file for changes, mirroring the rhai_watch_stream pattern.
+    /// Skips the initial event that files::watch always emits on startup.
+    fn config_watch_stream(config_path: Option<&Path>) -> impl Stream<Item = ServerEvent> {
+        match config_path {
+            Some(path) if path.exists() => files::watch(path)
+                .skip(1)
+                .map(|_| ServerEvent::ConfigChanged)
+                .boxed(),
+            _ => stream::empty().boxed(),
+        }
+    }
+
+    /// Listen for SIGHUP to trigger a config reload (Unix only).
+    fn sighup_stream() -> impl Stream<Item = ServerEvent> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::SignalKind;
+
+            async fn wait_for_sighup() -> Option<ServerEvent> {
+                let mut signal = tokio::signal::unix::signal(SignalKind::hangup()).ok()?;
+                signal.recv().await?;
+                Some(ServerEvent::ConfigChanged)
+            }
+
+            wait_for_sighup()
+                .map(stream::iter)
+                .into_stream()
+                .flatten()
+                .boxed()
+        }
+
+        #[cfg(not(unix))]
+        {
+            stream::empty().boxed()
+        }
     }
 
     fn rhai_watch_stream() -> impl Stream<Item = ServerEvent> {
@@ -273,6 +326,7 @@ enum State {
     Running(Running),
     Error(ServerError),
     Stopping,
+    Restarting,
 }
 
 impl From<Configuring> for State {
@@ -469,6 +523,12 @@ mod tests {
                 }
                 other => other,
             },
+            ServerEvent::ConfigChanged => {
+                if let State::Running(ref running) = state {
+                    running.cancellation_token.cancel();
+                }
+                State::Restarting
+            }
             _ => state,
         }
     }
@@ -560,6 +620,49 @@ mod tests {
         assert!(
             matches!(new_state, State::Error(_)),
             "expected CollectionError during startup to be fatal"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_transitions_running_to_restarting() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            matches!(new_state, State::Restarting),
+            "expected server to transition to Restarting after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_cancels_token_when_running() {
+        let running = create_running_server();
+        let token = running.cancellation_token.clone();
+        let state = State::Running(running);
+
+        assert!(!token.is_cancelled(), "token should not be cancelled yet");
+
+        let _new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            token.is_cancelled(),
+            "cancellation token should be cancelled after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_transitions_configuring_to_restarting() {
+        let state = State::Configuring(Configuring {
+            config: test_config(),
+        });
+
+        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            matches!(new_state, State::Restarting),
+            "expected Configuring to transition to Restarting after ConfigChanged"
         );
     }
 }

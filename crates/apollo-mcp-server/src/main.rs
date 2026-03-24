@@ -6,12 +6,12 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
-use apollo_mcp_server::server::Server;
+use apollo_mcp_server::server::{Server, ShutdownReason, Transport};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod runtime;
 
@@ -34,19 +34,56 @@ struct Args {
     config: Option<PathBuf>,
 }
 
+#[allow(clippy::exit)] // process::exit used for stdio mode restart
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config: runtime::Config = match Args::parse().config {
-        Some(config_path) => runtime::read_config(config_path)?,
-        None => runtime::read_config_from_env().unwrap_or_default(),
-    };
+    let args = Args::parse();
+    let config_path = args.config;
 
+    let config = load_config(config_path.as_deref())?;
     let _guard = runtime::telemetry::init_tracing_subscriber(&config)?;
 
     info!(
         "Apollo MCP Server v{} // (c) Apollo Graph, Inc. // Licensed under MIT",
         env!("CARGO_PKG_VERSION")
     );
+
+    // For stdio transport, spawn a background config watcher that exits the process
+    // when the config file changes, since the stdio event loop blocks and never
+    // polls the config watch stream in the state machine.
+    if matches!(config.transport, Transport::Stdio) {
+        if let Some(ref path) = config_path {
+            spawn_stdio_config_watcher(path.clone());
+        }
+        spawn_stdio_sighup_handler();
+    }
+
+    loop {
+        let server = build_server(config_path.as_deref())?;
+        match server.start().await {
+            Ok(ShutdownReason::Shutdown) => break Ok(()),
+            Ok(ShutdownReason::Restart) => {
+                info!("Config changed, restarting server...");
+                // Brief delay to let the port be released
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                continue;
+            }
+            Err(e) => break Err(e.into()),
+        }
+    }
+}
+
+/// Load and parse configuration from file or environment.
+fn load_config(config_path: Option<&std::path::Path>) -> anyhow::Result<runtime::Config> {
+    match config_path {
+        Some(path) => Ok(runtime::read_config(path)?),
+        None => Ok(runtime::read_config_from_env().unwrap_or_default()),
+    }
+}
+
+/// Build a Server from the current configuration.
+fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server> {
+    let config = load_config(config_path)?;
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
@@ -112,6 +149,7 @@ async fn main() -> anyhow::Result<()> {
     let transport = config.transport.clone();
 
     Ok(Server::builder()
+        .maybe_config_path(config_path.map(|p| p.to_path_buf()))
         .transport(config.transport)
         .schema_source(schema_source)
         .operation_source(operation_source)
@@ -136,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
         .descriptions(config.overrides.descriptions)
         .required_scopes(config.overrides.required_scopes)
         .disable_auth_token_passthrough(
-            if let apollo_mcp_server::server::Transport::StreamableHttp {
+            if let Transport::StreamableHttp {
                 auth: Some(auth), ..
             } = &transport
             {
@@ -156,7 +194,44 @@ async fn main() -> anyhow::Result<()> {
         .health_check(config.health_check)
         .cors(config.cors)
         .server_info(config.server_info)
-        .build()
-        .start()
-        .await?)
+        .build())
+}
+
+/// Spawn a background task that watches the config file and exits the process
+/// when it changes. Used for stdio mode where the state machine event loop
+/// is blocked by `service.waiting().await`.
+#[allow(clippy::exit)] // process::exit used for stdio mode restart
+fn spawn_stdio_config_watcher(config_path: PathBuf) {
+    use apollo_mcp_registry::files;
+    use futures::StreamExt as _;
+
+    tokio::spawn(async move {
+        // Skip the initial event that files::watch always emits on startup,
+        // then exit when a real file change is detected.
+        let mut stream = std::pin::pin!(files::watch(&config_path).skip(1));
+        if stream.next().await.is_some() {
+            info!("Config file changed, exiting for process manager to restart");
+            std::process::exit(75);
+        }
+    });
+}
+
+/// Spawn a background SIGHUP handler for stdio mode.
+#[allow(clippy::exit)] // process::exit used for stdio mode SIGHUP restart
+fn spawn_stdio_sighup_handler() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+
+        tokio::spawn(async move {
+            let Ok(mut signal) = tokio::signal::unix::signal(SignalKind::hangup()) else {
+                error!("Failed to install SIGHUP handler");
+                return;
+            };
+            if signal.recv().await.is_some() {
+                info!("Received SIGHUP, exiting for process manager to restart");
+                std::process::exit(75);
+            }
+        });
+    }
 }
