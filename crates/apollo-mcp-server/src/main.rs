@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
@@ -34,7 +34,6 @@ struct Args {
     config: Option<PathBuf>,
 }
 
-#[allow(clippy::exit)] // process::exit used for stdio mode restart
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -64,6 +63,9 @@ async fn main() -> anyhow::Result<()> {
             Ok(ShutdownReason::Shutdown) => break Ok(()),
             Ok(ShutdownReason::Restart) => {
                 info!("Config changed, restarting server...");
+                warn!(
+                    "Logging and telemetry configuration changes require a full process restart to take effect"
+                );
                 // Brief delay to let the port be released
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 continue;
@@ -76,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
 /// Load and parse configuration from file or environment.
 fn load_config(config_path: Option<&std::path::Path>) -> anyhow::Result<runtime::Config> {
     match config_path {
-        Some(path) => Ok(runtime::read_config(path)?),
+        Some(path) => runtime::read_config(path).map_err(Into::into),
         None => Ok(runtime::read_config_from_env().unwrap_or_default()),
     }
 }
@@ -146,10 +148,13 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .then(|| config.graphos.graph_ref())
         .transpose()?;
 
-    let transport = config.transport.clone();
+    let disable_auth_token_passthrough = matches!(
+        &config.transport,
+        Transport::StreamableHttp { auth: Some(auth), .. } if auth.disable_auth_token_passthrough
+    );
 
     Ok(Server::builder()
-        .maybe_config_path(config_path.map(|p| p.to_path_buf()))
+        .maybe_config_path(config_path.map(Path::to_path_buf))
         .transport(config.transport)
         .schema_source(schema_source)
         .operation_source(operation_source)
@@ -173,16 +178,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .enable_output_schema(config.overrides.enable_output_schema)
         .descriptions(config.overrides.descriptions)
         .required_scopes(config.overrides.required_scopes)
-        .disable_auth_token_passthrough(
-            if let Transport::StreamableHttp {
-                auth: Some(auth), ..
-            } = &transport
-            {
-                auth.disable_auth_token_passthrough
-            } else {
-                false
-            },
-        )
+        .disable_auth_token_passthrough(disable_auth_token_passthrough)
         .custom_scalar_map(
             config
                 .custom_scalars
@@ -200,7 +196,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
 /// Spawn a background task that watches the config file and exits the process
 /// when it changes. Used for stdio mode where the state machine event loop
 /// is blocked by `service.waiting().await`.
-#[allow(clippy::exit)] // process::exit used for stdio mode restart
+#[expect(clippy::exit, reason = "process::exit used for stdio mode restart")]
 fn spawn_stdio_config_watcher(config_path: PathBuf) {
     use apollo_mcp_registry::files;
     use futures::StreamExt as _;
@@ -217,7 +213,13 @@ fn spawn_stdio_config_watcher(config_path: PathBuf) {
 }
 
 /// Spawn a background SIGHUP handler for stdio mode.
-#[allow(clippy::exit)] // process::exit used for stdio mode SIGHUP restart
+#[cfg_attr(
+    unix,
+    expect(
+        clippy::exit,
+        reason = "process::exit used for stdio mode SIGHUP restart"
+    )
+)]
 fn spawn_stdio_sighup_handler() {
     #[cfg(unix)]
     {

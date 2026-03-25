@@ -7,6 +7,14 @@ redirectFrom:
 
 You can configure Apollo MCP Server using a configuration file. You can also [override configuration options using environment variables](#override-configuration-options-using-environment-variables).
 
+The server watches the configuration file for changes. When the file is modified, the server automatically restarts with the updated configuration. For `streamable_http` transport, the restart happens in-place. For `stdio` transport, the process exits with code 75 so the parent process can restart it.
+
+<Note>
+
+Changes to `logging` and `telemetry` configuration are not applied during in-process hot-reload (`streamable_http` transport). These settings are initialized once at startup and require a full process restart to take effect.
+
+</Note>
+
 See the [example config files](#example-config-files) for an example.
 
 ## Configuration options
