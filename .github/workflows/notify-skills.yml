@@ -1,0 +1,31 @@
+name: Notify Skills Repo
+
+on:
+  release:
+    types: [published]
+
+concurrency:
+  group: notify-skills-${{ github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Skip pre-releases (experimental, canary, RC)
+    if: github.event.release.prerelease == false
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch to skills repo
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.SKILLS_REPO_TOKEN }}
+          repository: apollographql/skills
+          event-type: product-update
+          client-payload: |-
+            {
+              "product": "apollo-mcp-server",
+              "version": ${{ toJSON(github.event.release.tag_name) }},
+              "repository": ${{ toJSON(github.repository) }},
+              "sender": ${{ toJSON(github.actor) }}
+            }
