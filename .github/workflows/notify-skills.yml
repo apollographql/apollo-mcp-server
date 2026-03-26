@@ -25,7 +25,7 @@ jobs:
           client-payload: |-
             {
               "product": "apollo-mcp-server",
-              "version": "${{ github.event.release.tag_name }}",
-              "repository": "${{ github.repository }}",
-              "sender": "${{ github.actor }}"
+              "version": ${{ toJSON(github.event.release.tag_name) }},
+              "repository": ${{ toJSON(github.repository) }},
+              "sender": ${{ toJSON(github.actor) }}
             }
