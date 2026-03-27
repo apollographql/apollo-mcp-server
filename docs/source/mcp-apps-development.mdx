@@ -498,7 +498,11 @@ Configuration that targets MCP app specific modules. Extend `@apollo/client-ai-a
 ```jsonc title=tsconfig.mcp.json
 {
   "extends": ["@apollo/client-ai-apps/tsconfig/mcp", "./tsconfig.base.json"],
-  "include": ["src/**/*.mcp.ts", "src/**/*.mcp.tsx"],
+  "include": [
+    ".apollo-client-ai-apps/types",
+    "src/**/*.mcp.ts",
+    "src/**/*.mcp.tsx",
+  ],
 }
 ```
 
@@ -518,9 +522,15 @@ Configuration that targets ChatGPT App-specific modules. Extend `@apollo/client-
   "compilerOptions": {
     "types": ["@apollo/client-ai-apps/openai/globals"],
   },
-  "include": ["src/**/*.openai.ts", "src/**/*.openai.tsx"],
+  "include": [
+    ".apollo-client-ai-apps/types",
+    "src/**/*.openai.ts",
+    "src/**/*.openai.tsx",
+  ],
 }
 ```
+
+Note that if [`compilerOptions.types`](https://www.typescriptlang.org/tsconfig#types) is specified, only these packages will be included in the global scope. This is recommended since TypeScript version 5.9.
 
 <Note>
 
