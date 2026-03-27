@@ -156,12 +156,13 @@ Tools are defined using directives on GraphQL operations in your app code. Avail
 
 ### `@tool` directive arguments
 
-| Argument      | What it is             | Required | Where it maps to                | Notes                                                                                                                                                                       |
-| ------------- | ---------------------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | Tool name              | Yes      | MCP tool `name`                 | Must be unique within the app                                                                                                                                               |
-| `description` | Tool description       | Yes      | MCP tool `description`          | App description is prefixed to tool description if present                                                                                                                  |
-| `extraInputs` | Additional tool inputs | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs are not part of the GraphQL operation but are provided by the host |
-| `labels`      | Tool-specific labels   | No       | Tool labels in manifest         | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.     |
+| Argument       | What it is                       | Required | Where it maps to                | Notes                                                                                                                                                                       |
+| -------------- | -------------------------------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | Tool name                        | No       | MCP tool `name`                 | Defaults to the GraphQL operation name if not provided. Must be unique within the app.                                                                                      |
+| `description`  | Tool description                 | No       | MCP tool `description`          | Defaults to the GraphQL operation description if not provided. App description is prefixed to tool description if present.                                                  |
+| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs are not part of the GraphQL operation but are provided by the host |
+| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use for passing additional metadata that should be included in the tool's manifest entry.            |
+| `labels`       | Tool-specific labels             | No       | Tool labels in manifest         | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.     |
 
 ### `@prefetch` directive
 
@@ -172,6 +173,16 @@ The `@prefetch` directive marks a GraphQL operation to run automatically wheneve
 | Element     | What it is                | Where it comes from                        | Where it maps to               | Notes                                                            |
 | ----------- | ------------------------- | ------------------------------------------ | ------------------------------ | ---------------------------------------------------------------- |
 | `@prefetch` | Prefetch operation marker | `@prefetch` directive on GraphQL operation | Prefetch operation in manifest | Operation runs automatically when any tool in the app is invoked |
+
+### `@private` directive
+
+The `@private` directive hides specified fields from the LLM while still making them accessible to your app's UI code. This prevents sensitive data from being exposed in AI responses.
+
+**Usage**: Add `@private` to individual fields within a GraphQL operation.
+
+| Element    | What it is                      | Where it maps to                     | Notes                                                                          |
+| ---------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| `@private` | Field visibility control marker | Field marked private in the manifest | Fields are excluded from the LLM-visible response but remain available in your app |
 
 ## App query parameter
 
