@@ -164,7 +164,7 @@ function App() {
 
 <Note>
 
-In order to provide specific `toolInput` types, you must configure a `schema` with the `apolloClientAiApps` Vite plugin. Refer to the [Vite configuration](#vite-configuration) section to learn more.
+To provide specific `toolInput` types, configure a `schema` with the `apolloClientAiApps` Vite plugin. Refer to the [Vite configuration](#vite-configuration) section to learn more.
 
 </Note>
 
@@ -172,14 +172,14 @@ In order to provide specific `toolInput` types, you must configure a `schema` wi
 
 When your query includes variables, the LLM decides what values to provide for variables. This presents a problem when running the query because the variable values you provide to `useQuery` might not match the LLM provided variables.
 
-You might be tempted to reach for `useToolInfo` to populate the initial values for these variables, but this approach quickly reveals additional complexity that `useToolInfo` can't handle on its own:
+You might consider using `useToolInfo` to populate the initial values for these variables, but this approach quickly reveals additional complexity that `useToolInfo` cannot handle on its own:
 
 - The tool called by the agent might not be the same tool
-- When a user navigates away from the screen and back again, the input might be different than the original tool input
+- The input might differ from the original tool input when a user navigates away and back
 - Some variables might need to sync with an external source, such as `props`
 - Some variables might change as a result of user interaction
 
-The `createHydrationUtils` utility exists to bridge this gap. Call `createHydrationUtils` with the query that provides the tool definition. This returns a `useHydratedVariables` hook used manage variables for the query. The returned `variables` are provided to the `useQuery` hook in the `variables` option.
+The `createHydrationUtils` utility bridges this gap. Call `createHydrationUtils` with the query that provides the tool definition. This returns a `useHydratedVariables` hook used to manage variables for the query. The returned `variables` are provided to the `useQuery` hook in the `variables` option.
 
 ```tsx
 import { createHydrationUtils } from "@apollo/client-ai-apps/react";
@@ -410,9 +410,9 @@ Make sure each configured environment has a module it can import. If one doesn't
 
 </Caution>
 
-## The `Platform` utility
+## `Platform` utility
 
-In some cases, you might want to alter a value in your application depending on the running platform. The `Platform` utility provides a straightforward way to detect the current platform and provide platform-specific values at runtime.
+In some cases, you might want to change a value in your application depending on the running platform. The `Platform` utility provides a simple way to detect the current platform and provide platform-specific values at runtime.
 
 ```tsx
 import { Platform } from "@apollo/client-ai-apps";
@@ -638,7 +638,7 @@ We recommend that you add separate development scripts in `package.json` that ta
 
 ### Schema types
 
-`apolloClientAiApps` generates TypeScript types for tools defined in your application by the `@tool` directive, including tool names and inputs. In order for input types to resolve correctly, the Vite plugin must know about inputs types defined by your GraphQL schema. You can configure a schema using the `schema` option.
+`apolloClientAiApps` generates TypeScript types for tools defined in your application by the `@tool` directive, including tool names and inputs. For input types to resolve correctly, ensure the Vite plugin knows about input types defined by your GraphQL schema. Configure your schema using the `schema` option.
 
 ```ts
 apolloClientAiApps({
@@ -651,6 +651,6 @@ If you don't configure a `schema`, the resolved tool input types are defined as 
 
 <Note>
 
-The `apolloClientAiApps` Vite plugin uses [GraphQL Codegen](https://the-guild.dev/graphql/codegen) under-the-hood. The `schema` option accepts any value that [GraphQL Codegen accepts](https://the-guild.dev/graphql/codegen/docs/config-reference/schema-field#available-formats).
+The `apolloClientAiApps` Vite plugin uses [GraphQL Codegen](https://the-guild.dev/graphql/codegen) internally. The `schema` option accepts any value that [GraphQL Codegen accepts](https://the-guild.dev/graphql/codegen/docs/config-reference/schema-field#available-formats).
 
 </Note>
