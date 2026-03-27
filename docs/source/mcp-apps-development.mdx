@@ -212,11 +212,11 @@ function App() {
 }
 ```
 
-`useHydratedVariables` compares the configured query to the tool called by the agent to determine if they match. If they match, `variables` returned by the hook is set to the value of the tool input provided by the LLM. If they don't match, the variables object provided as an argument to `useHydratedVariables` is used instead.
+`useHydratedVariables` compares the configured query to the tool called by the agent to determine if they match. When they match, `variables` is strictly set to the value of the tool input provided by the LLM. When they don't match, the `variables` argument passed to `useHydratedVariables` is used instead.
 
 <Note>
 
-The `variables` value returned by `useHydratedVariables` only includes keys for variables defined in the query and does not include additional input values. For example, `@tool` includes an `extraInputs` argument used to provide additional tool input. These values are stripped away in the returned `variables` value.
+`useHydratedVariables` only returns `variables` defined by the query. Extra inputs, such as those added by `extraInputs`, are stripped away in the returned object.
 
 </Note>
 
