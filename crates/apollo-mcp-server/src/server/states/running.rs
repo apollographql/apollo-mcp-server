@@ -2854,4 +2854,142 @@ mod integration_tests {
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         }
     }
+
+    mod peer_cleanup {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+
+        fn create_test_running() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::All,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_delete_request(session_id: &str) -> Request<Body> {
+            Request::builder()
+                .method("DELETE")
+                .uri("/mcp")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn closed_peers_are_cleaned_up_on_operations_update() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+
+            // Initialize a session — this adds a peer to running.peers
+            let service = create_service(running.clone(), Arc::clone(&session_manager));
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            // Allow the peer to be registered by the initialize handler
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            assert_eq!(
+                running.peers.read().await.len(),
+                1,
+                "should have one peer after initialize"
+            );
+
+            // Delete the session — closes the session transport
+            let service = create_service(running.clone(), Arc::clone(&session_manager));
+            let response = service
+                .oneshot(build_delete_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            // Allow the transport to fully close
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Trigger update_operations which calls notify_tool_list_changed,
+            // cleaning up the now-closed peer
+            running.update_operations(vec![]).await;
+
+            assert_eq!(
+                running.peers.read().await.len(),
+                0,
+                "closed peer should be removed after update_operations"
+            );
+        }
+    }
 }
