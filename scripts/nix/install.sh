@@ -236,6 +236,6 @@ downloader() {
     fi
 }
 
-if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+if [[ -z "${BASH_SOURCE[0]:-}" ]] || [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     download_binary_and_run_installer "$@" || exit 1
 fi

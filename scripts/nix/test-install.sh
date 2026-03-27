@@ -95,10 +95,11 @@ mv() {
 run_architecture_case "Linux" "aarch64" "ldd (GNU libc) 2.34" "aarch64-unknown-linux-musl"
 run_architecture_case "Linux" "aarch64" "ldd (GNU libc) 2.38" "aarch64-unknown-linux-gnu"
 run_architecture_case "Linux" "x86_64" "ldd (GNU libc) 2.34" "x86_64-unknown-linux-musl"
+run_architecture_case "Linux" "x86_64" "ldd (GNU libc) 2.38" "x86_64-unknown-linux-gnu"
 run_download_case \
     "Linux" \
     "aarch64" \
     "ldd (GNU libc) 2.34" \
-    "https://github.com/apollographql/apollo-mcp-server/releases/download/v1.9.0/apollo-mcp-server-v1.9.0-aarch64-unknown-linux-musl.tar.gz"
+    "https://github.com/apollographql/apollo-mcp-server/releases/download/${PACKAGE_VERSION}/apollo-mcp-server-${PACKAGE_VERSION}-aarch64-unknown-linux-musl.tar.gz"
 
 echo "install.sh target selection checks passed"
