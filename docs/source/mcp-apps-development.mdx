@@ -429,6 +429,14 @@ function App() {
     openai: "Running in ChatGPT",
   });
 
+  // `Platform.select` also accepts a function that is called immediately.
+  // Useful when you want to avoid expensive computation for a value not used in
+  // the current platform
+  const value = Platform.select({
+    mcp: () => factorial(10),
+    openai: () => factorial(20),
+  });
+
   return <div>{label}</div>;
 }
 ```
