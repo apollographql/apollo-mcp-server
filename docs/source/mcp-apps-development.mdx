@@ -481,12 +481,12 @@ Shared configuration for all TypeScript files. This is be where you should confi
 
 **`tsconfig.app.json`**
 
-Configuration that targets all shared modules. Extend `@apollo/client-ai-apps/tsconfig/core` and exclude platform-specific modules (`.mcp.*` and `.openai.*` files).
+Configuration that targets all shared modules. Extend `@apollo/client-ai-apps/tsconfig/core` and exclude platform-specific modules (`.mcp.*` and `.openai.*` files). Make sure you also include the generated types from the `apolloClientAiApps` Vite plugin.
 
 ```jsonc title=tsconfig.app.json
 {
   "extends": ["@apollo/client-ai-apps/tsconfig/core", "./tsconfig.base.json"],
-  "include": ["src"],
+  "include": ["src", ".apollo-client-ai-apps/types"],
   "exclude": ["src/**/*.mcp.*", "src/**/*.openai.*"],
 }
 ```
