@@ -366,29 +366,6 @@ export function MyComponent() {
 }
 ```
 
-## Detect the current platform
-
-The `Platform` utility lets you detect the current platform and select platform-specific values at runtime.
-
-```tsx
-import { Platform } from "@apollo/client-ai-apps";
-
-function App() {
-  const label = Platform.select({
-    mcp: "Running in an MCP host",
-    openai: "Running in ChatGPT",
-  });
-
-  return <div>{label}</div>;
-}
-```
-
-<Note>
-
-Any value can be returned by `select`. You are not limited to strings.
-
-</Note>
-
 ## Platform-specific modules
 
 To create platform-specific modules, append the file extension that corresponds with the host you want to target.
@@ -434,6 +411,33 @@ import { Home } from "./Home";
 Make sure each configured environment has a module it can import. If one doesn't exist, the application fails to build. For example, if you create a `Home.openai.tsx` file, you also need to create either a `Home.mcp.tsx` or `Home.tsx` file.
 
 </Caution>
+
+## The `Platform` utility
+
+In some cases, you might want to alter a value in your application depending on the running platform. The `Platform` utility provides a straightforward way to detect the current platform and provide platform-specific values at runtime.
+
+```tsx
+import { Platform } from "@apollo/client-ai-apps";
+
+function App() {
+  // Use `Platform.target` to get a string representing the current platform
+  const currentPlatform = Platform.target; // => "openai" | "mcp"
+
+  // The `Platform.select` function selects the value for you using the current platform
+  const label = Platform.select({
+    mcp: "Running in an MCP host",
+    openai: "Running in ChatGPT",
+  });
+
+  return <div>{label}</div>;
+}
+```
+
+<Note>
+
+Any value can be returned by `select`. You are not limited to strings.
+
+</Note>
 
 ## TypeScript configuration
 
