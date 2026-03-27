@@ -7,7 +7,15 @@ title: Limitations
 
 ### OAuth token passthrough
 
-Apollo MCP Server currently passes through OAuth tokens received from MCP clients directly to upstream GraphQL APIs.
+Apollo MCP Server passes through validated OAuth tokens received from MCP clients to upstream GraphQL APIs by default. You can disable this behavior by setting `disable_auth_token_passthrough: true` in your transport auth configuration:
+
+```yaml title="config.yaml"
+transport:
+  auth:
+    disable_auth_token_passthrough: true
+```
+
+When disabled, tokens are still validated for MCP client authentication but are not forwarded to the upstream GraphQL API.
 
 #### Rationale 
 
