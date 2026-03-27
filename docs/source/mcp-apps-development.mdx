@@ -141,23 +141,9 @@ function App() {
 
 Now that the query is registered as a tool, you can run the app in ChatGPT or an MCP Apps-compatible host and prompt the LLM to show you the top products. They render using data fetched by MCP Server.
 
-## Access host context
+## Access tool information
 
-Use the `useHostContext` hook to access context provided by the MCP host. `useHostContext` keeps the host context up-to-date for you as it changes.
-
-```tsx title=MyComponent.mcp.tsx
-import { useHostContext } from "@apollo/client-ai-apps";
-
-export function MyComponent() {
-  const hostContext = useHostContext();
-
-  return <div>{JSON.stringify(hostContext)}</div>;
-}
-```
-
-## Access tool input
-
-Use the `useToolInfo()` hook to access the current tool name and the input the LLM passed to the tool.
+Use the `useToolInfo` hook to access the current tool name and the input the LLM passed to the tool.
 
 ```tsx
 import { useToolInfo } from "@apollo/client-ai-apps/react";
@@ -173,6 +159,14 @@ function App() {
   );
 }
 ```
+
+`toolName` and `toolInput` are typed according to the tools defined in your application. Refer to the [typescript configuration](#typescript-configuration) section to learn how to include the generated types are included in your application.
+
+<Note>
+
+In order to provide specific `toolInput` types, you must configure a `schema` with the `apolloClientAiApps` Vite plugin. Refer to the [Vite configuration](#vite-configuration) section to learn more.
+
+</Note>
 
 ## Populate variables from tool input
 
@@ -357,6 +351,20 @@ Marking a variable `reactive` forbids you from using that variable in the `setVa
 When a reactive variable does not match tool input, the tool input value is used. The value of that variable will remain until the external value changes. When it changes, the new value is used moving forward.
 
 </Note>
+
+## Access host context
+
+Use the `useHostContext` hook to access context provided by the MCP host. `useHostContext` keeps the host context up-to-date for you as it changes.
+
+```tsx title=MyComponent.mcp.tsx
+import { useHostContext } from "@apollo/client-ai-apps";
+
+export function MyComponent() {
+  const hostContext = useHostContext();
+
+  return <div>{JSON.stringify(hostContext)}</div>;
+}
+```
 
 ## Detect the current platform
 
