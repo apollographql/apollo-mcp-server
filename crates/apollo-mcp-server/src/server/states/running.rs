@@ -126,11 +126,15 @@ impl Running {
 
         *operations_lock = operations;
 
+        // Drop the operations lock before notifying peers. The operations are
+        // already written, so clients will see the updated list when they
+        // re-fetch. Holding the lock during notification can starve all
+        // list_tools / call_tool / initialize requests if any peer notification
+        // is slow or hangs.
+        drop(operations_lock);
+
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-
-        // Now that clients have been notified, drop the lock so they can get the updated operations
-        drop(operations_lock);
     }
 
     /// Update a running server with new operations.
@@ -174,11 +178,11 @@ impl Running {
         );
         *operations_lock = updated_operations;
 
+        // Drop the operations lock before notifying peers (same rationale as update_schema).
+        drop(operations_lock);
+
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-
-        // Now that clients have been notified, drop the lock so they can get the updated operations
-        drop(operations_lock);
     }
 
     /// Reload Rhai scripts from the rhai/ directory.
@@ -198,6 +202,10 @@ impl Running {
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
     #[tracing::instrument(skip_all)]
     async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
+        // Timeout per peer: prevents a single unresponsive peer from blocking
+        // the entire notification loop and holding the peers write lock.
+        const PEER_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
         let mut peers = peers.write().await;
         if !peers.is_empty() {
             debug!(
@@ -208,14 +216,22 @@ impl Running {
         let mut retained_peers = Vec::new();
         for peer in peers.iter() {
             if !peer.is_transport_closed() {
-                match peer.notify_tool_list_changed().await {
-                    Ok(_) => retained_peers.push(peer.clone()),
-                    Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed) => {
-                        error!("Failed to notify peer of tool list change - dropping peer",);
+                match tokio::time::timeout(PEER_NOTIFY_TIMEOUT, peer.notify_tool_list_changed())
+                    .await
+                {
+                    Ok(Ok(_)) => retained_peers.push(peer.clone()),
+                    Ok(Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed)) => {
+                        error!("Failed to notify peer of tool list change - dropping peer");
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("Failed to notify peer of tool list change {:?}", e);
                         retained_peers.push(peer.clone());
+                    }
+                    Err(_) => {
+                        error!(
+                            "Timed out notifying peer of tool list change after {}s - dropping peer",
+                            PEER_NOTIFY_TIMEOUT.as_secs()
+                        );
                     }
                 }
             }
