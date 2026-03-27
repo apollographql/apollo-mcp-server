@@ -86,7 +86,13 @@ Using a `Suspense` component to display a loading fallback is optional. If you d
 
 ## Register an MCP tool
 
-To register MCP tools, combine your GraphQL queries with the `@tool` directive.
+To register MCP tools, combine your GraphQL queries with the `@tool` directive. By default, the operation name and operation description are used to define the tool name and description. `@tool` also accepts `name` and `description` arguments which overrides the operation name and description used to register the tool.
+
+<Note>
+
+You must use `graphql` version `16.2.0` or greater to use operation descriptions.
+
+</Note>
 
 For example, if you want to define a query that gets the highest-rated products in a marketplace application, define a query called `TopProductsQuery` in your React component, then use the `useQuery` hook from `@apollo/client/react` to read the query data. To register the query as its own tool, use the `@tool` directive.
 
@@ -100,11 +106,8 @@ const TOP_PRODUCTS_QUERY: TypedDocumentNode<
   TopProductsQuery,
   TopProductsQueryVariables
 > = gql`
-  query TopProductsQuery
-  @tool(
-    name: "TopProducts"
-    description: "Shows a list of the highest rated products."
-  ) {
+  "Shows a list of the highest rated products."
+  query TopProductsQuery @tool {
     topProducts {
       id
       title
