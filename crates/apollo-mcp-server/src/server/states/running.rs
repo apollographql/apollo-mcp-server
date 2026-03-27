@@ -126,11 +126,15 @@ impl Running {
 
         *operations_lock = operations;
 
+        // Drop the operations lock before notifying peers. The operations are
+        // already written, so clients will see the updated list when they
+        // re-fetch. Holding the lock during notification can starve all
+        // list_tools / call_tool / initialize requests if any peer notification
+        // is slow or hangs.
+        drop(operations_lock);
+
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-
-        // Now that clients have been notified, drop the lock so they can get the updated operations
-        drop(operations_lock);
     }
 
     /// Update a running server with new operations.
@@ -174,11 +178,11 @@ impl Running {
         );
         *operations_lock = updated_operations;
 
+        // Drop the operations lock before notifying peers (same rationale as update_schema).
+        drop(operations_lock);
+
         // Notify MCP clients that tools have changed
         Self::notify_tool_list_changed(self.peers.clone()).await;
-
-        // Now that clients have been notified, drop the lock so they can get the updated operations
-        drop(operations_lock);
     }
 
     /// Reload Rhai scripts from the rhai/ directory.
@@ -196,31 +200,65 @@ impl Running {
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
+    ///
+    /// Locking strategy: snapshot the peer list under a **read** lock, notify
+    /// without holding any lock, then briefly take a **write** lock only to
+    /// swap in the retained list. This keeps the write-lock hold time
+    /// negligible regardless of how many peers need notifying.
     #[tracing::instrument(skip_all)]
     async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
-        let mut peers = peers.write().await;
-        if !peers.is_empty() {
+        const PEER_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+        // Snapshot under read lock, then release immediately so concurrent
+        // initialize requests can register new peers without blocking.
+        let snapshot: Vec<_> = {
+            let guard = peers.read().await;
+            if guard.is_empty() {
+                return;
+            }
             debug!(
                 "Operations changed, notifying {} peers of tool change",
-                peers.len()
+                guard.len()
             );
-        }
+            guard.clone()
+        };
+        let snapshot_len = snapshot.len();
+
+        // Notify without holding any lock.
         let mut retained_peers = Vec::new();
-        for peer in peers.iter() {
+        for peer in &snapshot {
             if !peer.is_transport_closed() {
-                match peer.notify_tool_list_changed().await {
-                    Ok(_) => retained_peers.push(peer.clone()),
-                    Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed) => {
-                        error!("Failed to notify peer of tool list change - dropping peer",);
+                match tokio::time::timeout(PEER_NOTIFY_TIMEOUT, peer.notify_tool_list_changed())
+                    .await
+                {
+                    Ok(Ok(_)) => retained_peers.push(peer.clone()),
+                    Ok(Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed)) => {
+                        error!("Failed to notify peer of tool list change - dropping peer");
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("Failed to notify peer of tool list change {:?}", e);
                         retained_peers.push(peer.clone());
+                    }
+                    Err(_) => {
+                        error!(
+                            "Timed out notifying peer of tool list change after {}s - dropping peer",
+                            PEER_NOTIFY_TIMEOUT.as_secs()
+                        );
                     }
                 }
             }
         }
-        *peers = retained_peers;
+
+        // Brief write lock: replace the snapshot portion with retained peers,
+        // preserving any peers added by concurrent initialize calls.
+        let mut guard = peers.write().await;
+        let new_peers: Vec<_> = if guard.len() > snapshot_len {
+            guard.split_off(snapshot_len)
+        } else {
+            vec![]
+        };
+        *guard = retained_peers;
+        guard.extend(new_peers);
     }
 
     async fn list_tools_impl(
@@ -2836,6 +2874,161 @@ mod integration_tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+    }
+
+    mod peer_cleanup {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+
+        fn create_test_running() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::All,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig {
+                    stateful_mode: true,
+                    ..Default::default()
+                },
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {
+                        "name": "test-client",
+                        "version": "1.0.0"
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_delete_request(session_id: &str) -> Request<Body> {
+            Request::builder()
+                .method("DELETE")
+                .uri("/mcp")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::empty())
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn closed_peers_are_cleaned_up_on_operations_update() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+
+            // Initialize a session — this adds a peer to running.peers
+            let service = create_service(running.clone(), Arc::clone(&session_manager));
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            // Poll until the peer is registered by the async initialize handler
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if running.peers.read().await.len() == 1 {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "peer should be registered after initialize"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+
+            // Delete the session — closes the session transport
+            let service = create_service(running.clone(), Arc::clone(&session_manager));
+            let response = service
+                .oneshot(build_delete_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            // Poll until the transport is fully closed
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let guard = running.peers.read().await;
+                if guard.first().is_some_and(|p| p.is_transport_closed()) {
+                    break;
+                }
+                drop(guard);
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "peer transport should be closed after session delete"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+
+            // Trigger update_operations which calls notify_tool_list_changed,
+            // cleaning up the now-closed peer
+            running.update_operations(vec![]).await;
+
+            assert_eq!(
+                running.peers.read().await.len(),
+                0,
+                "closed peer should be removed after update_operations"
+            );
         }
     }
 }
