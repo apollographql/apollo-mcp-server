@@ -200,21 +200,33 @@ impl Running {
     }
 
     /// Notify any peers that tools have changed. Drops unreachable peers from the list.
+    ///
+    /// Locking strategy: snapshot the peer list under a **read** lock, notify
+    /// without holding any lock, then briefly take a **write** lock only to
+    /// swap in the retained list. This keeps the write-lock hold time
+    /// negligible regardless of how many peers need notifying.
     #[tracing::instrument(skip_all)]
     async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
-        // Timeout per peer: prevents a single unresponsive peer from blocking
-        // the entire notification loop and holding the peers write lock.
         const PEER_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-        let mut peers = peers.write().await;
-        if !peers.is_empty() {
+        // Snapshot under read lock, then release immediately so concurrent
+        // initialize requests can register new peers without blocking.
+        let snapshot: Vec<_> = {
+            let guard = peers.read().await;
+            if guard.is_empty() {
+                return;
+            }
             debug!(
                 "Operations changed, notifying {} peers of tool change",
-                peers.len()
+                guard.len()
             );
-        }
+            guard.clone()
+        };
+        let snapshot_len = snapshot.len();
+
+        // Notify without holding any lock.
         let mut retained_peers = Vec::new();
-        for peer in peers.iter() {
+        for peer in &snapshot {
             if !peer.is_transport_closed() {
                 match tokio::time::timeout(PEER_NOTIFY_TIMEOUT, peer.notify_tool_list_changed())
                     .await
@@ -236,7 +248,17 @@ impl Running {
                 }
             }
         }
-        *peers = retained_peers;
+
+        // Brief write lock: replace the snapshot portion with retained peers,
+        // preserving any peers added by concurrent initialize calls.
+        let mut guard = peers.write().await;
+        let new_peers: Vec<_> = if guard.len() > snapshot_len {
+            guard.split_off(snapshot_len)
+        } else {
+            vec![]
+        };
+        *guard = retained_peers;
+        guard.extend(new_peers);
     }
 
     async fn list_tools_impl(
@@ -2962,13 +2984,18 @@ mod integration_tests {
                 .unwrap()
                 .to_string();
 
-            // Allow the peer to be registered by the initialize handler
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            assert_eq!(
-                running.peers.read().await.len(),
-                1,
-                "should have one peer after initialize"
-            );
+            // Poll until the peer is registered by the async initialize handler
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if running.peers.read().await.len() == 1 {
+                    break;
+                }
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "peer should be registered after initialize"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
 
             // Delete the session — closes the session transport
             let service = create_service(running.clone(), Arc::clone(&session_manager));
@@ -2978,8 +3005,20 @@ mod integration_tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
 
-            // Allow the transport to fully close
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            // Poll until the transport is fully closed
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                let guard = running.peers.read().await;
+                if guard.first().is_some_and(|p| p.is_transport_closed()) {
+                    break;
+                }
+                drop(guard);
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "peer transport should be closed after session delete"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
 
             // Trigger update_operations which calls notify_tool_list_changed,
             // cleaning up the now-closed peer
