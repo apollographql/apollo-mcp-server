@@ -234,10 +234,19 @@ impl Starting {
                 }
 
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
+                let shutdown_token = cancellation_token.clone();
                 tokio::spawn(async move {
+                    // Shut down when either a signal (CTRL+C/SIGTERM) is received
+                    // or the cancellation token is cancelled (e.g., config change restart).
+                    let graceful_shutdown = async move {
+                        tokio::select! {
+                            _ = shutdown_signal() => {},
+                            _ = shutdown_token.cancelled() => {},
+                        }
+                    };
                     // Health check is already active from creation
                     if let Err(e) = axum::serve(tcp_listener, router)
-                        .with_graceful_shutdown(shutdown_signal())
+                        .with_graceful_shutdown(graceful_shutdown)
                         .await
                     {
                         // This can never really happen

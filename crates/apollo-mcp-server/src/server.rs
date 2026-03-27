@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
@@ -23,8 +24,18 @@ mod states;
 
 use states::StateMachine;
 
+/// The reason the server shut down, used to decide whether to restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShutdownReason {
+    /// Normal shutdown (SIGTERM, CTRL+C)
+    Shutdown,
+    /// Config changed, server should restart with new config
+    Restart,
+}
+
 /// An Apollo MCP Server
 pub struct Server {
+    config_path: Option<PathBuf>,
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
@@ -106,6 +117,7 @@ impl Transport {
 impl Server {
     #[builder]
     pub fn new(
+        config_path: Option<PathBuf>,
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
@@ -143,6 +155,7 @@ impl Server {
             headers
         };
         Self {
+            config_path,
             transport,
             schema_source,
             operation_source,
@@ -176,14 +189,28 @@ impl Server {
         }
     }
 
-    pub async fn start(self) -> Result<(), ServerError> {
+    pub async fn start(self) -> Result<ShutdownReason, ServerError> {
         StateMachine {}.start(self).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Transport;
+    use super::{ShutdownReason, Transport};
+
+    #[test]
+    fn shutdown_reason_is_copy() {
+        let reason = ShutdownReason::Restart;
+        let copy = reason;
+        assert_eq!(reason, copy);
+    }
+
+    #[test]
+    fn shutdown_reason_equality() {
+        assert_eq!(ShutdownReason::Shutdown, ShutdownReason::Shutdown);
+        assert_eq!(ShutdownReason::Restart, ShutdownReason::Restart);
+        assert_ne!(ShutdownReason::Shutdown, ShutdownReason::Restart);
+    }
 
     #[test]
     fn sse_transport_is_rejected_at_parse_time() {

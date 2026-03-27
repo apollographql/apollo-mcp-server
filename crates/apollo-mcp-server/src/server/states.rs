@@ -7,6 +7,7 @@ use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
+use tracing::info;
 use url::Url;
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
     server_info::ServerInfoConfig,
 };
 
-use super::{Server, ServerEvent, Transport};
+use super::{Server, ServerEvent, ShutdownReason, Transport};
 
 mod configuring;
 mod operations_configured;
@@ -69,7 +70,7 @@ struct Config {
 }
 
 impl StateMachine {
-    pub(crate) async fn start(self, server: Server) -> Result<(), ServerError> {
+    pub(crate) async fn start(self, server: Server) -> Result<ShutdownReason, ServerError> {
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -78,11 +79,15 @@ impl StateMachine {
         let operation_stream = server.operation_source.into_stream().await.boxed();
         let ctrl_c_stream = Self::ctrl_c_stream().boxed();
         let rhai_stream = Self::rhai_watch_stream().boxed();
+        let config_stream = Self::config_watch_stream(server.config_path.as_deref()).boxed();
+        let sighup_stream = Self::sighup_stream().boxed();
         let mut stream = stream::select_all(vec![
             schema_stream,
             operation_stream,
             ctrl_c_stream,
             rhai_stream,
+            config_stream,
+            sighup_stream,
         ]);
 
         let mut state = State::Configuring(Configuring {
@@ -119,89 +124,106 @@ impl StateMachine {
         });
 
         while let Some(event) = stream.next().await {
-            state = match event {
-                ServerEvent::SchemaUpdated(registry_event) => match registry_event {
-                    SchemaEvent::UpdateSchema(schema_state) => {
-                        let schema = Self::sdl_to_api_schema(schema_state)?;
-                        match state {
-                            State::Configuring(configuring) => {
-                                configuring.set_schema(schema).await.into()
-                            }
-                            State::SchemaConfigured(schema_configured) => {
-                                schema_configured.set_schema(schema).await.into()
-                            }
-                            State::OperationsConfigured(operations_configured) => {
-                                operations_configured.set_schema(schema).await.into()
-                            }
-                            State::Running(running) => {
-                                running.update_schema(schema).await;
-                                running.into()
-                            }
-                            other => other,
-                        }
-                    }
-                    SchemaEvent::NoMoreSchema => match state {
-                        State::Configuring(_) | State::OperationsConfigured(_) => {
-                            State::Error(ServerError::NoSchema)
-                        }
-                        _ => state,
-                    },
-                },
-                ServerEvent::OperationsUpdated(operations) => match state {
-                    State::Configuring(configuring) => {
-                        configuring.set_operations(operations).await.into()
-                    }
-                    State::SchemaConfigured(schema_configured) => {
-                        schema_configured.set_operations(operations).await.into()
-                    }
-                    State::OperationsConfigured(operations_configured) => operations_configured
-                        .set_operations(operations)
-                        .await
-                        .into(),
-                    State::Running(running) => {
-                        running.update_operations(operations).await;
-                        running.into()
-                    }
-                    other => other,
-                },
-                ServerEvent::OperationError(e, _) => {
-                    State::Error(ServerError::Operation(OperationError::File(e)))
-                }
-                ServerEvent::CollectionError(e) => match state {
-                    State::Running(running) => {
-                        tracing::error!(
-                            "Collection error while running, keeping existing operations: {e}"
-                        );
-                        running.into()
-                    }
-                    _ => State::Error(ServerError::Operation(OperationError::Collection(e))),
-                },
-                ServerEvent::RhaiScriptsChanged => match state {
-                    State::Running(running) => {
-                        running.reload_rhai_scripts();
-                        running.into()
-                    }
-                    other => other,
-                },
-                ServerEvent::Shutdown => match state {
-                    State::Running(running) => {
-                        running.cancellation_token.cancel();
-                        State::Stopping
-                    }
-                    _ => State::Stopping,
-                },
-            };
+            state = Self::process_event(state, event).await?;
             if let State::Starting(starting) = state {
                 state = starting.start().await.into();
             }
-            if matches!(&state, State::Error(_) | State::Stopping) {
+            if matches!(
+                &state,
+                State::Error(_) | State::Stopping | State::Restarting
+            ) {
                 break;
             }
         }
         match state {
             State::Error(e) => Err(e),
-            _ => Ok(()),
+            State::Restarting => Ok(ShutdownReason::Restart),
+            _ => Ok(ShutdownReason::Shutdown),
         }
+    }
+
+    /// Process a single event against the current state, returning the new state.
+    #[allow(clippy::result_large_err)]
+    async fn process_event(state: State, event: ServerEvent) -> Result<State, ServerError> {
+        Ok(match event {
+            ServerEvent::SchemaUpdated(registry_event) => match registry_event {
+                SchemaEvent::UpdateSchema(schema_state) => {
+                    let schema = Self::sdl_to_api_schema(schema_state)?;
+                    match state {
+                        State::Configuring(configuring) => {
+                            configuring.set_schema(schema).await.into()
+                        }
+                        State::SchemaConfigured(schema_configured) => {
+                            schema_configured.set_schema(schema).await.into()
+                        }
+                        State::OperationsConfigured(operations_configured) => {
+                            operations_configured.set_schema(schema).await.into()
+                        }
+                        State::Running(running) => {
+                            running.update_schema(schema).await;
+                            running.into()
+                        }
+                        other => other,
+                    }
+                }
+                SchemaEvent::NoMoreSchema => match state {
+                    State::Configuring(_) | State::OperationsConfigured(_) => {
+                        State::Error(ServerError::NoSchema)
+                    }
+                    _ => state,
+                },
+            },
+            ServerEvent::OperationsUpdated(operations) => match state {
+                State::Configuring(configuring) => {
+                    configuring.set_operations(operations).await.into()
+                }
+                State::SchemaConfigured(schema_configured) => {
+                    schema_configured.set_operations(operations).await.into()
+                }
+                State::OperationsConfigured(operations_configured) => operations_configured
+                    .set_operations(operations)
+                    .await
+                    .into(),
+                State::Running(running) => {
+                    running.update_operations(operations).await;
+                    running.into()
+                }
+                other => other,
+            },
+            ServerEvent::OperationError(e, _) => {
+                State::Error(ServerError::Operation(OperationError::File(e)))
+            }
+            ServerEvent::CollectionError(e) => match state {
+                State::Running(running) => {
+                    tracing::error!(
+                        "Collection error while running, keeping existing operations: {e}"
+                    );
+                    running.into()
+                }
+                _ => State::Error(ServerError::Operation(OperationError::Collection(e))),
+            },
+            ServerEvent::RhaiScriptsChanged => match state {
+                State::Running(running) => {
+                    running.reload_rhai_scripts();
+                    running.into()
+                }
+                other => other,
+            },
+            ServerEvent::ConfigChanged => {
+                info!("Config file changed, triggering server restart");
+                if let State::Running(ref running) = state {
+                    running.cancellation_token.cancel();
+                }
+                State::Restarting
+            }
+            ServerEvent::Shutdown => match state {
+                State::Running(running) => {
+                    running.cancellation_token.cancel();
+                    State::Stopping
+                }
+                _ => State::Stopping,
+            },
+        })
     }
 
     #[allow(clippy::result_large_err)]
@@ -222,6 +244,43 @@ impl StateMachine {
             .map(|_| ServerEvent::Shutdown)
             .into_stream()
             .boxed()
+    }
+
+    /// Watch the config file for changes, mirroring the rhai_watch_stream pattern.
+    /// Skips the initial event that files::watch always emits on startup.
+    fn config_watch_stream(config_path: Option<&Path>) -> impl Stream<Item = ServerEvent> {
+        match config_path {
+            Some(path) if path.exists() => files::watch(path)
+                .skip(1)
+                .map(|_| ServerEvent::ConfigChanged)
+                .boxed(),
+            _ => stream::empty().boxed(),
+        }
+    }
+
+    /// Listen for SIGHUP to trigger a config reload (Unix only).
+    fn sighup_stream() -> impl Stream<Item = ServerEvent> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::SignalKind;
+
+            async fn wait_for_sighup() -> Option<ServerEvent> {
+                let mut signal = tokio::signal::unix::signal(SignalKind::hangup()).ok()?;
+                signal.recv().await?;
+                Some(ServerEvent::ConfigChanged)
+            }
+
+            wait_for_sighup()
+                .map(stream::iter)
+                .into_stream()
+                .flatten()
+                .boxed()
+        }
+
+        #[cfg(not(unix))]
+        {
+            stream::empty().boxed()
+        }
     }
 
     fn rhai_watch_stream() -> impl Stream<Item = ServerEvent> {
@@ -273,6 +332,7 @@ enum State {
     Running(Running),
     Error(ServerError),
     Stopping,
+    Restarting,
 }
 
 impl From<Configuring> for State {
@@ -359,7 +419,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use crate::cors::CorsConfig;
-    use crate::errors::OperationError;
     use crate::event::Event as ServerEvent;
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
@@ -368,7 +427,7 @@ mod tests {
     use crate::server_info::ServerInfoConfig;
     use apollo_mcp_rhai::RhaiEngine;
 
-    use super::{Config, Configuring, Running, State};
+    use super::{Config, Configuring, Running, State, StateMachine};
 
     fn create_running_server() -> Running {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -442,35 +501,10 @@ mod tests {
         }
     }
 
-    // Replicate the event-processing match from StateMachine::start() to test
-    // how each event variant is handled when the server is in the Running state.
     async fn process_event(state: State, event: ServerEvent) -> State {
-        match event {
-            ServerEvent::OperationsUpdated(operations) => match state {
-                State::Running(running) => {
-                    running.update_operations(operations).await;
-                    running.into()
-                }
-                other => other,
-            },
-            ServerEvent::OperationError(e, _) => State::Error(
-                crate::errors::ServerError::Operation(OperationError::File(e)),
-            ),
-            ServerEvent::CollectionError(e) => match state {
-                State::Running(running) => running.into(),
-                _ => State::Error(crate::errors::ServerError::Operation(
-                    OperationError::Collection(e),
-                )),
-            },
-            ServerEvent::RhaiScriptsChanged => match state {
-                State::Running(running) => {
-                    running.reload_rhai_scripts();
-                    running.into()
-                }
-                other => other,
-            },
-            _ => state,
-        }
+        StateMachine::process_event(state, event)
+            .await
+            .unwrap_or_else(State::Error)
     }
 
     #[tokio::test]
@@ -560,6 +594,106 @@ mod tests {
         assert!(
             matches!(new_state, State::Error(_)),
             "expected CollectionError during startup to be fatal"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_transitions_running_to_restarting() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            matches!(new_state, State::Restarting),
+            "expected server to transition to Restarting after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_cancels_token_when_running() {
+        let running = create_running_server();
+        let token = running.cancellation_token.clone();
+        let state = State::Running(running);
+
+        assert!(!token.is_cancelled(), "token should not be cancelled yet");
+
+        let _new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            token.is_cancelled(),
+            "cancellation token should be cancelled after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_transitions_configuring_to_restarting() {
+        let state = State::Configuring(Configuring {
+            config: test_config(),
+        });
+
+        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
+
+        assert!(
+            matches!(new_state, State::Restarting),
+            "expected Configuring to transition to Restarting after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_watch_stream_returns_empty_when_no_path() {
+        use futures::StreamExt as _;
+
+        let mut stream = StateMachine::config_watch_stream(None).boxed();
+
+        assert!(
+            futures::poll!(stream.next()).is_ready(),
+            "expected empty stream to complete immediately"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_watch_stream_returns_empty_for_nonexistent_path() {
+        use futures::StreamExt as _;
+
+        let path = std::path::Path::new("/tmp/nonexistent-config-file-12345.yaml");
+        let mut stream = StateMachine::config_watch_stream(Some(path)).boxed();
+
+        assert!(
+            futures::poll!(stream.next()).is_ready(),
+            "expected empty stream for nonexistent path"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_transitions_running_to_stopping() {
+        let running = create_running_server();
+        let token = running.cancellation_token.clone();
+        let state = State::Running(running);
+
+        let new_state = process_event(state, ServerEvent::Shutdown).await;
+
+        assert!(
+            matches!(new_state, State::Stopping),
+            "expected Running to transition to Stopping after Shutdown"
+        );
+        assert!(
+            token.is_cancelled(),
+            "cancellation token should be cancelled after Shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_transitions_configuring_to_stopping() {
+        let state = State::Configuring(Configuring {
+            config: test_config(),
+        });
+
+        let new_state = process_event(state, ServerEvent::Shutdown).await;
+
+        assert!(
+            matches!(new_state, State::Stopping),
+            "expected Configuring to transition to Stopping after Shutdown"
         );
     }
 }
