@@ -160,8 +160,8 @@ Tools are defined using directives on GraphQL operations in your app code. Avail
 | -------------- | -------------------------------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `name`         | Tool name                        | No       | MCP tool `name`                 | Defaults to the GraphQL operation name if not provided. Must be unique within the app.                                                                                      |
 | `description`  | Tool description                 | No       | MCP tool `description`          | Defaults to the GraphQL operation description if not provided. App description is prefixed to tool description if present.                                                  |
-| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs are not part of the GraphQL operation but are provided by the host |
-| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use for passing additional metadata that should be included in the tool's manifest entry.            |
+| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs aren't part of the GraphQL operation but are provided by the host |
+| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use this to pass additional metadata that should be included in the tool's manifest entry.            |
 | `labels`       | Tool-specific labels             | No       | Tool labels in manifest         | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.     |
 
 ### `@prefetch` directive
@@ -182,7 +182,7 @@ The `@private` directive hides specified fields from the LLM while still making 
 
 | Element    | What it is                      | Where it maps to                     | Notes                                                                          |
 | ---------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
-| `@private` | Field visibility control marker | Field marked private in the manifest | Fields are excluded from the LLM-visible response but remain available in your app |
+| `@private` | Field visibility control marker | Field marked private in the manifest | The response excludes fields from the LLM-visible response, but they remain available in your app |
 
 ## App query parameter
 

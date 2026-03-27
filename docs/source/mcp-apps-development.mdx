@@ -86,7 +86,7 @@ Using a `Suspense` component to display a loading fallback is optional. If you d
 
 ## Register an MCP tool
 
-To register MCP tools, combine your GraphQL queries with the `@tool` directive. By default, the operation name and operation description are used to define the tool name and description. `@tool` also accepts `name` and `description` arguments which override the operation name and description used to register the tool.
+To register MCP tools, combine your GraphQL queries with the `@tool` directive. By default, the operation name and operation description are used to define the tool name and description. `@tool` also accepts `name` and `description` arguments, which override the operation name and description used to register the tool.
 
 <Note>
 
@@ -106,7 +106,7 @@ const TOP_PRODUCTS_QUERY: TypedDocumentNode<
   TopProductsQuery,
   TopProductsQueryVariables
 > = gql`
-  "Shows a list of the highest rated products."
+  "Shows a list of the highest-rated products."
   query TopProductsQuery @tool {
     topProducts {
       id
@@ -176,7 +176,7 @@ You might consider using `useToolInfo` to populate the initial values for these 
 
 - The tool called by the agent might not be the same tool
 - The input might differ from the original tool input when a user navigates away and back
-- Some variables might need to sync with an external source, such as `props`
+- Some variables might need to synchronize with an external source, such as `props`
 - Some variables might change as a result of user interaction
 
 The `createHydrationUtils` utility bridges this gap. Call `createHydrationUtils` with the query that provides the tool definition. This returns a `useHydratedVariables` hook used to manage variables for the query. The returned `variables` are provided to the `useQuery` hook in the `variables` option.
@@ -222,13 +222,13 @@ function App() {
 
 <Caution>
 
-To ensure your UI reflects the accurate values of variables, read the values from the `variables` returned by `useHydratedVariables`.
+Always read values from the `variables` object returned by `useHydratedVariables` to ensure your UI accurately reflects the current state.
 
 </Caution>
 
 ### Optional variables
 
-GraphQL queries might include one or more optional variables in the query definition. When these queries are executed by the tool, the LLM might decide to omit any of its optional variables. When this happens, the returned `variables` object includes only the values from the tool input. The variable values provided to `useHydratedVariables` are ignored. This ensures `useQuery` matches the exact tool call.
+GraphQL queries might include one or more optional variables in the query definition. When these queries are executed by the tool, the LLM might decide to omit any of its optional variables. When this happens, the returned `variables` object includes only the values from the tool input. The variable values provided to `useHydratedVariables` are ignored. This ensures that `useQuery` matches the exact tool call.
 
 ```tsx
 const TOP_PRODUCTS: TypedDocumentNode<
@@ -449,7 +449,7 @@ Any value can be returned by `select`. You are not limited to strings.
 
 `@apollo/client-ai-apps` provides extendable TypeScript configurations that make sure you only use code available to your application from [platform-specific modules](#platform-specific-modules).
 
-- `@apollo/client-ai-apps/tsconfig/core` — For shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files for all environments..
+- `@apollo/client-ai-apps/tsconfig/core` — For shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files for all environments.
 - `@apollo/client-ai-apps/tsconfig/mcp` — For developing MCP-specific modules. This configuration allows you to access utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
 - `@apollo/client-ai-apps/tsconfig/openai` — For developing ChatGPT-specific modules. This configuration allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
 
