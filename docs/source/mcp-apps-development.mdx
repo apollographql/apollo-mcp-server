@@ -572,7 +572,7 @@ export default defineConfig({
   plugins: [
     apolloClientAiApps({
       targets: ["mcp", "openai"],
-      appsOutDir: "../apps/my-app", // path where build artifacts are written
+      appsOutDir: "../apps", // path where build artifacts are written
     }),
     // ... other plugins
   ],
@@ -580,7 +580,7 @@ export default defineConfig({
 });
 ```
 
-The `appsOutDir` option controls where the build artifacts (including the manifest file and built resources) are written. This should point to the corresponding directory under `apps/` that Apollo MCP Server reads from.
+The `appsOutDir` option controls where the build artifacts (including the manifest file and built resources) are written. This directory must be named `apps` and should point to the directory that Apollo MCP Server reads from.
 
 ### Development mode
 
@@ -635,3 +635,22 @@ We recommend that you add separate development scripts in `package.json` that ta
 ```
 
 </Tip>
+
+### Schema types
+
+`apolloClientAiApps` generates TypeScript types for tools defined in your application by the `@tool` directive, including tool names and inputs. In order for input types to resolve correctly, the Vite plugin must know about inputs types defined by your GraphQL schema. You can configure a schema using the `schema` option.
+
+```ts
+apolloClientAiApps({
+  schema: "./path/to/schema.graphql",
+  // ...
+});
+```
+
+If you don't configure a `schema`, the resolved tool input types are defined as `Record<string, unknown>`.
+
+<Note>
+
+The `apolloClientAiApps` Vite plugin uses [GraphQL Codegen](https://the-guild.dev/graphql/codegen) under-the-hood. The `schema` option accepts any value that [GraphQL Codegen accepts](https://the-guild.dev/graphql/codegen/docs/config-reference/schema-field#available-formats).
+
+</Note>
