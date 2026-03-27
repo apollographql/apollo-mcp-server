@@ -342,11 +342,11 @@ function App({ id }: AppProps) {
 }
 ```
 
-Marking a variable `reactive` forbids you from using that variable in the `setVariables` function. This avoids accidental bugs that might keep that value out-of-sync. If a reactive variable is updated, a warning is logged and the update is ignored.
+Marking a variable `reactive` forbids you from using that variable in the `setVariables` function. This avoids accidental bugs that might desynchronize the value with the input. If a reactive variable is provided to `setVariables`, a warning is logged and the update is ignored.
 
 <Note>
 
-When a reactive variable does not match tool input, the tool input value is used. The value of that variable will remain until the external value changes. When it changes, the new value is used moving forward.
+When the value of a reactive variable differs from the tool input value, the tool input value is used. The value will remain the value of the tool input value until the external value provided to `reactive` changes. Once it changes, the new value is used moving forward.
 
 </Note>
 
