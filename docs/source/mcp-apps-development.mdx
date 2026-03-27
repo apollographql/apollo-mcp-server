@@ -21,14 +21,14 @@ Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, n
 
 ```ts title=src/main.tsx
 import { InMemoryCache } from "@apollo/client";
-import { ApolloClient, ApplicationManifest } from "@apollo/client-ai-apps";
+import { ApolloClient } from "@apollo/client-ai-apps";
 // Note the manifest is written to the root of the app
 import manifest from "../.application-manifest.json";
 
 // You may also provide other options that the core ApolloClient accepts
 const client = new ApolloClient({
   cache: new InMemoryCache(),
-  manifest: manifest as ApplicationManifest,
+  manifest,
 });
 ```
 
@@ -137,6 +137,246 @@ function App() {
 ```
 
 Now that the query is registered as a tool, you can run the app in ChatGPT or an MCP Apps-compatible host and prompt the LLM to show you the top products. They render using data fetched by MCP Server.
+
+## Access host context
+
+Use the `useHostContext` hook to access context provided by the MCP host. `useHostContext` keeps the host context up-to-date for you as it changes.
+
+```tsx title=MyComponent.mcp.tsx
+import { useHostContext } from "@apollo/client-ai-apps";
+
+export function MyComponent() {
+  const hostContext = useHostContext();
+
+  return <div>{JSON.stringify(hostContext)}</div>;
+}
+```
+
+## Access tool input
+
+Use the `useToolInfo()` hook to access the current tool name and the input the LLM passed to the tool.
+
+```tsx
+import { useToolInfo } from "@apollo/client-ai-apps/react";
+
+function App() {
+  const { toolName, toolInput } = useToolInfo();
+
+  return (
+    <div>
+      <p>Tool: {toolName}</p>
+      <p>Input: {JSON.stringify(toolInput)}</p>
+    </div>
+  );
+}
+```
+
+## Populate variables from tool input
+
+When your query includes variables, the LLM decides what values to provide for variables. This presents a problem when running the query because the variable values you provide to `useQuery` might not match the LLM provided variables.
+
+You might be tempted to reach for `useToolInfo` to populate the initial values for these variables, but this approach quickly reveals additional complexity that `useToolInfo` can't handle on its own:
+
+- The tool called by the agent might not be the same tool
+- When a user navigates away from the screen and back again, the input might be different than the original tool input
+- Some variables might need to sync with an external source, such as `props`
+- Some variables might change as a result of user interaction
+
+The `createHydrationUtils` utility exists to bridge this gap. Call `createHydrationUtils` with the query that provides the tool definition. This returns a `useHydratedVariables` hook used manage variables for the query. The returned `variables` are provided to the `useQuery` hook in the `variables` option.
+
+```tsx
+import { createHydrationUtils } from "@apollo/client-ai-apps/react";
+
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int) @tool {
+    topProducts(limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  // Provide initial variable values to the `useHydratedVariables` hook.
+  // These are used when the tool call doesn't match this query
+  const [variables] = useHydratedVariables({ limit: 10 });
+
+  // Use the `variables` returned from `useHydratedVariables` for the query
+  const { data } = useQuery(TOP_PRODUCTS, { variables });
+
+  // ...
+}
+```
+
+`useHydratedVariables` compares the configured query to the tool called by the agent to determine if they match. If they match, `variables` returned by the hook is set to the value of the tool input provided by the LLM. If they don't match, the variables object provided as an argument to `useHydratedVariables` is used instead.
+
+<Note>
+
+The `variables` value returned by `useHydratedVariables` only includes keys for variables defined in the query and does not include additional input values. For example, `@tool` includes an `extraInputs` argument used to provide additional tool input. These values are stripped away in the returned `variables` value.
+
+</Note>
+
+<Caution>
+
+TODO: MOVE ME
+
+To ensure your UI reflects the accurate state of variables, read the values from the `variables` returned by `useHydratedVariables`. This ensures
+
+</Caution>
+
+### Optional variables
+
+GraphQL queries might include one or more optional variables in the query definition. When these queries are executed by the tool, the LLM might decide to omit any of its optional variables. When this happens, the returned `variables` object includes only the values from the tool input. The variable values provided to `useHydratedVariables` are ignored. This ensures `useQuery` matches the exact tool call.
+
+```tsx
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int, $order: Order, $sortBy: SortBy) @tool {
+    topProducts(limit: $limit, order: $order, sortBy: $sortBy) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  // if tool input is:
+  // { limit: 5 }
+  const [variables] = useHydratedVariables({
+    limit: 10,
+    order: "asc",
+    sortBy: "title",
+  });
+  // => { limit: 5 }
+}
+```
+
+### Update variables during user interaction
+
+`useHydratedVariables` is designed similar to React's `useState` hook. It returns both the current `variables` value and a `setVariables` function used to update the value of a variable. Call `setVariables` with a partial variables object that includes variables you want to update. `setVariables` shallow-merges the current variables object with the updated variables object so that you do not need to provide the full variables object each time you want to make an update.
+
+```tsx
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int) @tool {
+    topProducts(limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  const [variables, setVariables] = useHydratedVariables({ limit: 10 });
+
+  const { data } = useQuery(TOP_PRODUCTS, { variables });
+
+  function handleShowMore() {
+    setVariables({ limit: variables.limit + 5 });
+
+    // Use a callback to get the previous variables value
+    setVariables((prev) => ({ limit: prev.limit + 5 }));
+  }
+
+  return (
+    <>
+      <button onClick={handleShowMore}>Show 5 more results</button>
+
+      {/* ... */}
+    </>
+  );
+}
+```
+
+### Sync variables with props
+
+You might have variable values that are provided from an external source, like props. You typically want to keep these values up-to-date with the props value without having to sync these values yourself.
+
+You can mark a variable as reactive by using the `reactive` function.
+
+```tsx
+import { createHydrationUtils, reactive } from "@apollo/client-ai-apps/react";
+
+const GET_PRODUCTS_BY_CATEGORY = gql`
+  "Get an ordered list of products for a category"
+  query GetProductsByCategory($category: Category!, $order: Order, $limit: Int)
+  @tool {
+    productsByCategory(category: $category, order: $order, limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(GET_PRODUCTS_BY_CATEGORY);
+
+interface AppProps {
+  id: string;
+}
+
+function App({ id }: AppProps) {
+  // As `id` changes, `variables.id` is kept in sync with the value
+  const [variables, setVariables] = useHydratedVariables({
+    id: reactive(id),
+    order: "asc",
+    limit: 10,
+  });
+
+  const { data } = useQuery(GET_PRODUCTS_BY_CATEGORY, { variables });
+  // ...
+}
+```
+
+Marking a variable `reactive` forbids you from using that variable in the `setVariables` function. This avoids accidental bugs that might keep that value out-of-sync. If a reactive variable is updated, a warning is logged and the update is ignored.
+
+<Note>
+
+When a reactive variable does not match tool input, the tool input value is used. The value of that variable will remain until the external value changes. When it changes, the new value is used moving forward.
+
+</Note>
+
+## Detect the current platform
+
+The `Platform` utility lets you detect the current platform and select platform-specific values at runtime.
+
+```tsx
+import { Platform } from "@apollo/client-ai-apps";
+
+function App() {
+  const label = Platform.select({
+    mcp: "Running in an MCP host",
+    openai: "Running in ChatGPT",
+  });
+
+  return <div>{label}</div>;
+}
+```
+
+<Note>
+
+Any value can be returned by `select`. You are not limited to strings.
+
+</Note>
 
 ## Platform-specific modules
 
@@ -301,12 +541,15 @@ export default defineConfig({
   plugins: [
     apolloClientAiApps({
       targets: ["mcp", "openai"],
+      appsOutDir: "../apps/my-app", // path where build artifacts are written
     }),
     // ... other plugins
   ],
   // ... other config
 });
 ```
+
+The `appsOutDir` option controls where the build artifacts (including the manifest file and built resources) are written. This should point to the corresponding directory under `apps/` that Apollo MCP Server reads from.
 
 ### Development mode
 
