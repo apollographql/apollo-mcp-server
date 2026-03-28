@@ -156,13 +156,13 @@ Tools are defined using directives on GraphQL operations in your app code. Avail
 
 ### `@tool` directive arguments
 
-| Argument       | What it is                       | Required | Where it maps to                | Notes                                                                                                                                                                       |
-| -------------- | -------------------------------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`         | Tool name                        | No       | MCP tool `name`                 | Defaults to the GraphQL operation name if not provided. Must be unique within the app.                                                                                      |
-| `description`  | Tool description                 | No       | MCP tool `description`          | Defaults to the GraphQL operation description if not provided. App description is prefixed to tool description if present.                                                  |
-| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs aren't part of the GraphQL operation but are provided by the host |
-| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use this to pass additional metadata that should be included in the tool's manifest entry.            |
-| `labels`       | Tool-specific labels             | No       | Tool labels in manifest         | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.     |
+| Argument       | What it is                       | Required | Where it maps to                      | Notes                                                                                                                                                                      |
+| -------------- | -------------------------------- | -------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | Tool name                        | No       | MCP tool `name`                       | Defaults to the GraphQL operation name if not provided. Must be unique within the app.                                                                                     |
+| `description`  | Tool description                 | No       | MCP tool `description`                | Defaults to the GraphQL operation description if not provided. App description is prefixed to tool description if present.                                                 |
+| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema       | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs aren't part of the GraphQL operation but are provided by the host |
+| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use this to pass additional metadata that should be included in the tool's manifest entry.                |
+| `labels`       | Tool-specific labels             | No       | Tool labels in manifest               | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.    |
 
 ### `@prefetch` directive
 
@@ -180,8 +180,8 @@ The `@private` directive hides specified fields from the LLM while still making 
 
 **Usage**: Add `@private` to individual fields within a GraphQL operation.
 
-| Element    | What it is                      | Where it maps to                     | Notes                                                                          |
-| ---------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------ |
+| Element    | What it is                      | Where it maps to                     | Notes                                                                                             |
+| ---------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | `@private` | Field visibility control marker | Field marked private in the manifest | The response excludes fields from the LLM-visible response, but they remain available in your app |
 
 ## App query parameter
@@ -215,3 +215,4 @@ These configuration files are **extensible**, allowing you to organize your Type
 You can extend the base `tsconfig.json` with specification-specific configurations using TypeScript's `extends` feature. This allows you to maintain separate type definitions, compiler options, or path mappings for different targets while sharing a common configuration.
 
 The pattern helps you maintain type safety and proper configuration for each specification while avoiding duplication.
+
