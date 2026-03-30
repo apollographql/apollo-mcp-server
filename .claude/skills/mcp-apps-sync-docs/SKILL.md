@@ -9,6 +9,7 @@ description: >
   The changelog URL and doc file paths are pre-configured — the user only needs to provide the
   minimum version to sync from.
 allowed-tools: Bash(gh api *) Bash(base64 *)
+argument-hint: "<minimum-version>"
 ---
 
 ## Overview
