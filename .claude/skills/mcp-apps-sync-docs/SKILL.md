@@ -51,8 +51,9 @@ Collect all version sections where the version number is **greater than or equal
 
 ## Step 3: Read the docs
 
-Read all five documentation files. Understand what each one covers before analyzing the changelog:
+Read all six documentation files. Understand what each one covers before analyzing the changelog:
 
+- `docs/source/mcp-apps.mdx` — MCP Apps overview: what are MCP apps, high-level overview, architecture diagram
 - `docs/source/mcp-apps-architecture.mdx` — How MCP Apps work: the discovery and tool execution phases, architecture diagrams
 - `docs/source/mcp-apps-quickstart.mdx` — Step-by-step setup guide using the Apollo AI Apps Template; Vite plugin behavior; project structure
 - `docs/source/mcp-apps-development.mdx` — Day-to-day development patterns, directives, hooks, and client usage
