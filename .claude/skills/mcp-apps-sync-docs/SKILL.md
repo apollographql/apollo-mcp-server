@@ -8,6 +8,7 @@ description: >
   of MCP Apps documentation, (3) checking whether mcp-apps-*.mdx files reflect recent releases.
   The changelog URL and doc file paths are pre-configured — the user only needs to provide the
   minimum version to sync from.
+allowed-tools: Bash(gh api *)
 ---
 
 ## Overview
