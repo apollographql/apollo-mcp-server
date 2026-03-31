@@ -21,14 +21,14 @@ Make sure you import `ApolloClient` from the `@apollo/client-ai-apps` package, n
 
 ```ts title=src/main.tsx
 import { InMemoryCache } from "@apollo/client";
-import { ApolloClient, ApplicationManifest } from "@apollo/client-ai-apps";
+import { ApolloClient } from "@apollo/client-ai-apps";
 // Note the manifest is written to the root of the app
 import manifest from "../.application-manifest.json";
 
 // You may also provide other options that the core ApolloClient accepts
 const client = new ApolloClient({
   cache: new InMemoryCache(),
-  manifest: manifest as ApplicationManifest,
+  manifest,
 });
 ```
 
@@ -86,7 +86,13 @@ Using a `Suspense` component to display a loading fallback is optional. If you d
 
 ## Register an MCP tool
 
-To register MCP tools, combine your GraphQL queries with the `@tool` directive.
+To register MCP tools, combine your GraphQL queries with the `@tool` directive. By default, the operation name and description are used to define the tool name and description. `@tool` also accepts `name` and `description` arguments, which override the operation name and description used to register the tool.
+
+<Note>
+
+To use operation descriptions, you must use `graphql` version `16.2.0` or greater.
+
+</Note>
 
 For example, if you want to define a query that gets the highest-rated products in a marketplace application, define a query called `TopProductsQuery` in your React component, then use the `useQuery` hook from `@apollo/client/react` to read the query data. To register the query as its own tool, use the `@tool` directive.
 
@@ -100,11 +106,8 @@ const TOP_PRODUCTS_QUERY: TypedDocumentNode<
   TopProductsQuery,
   TopProductsQueryVariables
 > = gql`
-  query TopProductsQuery
-  @tool(
-    name: "TopProducts"
-    description: "Shows a list of the highest rated products."
-  ) {
+  "Shows a list of the highest-rated products."
+  query TopProductsQuery @tool {
     topProducts {
       id
       title
@@ -137,6 +140,229 @@ function App() {
 ```
 
 Now that the query is registered as a tool, you can run the app in ChatGPT or an MCP Apps-compatible host and prompt the LLM to show you the top products. They render using data fetched by MCP Server.
+
+## Access tool information
+
+To access the tool name, as well as input passed from the LLM to the tool, use the `useToolInfo` hook.
+
+```tsx
+import { useToolInfo } from "@apollo/client-ai-apps/react";
+
+function App() {
+  const { toolName, toolInput } = useToolInfo();
+
+  return (
+    <div>
+      <p>Tool: {toolName}</p>
+      <p>Input: {JSON.stringify(toolInput)}</p>
+    </div>
+  );
+}
+```
+
+`toolName` and `toolInput` are typed according to the tools defined in your app. To learn how to include the generated types in your app, go to the [typescript configuration](#typescript-configuration) section.
+
+<Note>
+
+To provide specific `toolInput` types, configure a `schema` with the `apolloClientAiApps` Vite plugin. For more information, go to the [Vite configuration](#vite-configuration) section.
+
+</Note>
+
+## Populate variables from tool input
+
+When your query includes variables, the LLM decides what values to provide to those variables. That can be a problem because the variable values you provide to `useQuery` might not match the LLM provided variables.
+
+You might consider using `useToolInfo` to populate the initial values for those variables, but that approach quickly reveals additional complexity that `useToolInfo` cannot handle on its own:
+
+- The tool called by the agent might not be the same tool
+- The input might differ from the original tool input when a user navigates away and back
+- Some variables might need to synchronize with an external source, such as `props`
+- Some variables might change as a result of user interaction
+
+The `createHydrationUtils` utility bridges the gap. Call `createHydrationUtils` with the query that provides the tool definition. Doing that returns a `useHydratedVariables` hook used to manage variables for the query. The returned `variables` are provided to the `useQuery` hook in the `variables` option.
+
+```tsx
+import { createHydrationUtils } from "@apollo/client-ai-apps/react";
+
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int) @tool {
+    topProducts(limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  // Provide initial variable values to the `useHydratedVariables` hook.
+  // These are used when the tool call doesn't match this query
+  const [variables] = useHydratedVariables({ limit: 10 });
+
+  // Use the `variables` returned from `useHydratedVariables` for the query
+  const { data } = useQuery(TOP_PRODUCTS, { variables });
+
+  // ...
+}
+```
+
+`useHydratedVariables` compares the configured query to the tool called by the agent to determine if they match. When they match, `variables` is strictly set to the value of the tool input provided by the LLM. When they don't match, the `variables` argument passed to `useHydratedVariables` is used instead.
+
+<Note>
+
+`useHydratedVariables` only returns `variables` defined by the query. Extra inputs, such as those added by `extraInputs`, are stripped away in the returned object.
+
+</Note>
+
+<Caution>
+
+Always read values from the `variables` object returned by `useHydratedVariables` to ensure your UI accurately reflects the current state.
+
+</Caution>
+
+### Optional variables
+
+GraphQL queries can include optional variables in the query definition. When the tool executes a query that includes an optional variable, the LLM might omit any optional variables. When that happens, the returned `variables` object includes only the values from the tool input. The variable values provided to `useHydratedVariables` are ignored, ensuring that `useQuery` matches the exact tool call.
+
+```tsx
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int, $order: Order, $sortBy: SortBy) @tool {
+    topProducts(limit: $limit, order: $order, sortBy: $sortBy) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  // if tool input is:
+  // { limit: 5 }
+  const [variables] = useHydratedVariables({
+    limit: 10,
+    order: "asc",
+    sortBy: "title",
+  });
+  // => { limit: 5 }
+}
+```
+
+### Update variables during user interaction
+
+Similar to the `useState` hook in React, `useHydratedVariables` returns both the current `variables` value and a `setVariables` function, used to update the value of a variable. Call `setVariables` with a partial variables object that includes the variables you want to update. `setVariables` shallow-merges the current variables object with the updated variables object so you don't need to provide the full variables object each time you want to make an update.
+
+```tsx
+const TOP_PRODUCTS: TypedDocumentNode<
+  TopProductsQuery,
+  TopProductsQueryVariables
+> = gql`
+  "Get list of top products"
+  query TopProducts($limit: Int) @tool {
+    topProducts(limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(TOP_PRODUCTS);
+
+function App() {
+  const [variables, setVariables] = useHydratedVariables({ limit: 10 });
+
+  const { data } = useQuery(TOP_PRODUCTS, { variables });
+
+  function handleShowMore() {
+    setVariables({ limit: variables.limit + 5 });
+
+    // Use a callback to get the previous variables value
+    setVariables((prev) => ({ limit: prev.limit + 5 }));
+  }
+
+  return (
+    <>
+      <button onClick={handleShowMore}>Show 5 more results</button>
+
+      {/* ... */}
+    </>
+  );
+}
+```
+
+### Sync variables with props
+
+You might have variable values that are provided from an external source like props. You typically want to keep those values up-to-date without having to sync the values manually.
+
+To mark a variable as reactive, use the `reactive` function.
+
+```tsx
+import { createHydrationUtils, reactive } from "@apollo/client-ai-apps/react";
+
+const GET_PRODUCTS_BY_CATEGORY = gql`
+  "Get an ordered list of products for a category"
+  query GetProductsByCategory($category: Category!, $order: Order, $limit: Int)
+  @tool {
+    productsByCategory(category: $category, order: $order, limit: $limit) {
+      id
+      title
+      price
+    }
+  }
+`;
+
+const { useHydratedVariables } = createHydrationUtils(GET_PRODUCTS_BY_CATEGORY);
+
+interface AppProps {
+  id: string;
+}
+
+function App({ id }: AppProps) {
+  // As `id` changes, `variables.id` is kept in sync with the value
+  const [variables, setVariables] = useHydratedVariables({
+    id: reactive(id),
+    order: "asc",
+    limit: 10,
+  });
+
+  const { data } = useQuery(GET_PRODUCTS_BY_CATEGORY, { variables });
+  // ...
+}
+```
+
+Marking a variable `reactive` prevents you from using that variable in the `setVariables` function, which avoids accidental bugs that might desynchronize the value with the input. If a reactive variable is provided to `setVariables`, a warning is logged and the update is ignored.
+
+<Note>
+
+When the value of a reactive variable differs from the tool input value, the tool input value is used. It remains the value of the tool input value until the external value provided to `reactive` changes. From then on, the new value is used.
+
+</Note>
+
+## Access host context
+
+Use the `useHostContext` hook to access context provided by the MCP host. `useHostContext` keeps the host context up-to-date for you as it changes.
+
+```tsx title=MyComponent.mcp.tsx
+import { useHostContext } from "@apollo/client-ai-apps";
+
+export function MyComponent() {
+  const hostContext = useHostContext();
+
+  return <div>{JSON.stringify(hostContext)}</div>;
+}
+```
 
 ## Platform-specific modules
 
@@ -184,11 +410,46 @@ Make sure each configured environment has a module it can import. If one doesn't
 
 </Caution>
 
+## `Platform` utility
+
+In some cases, you might want to change a value in your application depending on the running platform. The `Platform` utility provides a simple way to detect the current platform and provide platform-specific values at runtime.
+
+```tsx
+import { Platform } from "@apollo/client-ai-apps";
+
+function App() {
+  // Use `Platform.target` to get a string representing the current platform
+  const currentPlatform = Platform.target; // => "openai" | "mcp"
+
+  // The `Platform.select` function selects the value for you using the current platform
+  const label = Platform.select({
+    mcp: "Running in an MCP host",
+    openai: "Running in ChatGPT",
+  });
+
+  // `Platform.select` also accepts a function that is called immediately.
+  // Useful when you want to avoid expensive computation for a value not used in
+  // the current platform
+  const value = Platform.select({
+    mcp: () => factorial(10),
+    openai: () => factorial(20),
+  });
+
+  return <div>{label}</div>;
+}
+```
+
+<Note>
+
+Any value can be returned by `select`. You aren't limited to strings.
+
+</Note>
+
 ## TypeScript configuration
 
 `@apollo/client-ai-apps` provides extendable TypeScript configurations that make sure you only use code available to your application from [platform-specific modules](#platform-specific-modules).
 
-- `@apollo/client-ai-apps/tsconfig/core` — for shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files for all environments..
+- `@apollo/client-ai-apps/tsconfig/core` — For shared modules that run in both environments. This config ensures that included files only use shared utilities available to all environments. Use this when type-checking shared files for all environments.
 - `@apollo/client-ai-apps/tsconfig/mcp` — For developing MCP-specific modules. This configuration allows you to access utilities exported by `@apollo/client-ai-apps/mcp`. Use this when type-checking your `.mcp.*` files.
 - `@apollo/client-ai-apps/tsconfig/openai` — For developing ChatGPT-specific modules. This configuration allows you to use utilities exported by `@apollo/client-ai-apps/openai`. Use this when type-checking your `.openai.*` files.
 
@@ -220,12 +481,12 @@ Shared configuration for all TypeScript files. This is be where you should confi
 
 **`tsconfig.app.json`**
 
-Configuration that targets all shared modules. Extend `@apollo/client-ai-apps/tsconfig/core` and exclude platform-specific modules (`.mcp.*` and `.openai.*` files).
+Configuration that targets all shared modules. Extend `@apollo/client-ai-apps/tsconfig/core` and exclude platform-specific modules (`.mcp.*` and `.openai.*` files). Make sure you also include the generated types from the `apolloClientAiApps` Vite plugin.
 
 ```jsonc title=tsconfig.app.json
 {
   "extends": ["@apollo/client-ai-apps/tsconfig/core", "./tsconfig.base.json"],
-  "include": ["src"],
+  "include": ["src", ".apollo-client-ai-apps/types"],
   "exclude": ["src/**/*.mcp.*", "src/**/*.openai.*"],
 }
 ```
@@ -237,7 +498,11 @@ Configuration that targets MCP app specific modules. Extend `@apollo/client-ai-a
 ```jsonc title=tsconfig.mcp.json
 {
   "extends": ["@apollo/client-ai-apps/tsconfig/mcp", "./tsconfig.base.json"],
-  "include": ["src/**/*.mcp.ts", "src/**/*.mcp.tsx"],
+  "include": [
+    ".apollo-client-ai-apps/types",
+    "src/**/*.mcp.ts",
+    "src/**/*.mcp.tsx",
+  ],
 }
 ```
 
@@ -257,9 +522,15 @@ Configuration that targets ChatGPT App-specific modules. Extend `@apollo/client-
   "compilerOptions": {
     "types": ["@apollo/client-ai-apps/openai/globals"],
   },
-  "include": ["src/**/*.openai.ts", "src/**/*.openai.tsx"],
+  "include": [
+    ".apollo-client-ai-apps/types",
+    "src/**/*.openai.ts",
+    "src/**/*.openai.tsx",
+  ],
 }
 ```
+
+Note that, if [`compilerOptions.types`](https://www.typescriptlang.org/tsconfig#types) is specified, only those packages are included in the global scope. That is the recommendation for TypeScript version 5.9 and the default in version [6.0](https://devblogs.microsoft.com/typescript/announcing-typescript-6-0/#types-now-defaults-to-[])
 
 <Note>
 
@@ -301,12 +572,21 @@ export default defineConfig({
   plugins: [
     apolloClientAiApps({
       targets: ["mcp", "openai"],
+      appsOutDir: "../apps", // path where build artifacts are written
     }),
     // ... other plugins
   ],
   // ... other config
 });
 ```
+
+The `appsOutDir` option controls where build artifacts (including the manifest file and built resources) are written. That directory must be named `apps`, and it should point to the directory that Apollo MCP Server reads from.
+
+<Tip>
+
+The Vite plugin creates a `.apollo-client-ai-apps/` directory with generated files, such as TypeScript types for your application. This directory is fully generated by the Vite plugin and can be safely added to your `.gitignore`.
+
+</Tip>
 
 ### Development mode
 
@@ -361,3 +641,22 @@ We recommend that you add separate development scripts in `package.json` that ta
 ```
 
 </Tip>
+
+### Schema types
+
+`apolloClientAiApps` generates TypeScript types for tools defined in your application by the `@tool` directive, including tool names and inputs. For input types to resolve correctly, ensure the Vite plugin knows about input types defined by your GraphQL schema. Configure your schema using the `schema` option.
+
+```ts
+apolloClientAiApps({
+  schema: "./path/to/schema.graphql",
+  // ...
+});
+```
+
+If you don't configure a `schema`, the resolved tool input types are defined as `Record<string, unknown>`.
+
+<Note>
+
+The `apolloClientAiApps` Vite plugin uses [GraphQL Codegen](https://the-guild.dev/graphql/codegen) internally. The `schema` option accepts any value that [GraphQL Codegen accepts](https://the-guild.dev/graphql/codegen/docs/config-reference/schema-field#available-formats).
+
+</Note>

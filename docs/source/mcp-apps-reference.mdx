@@ -66,6 +66,7 @@ The following app-level configuration options are supported:
 | `csp.frameDomains`<br/>(optional)               | Approved origins for nested iframes   | `openai/widgetCSP.frame_domains` (ChatGPT Apps)<br />`_meta.ui.csp.frameDomains` (MCP Apps)       | Approved origins for nested iframes (frame-src directive). Must include protocol (`https://`)                                                                                                                                                                                                           |
 | `csp.redirectDomains`<br/>(optional)            | Approved origins for redirects        | `openai/widgetCSP.redirect_domains` (ChatGPT Apps only)                                           | OpenAI environment only. Enables ChatGPT return link to the same conversation. ChatGPT skips the safe-link modal and appends a `redirectUrl` query parameter                                                                                                                                            |
 | `csp.resourceDomains`<br/>(optional)            | Approved origins for static resources | `openai/widgetCSP.resource_domains` (ChatGPT Apps)<br />`_meta.ui.csp.resourceDomains` (MCP Apps) | Approved origins for static resources (scripts, images, styles, fonts). Must include protocol (`https://`)                                                                                                                                                                                              |
+| `csp.baseUriDomains`<br/>(optional)             | Approved origins for base URI         | `_meta.ui.csp.baseUriDomains` (MCP Apps only)                                                     | MCP Apps only. Approved origins for the `base-uri` CSP directive. Must include protocol (`https://`)                                                                                                                                                                                                    |
 | `widgetSettings.prefersBorder`<br/>(optional)   | Visual boundary preference            | `openai/widgetPrefersBorder` (ChatGPT Apps)<br />`_meta.ui.prefersBorder` (MCP Apps)              | Boolean flag for visual boundary display                                                                                                                                                                                                                                                                |
 | `widgetSettings.description`<br/>(optional)     | Widget description                    | `openai/widgetDescription` (ChatGPT Apps only)                                                    | OpenAI environment only. Lets the widget describe itself                                                                                                                                                                                                                                                |
 | `widgetSettings.domain`<br/>(optional)          | Dedicated origin for the view         | `openai/widgetDomain` (ChatGPT Apps)<br />`_meta.ui.domain` (MCP Apps)                            | Dedicated origin for the view                                                                                                                                                                                                                                                                           |
@@ -107,6 +108,7 @@ const config: ApolloClientAiAppsConfig.Config = {
     frameDomains: ["https://example.com"],
     redirectDomains: ["https://example.com"],
     resourceDomains: ["https://example.com"],
+    baseUriDomains: ["https://example.com"],
   },
   widgetSettings: {
     prefersBorder: true,
@@ -134,6 +136,12 @@ The manifest file (`.application-manifest.json`) is automatically generated from
   app-level configuration). The manifest file generates automatically.
 </Caution>
 
+<Tip>
+
+Since `.application-manifest.json` is fully generated, you can safely add it to your `.gitignore`.
+
+</Tip>
+
 ## App vs Host
 
 An **app** is your MCP App—the code, configuration, and built resource you create that combines GraphQL operations with custom UI. The **host** is the MCP Apps-compatible application (such as ChatGPT) that discovers your app, invokes tools, and displays your UI.
@@ -156,12 +164,13 @@ Tools are defined using directives on GraphQL operations in your app code. Avail
 
 ### `@tool` directive arguments
 
-| Argument      | What it is             | Required | Where it maps to                | Notes                                                                                                                                                                       |
-| ------------- | ---------------------- | -------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`        | Tool name              | Yes      | MCP tool `name`                 | Must be unique within the app                                                                                                                                               |
-| `description` | Tool description       | Yes      | MCP tool `description`          | App description is prefixed to tool description if present                                                                                                                  |
-| `extraInputs` | Additional tool inputs | No       | Extra inputs in MCP tool schema | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs are not part of the GraphQL operation but are provided by the host |
-| `labels`      | Tool-specific labels   | No       | Tool labels in manifest         | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.     |
+| Argument       | What it is                       | Required | Where it maps to                      | Notes                                                                                                                                                                                                                                                                                                                                 |
+| -------------- | -------------------------------- | -------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`         | Tool name                        | No       | MCP tool `name`                       | Defaults to the GraphQL operation name if not provided. Must be unique within the app. An anonymous operation with a bare `@tool` directive fails validation. When multiple `@tool` directives are present on the same operation, `name` must be provided explicitly on each.                                                         |
+| `description`  | Tool description                 | No       | MCP tool `description`                | Defaults to the GraphQL operation description if not provided. App description is prefixed to tool description if present. An operation without a description using a bare `@tool` directive fails validation. When multiple `@tool` directives are present on the same operation, `description` must be provided explicitly on each. |
+| `extraInputs`  | Additional tool inputs           | No       | Extra inputs in MCP tool schema       | Array of objects with `name`, `description`, and `type` ("string", "number", or "boolean"). These inputs aren't part of the GraphQL operation but are provided by the host                                                                                                                                                            |
+| `extraOutputs` | Additional free-form output data | No       | Extra outputs in manifest tool config | Object for writing free-form data to the manifest's tool config. Use this to pass additional metadata that should be included in the tool's manifest entry.                                                                                                                                                                           |
+| `labels`       | Tool-specific labels             | No       | Tool labels in manifest               | Object with `toolInvocation/invoking` and/or `toolInvocation/invoked` string values. Overrides app-level labels for this specific tool. Only available in ChatGPT apps.                                                                                                                                                               |
 
 ### `@prefetch` directive
 
@@ -172,6 +181,16 @@ The `@prefetch` directive marks a GraphQL operation to run automatically wheneve
 | Element     | What it is                | Where it comes from                        | Where it maps to               | Notes                                                            |
 | ----------- | ------------------------- | ------------------------------------------ | ------------------------------ | ---------------------------------------------------------------- |
 | `@prefetch` | Prefetch operation marker | `@prefetch` directive on GraphQL operation | Prefetch operation in manifest | Operation runs automatically when any tool in the app is invoked |
+
+### `@private` directive
+
+The `@private` directive hides specified fields from the LLM while still making them accessible to your app's UI code, which prevents sensitive data from being exposed in AI responses.
+
+**Usage**: Add `@private` to individual fields within a GraphQL operation.
+
+| Element    | What it is                      | Where it maps to                     | Notes                                                                                             |
+| ---------- | ------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `@private` | Field visibility control marker | Field marked private in the manifest | The response excludes fields from the LLM-visible response, but they remain available in your app |
 
 ## App query parameter
 
