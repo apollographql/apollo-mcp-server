@@ -107,6 +107,9 @@ pub enum ServerError {
     #[error("Failed to load apps: {0}")]
     Apps(String),
 
+    #[error("Failed to load prompts: {0}")]
+    Prompts(String),
+
     #[error("TLS configuration error: {0}")]
     Tls(#[from] crate::auth::TlsConfigError),
 
