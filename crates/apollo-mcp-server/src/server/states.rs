@@ -439,6 +439,7 @@ mod tests {
             schema: Arc::new(RwLock::new(schema)),
             operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
+            prompts: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
