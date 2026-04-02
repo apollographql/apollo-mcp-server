@@ -20,6 +20,10 @@ The MCP server could become completely unresponsive to POST /mcp requests after 
 
 The operations write lock is now released before notifying peers, and each peer notification has a 5-second timeout. Unresponsive peers are dropped instead of blocking the server.
 
+#### Fix unused import warning on Windows targets
+
+The `tracing::error` macro was imported at the top level but only used inside a `#[cfg(unix)]` block, causing a build failure on Windows targets with `--deny warnings`.
+
 ## 1.11.0 (2026-03-23)
 
 ### Features
