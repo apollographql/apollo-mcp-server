@@ -20,7 +20,7 @@ use crate::{
     server_info::ServerInfoConfig,
 };
 
-use super::{Server, ServerEvent, ShutdownReason, Transport};
+use super::{ConfigValidator, Server, ServerEvent, ShutdownReason, Transport};
 
 mod configuring;
 mod operations_configured;
@@ -71,6 +71,7 @@ struct Config {
 
 impl StateMachine {
     pub(crate) async fn start(self, server: Server) -> Result<ShutdownReason, ServerError> {
+        let config_validator = server.config_validator;
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -124,7 +125,7 @@ impl StateMachine {
         });
 
         while let Some(event) = stream.next().await {
-            state = Self::process_event(state, event).await?;
+            state = Self::process_event(state, event, &config_validator).await?;
             if let State::Starting(starting) = state {
                 state = starting.start().await.into();
             }
@@ -144,7 +145,11 @@ impl StateMachine {
 
     /// Process a single event against the current state, returning the new state.
     #[allow(clippy::result_large_err)]
-    async fn process_event(state: State, event: ServerEvent) -> Result<State, ServerError> {
+    async fn process_event(
+        state: State,
+        event: ServerEvent,
+        config_validator: &Option<ConfigValidator>,
+    ) -> Result<State, ServerError> {
         Ok(match event {
             ServerEvent::SchemaUpdated(registry_event) => match registry_event {
                 SchemaEvent::UpdateSchema(schema_state) => {
@@ -210,6 +215,14 @@ impl StateMachine {
                 other => other,
             },
             ServerEvent::ConfigChanged => {
+                if let Some(validate) = config_validator
+                    && let Err(e) = validate()
+                {
+                    tracing::error!(
+                        "Config file changed but contains errors, keeping current configuration: {e}"
+                    );
+                    return Ok(state);
+                }
                 info!("Config file changed, triggering server restart");
                 if let State::Running(ref running) = state {
                     running.cancellation_token.cancel();
@@ -502,7 +515,17 @@ mod tests {
     }
 
     async fn process_event(state: State, event: ServerEvent) -> State {
-        StateMachine::process_event(state, event)
+        StateMachine::process_event(state, event, &None)
+            .await
+            .unwrap_or_else(State::Error)
+    }
+
+    async fn process_event_with_validator(
+        state: State,
+        event: ServerEvent,
+        validator: &Option<super::ConfigValidator>,
+    ) -> State {
+        StateMachine::process_event(state, event, validator)
             .await
             .unwrap_or_else(State::Error)
     }
@@ -637,6 +660,49 @@ mod tests {
         assert!(
             matches!(new_state, State::Restarting),
             "expected Configuring to transition to Restarting after ConfigChanged"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_with_invalid_config_keeps_running() {
+        let running = create_running_server();
+        let token = running.cancellation_token.clone();
+        let state = State::Running(running);
+
+        let validator: super::ConfigValidator =
+            Arc::new(|| Err("invalid YAML: expected ':', got newline".into()));
+
+        let new_state =
+            process_event_with_validator(state, ServerEvent::ConfigChanged, &Some(validator)).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running when config is invalid"
+        );
+        assert!(
+            !token.is_cancelled(),
+            "cancellation token should NOT be cancelled when config is invalid"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_changed_with_valid_config_transitions_to_restarting() {
+        let running = create_running_server();
+        let token = running.cancellation_token.clone();
+        let state = State::Running(running);
+
+        let validator: super::ConfigValidator = Arc::new(|| Ok(()));
+
+        let new_state =
+            process_event_with_validator(state, ServerEvent::ConfigChanged, &Some(validator)).await;
+
+        assert!(
+            matches!(new_state, State::Restarting),
+            "expected server to transition to Restarting when config is valid"
+        );
+        assert!(
+            token.is_cancelled(),
+            "cancellation token should be cancelled when config is valid"
         );
     }
 
