@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.0 (2026-04-01)
+
+### Features
+
+#### Add config file hot reloading
+
+The MCP server now automatically detects changes to its YAML configuration file and reloads without requiring a restart. When a configuration change is detected, the server re-reads the file, applies the updated settings, and continues serving with the new configuration. If the updated config file contains errors, the server logs the issue and continues running with the previous configuration.
+
+### Fixes
+
+#### Fix server becoming unresponsive due to zombie peer lock starvation
+
+The MCP server could become completely unresponsive to POST /mcp requests after hours of uptime while /health remained responsive. This occurred when a peer's transport entered a half-closed state (e.g., from an HTTP/2 RST_STREAM) and a subsequent schema or operations update tried to notify the zombie peer while holding the operations write lock — blocking all tool listing, tool calling, and session initialization indefinitely.
+
+The operations write lock is now released before notifying peers, and each peer notification has a 5-second timeout. Unresponsive peers are dropped instead of blocking the server.
+
 ## 1.11.0 (2026-03-23)
 
 ### Features
