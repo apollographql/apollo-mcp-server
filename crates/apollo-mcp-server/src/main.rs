@@ -11,7 +11,7 @@ use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 mod runtime;
 
@@ -227,7 +227,7 @@ fn spawn_stdio_sighup_handler() {
 
         tokio::spawn(async move {
             let Ok(mut signal) = tokio::signal::unix::signal(SignalKind::hangup()) else {
-                error!("Failed to install SIGHUP handler");
+                tracing::error!("Failed to install SIGHUP handler");
                 return;
             };
             if signal.recv().await.is_some() {
