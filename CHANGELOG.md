@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.12.1 (2026-04-02)
+
+### Fixes
+
+#### Fix unused import warning on Windows targets
+
+The `tracing::error` macro was imported at the top level of `main.rs` but only used inside a `#[cfg(unix)]` block, causing an unused import warning that fails the release build on Windows targets with `--deny warnings`. The import is now scoped to the unix-only call site.
+
 ## 1.12.0 (2026-04-01)
 
 ### Features
