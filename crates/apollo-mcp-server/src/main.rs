@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use apollo_mcp_registry::platform_api::operation_collections::collection_poller::CollectionSource;
 use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
@@ -6,12 +7,12 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
-use apollo_mcp_server::server::{Server, ShutdownReason, Transport};
+use apollo_mcp_server::server::{ConfigValidator, Server, ShutdownReason, Transport};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
 use runtime::IdOrDefault;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 mod runtime;
 
@@ -54,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         if let Some(ref path) = config_path {
             spawn_stdio_config_watcher(path.clone());
         }
-        spawn_stdio_sighup_handler();
+        spawn_stdio_sighup_handler(config_path.clone());
     }
 
     loop {
@@ -86,6 +87,12 @@ fn load_config(config_path: Option<&std::path::Path>) -> anyhow::Result<runtime:
 /// Build a Server from the current configuration.
 fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server> {
     let config = load_config(config_path)?;
+
+    let config_validator: Option<ConfigValidator> = config_path.map(|p| {
+        let path = p.to_path_buf();
+        Arc::new(move || load_config(Some(&path)).map(|_| ()).map_err(|e| e.into()))
+            as ConfigValidator
+    });
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
@@ -190,6 +197,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .health_check(config.health_check)
         .cors(config.cors)
         .server_info(config.server_info)
+        .maybe_config_validator(config_validator)
         .build())
 }
 
@@ -205,9 +213,18 @@ fn spawn_stdio_config_watcher(config_path: PathBuf) {
         // Skip the initial event that files::watch always emits on startup,
         // then exit when a real file change is detected.
         let mut stream = std::pin::pin!(files::watch(&config_path).skip(1));
-        if stream.next().await.is_some() {
-            info!("Config file changed, exiting for process manager to restart");
-            std::process::exit(75);
+        while stream.next().await.is_some() {
+            match load_config(Some(&config_path)) {
+                Ok(_) => {
+                    info!("Config file changed, exiting for process manager to restart");
+                    std::process::exit(75);
+                }
+                Err(e) => {
+                    error!(
+                        "Config file changed but contains errors, keeping current configuration: {e}"
+                    );
+                }
+            }
         }
     });
 }
@@ -220,7 +237,7 @@ fn spawn_stdio_config_watcher(config_path: PathBuf) {
         reason = "process::exit used for stdio mode SIGHUP restart"
     )
 )]
-fn spawn_stdio_sighup_handler() {
+fn spawn_stdio_sighup_handler(config_path: Option<PathBuf>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::SignalKind;
@@ -230,7 +247,18 @@ fn spawn_stdio_sighup_handler() {
                 tracing::error!("Failed to install SIGHUP handler");
                 return;
             };
-            if signal.recv().await.is_some() {
+            loop {
+                if signal.recv().await.is_none() {
+                    return;
+                }
+                if let Some(ref path) = config_path
+                    && let Err(e) = load_config(Some(path))
+                {
+                    error!(
+                        "SIGHUP received but config contains errors, keeping current configuration: {e}"
+                    );
+                    continue;
+                }
                 info!("Received SIGHUP, exiting for process manager to restart");
                 std::process::exit(75);
             }
