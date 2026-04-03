@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
         if let Some(ref path) = config_path {
             spawn_stdio_config_watcher(path.clone());
         }
-        spawn_stdio_sighup_handler();
+        spawn_stdio_sighup_handler(config_path.clone());
     }
 
     loop {
@@ -237,7 +237,7 @@ fn spawn_stdio_config_watcher(config_path: PathBuf) {
         reason = "process::exit used for stdio mode SIGHUP restart"
     )
 )]
-fn spawn_stdio_sighup_handler() {
+fn spawn_stdio_sighup_handler(config_path: Option<PathBuf>) {
     #[cfg(unix)]
     {
         use tokio::signal::unix::SignalKind;
@@ -247,7 +247,18 @@ fn spawn_stdio_sighup_handler() {
                 tracing::error!("Failed to install SIGHUP handler");
                 return;
             };
-            if signal.recv().await.is_some() {
+            loop {
+                if signal.recv().await.is_none() {
+                    return;
+                }
+                if let Some(ref path) = config_path
+                    && let Err(e) = load_config(Some(path))
+                {
+                    error!(
+                        "SIGHUP received but config contains errors, keeping current configuration: {e}"
+                    );
+                    continue;
+                }
                 info!("Received SIGHUP, exiting for process manager to restart");
                 std::process::exit(75);
             }
