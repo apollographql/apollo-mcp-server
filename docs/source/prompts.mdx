@@ -2,24 +2,24 @@
 title: Define MCP Prompts
 ---
 
-Apollo MCP Server supports **[MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts)**, which are reusable prompt templates that AI clients can discover and use. Prompts provide guided workflows that help AI models use your GraphQL tools more effectively.
+Apollo MCP Server supports [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts), which are reusable prompt templates that AI clients can discover and use. Prompts provide guided workflows that help AI models use your GraphQL tools more effectively.
 
 ## How prompts work
 
-Each prompt is a Markdown file with YAML frontmatter that defines its name, description, and arguments. The file body is the prompt template, which can include `{{argument}}` placeholders that are substituted with values provided by the AI client at runtime.
+Each prompt is a Markdown file with YAML frontmatter that defines its name, description, and arguments. The file body is the prompt template, which includes `{{argument}}` placeholders that the AI client substitutes with values at runtime.
 
 When the server starts, it loads all `.md` files from a `prompts/` directory in the working directory. If the directory exists and contains valid prompt files, the server advertises prompt support to MCP clients via the `prompts` capability.
 
-## Define prompts
+## Define your prompts
 
-Create a `prompts/` directory in the working directory where you start the server. Each `.md` file in this directory becomes an MCP prompt.
+Store your prompt files in a `prompts/` directory in your server's working directory. Each `.md` file in this directory becomes an MCP prompt.
 
 ### Prompt file format
 
 A prompt file has two parts separated by `---` delimiters:
 
-1. **YAML frontmatter** with the prompt metadata
-2. **Template body** with the prompt content
+1. YAML frontmatter with the prompt metadata
+2. Template body with the prompt content
 
 ```markdown title="prompts/check_orders.md"
 ---
@@ -42,23 +42,23 @@ arguments:
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique identifier for the prompt, used in `prompts/get` requests |
-| `description` | string | No | Human-readable description shown to AI clients |
+| `name` | `string` | Yes | Unique identifier for the prompt, used in `prompts/get` requests |
+| `description` | `string` | No | Human-readable description shown to AI clients |
 | `arguments` | list | No | Arguments the prompt accepts |
 
-Each argument in the `arguments` list supports:
+The `arguments` list supports the following fields:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `name` | string | — | Argument name, used as the `{{name}}` placeholder in the template |
-| `description` | string | — | Description shown to AI clients |
+| `name` | `string` | — | Argument name, used as the `{{name}}` placeholder in the template |
+| `description` | `string` | — | Description shown to AI clients |
 | `required` | boolean | `false` | Whether the argument must be provided |
 
 ### Template placeholders
 
 Use `{{argument_name}}` in the template body to reference arguments. When an AI client calls `prompts/get` with argument values, the server replaces each placeholder with the corresponding value.
 
-Placeholders that don't match any provided argument are left as-is in the output.
+Placeholders that don't match any provided argument are left unchanged in the output.
 
 ## Example
 
@@ -97,8 +97,8 @@ Receives a single user message:
 
 - **No configuration required.** The server automatically detects the `prompts/` directory. No changes to your YAML config file are needed.
 - **Graceful degradation.** If the `prompts/` directory doesn't exist, the server starts normally without advertising prompt support.
-- **Validation.** The server validates that required arguments are present when a prompt is requested. Missing required arguments return an error.
-- **Single message.** Each prompt returns a single user-role text message. Multi-message and non-text content types are not currently supported.
+- **Validation.** Apollo MCP Server validates that required arguments are present when a prompt is requested. Missing required arguments return an error.
+- **Single message.** Each prompt returns a single user-role text message. Multi-message and non-text content types aren't currently supported.
 
 ## See also
 
