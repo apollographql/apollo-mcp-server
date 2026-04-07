@@ -75,7 +75,7 @@ impl GraphOSConfig {
     fn key(&self) -> Result<SecretString, ServerError> {
         self.apollo_key
             .clone()
-            .ok_or_else(|| ServerError::EnvironmentVariable(APOLLO_GRAPH_REF_ENV.to_string()))
+            .ok_or_else(|| ServerError::EnvironmentVariable(APOLLO_KEY_ENV.to_string()))
     }
 
     /// Generate an uplink config based on configuration params
@@ -110,5 +110,36 @@ impl GraphOSConfig {
         );
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uplink_config_missing_key_reports_apollo_key() {
+        let config = GraphOSConfig {
+            apollo_graph_ref: Some("my-graph@main".to_string()),
+            ..Default::default()
+        };
+
+        let err = config.uplink_config().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(APOLLO_KEY_ENV));
+        assert!(!msg.contains(APOLLO_GRAPH_REF_ENV));
+    }
+
+    #[test]
+    fn uplink_config_missing_graph_ref_reports_apollo_graph_ref() {
+        let config = GraphOSConfig {
+            apollo_key: Some(SecretString::from("service:my-graph:secret")),
+            ..Default::default()
+        };
+
+        let err = config.uplink_config().unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(APOLLO_GRAPH_REF_ENV));
+        assert!(!msg.contains(APOLLO_KEY_ENV));
     }
 }
