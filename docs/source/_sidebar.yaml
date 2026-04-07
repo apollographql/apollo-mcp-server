@@ -12,6 +12,8 @@ items:
     href: "./quickstart"
   - label: "Define tools"
     href: "./define-tools"
+  - label: "Define prompts"
+    href: "./prompts"
   - label: "Configuration"
     children:
       - label: "YAML Config Reference"

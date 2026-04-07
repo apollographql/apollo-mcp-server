@@ -12,11 +12,11 @@ Apollo MCP Server provides a standard way for AI models to access and orchestrat
 
 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) is an open protocol that standardizes how applications provide context to AI models like Large Language Models (LLM). MCP enables LLMs and AI agents to indirectly fetch data from external sources.
 
-MCP follows a client-server architecture. MCP servers expose functions, called _tools_, that MCP clients can invoke.
+MCP follows a client-server architecture. MCP servers expose functions, called _tools_, that MCP clients can invoke. MCP servers can also expose _prompts_—reusable templates that guide AI models through multi-step workflows.
 
 ## What is Apollo MCP Server? 
 
-Apollo MCP Server is an implementation of an MCP server. It makes GraphQL API operations available to AI clients as MCP tools. You can use Apollo MCP Server with any GraphQL API.
+Apollo MCP Server is an implementation of an MCP server. It makes GraphQL API operations available to AI clients as MCP tools, and supports MCP prompts for guided workflows. You can use Apollo MCP Server with any GraphQL API.
 
 The GraphQL operations can be configured from persisted queries, which are predefined, approved lists of operations that are registered with and maintained by a graph. The operations can also be determined by AI introspecting your graph schema.
 
@@ -130,5 +130,7 @@ With Apollo MCP Server, these GraphQL advantages become immediately accessible t
 ## Getting started
 
 Ready to connect AI to your GraphQL API? Follow our [5-minute quickstart](/apollo-mcp-server/quickstart) to see Apollo MCP Server in action, or explore the [config file reference](/apollo-mcp-server/config-file) for detailed configuration options.
+
+Want to guide AI models through multi-step workflows? Learn how to [define MCP prompts](/apollo-mcp-server/prompts).
 
 Want to build custom interactive experiences? Check out the [MCP Apps quickstart](/apollo-mcp-server/mcp-apps-quickstart) to create your first MCP App.
