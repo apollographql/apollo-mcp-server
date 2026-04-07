@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
@@ -32,6 +33,11 @@ pub enum ShutdownReason {
     /// Config changed, server should restart with new config
     Restart,
 }
+
+/// A callback that validates the current config file before restarting the server.
+/// Returns `Ok(())` if the config is valid, or an error describing why it is not.
+pub type ConfigValidator =
+    Arc<dyn Fn() -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync>;
 
 /// An Apollo MCP Server
 pub struct Server {
@@ -66,6 +72,7 @@ pub struct Server {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    config_validator: Option<ConfigValidator>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -148,6 +155,7 @@ impl Server {
         health_check: HealthCheckConfig,
         cors: CorsConfig,
         server_info: ServerInfoConfig,
+        config_validator: Option<ConfigValidator>,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -186,6 +194,7 @@ impl Server {
             health_check,
             cors,
             server_info,
+            config_validator,
         }
     }
 
