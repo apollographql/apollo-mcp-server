@@ -36,7 +36,7 @@ pub(super) struct Starting {
 }
 
 impl Starting {
-    pub(super) async fn start(self) -> Result<Running, ServerError> {
+    pub(super) async fn start(mut self) -> Result<Running, ServerError> {
         let peers = Arc::new(RwLock::new(Vec::new()));
 
         let operations: Vec<_> = self
@@ -160,6 +160,9 @@ impl Starting {
             })?;
         }
 
+        // Move into `Running` so we do not clone the full string (config is not read afterward).
+        let instructions = std::mem::take(&mut self.config.instructions);
+
         let running = Running {
             schema,
             operations: Arc::new(RwLock::new(operations)),
@@ -183,6 +186,7 @@ impl Starting {
             descriptions: self.config.descriptions,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
+            instructions,
             rhai_engine: engine,
         };
 
@@ -334,6 +338,7 @@ mod tests {
                 },
                 cors: Default::default(),
                 server_info: Default::default(),
+                instructions: None,
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),

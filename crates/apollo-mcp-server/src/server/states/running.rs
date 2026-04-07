@@ -73,6 +73,8 @@ pub(super) struct Running {
     pub(super) descriptions: HashMap<String, String>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
+    /// MCP initialize-response instructions (optional).
+    pub(super) instructions: Option<String>,
     pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
 }
 
@@ -662,9 +664,13 @@ impl ServerHandler for Running {
         if let Some(u) = self.server_info.website_url() {
             impl_ = impl_.with_website_url(u);
         }
-        InitializeResult::new(capabilities)
+        let mut result = InitializeResult::new(capabilities)
             .with_protocol_version(protocol_version)
-            .with_server_info(impl_)
+            .with_server_info(impl_);
+        if let Some(instructions) = self.instructions.as_deref() {
+            result = result.with_instructions(instructions);
+        }
+        result
     }
 }
 
@@ -723,6 +729,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         }
     }
@@ -1829,6 +1836,26 @@ mod tests {
                 )
             );
             assert_eq!(info.server_info.icons, None);
+            assert_eq!(info.instructions, None);
+        }
+
+        #[test]
+        fn get_info_includes_instructions_when_configured() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let running = Running {
+                instructions: Some("Prefer search before list.".to_string()),
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let info = running.get_info();
+            assert_eq!(
+                info.instructions.as_deref(),
+                Some("Prefer search before list.")
+            );
         }
 
         #[test]
@@ -2142,6 +2169,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
@@ -2368,6 +2396,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
@@ -2597,6 +2626,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }
@@ -2917,6 +2947,7 @@ mod integration_tests {
                 descriptions: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
+                instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
             }
         }

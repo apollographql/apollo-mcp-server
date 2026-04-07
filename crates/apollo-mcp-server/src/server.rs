@@ -73,6 +73,7 @@ pub struct Server {
     cors: CorsConfig,
     server_info: ServerInfoConfig,
     config_validator: Option<ConfigValidator>,
+    instructions: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
@@ -156,6 +157,7 @@ impl Server {
         cors: CorsConfig,
         server_info: ServerInfoConfig,
         config_validator: Option<ConfigValidator>,
+        instructions: Option<String>,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -195,6 +197,7 @@ impl Server {
             cors,
             server_info,
             config_validator,
+            instructions,
         }
     }
 

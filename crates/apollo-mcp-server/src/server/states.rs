@@ -67,6 +67,7 @@ struct Config {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
+    instructions: Option<String>,
 }
 
 impl StateMachine {
@@ -121,6 +122,7 @@ impl StateMachine {
                 health_check: server.health_check,
                 cors: server.cors,
                 server_info: server.server_info,
+                instructions: server.instructions,
             },
         });
 
@@ -471,6 +473,7 @@ mod tests {
             descriptions: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
+            instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         }
     }
@@ -511,6 +514,7 @@ mod tests {
             health_check: HealthCheckConfig::default(),
             cors: CorsConfig::default(),
             server_info: ServerInfoConfig::default(),
+            instructions: None,
         }
     }
 
