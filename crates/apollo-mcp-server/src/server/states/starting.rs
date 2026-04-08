@@ -160,7 +160,7 @@ impl Starting {
             })?;
         }
 
-        // Move into `Running` so we do not clone the full string (config is not read afterward).
+        // Move into `Running` so we do not clone the full string (`config.instructions` is not read afterward).
         let instructions = std::mem::take(&mut self.config.instructions);
 
         let running = Running {
