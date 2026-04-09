@@ -32,6 +32,7 @@ All fields are optional.
 | `graphos`         | `GraphOS`             |                          | Apollo-specific credential overrides                             |
 | `headers`         | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
 | `health_check`    | `HealthCheck`         |                          | Health check configuration                                       |
+| `instructions`    | `string`              |                          | Optional text for the [MCP `initialize` response](#initialize-instructions)) |
 | `introspection`   | `Introspection`       |                          | Introspection configuration                                      |
 | `logging`         | `Logging`             |                          | Logging configuration                                            |
 | `operations`      | `OperationSource`     |                          | Operations configuration                                         |
@@ -520,6 +521,17 @@ server_info:
   description: "MCP server for Acme Corp's GraphQL API"
 ```
 
+### Initialize instructions
+
+The `instructions` field (optional) is a top-level field that sets the MCP `instructions` value in the [`initialize` result](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle). Supported clients can inject that string into the model context so the LLM receives domain-specific guidance (workflows, tool relationships, and constraints) alongside per-tool descriptions.
+
+You can configure `instructions` with YAML (including a [block scalar](https://yaml.org/spec/1.2.2/#81-block-scalar-styles) for multiple lines) or with the `APOLLO_MCP_INSTRUCTIONS` environment variable.
+
+```yaml title="config.yaml"
+instructions: |
+  Prefer semantic search tools before listing. Check access tier rules before mutations.
+```
+
 ## Example config files
 
 The following example file sets your endpoint to `localhost:4001`, configures transport over Streamable HTTP, enables introspection, and provides two local MCP operations for the server to expose.
@@ -680,7 +692,7 @@ The server fails to start and tells you exactly which field is invalid and what 
 
 ```
 Error: unknown field: found `auth`, expected one of `cors`, `server_info`,
-`custom_scalars`, `endpoint`, `graphos`, `headers`, `forward_headers`,
+`instructions`, `custom_scalars`, `endpoint`, `graphos`, `headers`, `forward_headers`,
 `health_check`, `introspection`, `logging`, `telemetry`, `operations`,
 `overrides`, `schema`, `transport`
 ```

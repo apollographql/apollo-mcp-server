@@ -46,7 +46,7 @@ cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
 
 ### Common Config Keys
 
-- Top-level keys: `endpoint`, `transport`, `operations`, `schema`, `introspection`, `graphos`, `overrides`, `headers`, `forward_headers`, `health_check`, `cors`, `telemetry`, `logging`, `server_info`, `custom_scalars`.
+- Top-level keys: `endpoint`, `transport`, `operations`, `schema`, `introspection`, `graphos`, `overrides`, `headers`, `forward_headers`, `health_check`, `cors`, `telemetry`, `logging`, `server_info`, `instructions`, `custom_scalars`.
 - `auth` must be nested under `transport` (not top-level).
 - `operations.source`: `infer` (default), `local`, `manifest`, `collection`, `introspect`, `uplink`.
 - `schema.source`: `local` or `uplink`.

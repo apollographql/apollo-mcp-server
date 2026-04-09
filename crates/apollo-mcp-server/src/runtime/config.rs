@@ -26,6 +26,11 @@ pub struct Config {
     #[serde(default)]
     pub server_info: ServerInfoConfig,
 
+    /// Optional instructions returned in the MCP `initialize` response (protocol 2025-06-18+).
+    /// Clients may inject this into the model context as server-level guidance.
+    #[serde(default)]
+    pub instructions: Option<String>,
+
     /// Path to a custom scalar map
     pub custom_scalars: Option<PathBuf>,
 
@@ -154,6 +159,19 @@ mod test {
         );
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown field"));
+    }
+
+    #[test]
+    fn it_parses_instructions() {
+        let yaml = r#"
+            endpoint: http://localhost:4000/
+            instructions: "Use semantic search before listing."
+        "#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            config.instructions.as_deref(),
+            Some("Use semantic search before listing.")
+        );
     }
 
     #[test]

@@ -200,6 +200,7 @@ mod test {
                     website_url: None,
                     description: None,
                 },
+                instructions: None,
                 custom_scalars: None,
                 endpoint: Endpoint(
                     Url {

@@ -2,6 +2,11 @@
 # MCP client (e.g. Claude Desktop, VS Code, Cursor).
 # Communication happens over stdin/stdout; no HTTP port is opened.
 endpoint: https://thespacedevs-production.up.railway.app/
+instructions: |
+  This server wraps The Space Devs public GraphQL API (launches, astronauts in space,
+  upcoming launches, celestial bodies). Use the search tool when you need to explore the
+  schema; prefer the named operations (e.g. GetAstronautsCurrentlyInSpace) when they match
+  the user's question.
 transport:
   type: stdio
 operations:
