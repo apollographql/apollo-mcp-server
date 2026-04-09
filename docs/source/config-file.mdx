@@ -32,7 +32,7 @@ All fields are optional.
 | `graphos`         | `GraphOS`             |                          | Apollo-specific credential overrides                             |
 | `headers`         | `Map<string, string>` | `{}`                     | List of hard-coded headers to include in all GraphQL requests    |
 | `health_check`    | `HealthCheck`         |                          | Health check configuration                                       |
-| `instructions`    | `string`              |                          | Optional text for the MCP `initialize` response (see [below](#initialize-instructions)) |
+| `instructions`    | `string`              |                          | Optional text for the [MCP `initialize` response](#initialize-instructions)) |
 | `introspection`   | `Introspection`       |                          | Introspection configuration                                      |
 | `logging`         | `Logging`             |                          | Logging configuration                                            |
 | `operations`      | `OperationSource`     |                          | Operations configuration                                         |
@@ -523,9 +523,9 @@ server_info:
 
 ### Initialize instructions
 
-The optional top-level `instructions` field sets the MCP `instructions` value in the [`initialize` result](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle). Supporting clients can inject this string into the model context so the LLM gets domain-specific guidance (workflows, tool relationships, and constraints) alongside per-tool descriptions.
+The `instructions` field (optional) is a top-level field that sets the MCP `instructions` value in the [`initialize` result](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle). Supported clients can inject that string into the model context so the LLM receives domain-specific guidance (workflows, tool relationships, and constraints) alongside per-tool descriptions.
 
-You can set it in YAML (including a [block scalar](https://yaml.org/spec/1.2.2/#81-block-scalar-styles) for multiple lines) or with the `APOLLO_MCP_INSTRUCTIONS` environment variable.
+You can configure `instructions` with YAML (including a [block scalar](https://yaml.org/spec/1.2.2/#81-block-scalar-styles) for multiple lines) or with the `APOLLO_MCP_INSTRUCTIONS` environment variable.
 
 ```yaml title="config.yaml"
 instructions: |
