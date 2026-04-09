@@ -2,13 +2,13 @@
 title: Define MCP Prompts
 ---
 
-Apollo MCP Server supports [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts), which are reusable prompt templates that AI clients can discover and use. Prompts provide guided workflows that help AI models use your GraphQL tools more effectively.
+Apollo MCP Server supports [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts)—reusable prompt templates that AI clients can discover and use. These prompts operate as guided workflows that help AI models use your GraphQL tools more effectively.
 
 ## How prompts work
 
 Each prompt is a Markdown file with YAML frontmatter that defines its name, description, and arguments. The file body is the prompt template, which includes `{{argument}}` placeholders that the AI client substitutes with values at runtime.
 
-When the server starts, it loads all `.md` files from a `prompts/` directory in the working directory. If the directory exists and contains valid prompt files, the server advertises prompt support to MCP clients via the `prompts` capability.
+When the server starts, it loads all `.md` files from a `prompts/` directory, which is in the working directory. If that directory contains valid prompt files, the server advertises prompt support to MCP clients with the `prompts` feature.
 
 ## Define your prompts
 
@@ -62,7 +62,7 @@ Placeholders that don't match any provided argument are left unchanged in the ou
 
 ## Example
 
-Given this prompt file:
+If this prompt file is provided...
 
 ```markdown title="prompts/astronaut_bio.md"
 ---
@@ -85,7 +85,7 @@ An AI client calling `prompts/get` with the following request:
 {"name": "astronaut_bio", "arguments": {"name": "Chris Hadfield"}}
 ```
 
-Receives a single user message:
+...the client receives a single user message:
 
 ```text
 1. Search for an astronaut named "Chris Hadfield"
@@ -95,7 +95,7 @@ Receives a single user message:
 
 ## Behavior
 
-- **No configuration required.** The server automatically detects the `prompts/` directory. No changes to your YAML config file are needed.
+- **No configuration required.** The server automatically detects the `prompts/` directory.
 - **Graceful degradation.** If the `prompts/` directory doesn't exist, the server starts normally without advertising prompt support.
 - **Validation.** Apollo MCP Server validates that required arguments are present when a prompt is requested. Missing required arguments return an error.
 - **Single message.** Each prompt returns a single user-role text message. Multi-message and non-text content types aren't currently supported.
