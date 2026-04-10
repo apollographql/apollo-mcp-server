@@ -7,8 +7,9 @@ use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    ClientCapabilities, Extensions, Implementation, ListResourcesResult, ReadResourceResult,
-    ResourcesCapability, ToolsCapability,
+    ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResult, Implementation,
+    ListPromptsResult, ListResourcesResult, PromptMessage, PromptMessageRole, PromptsCapability,
+    ReadResourceResult, ResourcesCapability, ToolsCapability,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -54,6 +55,7 @@ pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
     pub(super) operations: Arc<RwLock<Vec<Operation>>>,
     pub(super) apps: Vec<crate::apps::App>,
+    pub(super) prompts: Vec<crate::prompts::PromptFile>,
     pub(super) headers: HeaderMap,
     pub(super) forward_headers: ForwardHeaders,
     pub(super) endpoint: Url,
@@ -554,6 +556,58 @@ impl Running {
             ))
         }
     }
+
+    fn list_prompts_impl(&self) -> Result<ListPromptsResult, McpError> {
+        Ok(ListPromptsResult::with_all_items(
+            self.prompts.iter().map(|p| p.prompt.clone()).collect(),
+        ))
+    }
+
+    fn get_prompt_impl(
+        &self,
+        request: GetPromptRequestParams,
+    ) -> Result<GetPromptResult, McpError> {
+        let prompt_file = self
+            .prompts
+            .iter()
+            .find(|p| p.prompt.name == request.name)
+            .ok_or_else(|| {
+                McpError::new(
+                    ErrorCode::INVALID_PARAMS,
+                    format!("Prompt '{}' not found", request.name),
+                    None,
+                )
+            })?;
+
+        // Validate required arguments are present
+        if let Some(args_def) = &prompt_file.prompt.arguments {
+            let provided = request.arguments.as_ref();
+            for arg in args_def {
+                if arg.required == Some(true)
+                    && !provided.is_some_and(|a| a.contains_key(&arg.name))
+                {
+                    return Err(McpError::new(
+                        ErrorCode::INVALID_PARAMS,
+                        format!("Missing required argument: '{}'", arg.name),
+                        None,
+                    ));
+                }
+            }
+        }
+
+        let text = if let Some(arguments) = &request.arguments {
+            crate::prompts::prompt_file::substitute_args(&prompt_file.template, arguments)
+        } else {
+            prompt_file.template.clone()
+        };
+
+        let mut result =
+            GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, text)]);
+        if let Some(desc) = &prompt_file.prompt.description {
+            result = result.with_description(desc);
+        }
+        Ok(result)
+    }
 }
 
 impl ServerHandler for Running {
@@ -632,6 +686,24 @@ impl ServerHandler for Running {
             .await
     }
 
+    #[tracing::instrument(skip_all)]
+    async fn list_prompts(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListPromptsResult, McpError> {
+        self.list_prompts_impl()
+    }
+
+    #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
+    async fn get_prompt(
+        &self,
+        request: GetPromptRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetPromptResult, McpError> {
+        self.get_prompt_impl(request)
+    }
+
     fn get_info(&self) -> ServerInfo {
         let meter = &meter::METER;
         meter
@@ -644,6 +716,8 @@ impl ServerHandler for Running {
             list_changed: Some(true),
         });
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
+        capabilities.prompts =
+            (!self.prompts.is_empty()).then_some(PromptsCapability { list_changed: None });
 
         let protocol_version = if self.enable_output_schema {
             ProtocolVersion::default()
@@ -710,6 +784,7 @@ mod tests {
             schema,
             operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
+            prompts: vec![],
             headers: HeaderMap::new(),
             forward_headers: vec![],
             endpoint: "http://localhost:4000".parse().unwrap(),
@@ -1931,6 +2006,116 @@ mod tests {
         }
     }
 
+    mod prompts {
+        use super::*;
+        use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, PromptMessageRole};
+
+        fn running_with_prompts(prompts: Vec<crate::prompts::PromptFile>) -> Running {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+            Running {
+                prompts,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            }
+        }
+
+        #[test]
+        fn list_prompts_empty() {
+            let running = running_with_prompts(vec![]);
+            let result = running.list_prompts_impl().unwrap();
+            assert!(result.prompts.is_empty());
+        }
+
+        #[test]
+        fn list_prompts_returns_loaded_prompts() {
+            let prompts = vec![crate::prompts::PromptFile {
+                prompt: Prompt::new("greeting", Some("A greeting"), None),
+                template: "Hello {{name}}!".to_string(),
+            }];
+            let running = running_with_prompts(prompts);
+            let result = running.list_prompts_impl().unwrap();
+            assert_eq!(result.prompts.len(), 1);
+            assert_eq!(result.prompts[0].name, "greeting");
+            assert_eq!(result.prompts[0].description.as_deref(), Some("A greeting"));
+        }
+
+        #[test]
+        fn get_prompt_substitutes_arguments() {
+            let prompts = vec![crate::prompts::PromptFile {
+                prompt: Prompt::new(
+                    "greet",
+                    Some("Greet someone"),
+                    Some(vec![PromptArgument::new("name").with_required(true)]),
+                ),
+                template: "Hello {{name}}!".to_string(),
+            }];
+            let running = running_with_prompts(prompts);
+            let mut args = serde_json::Map::new();
+            args.insert("name".to_string(), serde_json::json!("Alice"));
+            let result = running
+                .get_prompt_impl(GetPromptRequestParams::new("greet").with_arguments(args))
+                .unwrap();
+            assert_eq!(result.messages.len(), 1);
+            assert_eq!(result.messages[0].role, PromptMessageRole::User);
+            assert!(
+                matches!(
+                    &result.messages[0].content,
+                    rmcp::model::PromptMessageContent::Text { text } if text == "Hello Alice!"
+                ),
+                "Expected Text content with 'Hello Alice!', got {:?}",
+                result.messages[0].content
+            );
+        }
+
+        #[test]
+        fn get_prompt_not_found() {
+            let running = running_with_prompts(vec![]);
+            let err = running
+                .get_prompt_impl(GetPromptRequestParams::new("nonexistent"))
+                .unwrap_err();
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+            assert!(err.message.contains("not found"));
+        }
+
+        #[test]
+        fn get_prompt_missing_required_argument() {
+            let prompts = vec![crate::prompts::PromptFile {
+                prompt: Prompt::new(
+                    "greet",
+                    None::<String>,
+                    Some(vec![PromptArgument::new("name").with_required(true)]),
+                ),
+                template: "Hello {{name}}!".to_string(),
+            }];
+            let running = running_with_prompts(prompts);
+            let err = running
+                .get_prompt_impl(GetPromptRequestParams::new("greet"))
+                .unwrap_err();
+            assert_eq!(err.code, ErrorCode::INVALID_PARAMS);
+            assert!(err.message.contains("Missing required argument"));
+        }
+
+        #[test]
+        fn get_info_includes_prompts_capability_when_prompts_exist() {
+            let prompts = vec![crate::prompts::PromptFile {
+                prompt: Prompt::new("test", None::<String>, None),
+                template: "test".to_string(),
+            }];
+            let running = running_with_prompts(prompts);
+            let info = running.get_info();
+            assert!(info.capabilities.prompts.is_some());
+        }
+
+        #[test]
+        fn get_info_no_prompts_capability_when_empty() {
+            let running = running_with_prompts(vec![]);
+            let info = running.get_info();
+            assert!(info.capabilities.prompts.is_none());
+        }
+    }
+
     mod call_tool {
         use super::*;
         use crate::apps::app::{AppResource, AppResourceSource};
@@ -2150,6 +2335,7 @@ mod integration_tests {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![operation])),
                 apps: vec![],
+                prompts: vec![],
                 headers: http::HeaderMap::new(),
                 forward_headers: vec![],
                 endpoint: url::Url::parse("http://localhost:4000").unwrap(),
@@ -2377,6 +2563,7 @@ mod integration_tests {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![operation])),
                 apps: vec![],
+                prompts: vec![],
                 headers: http::HeaderMap::new(),
                 forward_headers: vec![],
                 endpoint,
@@ -2607,6 +2794,7 @@ mod integration_tests {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![])),
                 apps: vec![],
+                prompts: vec![],
                 headers: http::HeaderMap::new(),
                 forward_headers: vec![],
                 endpoint: url::Url::parse("http://localhost:4000").unwrap(),
@@ -2928,6 +3116,7 @@ mod integration_tests {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![])),
                 apps: vec![],
+                prompts: vec![],
                 headers: http::HeaderMap::new(),
                 forward_headers: vec![],
                 endpoint: url::Url::parse("http://localhost:4000").unwrap(),

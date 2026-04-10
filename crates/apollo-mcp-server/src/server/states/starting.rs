@@ -107,6 +107,8 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
+        let prompts =
+            crate::prompts::load_from_path(Path::new("prompts")).map_err(ServerError::Prompts)?;
         let schema = Arc::new(RwLock::new(self.schema));
         let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
@@ -167,6 +169,7 @@ impl Starting {
             schema,
             operations: Arc::new(RwLock::new(operations)),
             apps,
+            prompts,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
             endpoint: self.config.endpoint,
