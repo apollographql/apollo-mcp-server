@@ -6,6 +6,21 @@
 
 ## How to contribute to Apollo MCP Server
 
+Excited about Apollo MCP Server and want to make it better? We're excited too! We welcome anyone who wants to contribute or provide constructive feedback, no matter their level of experience.
+
+> [!IMPORTANT]
+> **Please do not open a pull request before the team has had a chance to discuss the issue.** We appreciate the enthusiasm, but unsolicited PRs (especially for features or non-trivial changes) will be closed if there hasn't been prior agreement on the approach. The workflow is: **open an issue first, wait for a maintainer to respond, and only start coding once we've agreed on a path forward.** This saves everyone's time and keeps the project moving in the right direction.
+
+### PR quality expectations
+
+Every pull request should reflect a genuine understanding of the problem and the codebase. We will close PRs that:
+
+* Were submitted without a prior issue discussion or maintainer sign-off.
+* Contain low-quality or AI-generated code that hasn't been reviewed, tested, or adapted to the project's conventions by the author.
+* Make broad, speculative changes unrelated to a specific agreed-upon issue.
+
+We're not against using AI tools to assist your work, but you are responsible for every line of code you submit. If you can't explain your changes, debug failures, or respond to review feedback, the PR isn't ready. **Authorship means accountability.**
+
 ### Bug Reporting
 
 > [!WARNING]  
@@ -16,17 +31,28 @@
 
 ### Did you write a patch that fixes a bug?
 
-* Refer to the simple [branching guide](#branching-strategy) for the project.
-* Open a new GitHub pull request with the patch.
-* Ensure the PR description clearly describes the problem and solution. Include the relevant issue number if applicable.
-* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines) to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
+Small, focused bug fixes (under ~20 lines of code) with accompanying tests can be submitted directly as a pull request. For anything larger:
+
+1. **Open an issue first** (or find an existing one) and describe the bug and your proposed fix.
+2. **Wait for a maintainer to respond.** We may already be working on it, or we may want to discuss the approach before code is written.
+3. Once there's agreement, branch off `main` per our [branching guide](#branching-strategy) and submit your PR.
+
+* Ensure the PR description clearly describes the problem and solution. Include the relevant issue number.
+* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines) to learn more about our coding conventions and review process.
 
 ### Do you intend to add a new feature or change an existing one?
 
-* Suggest your change as a new [issue](https://github.com/apollographql/apollo-mcp-server/issues) using the `enhancement` label.
-* You can also suggest changes and features using the [Apollo Community forums](https://community.apollographql.com/latest).
-* Once the feature is coded and complete, open a GitHub pull request providing clear description of the feature/change and include any relevant links to discussions.
-* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines) to learn more about our coding conventions, branching strategies, code reviews guidelines, etc.
+New features require consensus before implementation. Please follow this workflow:
+
+1. **Open an issue** describing the feature using the `enhancement` label, or start a discussion on the [Apollo Community forums](https://community.apollographql.com/latest).
+2. **Wait for the team to weigh in.** We discuss feature proposals internally and need time to evaluate how they fit into the project's roadmap. A maintainer will respond on the issue when we're ready.
+3. **Get agreement on the approach** before writing code. This includes the scope of the change, the implementation strategy, and any architectural considerations.
+4. **Submit your PR** with a clear description of the feature and links back to the discussion.
+
+> [!WARNING]
+> **Do not open a PR for a feature that hasn't been discussed and approved in an issue.** Even if the implementation looks correct, PRs without prior agreement will be closed. We know it can be tempting to jump straight to code, but aligning on the "what" and "why" first leads to better outcomes for everyone.
+
+* Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines).
 
 ### Do you have questions about the code or about Apollo MCP Server itself?
 
