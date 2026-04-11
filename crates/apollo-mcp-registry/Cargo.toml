@@ -16,7 +16,7 @@ derive_more = { version = "2.0.1", default-features = false, features = [
 ] }
 educe = "0.6.0"
 futures.workspace = true
-graphql_client = "0.14.0"
+graphql_client = "0.16.0"
 notify = "8.0.0"
 reqwest.workspace = true
 secrecy.workspace = true
