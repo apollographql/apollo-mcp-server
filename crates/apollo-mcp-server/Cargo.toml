@@ -85,7 +85,7 @@ tower = "0.5.2"
 tracing-test = "0.2.5"
 
 [build-dependencies]
-cruet = "0.15.0"
+cruet = "1.0.0"
 prettyplease = "0.2.37"
 quote = "1.0.40"
 serde.workspace = true
