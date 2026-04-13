@@ -46,7 +46,9 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{MutationMode, Operation, RawOperation, apply_description_override},
+    operations::{
+        AnnotationOverrides, MutationMode, Operation, RawOperation, apply_description_override,
+    },
 };
 use apollo_mcp_rhai::RhaiEngine;
 
@@ -73,6 +75,7 @@ pub(super) struct Running {
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) descriptions: HashMap<String, String>,
+    pub(super) annotations: HashMap<String, AnnotationOverrides>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
@@ -112,6 +115,7 @@ impl Running {
                         self.disable_type_description,
                         self.disable_schema_description,
                         self.enable_output_schema,
+                        &self.annotations,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -166,6 +170,7 @@ impl Running {
                             self.disable_type_description,
                             self.disable_schema_description,
                             self.enable_output_schema,
+                            &self.annotations,
                         )
                         .unwrap_or_else(|error| {
                             error!("Invalid operation: {}", error);
@@ -802,6 +807,7 @@ mod tests {
             enable_output_schema: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
+            annotations: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
@@ -827,7 +833,15 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false, true)
+                        .into_operation(
+                            &schema,
+                            None,
+                            MutationMode::All,
+                            false,
+                            false,
+                            true,
+                            &HashMap::new(),
+                        )
                         .unwrap()
                         .unwrap(),
                 ),
@@ -959,6 +973,97 @@ mod tests {
                 tool.description.as_deref(),
                 Some("This should not match anything"),
                 "Unmatched override description should not be applied"
+            );
+        }
+
+        #[tokio::test]
+        async fn overrides_annotations_applied_to_operations() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let operations = Arc::new(RwLock::new(vec![]));
+
+            let annotations = HashMap::from([(
+                "GetId".to_string(),
+                AnnotationOverrides {
+                    idempotent_hint: Some(true),
+                    open_world_hint: Some(false),
+                    ..Default::default()
+                },
+            )]);
+
+            let running = Running {
+                operations: operations.clone(),
+                annotations,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let new_operations = vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("get_id.graphql".to_string()),
+            ))];
+
+            running.update_operations(new_operations).await;
+
+            let updated = operations.read().await;
+            let tool: &Tool = updated.first().unwrap().as_ref();
+            let ann = tool.annotations.as_ref().unwrap();
+            assert_eq!(
+                ann.idempotent_hint,
+                Some(true),
+                "Override annotation should be applied"
+            );
+            assert_eq!(
+                ann.open_world_hint,
+                Some(false),
+                "Override annotation should be applied"
+            );
+            assert_eq!(
+                ann.read_only_hint,
+                Some(true),
+                "Auto-detected hint should be preserved"
+            );
+        }
+
+        #[tokio::test]
+        async fn overrides_annotations_do_not_affect_unmatched_operations() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let operations = Arc::new(RwLock::new(vec![]));
+
+            let annotations = HashMap::from([(
+                "NonExistent".to_string(),
+                AnnotationOverrides {
+                    idempotent_hint: Some(true),
+                    ..Default::default()
+                },
+            )]);
+
+            let running = Running {
+                operations: operations.clone(),
+                annotations,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let new_operations = vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("get_id.graphql".to_string()),
+            ))];
+
+            running.update_operations(new_operations).await;
+
+            let updated = operations.read().await;
+            let tool: &Tool = updated.first().unwrap().as_ref();
+            let ann = tool.annotations.as_ref().unwrap();
+            assert_eq!(
+                ann.idempotent_hint,
+                Some(true),
+                "Unmatched override should not change auto-detected value (queries are idempotent)"
             );
         }
 
@@ -1812,7 +1917,15 @@ mod tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -1849,7 +1962,15 @@ mod tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -2136,7 +2257,15 @@ mod tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -2181,7 +2310,15 @@ mod tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -2245,13 +2382,29 @@ mod tests {
 
             let operation: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = operation
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
             let app_operation: RawOperation = ("query AppHello { hello }".to_string(), None).into();
             let app_operation = app_operation
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("app operation should be valid");
 
@@ -2327,7 +2480,15 @@ mod integration_tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -2353,6 +2514,7 @@ mod integration_tests {
                 enable_output_schema: true,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                annotations: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -2555,7 +2717,15 @@ mod integration_tests {
 
             let raw_op: RawOperation = ("query Hello { hello }".to_string(), None).into();
             let operation = raw_op
-                .into_operation(&schema, None, MutationMode::None, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::None,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .expect("operation should be valid");
 
@@ -2581,6 +2751,7 @@ mod integration_tests {
                 enable_output_schema: true,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                annotations: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -2812,6 +2983,7 @@ mod integration_tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                annotations: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -3134,6 +3306,7 @@ mod integration_tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
+                annotations: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,

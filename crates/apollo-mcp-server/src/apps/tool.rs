@@ -288,6 +288,8 @@ pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTa
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use apollo_compiler::Schema;
     use rmcp::{model::Tool, object};
 
@@ -312,7 +314,15 @@ mod tests {
                 "query Primary($apples: Int) { apples(first: $apples) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true, true)
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::All,
+                true,
+                true,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap(),
         );
@@ -323,7 +333,15 @@ mod tests {
                 "query FirstPrefetch($bananas: Int) { bananas(first: $bananas) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true, true)
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::All,
+                true,
+                true,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap(),
         );
@@ -332,7 +350,15 @@ mod tests {
                 "query SecondPrefetch($oranges: Int) { oranges(first: $oranges) }".to_string(),
                 None,
             ))
-            .into_operation(&schema, None, MutationMode::All, true, true, true)
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::All,
+                true,
+                true,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap(),
         );
@@ -471,7 +497,15 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false, true)
+                        .into_operation(
+                            &schema,
+                            None,
+                            MutationMode::All,
+                            false,
+                            false,
+                            true,
+                            &HashMap::new(),
+                        )
                         .unwrap()
                         .unwrap(),
                 ),
@@ -524,7 +558,15 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false, true)
+                        .into_operation(
+                            &schema,
+                            None,
+                            MutationMode::All,
+                            false,
+                            false,
+                            true,
+                            &HashMap::new(),
+                        )
                         .unwrap()
                         .unwrap(),
                 ),
@@ -569,7 +611,15 @@ mod tests {
             tools: vec![AppTool {
                 operation: Arc::new(
                     RawOperation::from(("query GetId { id }".to_string(), None))
-                        .into_operation(&schema, None, MutationMode::All, false, false, true)
+                        .into_operation(
+                            &schema,
+                            None,
+                            MutationMode::All,
+                            false,
+                            false,
+                            true,
+                            &HashMap::new(),
+                        )
                         .unwrap()
                         .unwrap(),
                 ),
@@ -633,7 +683,15 @@ mod tests {
             .unwrap();
         Arc::new(
             RawOperation::from(("query TestOp { hello }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, true, true, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::All,
+                    true,
+                    true,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .unwrap(),
         )

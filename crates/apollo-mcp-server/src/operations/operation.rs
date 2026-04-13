@@ -22,7 +22,7 @@ use crate::{
 };
 
 use super::{
-    MutationMode, RawOperation,
+    AnnotationOverrides, MutationMode, RawOperation,
     private_fields::{
         PrivateFieldTree, collect_named_fragments, collect_private_fields, strip_private_directives,
     },
@@ -61,6 +61,7 @@ impl Operation {
         self.inner
     }
 
+    #[expect(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "load_tool")]
     pub fn from_document(
         raw_operation: RawOperation,
@@ -70,6 +71,7 @@ impl Operation {
         disable_type_description: bool,
         disable_schema_description: bool,
         enable_output_schema: bool,
+        annotation_overrides: &HashMap<String, AnnotationOverrides>,
     ) -> Result<Option<Self>, OperationError> {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
@@ -177,11 +179,21 @@ impl Operation {
                 (None, None)
             };
 
-            let mut tool: Tool = Tool::new(operation_name.clone(), description, schema).annotate(
-                ToolAnnotations::new()
-                    .read_only(operation.operation_type != OperationType::Mutation)
-                    .destructive(operation.operation_type == OperationType::Mutation),
-            );
+            let is_query = operation.operation_type != OperationType::Mutation;
+            let mut annotations = ToolAnnotations::new()
+                .read_only(is_query)
+                .destructive(!is_query);
+            if is_query {
+                annotations.idempotent_hint = Some(true);
+            }
+            annotations.open_world_hint = Some(true);
+
+            if let Some(overrides) = annotation_overrides.get(operation_name.as_str()) {
+                overrides.apply_to(&mut annotations);
+            }
+
+            let mut tool: Tool =
+                Tool::new(operation_name.clone(), description, schema).annotate(annotations);
             tool.output_schema = output_schema.map(std::sync::Arc::new);
             let character_count = tool_character_length(&tool);
             match character_count {
@@ -674,7 +686,10 @@ mod tests {
     use crate::{
         custom_scalar_map::CustomScalarMap,
         graphql::Executable as _,
-        operations::{MutationMode, Operation, RawOperation, operation::tool_character_length},
+        operations::{
+            AnnotationOverrides, MutationMode, Operation, RawOperation,
+            operation::tool_character_length,
+        },
     };
 
     // Example schema for tests
@@ -765,6 +780,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -863,8 +879,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -903,6 +923,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1004,8 +1025,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1045,6 +1070,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1156,8 +1182,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1207,6 +1237,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1311,8 +1342,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1355,6 +1390,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1463,8 +1499,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1511,6 +1551,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1612,8 +1653,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1653,6 +1698,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1771,8 +1817,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1829,6 +1879,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1945,8 +1996,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -1973,6 +2028,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2084,8 +2140,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -2112,6 +2172,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2143,6 +2204,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         );
         assert!(operation.unwrap().is_none());
 
@@ -2175,6 +2237,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2204,6 +2267,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r"
         Err(
@@ -2232,6 +2296,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2338,8 +2403,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -2367,6 +2436,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2480,8 +2550,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -2509,6 +2583,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2626,8 +2701,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -2657,6 +2736,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2761,8 +2841,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -2916,6 +3000,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3005,6 +3090,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3040,6 +3126,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3067,6 +3154,7 @@ mod tests {
             false,
             true,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3098,6 +3186,7 @@ mod tests {
             true,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3134,6 +3223,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3185,6 +3275,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3300,8 +3391,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -3331,6 +3426,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3429,8 +3525,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -3458,6 +3558,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3494,6 +3595,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3534,6 +3636,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3575,6 +3678,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3603,6 +3707,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3628,6 +3733,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3664,6 +3770,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3700,6 +3807,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3736,6 +3844,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3776,6 +3885,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3807,6 +3917,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -3847,6 +3958,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3878,6 +3990,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4004,8 +4117,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -4072,6 +4189,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4194,8 +4312,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -4259,6 +4381,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
             )
             .unwrap()
             .is_none()
@@ -4283,6 +4406,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
             )
             .ok()
             .unwrap()
@@ -4307,6 +4431,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4402,7 +4527,9 @@ mod tests {
                             true,
                         ),
                         idempotent_hint: None,
-                        open_world_hint: None,
+                        open_world_hint: Some(
+                            true,
+                        ),
                     },
                 ),
                 execution: None,
@@ -4441,6 +4568,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4536,7 +4664,9 @@ mod tests {
                             true,
                         ),
                         idempotent_hint: None,
-                        open_world_hint: None,
+                        open_world_hint: Some(
+                            true,
+                        ),
                     },
                 ),
                 execution: None,
@@ -4575,6 +4705,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4669,8 +4800,12 @@ mod tests {
                     destructive_hint: Some(
                         false,
                     ),
-                    idempotent_hint: None,
-                    open_world_hint: None,
+                    idempotent_hint: Some(
+                        true,
+                    ),
+                    open_world_hint: Some(
+                        true,
+                    ),
                 },
             ),
             execution: None,
@@ -4808,6 +4943,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4836,6 +4972,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4870,6 +5007,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4884,7 +5022,15 @@ mod tests {
     #[test]
     fn operation_without_private_has_no_stripped_text() {
         let operation = RawOperation::from(("query TestOp { id }".to_string(), None))
-            .into_operation(&SCHEMA, None, MutationMode::All, false, false, true)
+            .into_operation(
+                &SCHEMA,
+                None,
+                MutationMode::All,
+                false,
+                false,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap();
 
@@ -4906,7 +5052,15 @@ mod tests {
             "query TestOp { fieldA fieldB @private fieldC }".to_string(),
             None,
         ))
-        .into_operation(&schema, None, MutationMode::All, false, false, true)
+        .into_operation(
+            &schema,
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+        )
         .unwrap()
         .unwrap();
 
@@ -4928,7 +5082,15 @@ mod tests {
             "query TestOp { fieldA fieldB @private fieldC }".to_string(),
             None,
         ))
-        .into_operation(&schema, None, MutationMode::All, false, false, true)
+        .into_operation(
+            &schema,
+            None,
+            MutationMode::All,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+        )
         .unwrap()
         .unwrap();
 
@@ -4949,7 +5111,15 @@ mod tests {
 
         let operation =
             RawOperation::from(("query TestOp { fieldA fieldB @private }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, false, false, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::All,
+                    false,
+                    false,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .unwrap();
 
@@ -4960,7 +5130,15 @@ mod tests {
     #[test]
     fn operation_method_returns_original_text_when_no_private() {
         let operation = RawOperation::from(("query TestOp { id }".to_string(), None))
-            .into_operation(&SCHEMA, None, MutationMode::All, false, false, true)
+            .into_operation(
+                &SCHEMA,
+                None,
+                MutationMode::All,
+                false,
+                false,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap();
 
@@ -4987,7 +5165,15 @@ mod tests {
         "#;
 
         let operation = RawOperation::from((source.to_string(), None))
-            .into_operation(&schema, None, MutationMode::All, false, false, true)
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::All,
+                false,
+                false,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap();
 
@@ -4996,5 +5182,145 @@ mod tests {
             stripped.contains("fragment UserFields"),
             "stripped text should include fragment definitions, got: {stripped}"
         );
+    }
+
+    #[test]
+    fn annotation_overrides_merge_with_auto_detected_for_query() {
+        let overrides = HashMap::from([(
+            "GetId".to_string(),
+            AnnotationOverrides {
+                idempotent_hint: Some(true),
+                open_world_hint: Some(false),
+                ..Default::default()
+            },
+        )]);
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query GetId { id }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &overrides,
+        )
+        .unwrap()
+        .unwrap();
+
+        let ann = operation.tool.annotations.as_ref().unwrap();
+        assert_eq!(ann.read_only_hint, Some(true), "query auto-detected");
+        assert_eq!(ann.destructive_hint, Some(false), "query auto-detected");
+        assert_eq!(ann.idempotent_hint, Some(true), "user override applied");
+        assert_eq!(ann.open_world_hint, Some(false), "user override applied");
+        assert_eq!(ann.title, None, "not overridden");
+    }
+
+    #[test]
+    fn annotation_overrides_can_flip_auto_detected_hints() {
+        let overrides = HashMap::from([(
+            "GetId".to_string(),
+            AnnotationOverrides {
+                read_only_hint: Some(false),
+                destructive_hint: Some(true),
+                ..Default::default()
+            },
+        )]);
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query GetId { id }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &overrides,
+        )
+        .unwrap()
+        .unwrap();
+
+        let ann = operation.tool.annotations.as_ref().unwrap();
+        assert_eq!(ann.read_only_hint, Some(false), "overridden from true");
+        assert_eq!(ann.destructive_hint, Some(true), "overridden from false");
+    }
+
+    #[test]
+    fn annotation_overrides_set_title() {
+        let overrides = HashMap::from([(
+            "GetId".to_string(),
+            AnnotationOverrides {
+                title: Some("My Tool Title".to_string()),
+                ..Default::default()
+            },
+        )]);
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query GetId { id }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &overrides,
+        )
+        .unwrap()
+        .unwrap();
+
+        let ann = operation.tool.annotations.as_ref().unwrap();
+        assert_eq!(ann.title.as_deref(), Some("My Tool Title"));
+    }
+
+    #[test]
+    fn no_annotation_overrides_keeps_auto_detected() {
+        let operation = Operation::from_document(
+            RawOperation {
+                source_text: "query GetId { id }".to_string(),
+                persisted_query_id: None,
+                headers: None,
+                variables: None,
+                source_path: None,
+                description: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        let ann = operation.tool.annotations.as_ref().unwrap();
+        assert_eq!(ann.read_only_hint, Some(true));
+        assert_eq!(ann.destructive_hint, Some(false));
+        assert_eq!(ann.idempotent_hint, Some(true), "queries are idempotent");
+        assert_eq!(
+            ann.open_world_hint,
+            Some(true),
+            "operations hit external API"
+        );
+        assert_eq!(ann.title, None);
     }
 }

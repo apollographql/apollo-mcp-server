@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use apollo_mcp_server::operations::MutationMode;
+use apollo_mcp_server::operations::{AnnotationOverrides, MutationMode};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -27,6 +27,12 @@ pub struct Overrides {
     /// these descriptions override the auto-generated tool descriptions for
     /// the matching operations, regardless of the operation source.
     pub descriptions: HashMap<String, String>,
+
+    /// Optional map from operation name to MCP tool annotation hints.
+    /// When provided, these annotations are merged with the auto-detected
+    /// defaults for the matching operations.
+    #[serde(default)]
+    pub annotations: HashMap<String, AnnotationOverrides>,
 
     /// Per-operation OAuth scope requirements for step-up authorization.
     /// Keys are operation names; values are lists of required scopes.
@@ -102,5 +108,60 @@ mod tests {
         let json = serde_json::json!({});
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert!(overrides.required_scopes.is_empty());
+    }
+
+    #[test]
+    fn overrides_with_annotations_parses() {
+        let json = serde_json::json!({
+            "annotations": {
+                "GetAlerts": {
+                    "read_only_hint": true,
+                    "idempotent_hint": true
+                },
+                "CreateUser": {
+                    "destructive_hint": false,
+                    "title": "Create a new user account"
+                }
+            }
+        });
+
+        let overrides: Overrides = serde_json::from_value(json).unwrap();
+        assert_eq!(overrides.annotations.len(), 2);
+
+        let alerts = overrides.annotations.get("GetAlerts").unwrap();
+        assert_eq!(alerts.read_only_hint, Some(true));
+        assert_eq!(alerts.idempotent_hint, Some(true));
+        assert_eq!(alerts.destructive_hint, None);
+        assert_eq!(alerts.title, None);
+        assert_eq!(alerts.open_world_hint, None);
+
+        let create_user = overrides.annotations.get("CreateUser").unwrap();
+        assert_eq!(create_user.destructive_hint, Some(false));
+        assert_eq!(
+            create_user.title.as_deref(),
+            Some("Create a new user account")
+        );
+        assert_eq!(create_user.read_only_hint, None);
+    }
+
+    #[test]
+    fn overrides_without_annotations_defaults_to_empty() {
+        let json = serde_json::json!({});
+        let overrides: Overrides = serde_json::from_value(json).unwrap();
+        assert!(overrides.annotations.is_empty());
+    }
+
+    #[test]
+    fn annotation_overrides_rejects_unknown_fields() {
+        let json = serde_json::json!({
+            "annotations": {
+                "GetAlerts": {
+                    "unknown_hint": true
+                }
+            }
+        });
+
+        let result = serde_json::from_value::<Overrides>(json);
+        assert!(result.is_err());
     }
 }

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{custom_scalar_map::CustomScalarMap, errors::OperationError};
 
-use super::{MutationMode, operation::Operation};
+use super::{AnnotationOverrides, MutationMode, operation::Operation};
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
@@ -24,6 +24,7 @@ pub struct RawOperation {
 }
 
 impl RawOperation {
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn into_operation(
         self,
         schema: &Valid<apollo_compiler::Schema>,
@@ -32,6 +33,7 @@ impl RawOperation {
         disable_type_description: bool,
         disable_schema_description: bool,
         enable_output_schema: bool,
+        annotation_overrides: &HashMap<String, AnnotationOverrides>,
     ) -> Result<Option<Operation>, OperationError> {
         Operation::from_document(
             self,
@@ -41,6 +43,7 @@ impl RawOperation {
             disable_type_description,
             disable_schema_description,
             enable_output_schema,
+            annotation_overrides,
         )
     }
 }

@@ -220,6 +220,36 @@ overrides:
       - admin
 ```
 
+### Config-level annotations
+
+MCP tool annotations are hints that help AI clients understand tool behavior. By default, queries are annotated with `read_only_hint: true` and mutations with `destructive_hint: true`. To customize these hints or add additional ones like `idempotent_hint` or `open_world_hint`, add an `annotations` map under the `overrides` config key.
+
+```yaml title="Config with tool annotations" {4-10}
+operations:
+  source: local
+  paths: [./operations]
+overrides:
+  annotations:
+    GetAlerts:
+      read_only_hint: true
+      idempotent_hint: true
+    CreateUser:
+      destructive_hint: false
+      title: "Create a new user account"
+```
+
+Each annotation field is optional. Only the fields you specify override the auto-detected defaults; unset fields keep their original values.
+
+| Field              | Type     | Description                                                        |
+| :----------------- | :------- | :----------------------------------------------------------------- |
+| `title`            | `String` | A human-readable title for the tool                                |
+| `read_only_hint`   | `bool`   | If true, the tool does not modify its environment                  |
+| `destructive_hint` | `bool`   | If true, the tool may perform destructive updates                  |
+| `idempotent_hint`  | `bool`   | If true, calling the tool repeatedly has no additional effect      |
+| `open_world_hint`  | `bool`   | If true, the tool may interact with systems outside its own domain |
+
+For more details on MCP tool annotations, see the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
 ## Introspection tools
 
 In addition to defining specific tools for pre-defined GraphQL operations, Apollo MCP Server supports introspection tools that enable AI agents to explore the graph schema and execute operations dynamically.
