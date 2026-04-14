@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/apollographql/rtf-mcp/main/schemas/test-plan-schema.json
+name: mcp-server smoke test
+description: |
+  Smoke test for the Apollo MCP Server that validates individual tool invocations.
+
+  This test plan validates that:
+  - The MCP server starts and responds to health checks
+  - All expected tools are exposed (introspection + GraphQL operations)
+  - The introspect, search, and validate tools work correctly
+  - Error paths return appropriate errors (invalid queries, missing fields)
+  - GraphQL operation tools can be executed against the backend
+
+  Requirements:
+  - Docker installed and running
+
+variables:
+  mcp_server_image: ghcr.io/apollographql/apollo-mcp-server
+  mcp_server_tag: latest
+  mcp_server_port: 8000
+  target_url: http://apollo-mcp-server:8000/mcp
+  healthcheck_endpoint: health
+
+# TODO: remove git_ref once apollographql/rtf-mcp#feat/mcp-server-smoke-test is merged
+custom_providers:
+  - kind: github
+    org: apollographql
+    repo: rtf-mcp
+    git_ref: feat/mcp-server-smoke-test
+    path: lib/custom-providers
+    using:
+      mcp_ecommerce_fixtures: mcp-ecommerce-fixtures/provider.yaml
+
+scenario:
+  from:
+    kind: github
+    org: apollographql
+    repo: rtf-mcp
+    git_ref: feat/mcp-server-smoke-test
+    path: lib/scenario-config/mcp-tool-smoke/scenario.yaml
+
+  overrides:
+    file_providers:
+      - name: test-cases.json
+        env_var: TEST_CASES
+        kind: relative_path
+        path: data/test-cases.json
+
+environment:
+  from:
+    kind: github
+    org: apollographql
+    repo: rtf-mcp
+    git_ref: feat/mcp-server-smoke-test
+    path: lib/env-config/mcp-server/environment.yaml
+
+  overrides:
+    project_name: rtf-mcp-smoke
+
+    file_providers:
+      - name: schema.graphql
+        env_var: SUPERGRAPH_SCHEMA
+        kind: github_file
+        org: apollographql
+        repo: rtf-mcp
+        git_ref: feat/mcp-server-smoke-test
+        path: lib/custom-providers/mcp-ecommerce-fixtures/data/schema.graphql
+
+      - name: mcp-ecommerce-fixtures
+        env_var: OPERATIONS_DIR
+        kind: custom_provider
+        type: mcp_ecommerce_fixtures

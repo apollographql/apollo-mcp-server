@@ -85,15 +85,16 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
+      - name: Build Docker image from current code
+        run: docker build -t apollo-mcp-server:local .
 
-      - name: Build release binary
-        run: cargo build --release
+      - name: Install RTF CLI
+        run: |
+          git clone --depth 1 https://github.com/apollographql/runtime-testing-framework.git /tmp/rtf
+          cargo install --path /tmp/rtf/crates/rtf-cli
 
-      - name: Run e2e tests (local-operations)
-        run: ./e2e/mcp-server-tester/run_tests.sh local-operations
-
-      - name: Run e2e tests (pq-manifest)
-        run: ./e2e/mcp-server-tester/run_tests.sh pq-manifest
+      - name: Run e2e smoke tests
+        run: |
+          rtf run e2e/rtf/smoke/test-plan.yaml -v \
+            --var 'mcp_server_image=apollo-mcp-server' \
+            --var 'mcp_server_tag=local'
