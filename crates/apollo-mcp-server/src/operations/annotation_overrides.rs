@@ -1,12 +1,12 @@
 use rmcp::model::ToolAnnotations;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Per-operation MCP tool annotation hints.
 ///
 /// Each field is optional. Only the hints you specify override the
 /// auto-detected defaults; unset fields keep their original values.
-#[derive(Debug, Deserialize, Default, JsonSchema, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, JsonSchema, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub struct AnnotationOverrides {
     pub title: Option<String>,

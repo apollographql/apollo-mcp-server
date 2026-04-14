@@ -1039,7 +1039,7 @@ mod tests {
             let annotations = HashMap::from([(
                 "NonExistent".to_string(),
                 AnnotationOverrides {
-                    idempotent_hint: Some(true),
+                    idempotent_hint: Some(false),
                     ..Default::default()
                 },
             )]);
@@ -1063,7 +1063,7 @@ mod tests {
             assert_eq!(
                 ann.idempotent_hint,
                 Some(true),
-                "Unmatched override should not change auto-detected value (queries are idempotent)"
+                "Unmatched override (false) must not replace auto-detected default (true)"
             );
         }
 

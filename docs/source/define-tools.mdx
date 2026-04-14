@@ -222,7 +222,12 @@ overrides:
 
 ### Config-level annotations
 
-MCP tool annotations are hints that help AI clients understand tool behavior. By default, queries are annotated with `read_only_hint: true` and mutations with `destructive_hint: true`. To customize these hints or add additional ones like `idempotent_hint` or `open_world_hint`, add an `annotations` map under the `overrides` config key.
+MCP tool annotations are hints that help AI clients understand tool behavior. Apollo MCP Server auto-detects the following defaults:
+
+- Queries: `read_only_hint: true`, `destructive_hint: false`, `idempotent_hint: true`, and `open_world_hint: true`
+- Mutations: `read_only_hint: false`, `destructive_hint: true`, and `open_world_hint: true`
+
+To customize these defaults, add an `annotations` map under the `overrides` config key. Specify only the fields you want to override.
 
 ```yaml title="Config with tool annotations" {4-10}
 operations:
@@ -231,22 +236,20 @@ operations:
 overrides:
   annotations:
     GetAlerts:
-      read_only_hint: true
-      idempotent_hint: true
+      open_world_hint: false
     CreateUser:
       destructive_hint: false
+      idempotent_hint: true
       title: "Create a new user account"
 ```
 
-Each annotation field is optional. Only the fields you specify override the auto-detected defaults; unset fields keep their original values.
-
 | Field              | Type     | Description                                                        |
 | :----------------- | :------- | :----------------------------------------------------------------- |
-| `title`            | `String` | A human-readable title for the tool                                |
-| `read_only_hint`   | `bool`   | If true, the tool does not modify its environment                  |
-| `destructive_hint` | `bool`   | If true, the tool may perform destructive updates                  |
-| `idempotent_hint`  | `bool`   | If true, calling the tool repeatedly has no additional effect      |
-| `open_world_hint`  | `bool`   | If true, the tool may interact with systems outside its own domain |
+| `title`            | `String` | A human-readable title for the tool                                  |
+| `read_only_hint`   | `bool`   | If `true`, the tool does not modify its environment                  |
+| `destructive_hint` | `bool`   | If `true`, the tool performs destructive updates                     |
+| `idempotent_hint`  | `bool`   | If `true`, calling the tool repeatedly has no additional effect      |
+| `open_world_hint`  | `bool`   | If `true`, the tool interacts with systems outside its own domain    |
 
 For more details on MCP tool annotations, see the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
 
