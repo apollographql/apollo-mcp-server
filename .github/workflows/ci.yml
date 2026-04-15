@@ -89,11 +89,15 @@ jobs:
         run: docker build -t apollo-mcp-server:local .
 
       - name: Install RTF CLI
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git clone --depth 1 https://github.com/apollographql/runtime-testing-framework.git /tmp/rtf
+          gh repo clone apollographql/runtime-testing-framework /tmp/rtf -- --depth 1
           cargo install --path /tmp/rtf/crates/rtf-cli
 
       - name: Run e2e smoke tests
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           rtf run e2e/rtf/smoke/test-plan.yaml -v \
             --var 'mcp_server_image=apollo-mcp-server' \
