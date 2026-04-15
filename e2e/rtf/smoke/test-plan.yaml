@@ -18,7 +18,7 @@ variables:
   mcp_server_tag: latest
   mcp_server_port: 8000
   target_url: http://apollo-mcp-server:8000/mcp
-  healthcheck_endpoint: health
+  healthcheck_url: http://apollo-mcp-server:8000/health
 
 # TODO: remove git_ref once apollographql/rtf-mcp#feat/mcp-server-smoke-test is merged
 custom_providers:
