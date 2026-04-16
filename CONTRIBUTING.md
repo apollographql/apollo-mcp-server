@@ -15,7 +15,7 @@ Excited about Apollo MCP Server and want to make it better? We're excited too! W
 
 Every pull request should reflect a genuine understanding of the problem and the codebase. We will close PRs that:
 
-* Were submitted without a prior issue discussion or maintainer sign-off.
+* Were submitted without a prior issue discussion or maintainer sign-off (exception: small bug fixes under ~20 lines with tests, as described below).
 * Contain low-quality or AI-generated code that hasn't been reviewed, tested, or adapted to the project's conventions by the author.
 * Make broad, speculative changes unrelated to a specific agreed-upon issue.
 
@@ -50,7 +50,7 @@ New features require consensus before implementation. Please follow this workflo
 4. **Submit your PR** with a clear description of the feature and links back to the discussion.
 
 > [!WARNING]
-> **Do not open a PR for a feature that hasn't been discussed and approved in an issue.** Even if the implementation looks correct, PRs without prior agreement will be closed. We know it can be tempting to jump straight to code, but aligning on the "what" and "why" first leads to better outcomes for everyone.
+> **Do not open a PR for a feature that hasn't been discussed and approved in a GitHub issue or Community forum thread.** Even if the implementation looks correct, PRs without prior agreement will be closed. We know it can be tempting to jump straight to code, but aligning on the "what" and "why" first leads to better outcomes for everyone.
 
 * Before submitting, please read the [branching strategy](#branching-strategy) and [code review guidelines](#code-review-guidelines).
 
