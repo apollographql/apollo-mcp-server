@@ -222,12 +222,12 @@ overrides:
 
 ### Config-level annotations
 
-MCP tool annotations are hints that help AI clients understand tool behavior. Apollo MCP Server auto-detects the following defaults:
+MCP tool annotations are hints that help AI clients understand tool behavior. Apollo MCP Server auto-detects these defaults:
 
 - Queries: `read_only_hint: true`, `destructive_hint: false`, `idempotent_hint: true`, and `open_world_hint: true`
 - Mutations: `read_only_hint: false`, `destructive_hint: true`, and `open_world_hint: true`
 
-To customize these defaults, add an `annotations` map under the `overrides` config key. Specify only the fields you want to override.
+To customize those defaults, add an `annotations` map under the `overrides` config key. Specify only the fields you want to override.
 
 ```yaml title="Config with tool annotations" {4-10}
 operations:
