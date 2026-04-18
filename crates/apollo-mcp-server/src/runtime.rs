@@ -317,6 +317,7 @@ mod test {
                     enable_explorer: false,
                     mutation_mode: None,
                     descriptions: {},
+                    annotations: {},
                     required_scopes: {},
                 },
                 schema: Uplink,
@@ -434,6 +435,42 @@ mod test {
             assert_eq!(
                 config.overrides.descriptions.get("GetForecast").unwrap(),
                 "Get the 7-day forecast"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_parses_overrides_annotations() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+                overrides:
+                    annotations:
+                        GetAlerts:
+                            read_only_hint: true
+                            idempotent_hint: true
+                        CreateUser:
+                            destructive_hint: false
+                            title: "Create a new user account"
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+            assert_eq!(config.overrides.annotations.len(), 2);
+
+            let alerts = config.overrides.annotations.get("GetAlerts").unwrap();
+            assert_eq!(alerts.read_only_hint, Some(true));
+            assert_eq!(alerts.idempotent_hint, Some(true));
+            assert_eq!(alerts.destructive_hint, None);
+
+            let create_user = config.overrides.annotations.get("CreateUser").unwrap();
+            assert_eq!(create_user.destructive_hint, Some(false));
+            assert_eq!(
+                create_user.title.as_deref(),
+                Some("Create a new user account")
             );
             Ok(())
         });

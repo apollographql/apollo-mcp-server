@@ -3,6 +3,7 @@
 //! This module includes transformation utilities that convert GraphQL operations
 //! into MCP tools.
 
+mod annotation_overrides;
 mod execution;
 mod mutation_mode;
 mod operation;
@@ -13,6 +14,7 @@ mod schema_walker;
 
 use std::collections::HashMap;
 
+pub use annotation_overrides::AnnotationOverrides;
 pub(crate) use execution::{execute_operation, find_and_execute_operation};
 pub use mutation_mode::MutationMode;
 pub(crate) use operation::{Operation, operation_defs, operation_name};

@@ -52,6 +52,7 @@ impl Starting {
                         self.config.disable_type_description,
                         self.config.disable_schema_description,
                         self.config.enable_output_schema,
+                        &self.config.annotations,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -187,6 +188,7 @@ impl Starting {
             enable_output_schema: self.config.enable_output_schema,
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             descriptions: self.config.descriptions,
+            annotations: self.config.annotations,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
             instructions,
@@ -332,6 +334,7 @@ mod tests {
                 enable_output_schema: false,
                 disable_auth_token_passthrough: false,
                 descriptions: std::collections::HashMap::new(),
+                annotations: std::collections::HashMap::new(),
                 required_scopes: std::collections::HashMap::new(),
                 search_leaf_depth: 5,
                 index_memory_bytes: 1024 * 1024 * 1024,

@@ -70,6 +70,8 @@ pub(crate) async fn execute_operation(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use apollo_compiler::Schema;
 
     use crate::operations::{MutationMode, RawOperation};
@@ -83,7 +85,15 @@ mod tests {
             .validate()
             .unwrap();
         let operation = RawOperation::from(("query GetHello { hello }".to_string(), None))
-            .into_operation(&schema, None, MutationMode::All, true, true, true)
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::All,
+                true,
+                true,
+                true,
+                &HashMap::new(),
+            )
             .unwrap()
             .unwrap();
 
@@ -109,11 +119,27 @@ mod tests {
             .unwrap();
         let operations = [
             RawOperation::from(("query GetHello { hello }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, true, true, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::All,
+                    true,
+                    true,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .unwrap(),
             RawOperation::from(("query GetWorld { hello }".to_string(), None))
-                .into_operation(&schema, None, MutationMode::All, true, true, true)
+                .into_operation(
+                    &schema,
+                    None,
+                    MutationMode::All,
+                    true,
+                    true,
+                    true,
+                    &HashMap::new(),
+                )
                 .unwrap()
                 .unwrap(),
         ];

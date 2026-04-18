@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::HashMap;
 use std::fmt::Display;
 use std::path::Path;
 use std::{fs::read_to_string, sync::Arc};
@@ -86,6 +87,7 @@ pub(crate) fn load_from_path(
                 disable_type_description,
                 disable_schema_description,
                 enable_output_schema,
+                &HashMap::new(),
             ) {
                 Err(err) => {
                     return Err(format!(

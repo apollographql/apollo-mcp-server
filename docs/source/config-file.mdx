@@ -216,6 +216,7 @@ These fields are under the top-level `overrides` key.
 | `enable_explorer`            | `bool`                              | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: This requires a GraphOS graph reference                                                               |
 | `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Defines the mutation access level for the MCP server                                                                                                                                           |
 | `descriptions`               | `Map<String, String>`               | `{}`     | Optional map from operation name to tool description. Overrides auto-generated descriptions for any operation source. [Learn more](/apollo-mcp-server/define-tools#config-level-descriptions). |
+| `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
 | `required_scopes`            | `Map<String, List<String>>`         | `{}`     | Optional map from operation name to a list of required OAuth scopes. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more](/apollo-mcp-server/auth#per-operation-scope-requirements). |
 
 ### Schema source

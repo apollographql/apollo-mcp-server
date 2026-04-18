@@ -15,6 +15,15 @@ schema:
   path: ./examples/TheSpaceDevs/api.graphql
 overrides:
   mutation_mode: all
+  descriptions:
+    GetAstronautsCurrentlyInSpace: "Get a list of astronauts currently in space with their name, nationality, and agency"
+    SearchUpcomingLaunches: "Search upcoming rocket launches by name, provider, or mission keyword"
+  annotations:
+    GetAstronautsCurrentlyInSpace:
+      idempotent_hint: true
+      open_world_hint: false
+    SearchUpcomingLaunches:
+      title: "Search upcoming rocket launches"
 introspection:
   execute:
     enabled: true

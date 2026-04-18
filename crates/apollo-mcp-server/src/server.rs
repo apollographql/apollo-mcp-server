@@ -18,7 +18,7 @@ use crate::event::Event as ServerEvent;
 use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::host_validation::HostValidationConfig;
-use crate::operations::{MutationMode, OperationSource};
+use crate::operations::{AnnotationOverrides, MutationMode, OperationSource};
 use crate::server_info::ServerInfoConfig;
 
 mod states;
@@ -66,6 +66,7 @@ pub struct Server {
     enable_output_schema: bool,
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
+    annotations: HashMap<String, AnnotationOverrides>,
     required_scopes: HashMap<String, Vec<String>>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
@@ -150,6 +151,7 @@ impl Server {
         enable_output_schema: bool,
         disable_auth_token_passthrough: bool,
         descriptions: HashMap<String, String>,
+        annotations: HashMap<String, AnnotationOverrides>,
         required_scopes: HashMap<String, Vec<String>>,
         search_leaf_depth: usize,
         index_memory_bytes: usize,
@@ -190,6 +192,7 @@ impl Server {
             enable_output_schema,
             disable_auth_token_passthrough,
             descriptions,
+            annotations,
             required_scopes,
             search_leaf_depth,
             index_memory_bytes,
