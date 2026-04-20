@@ -25,15 +25,6 @@ impl Deref for ValidToken {
     }
 }
 
-/// Extract scopes from JWT claims.
-///
-/// Scopes are expected as a space-separated string per RFC 6749.
-pub(super) fn extract_scopes(scope: Option<&str>) -> Vec<String> {
-    scope
-        .map(|s| s.split_whitespace().map(String::from).collect())
-        .unwrap_or_default()
-}
-
 /// Trait to handle validation of tokens
 pub(super) trait ValidateToken {
     /// Whether to skip audience validation (allow any audience)
@@ -69,6 +60,34 @@ pub(super) trait ValidateToken {
             /// OAuth scope claim (space-separated list per RFC 6749)
             #[serde(default)]
             pub scope: Option<String>,
+
+            /// Non-standard scope claim. Okta emits this as an array of
+            /// strings; Microsoft Entra emits it as a space-separated string.
+            /// Used as a fallback when the RFC 9068 `scope` claim is absent.
+            #[serde(default)]
+            pub scp: Option<ScpClaim>,
+        }
+
+        #[derive(Clone, Debug, Serialize, Deserialize)]
+        #[serde(untagged)]
+        enum ScpClaim {
+            Array(Vec<String>),
+            String(String),
+        }
+
+        impl Claims {
+            /// Resolve the scopes granted by this token, preferring the
+            /// RFC 9068 `scope` claim and falling back to the `scp` claim
+            /// used by Okta (array) and Microsoft Entra (space-separated string).
+            fn scopes(self) -> Vec<String> {
+                match (self.scope, self.scp) {
+                    (Some(s), _) | (None, Some(ScpClaim::String(s))) => {
+                        s.split_whitespace().map(String::from).collect()
+                    }
+                    (None, Some(ScpClaim::Array(v))) => v,
+                    (None, None) => Vec::new(),
+                }
+            }
         }
 
         fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -143,8 +162,10 @@ pub(super) trait ValidateToken {
                         warn!("Token is missing the required `aud` claim");
                         break;
                     }
-                    let scopes = extract_scopes(token_data.claims.scope.as_deref());
-                    return Some(ValidToken { token, scopes });
+                    return Some(ValidToken {
+                        token,
+                        scopes: token_data.claims.scopes(),
+                    });
                 }
                 Err(e) => warn!("Token failed validation with error: {e}"),
             };
@@ -662,41 +683,103 @@ mod test {
         });
     }
 
-    // Tests for extract_scopes
-    mod extract_scopes_tests {
-        use super::super::extract_scopes;
+    /// Build and validate a JWT with the given claims JSON, returning the
+    /// extracted scopes from the resulting `ValidToken`.
+    async fn validate_with_claims(claims: serde_json::Value) -> Vec<String> {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
 
-        #[test]
-        fn returns_empty_when_none() {
-            assert_eq!(extract_scopes(None), Vec::<String>::new());
-        }
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
 
-        #[test]
-        fn extracts_from_scope_claim() {
-            assert_eq!(extract_scopes(Some("read write")), vec!["read", "write"]);
-        }
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        #[test]
-        fn handles_extra_whitespace() {
-            assert_eq!(
-                extract_scopes(Some("  read   write  ")),
-                vec!["read", "write"]
-            );
-        }
+        let test_validator = TestTokenValidator {
+            audiences: vec!["test-audience".to_string()],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
 
-        #[test]
-        fn handles_empty_string() {
-            assert_eq!(extract_scopes(Some("")), Vec::<String>::new());
-        }
+        test_validator
+            .validate(jwt)
+            .await
+            .expect("valid token")
+            .scopes
+    }
 
-        #[test]
-        fn handles_whitespace_only() {
-            assert_eq!(extract_scopes(Some("   ")), Vec::<String>::new());
-        }
+    #[tokio::test]
+    async fn it_extracts_scopes_from_scope_claim() {
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let scopes = validate_with_claims(serde_json::json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user",
+            "scope": "read write"
+        }))
+        .await;
+        assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
+    }
 
-        #[test]
-        fn handles_single_scope() {
-            assert_eq!(extract_scopes(Some("admin")), vec!["admin"]);
-        }
+    #[tokio::test]
+    async fn it_extracts_scopes_from_scp_array_claim() {
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let scopes = validate_with_claims(serde_json::json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user",
+            "scp": ["read", "write"]
+        }))
+        .await;
+        assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn it_extracts_scopes_from_scp_string_claim() {
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let scopes = validate_with_claims(serde_json::json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user",
+            "scp": "read write"
+        }))
+        .await;
+        assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn it_prefers_scope_over_scp_when_both_present() {
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let scopes = validate_with_claims(serde_json::json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user",
+            "scope": "read",
+            "scp": ["write"]
+        }))
+        .await;
+        assert_eq!(scopes, vec!["read".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn it_returns_empty_scopes_when_neither_claim_present() {
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let scopes = validate_with_claims(serde_json::json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user"
+        }))
+        .await;
+        assert!(scopes.is_empty());
     }
 }
