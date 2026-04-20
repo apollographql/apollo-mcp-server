@@ -94,4 +94,4 @@ jobs:
         with:
           test_plan_path: e2e/rtf/smoke/test-plan.yaml
           vars_file: e2e/rtf/smoke/ci-variables.json
-          github_token: ${{ github.token }}
+          github_token: ${{ secrets.RTF_MCP_REPO_PAT }}
