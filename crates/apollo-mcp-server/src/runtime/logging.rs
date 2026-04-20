@@ -6,6 +6,7 @@
 mod defaults;
 mod log_rotation_kind;
 mod parsers;
+mod trace_id_format;
 
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
@@ -53,7 +54,7 @@ type LoggingLayerResult = (
     Layer<
         tracing_subscriber::Registry,
         tracing_subscriber::fmt::format::DefaultFields,
-        tracing_subscriber::fmt::format::Format,
+        trace_id_format::TraceIdFormat,
         BoxMakeWriter,
     >,
     Option<tracing_appender::non_blocking::WorkerGuard>,
@@ -101,11 +102,15 @@ impl Logging {
             None => (BoxMakeWriter::new(std::io::stdout), None, true),
         };
 
+        let inner_format = tracing_subscriber::fmt::format::Format::default()
+            .with_ansi(with_ansi)
+            .with_target(false);
+
         Ok((
             tracing_subscriber::fmt::layer()
                 .with_writer(writer)
                 .with_ansi(with_ansi)
-                .with_target(false),
+                .event_format(trace_id_format::TraceIdFormat::new(inner_format)),
             guard,
         ))
     }
