@@ -195,6 +195,11 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         self.upstreams
     }
 
+    /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS
+    /// fetch) independently, so a cold-cache lookup can take up to 2×
+    /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
+    /// back to alternate discovery URLs on failure; real providers advertise
+    /// the same `jwks_uri` from every well-known path.
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
         let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
