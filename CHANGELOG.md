@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.13.0 (2026-04-22)
+
+### Features
+
+#### Add MCP prompts support via Markdown files
+
+Apollo MCP Server now supports [MCP prompts](https://modelcontextprotocol.io/docs/concepts/prompts). Prompts are reusable templates that guide AI models through multi-step workflows using your GraphQL tools.
+
+Each prompt is a Markdown file in a `prompts/` directory with YAML frontmatter for metadata (name, description, arguments) and a template body with `{{argument}}` placeholders. The server loads prompts at startup and serves them via the `prompts/list` and `prompts/get` MCP methods. No configuration changes are needed — the server automatically detects the `prompts/` directory.
+
+#### Add per-operation MCP tool annotation overrides
+
+Users can now configure MCP tool annotations per operation via `overrides.annotations` in the config file. Each entry maps an operation name to annotation hints (`title`, `read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`) that are merged with auto-detected defaults. Additionally, `idempotent_hint` is now auto-set to `true` for queries and `open_world_hint` is auto-set to `true` for all operations.
+
+#### Add trace_id to log output for distributed trace correlation
+
+Log lines emitted within an OpenTelemetry-traced span now include a `trace_id=<hex>` prefix, allowing operators to correlate logs with distributed traces in observability tools such as Jaeger and Grafana. Startup messages and other events outside a span are unaffected.
+
+### Fixes
+
+#### Add optional `instructions` for MCP initialize
+
+Operators can set a top-level `instructions` value in the server configuration, or supply it through `APOLLO_MCP_INSTRUCTIONS`, to describe how models should use this server's tools and resources. The server returns that string in the MCP `initialize` response so clients can surface it to the model, consistent with the protocol's optional instructions field.
+
+#### Fix aarch64 musl installer fallback
+
+The install script previously blocked installation on `aarch64` Linux systems with older glibc versions, even though a musl binary is now available for that target. This change removes the block, allowing ARM64 musl systems to fall back to the musl binary just like `x86_64` systems.
+
+The installer script is now testable via `source` without side effects, and a new `test-install.sh` validates architecture detection and download URL logic across OS, CPU, and libc combinations.
+
+#### Fix config hot reload crashing server on invalid config
+
+The config hot-reload feature was supposed to keep the server running when an invalid config file was saved, but instead the server would crash because it cancelled the running instance before validating the new config. The new config is now validated before the server is stopped, and if validation fails, the error is logged and the server continues running with the previous configuration.
+
+#### Fix misleading error when APOLLO_KEY is missing
+
+When `APOLLO_KEY` was not set, the server incorrectly reported "Missing environment variable: APOLLO_GRAPH_REF" instead of `APOLLO_KEY`. This was a copy-paste bug in `GraphOSConfig::key()` that referenced the wrong constant in its error path.
+
+#### Accept the `scp` JWT claim for OAuth scope validation
+
+Previously, the MCP server only read the RFC 9068 `scope` claim when validating OAuth tokens. Okta emits scopes as the non-standard `scp` claim, which caused otherwise-valid tokens from those providers to be rejected as having insufficient scopes. The server now falls back to `scp` when `scope` is absent.
+
+#### Fix unused import warning on Windows targets
+
+The `tracing::error` macro was imported at the top level of `main.rs` but only used inside a `#[cfg(unix)]` block, causing an unused import warning that fails the release build on Windows targets with `--deny warnings`. The import is now scoped to the unix-only call site.
+
 ## 1.12.0 (2026-04-01)
 
 ### Features
