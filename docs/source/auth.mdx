@@ -237,6 +237,10 @@ transport:
 
 These headers are sent with every request the server makes to discover authorization server metadata and fetch JSON Web Key Sets (JWKS). They are _not_ sent to downstream GraphQL APIs.
 
+## JWKs that omit `alg`
+
+Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, Ping Identity) deliberately omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). Apollo MCP Server supports these providers automatically, inferring the signing algorithm from the authorization server's discovery document.
+
 ## Anonymous MCP discovery
 
 Some MCP clients need to call discovery methods before they have obtained an OAuth token. By default, these methods require authentication like every other request. You can allow unauthenticated access to these methods by setting `allow_anonymous_mcp_discovery` to `true`:
