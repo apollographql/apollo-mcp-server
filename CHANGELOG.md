@@ -46,10 +46,6 @@ When `APOLLO_KEY` was not set, the server incorrectly reported "Missing environm
 
 Previously, the MCP server only read the RFC 9068 `scope` claim when validating OAuth tokens. Okta emits scopes as the non-standard `scp` claim, which caused otherwise-valid tokens from those providers to be rejected as having insufficient scopes. The server now falls back to `scp` when `scope` is absent.
 
-#### Fix unused import warning on Windows targets
-
-The `tracing::error` macro was imported at the top level of `main.rs` but only used inside a `#[cfg(unix)]` block, causing an unused import warning that fails the release build on Windows targets with `--deny warnings`. The import is now scoped to the unix-only call site.
-
 ## 1.12.0 (2026-04-01)
 
 ### Features
