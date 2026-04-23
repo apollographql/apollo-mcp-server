@@ -1,7 +1,10 @@
+use std::str::FromStr;
 use std::time::Duration;
 
+use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
-use tracing::{info, trace, warn};
+use serde::Deserialize;
+use tracing::{error, info, trace, warn};
 use url::Url;
 
 use super::valid_token::ValidateToken;
@@ -112,27 +115,44 @@ fn build_discovery_urls(issuer: &Url) -> Result<Vec<Url>, DiscoveryUrlError> {
         .collect())
 }
 
-/// Attempts discovery from multiple URLs sequentially, returning first success
-async fn discover_jwks(client: &reqwest::Client, issuer: &Url, timeout: Duration) -> Option<Jwks> {
-    let urls = match build_discovery_urls(issuer) {
-        Ok(urls) => urls,
-        Err(e) => {
-            warn!(error = %e, "Failed to build discovery URLs");
-            return None;
-        }
+/// Subset of the OIDC/OAuth discovery document that we consume.
+///
+/// `jwks_uri` locates the public keys, and `id_token_signing_alg_values_supported`
+/// lets us infer the signing algorithm when a JWK omits `alg` (RFC 7517 §4.4).
+#[derive(Debug, Deserialize)]
+struct DiscoveryMetadata {
+    jwks_uri: String,
+    #[serde(default)]
+    id_token_signing_alg_values_supported: Vec<String>,
+}
+
+/// Fetches the discovery document, trying each well-known URL in priority order.
+async fn discover_metadata(
+    client: &reqwest::Client,
+    issuer: &Url,
+    timeout: Duration,
+) -> Option<DiscoveryMetadata> {
+    let Ok(urls) = build_discovery_urls(issuer)
+        .inspect_err(|e| warn!(error = %e, "Failed to build discovery URLs"))
+    else {
+        return None;
     };
 
     for url in &urls {
-        let result = tokio::time::timeout(
-            timeout,
-            Jwks::from_oidc_url_with_client(client, url.as_str()),
-        )
-        .await;
+        let fetch = async {
+            client
+                .get(url.as_str())
+                .send()
+                .await?
+                .error_for_status()?
+                .json::<DiscoveryMetadata>()
+                .await
+        };
 
-        match result {
-            Ok(Ok(jwks)) => {
+        match tokio::time::timeout(timeout, fetch).await {
+            Ok(Ok(metadata)) => {
                 info!(url = %url, "Authorization server metadata discovered");
-                return Some(jwks);
+                return Some(metadata);
             }
             Ok(Err(e)) => {
                 trace!(url = %url, error = %e, "Discovery failed, trying next URL");
@@ -145,6 +165,21 @@ async fn discover_jwks(client: &reqwest::Client, issuer: &Url, timeout: Duration
 
     warn!(issuer = %issuer, "All discovery URLs failed");
     None
+}
+
+/// Fetches the JWKS from `jwks_uri`.
+async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration) -> Option<Jwks> {
+    match tokio::time::timeout(timeout, Jwks::from_jwks_url_with_client(client, jwks_uri)).await {
+        Ok(Ok(jwks)) => Some(jwks),
+        Ok(Err(e)) => {
+            warn!(jwks_uri = %jwks_uri, error = %e, "Failed to fetch JWKS");
+            None
+        }
+        Err(_) => {
+            warn!(jwks_uri = %jwks_uri, timeout_secs = ?timeout.as_secs(), "JWKS fetch timed out");
+            None
+        }
+    }
 }
 
 impl ValidateToken for NetworkedTokenValidator<'_> {
@@ -160,9 +195,56 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         self.upstreams
     }
 
+    /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS
+    /// fetch) independently, so a cold-cache lookup can take up to 2×
+    /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
+    /// back to alternate discovery URLs on failure; real providers advertise
+    /// the same `jwks_uri` from every well-known path.
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
-        let jwks = discover_jwks(self.client, server, self.discovery_timeout).await?;
-        jwks.keys.get(key_id).cloned()
+        let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
+        let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
+        let mut jwk = jwks.keys.remove(key_id)?;
+        if jwk.alg.is_none() {
+            jwk.alg = resolve_alg(&metadata.id_token_signing_alg_values_supported, server);
+        }
+        Some(jwk)
+    }
+}
+
+/// Resolves the signing algorithm from the list of algorithms the authorization
+/// server advertises in its discovery document, for use when a JWK omits `alg`.
+///
+/// Returns `None` unless exactly one recognized algorithm is advertised; picking
+/// from a multi-entry list risks an algorithm-confusion attack.
+fn resolve_alg(advertised: &[String], server: &Url) -> Option<KeyAlgorithm> {
+    let parsed: Vec<KeyAlgorithm> = advertised
+        .iter()
+        .filter_map(|s| {
+            KeyAlgorithm::from_str(s)
+                .inspect_err(
+                    |_| trace!(alg = %s, "Ignoring unrecognized signing algorithm from discovery"),
+                )
+                .ok()
+        })
+        .collect();
+
+    match parsed.as_slice() {
+        [only] => Some(*only),
+        [] => {
+            warn!(
+                server = %server,
+                "Authorization server discovery did not advertise any signing algorithms and the JWK omits `alg`; tokens signed by this key cannot be verified"
+            );
+            None
+        }
+        many => {
+            error!(
+                server = %server,
+                advertised = ?many,
+                "Authorization server advertises multiple signing algorithms but the JWK omits `alg`; Apollo MCP Server cannot safely pick one"
+            );
+            None
+        }
     }
 }
 
@@ -293,15 +375,10 @@ mod tests {
     const TEST_RSA_E: &str = "AQAB";
 
     #[tokio::test]
-    async fn discover_jwks_should_return_jwks_when_first_url_succeeds() {
-        // given
+    async fn discover_metadata_returns_metadata_when_first_url_succeeds() {
         let mut server = mockito::Server::new_async().await;
-        let jwks_json = format!(
-            r#"{{"keys":[{{"kty":"RSA","kid":"test-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
-            TEST_RSA_N, TEST_RSA_E
-        );
         let discovery_json = format!(
-            r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
             server.url(),
             server.url()
         );
@@ -315,46 +392,29 @@ mod tests {
             .create_async()
             .await;
 
-        let jwks_mock = server
-            .mock("GET", "/jwks")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&jwks_json)
-            .expect(1)
-            .create_async()
-            .await;
-
         let client = reqwest::Client::new();
         let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
-        // when
-        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
+        let result = discover_metadata(&client, &issuer, Duration::from_secs(5)).await;
 
-        // then
         discovery_mock.assert();
-        jwks_mock.assert();
-        let jwks = result.expect("discover_jwks should return Some when first URL succeeds");
-        assert!(
-            jwks.keys.contains_key("test-key"),
-            "Expected test-key in discovered JWKS"
+        let metadata = result.expect("discovery should succeed");
+        assert_eq!(metadata.jwks_uri, format!("{}/jwks", server.url()));
+        assert_eq!(
+            metadata.id_token_signing_alg_values_supported,
+            vec!["RS256".to_string()]
         );
     }
 
     #[tokio::test]
-    async fn discover_jwks_should_fallback_to_oidc_when_rfc8414_returns_404() {
-        // given
+    async fn discover_metadata_falls_back_when_rfc8414_returns_404() {
         let mut server = mockito::Server::new_async().await;
-        let jwks_json = format!(
-            r#"{{"keys":[{{"kty":"RSA","kid":"fallback-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
-            TEST_RSA_N, TEST_RSA_E
-        );
         let discovery_json = format!(
             r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
             server.url(),
             server.url()
         );
 
-        // First URL (RFC 8414) fails with 404
         let fail_mock = server
             .mock("GET", "/.well-known/oauth-authorization-server")
             .with_status(404)
@@ -362,8 +422,7 @@ mod tests {
             .create_async()
             .await;
 
-        // Second URL (OIDC) succeeds
-        let discovery_mock = server
+        let oidc_mock = server
             .mock("GET", "/.well-known/openid-configuration")
             .with_status(200)
             .with_header("content-type", "application/json")
@@ -372,35 +431,18 @@ mod tests {
             .create_async()
             .await;
 
-        let jwks_mock = server
-            .mock("GET", "/jwks")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&jwks_json)
-            .expect(1)
-            .create_async()
-            .await;
-
         let client = reqwest::Client::new();
         let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
-        // when
-        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
+        let result = discover_metadata(&client, &issuer, Duration::from_secs(5)).await;
 
-        // then
         fail_mock.assert();
-        discovery_mock.assert();
-        jwks_mock.assert();
-        let jwks = result.expect("discover_jwks should fallback to OIDC when RFC 8414 returns 404");
-        assert!(
-            jwks.keys.contains_key("fallback-key"),
-            "Expected fallback-key in discovered JWKS"
-        );
+        oidc_mock.assert();
+        assert!(result.is_some());
     }
 
     #[tokio::test]
-    async fn discover_jwks_should_return_none_when_all_urls_fail() {
-        // given
+    async fn discover_metadata_returns_none_when_all_urls_fail() {
         let mut server = mockito::Server::new_async().await;
 
         let fail_mock1 = server
@@ -420,12 +462,93 @@ mod tests {
         let client = reqwest::Client::new();
         let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
 
-        // when
-        let result = discover_jwks(&client, &issuer, Duration::from_secs(5)).await;
+        let result = discover_metadata(&client, &issuer, Duration::from_secs(5)).await;
 
-        // then
         fail_mock1.assert();
         fail_mock2.assert();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn discover_metadata_defaults_algorithms_to_empty_when_field_missing() {
+        let mut server = mockito::Server::new_async().await;
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
+            server.url(),
+            server.url()
+        );
+
+        let mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let issuer = Url::parse(&server.url()).expect("mock server URL should be valid");
+
+        let result = discover_metadata(&client, &issuer, Duration::from_secs(5)).await;
+
+        mock.assert();
+        let metadata = result.expect("discovery should succeed");
+        assert!(metadata.id_token_signing_alg_values_supported.is_empty());
+    }
+
+    #[tokio::test]
+    async fn fetch_jwks_returns_jwks_on_success() {
+        let mut server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"test-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let client = reqwest::Client::new();
+        let jwks_uri = format!("{}/jwks", server.url());
+
+        let result = fetch_jwks(&client, &jwks_uri, Duration::from_secs(5)).await;
+
+        mock.assert();
+        let jwks = result.expect("fetch should succeed");
+        assert!(jwks.keys.contains_key("test-key"));
+    }
+
+    #[test]
+    fn resolve_alg_picks_single_advertised_alg() {
+        let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
+        let result = resolve_alg(&["RS256".to_string()], &server);
+        assert_eq!(result, Some(KeyAlgorithm::RS256));
+    }
+
+    #[test]
+    fn resolve_alg_rejects_when_multiple_advertised() {
+        let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
+        let result = resolve_alg(&["RS256".to_string(), "PS256".to_string()], &server);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_alg_returns_none_when_empty() {
+        let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
+        let result = resolve_alg(&[], &server);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_alg_skips_unrecognized_values() {
+        let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
+        let advertised = vec!["BOGUS".to_string(), "RS256".to_string(), "none".to_string()];
+        let result = resolve_alg(&advertised, &server);
+        assert_eq!(result, Some(KeyAlgorithm::RS256));
     }
 }
