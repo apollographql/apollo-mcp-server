@@ -52,6 +52,7 @@ jobs:
   build-artifacts:
     needs: [get-version]
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin

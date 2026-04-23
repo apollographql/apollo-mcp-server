@@ -239,6 +239,10 @@ fn spawn_stdio_config_watcher(config_path: PathBuf) {
         reason = "process::exit used for stdio mode SIGHUP restart"
     )
 )]
+#[cfg_attr(
+    not(unix),
+    allow(unused_variables, reason = "SIGHUP handling is unix-only")
+)]
 fn spawn_stdio_sighup_handler(config_path: Option<PathBuf>) {
     #[cfg(unix)]
     {
