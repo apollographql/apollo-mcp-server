@@ -20,12 +20,10 @@ variables:
   target_url: http://apollo-mcp-server:8000/mcp
   healthcheck_url: http://apollo-mcp-server:8000/health
 
-# TODO: remove git_ref once apollographql/rtf-mcp#feat/mcp-server-smoke-test is merged
 custom_providers:
   - kind: github
     org: apollographql
     repo: rtf-mcp
-    git_ref: feat/mcp-server-smoke-test
     path: lib/custom-providers
     using:
       mcp_ecommerce_fixtures: mcp-ecommerce-fixtures/provider.yaml
@@ -35,7 +33,6 @@ scenario:
     kind: github
     org: apollographql
     repo: rtf-mcp
-    git_ref: feat/mcp-server-smoke-test
     path: lib/scenario-config/mcp-tool-smoke/scenario.yaml
 
   overrides:
@@ -50,7 +47,6 @@ environment:
     kind: github
     org: apollographql
     repo: rtf-mcp
-    git_ref: feat/mcp-server-smoke-test
     path: lib/env-config/mcp-server/environment.yaml
 
   overrides:
@@ -62,7 +58,6 @@ environment:
         kind: github_file
         org: apollographql
         repo: rtf-mcp
-        git_ref: feat/mcp-server-smoke-test
         path: lib/custom-providers/mcp-ecommerce-fixtures/data/schema.graphql
 
       - name: mcp-ecommerce-fixtures
