@@ -90,20 +90,18 @@ jobs:
   e2e:
     name: End-to-End Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build Docker image from current code
+        run: docker build -t apollo-mcp-server:local .
 
-      - uses: actions/setup-node@v4
+      - name: Run e2e smoke tests
+        uses: apollographql/release-tooling/rtf-run-test-plan@main
         with:
-          node-version: '20'
-
-      - name: Build release binary
-        run: cargo build --release
-
-      - name: Run e2e tests (local-operations)
-        run: ./e2e/mcp-server-tester/run_tests.sh local-operations
-
-      - name: Run e2e tests (pq-manifest)
-        run: ./e2e/mcp-server-tester/run_tests.sh pq-manifest
+          test_plan_path: e2e/rtf/smoke/test-plan.yaml
+          vars_file: e2e/rtf/smoke/ci-variables.json
+          github_token: ${{ secrets.RTF_MCP_REPO_PAT }}

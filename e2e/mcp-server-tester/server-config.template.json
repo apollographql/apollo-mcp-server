@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "mcp-server": {
-      "command": "<bin-path>",
-      "args": ["<test-dir>/config.generated.yaml"]
-    }
-  }
-}

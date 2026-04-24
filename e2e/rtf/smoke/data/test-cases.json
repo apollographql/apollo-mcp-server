@@ -1,0 +1,98 @@
+{
+  "expected_tools": [
+    "introspect",
+    "execute",
+    "search",
+    "validate",
+    "GetCustomerWithOrders",
+    "GetFeaturedProducts",
+    "GetOrderDetails",
+    "GetProductById",
+    "GetProductBySku",
+    "GetProductReviews",
+    "GetRecentReviews",
+    "GetStoreStats",
+    "ListProducts",
+    "SearchProducts"
+  ],
+  "tests": [
+    {
+      "name": "Introspect Product type",
+      "tool": "introspect",
+      "arguments": { "type_name": "Product", "depth": 1 },
+      "expect": {
+        "success": true,
+        "contains": "Product"
+      }
+    },
+    {
+      "name": "Search for product queries",
+      "tool": "search",
+      "arguments": { "terms": ["product"] },
+      "expect": {
+        "success": true,
+        "contains": "product"
+      }
+    },
+    {
+      "name": "Validate a valid query",
+      "tool": "validate",
+      "arguments": {
+        "operation": "query { featuredProducts { id name price } }"
+      },
+      "expect": {
+        "success": true,
+        "contains": "Operation is valid"
+      }
+    },
+    {
+      "name": "Validate an invalid query (unknown field)",
+      "tool": "validate",
+      "arguments": {
+        "operation": "query { nonExistentField }"
+      },
+      "expect": {
+        "success": false,
+        "contains": "does not have a field `nonExistentField`"
+      }
+    },
+    {
+      "name": "Validate query with invalid nested field",
+      "tool": "validate",
+      "arguments": {
+        "operation": "query { featuredProducts { id bogusField } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": "does not have a field `bogusField`"
+      }
+    },
+    {
+      "name": "Validate query with missing required argument",
+      "tool": "validate",
+      "arguments": {
+        "operation": "query { product { id } }"
+      },
+      "expect": {
+        "success": false,
+        "contains": "required argument"
+      }
+    },
+    {
+      "name": "Execute GetStoreStats",
+      "tool": "GetStoreStats",
+      "arguments": {},
+      "expect": {
+        "success": true
+      }
+    },
+    {
+      "name": "Execute GetFeaturedProducts",
+      "tool": "GetFeaturedProducts",
+      "arguments": {},
+      "expect": {
+        "success": true
+      }
+    }
+  ]
+}
