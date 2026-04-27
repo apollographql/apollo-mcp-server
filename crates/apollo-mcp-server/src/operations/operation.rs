@@ -354,8 +354,8 @@ impl Operation {
 }
 
 impl graphql::Executable for Operation {
+    // Always returns None: full source text is sent instead of a persisted query hash.
     fn persisted_query_id(&self) -> Option<String> {
-        // TODO: id was being overridden, should we be returning? Should this be behind a flag? self.inner.persisted_query_id.clone()
         None
     }
 
@@ -768,7 +768,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -911,7 +910,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID!) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1058,7 +1056,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: [ID]!) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1225,7 +1222,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: [ID!]!) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1378,7 +1374,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: [ID]) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1539,7 +1534,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: [ID!]) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1686,7 +1680,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: [[ID]]) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -1867,7 +1860,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: RealInputObject) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2016,7 +2008,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: RealEnum!) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2160,7 +2151,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName { id } query QueryName { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
@@ -2192,7 +2182,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
@@ -2225,7 +2214,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "fragment Test on Query { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
@@ -2255,7 +2243,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "type Query { id: String }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2284,7 +2271,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: FakeType) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2424,7 +2410,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2571,7 +2556,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2724,7 +2708,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -2988,7 +2971,6 @@ mod tests {
             }
             "###
                 .to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3078,7 +3060,6 @@ mod tests {
             }
             "###
                 .to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3114,7 +3095,6 @@ mod tests {
             }
             "###
                 .to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3142,7 +3122,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3174,7 +3153,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3211,7 +3189,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3244,7 +3221,6 @@ mod tests {
                 }
             }"###
                     .to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3411,7 +3387,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID, $name: String) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: Some(HashMap::from([(
                     "id".to_string(),
@@ -3546,7 +3521,6 @@ mod tests {
             RawOperation {
                 source_text: "query QueryName($idArg: ID) { customQuery(id: $idArg) { id } }"
                     .to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3583,7 +3557,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($idArg: ID, $flag: Boolean) { customQuery(id: $idArg, flag: $flag) { id @skip(if: $flag) } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3624,7 +3597,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($idArg: ID, $skipArg: Boolean) { customQuery(id: $idArg) { id @skip(if: $skipArg) } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3664,7 +3636,6 @@ mod tests {
         let source_text = "query GetUser($id: ID!) { user(id: $id) { name email } }";
         let raw_op = RawOperation {
             source_text: source_text.to_string(),
-            persisted_query_id: None,
             headers: None,
             variables: None,
             source_path: None,
@@ -3693,7 +3664,6 @@ mod tests {
             "mutation CreateUser($input: UserInput!) { createUser(input: $input) { id name } }";
         let raw_op = RawOperation {
             source_text: source_text.to_string(),
-            persisted_query_id: None,
             headers: None,
             variables: None,
             source_path: None,
@@ -3721,7 +3691,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "# operation description\nquery QueryName(# id comment override\n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3758,7 +3727,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "# operation description\nquery QueryName(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3795,7 +3763,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName # a comment (with parens)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3832,7 +3799,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID\n, \n# a flag\n$flag: Boolean) { customQuery(id: $idArg, skip: $flag) { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3873,7 +3839,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName { customQuery(id: \"123\") { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3905,7 +3870,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName(# id arg\n $idArg: ID,,\n,,\n # a flag\n $flag: Boolean,  ,,) { customQuery(id: $idArg, flag: $flag) { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3946,7 +3910,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query TestOp { testOp { id } }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -3978,7 +3941,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($objects: [RealInputObject]) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4177,7 +4139,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($objects: [RealInputObject!]!) { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4369,7 +4330,6 @@ mod tests {
             Operation::from_document(
                 RawOperation {
                     source_text: "subscription SubscriptionName { id }".to_string(),
-                    persisted_query_id: None,
                     headers: None,
                     variables: None,
                     source_path: None,
@@ -4394,7 +4354,6 @@ mod tests {
             Operation::from_document(
                 RawOperation {
                     source_text: "mutation MutationName { id }".to_string(),
-                    persisted_query_id: None,
                     headers: None,
                     variables: None,
                     source_path: None,
@@ -4419,7 +4378,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "mutation MutationName { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4538,7 +4496,6 @@ mod tests {
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4556,7 +4513,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "mutation MutationName { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4675,7 +4631,6 @@ mod tests {
             },
             inner: RawOperation {
                 source_text: "mutation MutationName { id }",
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4693,7 +4648,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4931,7 +4885,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
-                persisted_query_id: Some("hash123".to_string()),
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4960,7 +4913,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
-                persisted_query_id: Some("hash123".to_string()),
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -4995,7 +4947,6 @@ mod tests {
             RawOperation {
                 source_text: "# Comment-based description\nquery QueryName($id: ID) { id }"
                     .to_string(),
-                persisted_query_id: Some("hash123".to_string()),
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -5197,7 +5148,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -5235,7 +5185,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -5269,7 +5218,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,
@@ -5295,7 +5243,6 @@ mod tests {
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
-                persisted_query_id: None,
                 headers: None,
                 variables: None,
                 source_path: None,

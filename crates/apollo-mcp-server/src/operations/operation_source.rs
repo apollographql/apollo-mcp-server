@@ -49,7 +49,10 @@ impl OperationSource {
                 .map(|event| {
                     let ManifestEvent::UpdateManifest(operations) = event;
                     Event::OperationsUpdated(
-                        operations.into_iter().map(RawOperation::from).collect(),
+                        operations
+                            .into_iter()
+                            .map(|(_hash, body)| RawOperation::from((body, None)))
+                            .collect(),
                     )
                 })
                 .boxed(),
