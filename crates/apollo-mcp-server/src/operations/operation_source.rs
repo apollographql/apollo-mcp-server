@@ -46,11 +46,8 @@ impl OperationSource {
             OperationSource::Manifest(source) => source
                 .into_stream()
                 .await
-                .map(|event| {
-                    let ManifestEvent::UpdateManifest(operations) = event;
-                    Event::OperationsUpdated(
-                        operations.into_iter().map(RawOperation::from).collect(),
-                    )
+                .map(|ManifestEvent::UpdateManifest(operations)| {
+                    Event::OperationsUpdated(raw_operations_from_manifest(operations))
                 })
                 .boxed(),
             OperationSource::Collection(collection_source) => collection_source
@@ -200,6 +197,14 @@ impl From<ManifestSource> for OperationSource {
     }
 }
 
+fn raw_operations_from_manifest(operations: Vec<(String, String)>) -> Vec<RawOperation> {
+    operations
+        .into_iter()
+        // No source_path: manifest entries are not loaded from disk.
+        .map(|(_hash, body)| RawOperation::from((body, None)))
+        .collect()
+}
+
 #[allow(clippy::expect_used)]
 static OP_NAME_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
     Regex::new(r"(?:query|mutation|subscription)\s+([A-Za-z_]\w*)")
@@ -316,5 +321,36 @@ mod tests {
             extract_operation_name("query { alerts { severity } }"),
             None
         );
+    }
+
+    #[test]
+    fn raw_operations_from_manifest_drops_hashes_and_preserves_bodies() {
+        let manifest = vec![
+            ("hash1".to_string(), "query A { a }".to_string()),
+            ("hash2".to_string(), "query B { b }".to_string()),
+        ];
+
+        let bodies: Vec<String> = raw_operations_from_manifest(manifest)
+            .into_iter()
+            .map(|op| op.source_text)
+            .collect();
+
+        assert_eq!(bodies, vec!["query A { a }", "query B { b }"]);
+    }
+
+    #[test]
+    fn raw_operations_from_manifest_does_not_set_source_path() {
+        let manifest = vec![("hash".to_string(), "query A { a }".to_string())];
+
+        let raw_ops = raw_operations_from_manifest(manifest);
+
+        assert!(raw_ops[0].source_path.is_none());
+    }
+
+    #[test]
+    fn raw_operations_from_manifest_handles_empty_input() {
+        let raw_ops = raw_operations_from_manifest(vec![]);
+
+        assert!(raw_ops.is_empty());
     }
 }

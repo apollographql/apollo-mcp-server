@@ -14,7 +14,6 @@ use super::{AnnotationOverrides, MutationMode, operation::Operation};
 #[derive(Debug, Clone)]
 pub struct RawOperation {
     pub(crate) source_text: String,
-    pub(super) persisted_query_id: Option<String>,
     pub(super) headers: Option<HeaderMap<HeaderValue>>,
     pub(crate) variables: Option<HashMap<String, Value>>,
     pub(super) source_path: Option<String>,
@@ -51,24 +50,10 @@ impl RawOperation {
 impl From<(String, Option<String>)> for RawOperation {
     fn from((source_text, source_path): (String, Option<String>)) -> Self {
         Self {
-            persisted_query_id: None,
             source_text,
             headers: None,
             variables: None,
             source_path,
-            description: None,
-        }
-    }
-}
-
-impl From<(String, String)> for RawOperation {
-    fn from((persisted_query_id, source_text): (String, String)) -> Self {
-        Self {
-            persisted_query_id: Some(persisted_query_id),
-            source_text,
-            headers: None,
-            variables: None,
-            source_path: None,
             description: None,
         }
     }
@@ -105,7 +90,6 @@ impl TryFrom<&OperationData> for RawOperation {
         };
 
         Ok(Self {
-            persisted_query_id: None,
             source_text: operation_data.source_text.clone(),
             headers,
             variables,
@@ -125,11 +109,8 @@ impl serde::Serialize for RawOperation {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("RawOperation", 4)?;
+        let mut state = serializer.serialize_struct("RawOperation", 3)?;
         state.serialize_field("source_text", &self.source_text)?;
-        if let Some(ref id) = self.persisted_query_id {
-            state.serialize_field("persisted_query_id", id)?;
-        }
         if let Some(ref variables) = self.variables {
             state.serialize_field("variables", variables)?;
         }
@@ -207,24 +188,12 @@ mod tests {
     }
 
     #[test]
-    fn from_manifest_tuple_has_no_description() {
-        let raw_op = RawOperation::from((
-            "hash123".to_string(),
-            "query GetUser { user { name } }".to_string(),
-        ));
-
-        assert_eq!(raw_op.persisted_query_id.as_deref(), Some("hash123"));
-        assert!(raw_op.description.is_none());
-    }
-
-    #[test]
     fn from_local_file_has_no_description() {
         let raw_op = RawOperation::from((
             "query GetUser { user { name } }".to_string(),
             None::<String>,
         ));
 
-        assert!(raw_op.persisted_query_id.is_none());
         assert!(raw_op.description.is_none());
     }
 }
