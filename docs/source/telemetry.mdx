@@ -143,7 +143,7 @@ The server emits the following metrics, which are invaluable for monitoring and 
 | `apollo.mcp.get_info.count` | Counter | Incremented for each `get_info` request. | (none) |
 | `apollo.mcp.tool.count` | Counter | Incremented for each tool call. | `tool_name`, `success` (bool) |
 | `apollo.mcp.tool.duration` | Histogram | Measures the execution duration of each tool call. | `tool_name`, `success` (bool) |
-| `apollo.mcp.operation.count`| Counter | Incremented for each downstream GraphQL operation executed by a tool. | `operation.id`, `operation.type` ("persisted_query" or "operation"), `success` (bool) |
+| `apollo.mcp.operation.count`| Counter | Incremented for each downstream GraphQL operation executed by a tool. | `operation.id`, `operation.type`, `success` (bool) |
 | `apollo.mcp.operation.duration`| Histogram | Measures the round-trip duration of each downstream GraphQL operation. | `operation.id`, `operation.type`, `success` (bool) |
 
 In addition to these metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
