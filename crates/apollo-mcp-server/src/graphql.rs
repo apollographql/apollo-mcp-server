@@ -59,7 +59,6 @@ pub trait Executable {
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
-        let mut op_id: Option<String> = None;
         let client_metadata = serde_json::json!({
             "name": "mcp",
             "version": std::env!("CARGO_PKG_VERSION")
@@ -93,8 +92,8 @@ pub trait Executable {
             }),
         );
 
+        let op_id = operation_name.clone();
         if let Some(op_name) = operation_name {
-            op_id = Some(op_name.clone());
             request_body.insert(String::from("operationName"), Value::String(op_name));
         }
 
@@ -153,7 +152,7 @@ pub trait Executable {
             ),
             KeyValue::new(
                 TelemetryAttribute::OperationId.to_key(),
-                op_id.unwrap_or("".to_string()),
+                op_id.unwrap_or_default(),
             ),
             KeyValue::new(TelemetryAttribute::OperationSource.to_key(), "operation"),
         ];
