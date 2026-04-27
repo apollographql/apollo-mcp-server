@@ -1,0 +1,4 @@
+{
+  "mcp_server_image": "apollo-mcp-server",
+  "mcp_server_tag": "local"
+}
