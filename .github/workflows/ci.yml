@@ -90,7 +90,7 @@ jobs:
         run: docker build -t apollo-mcp-server:local .
 
       - name: Run e2e smoke tests
-        uses: apollographql/release-tooling/rtf-run-test-plan@main
+        uses: apollographql/release-tooling/rtf-run-test-plan@cc8018036a3df0bfb7dd8b5d92ff23c998a59579
         with:
           test_plan_path: e2e/rtf/smoke/test-plan.yaml
           vars_file: e2e/rtf/smoke/ci-variables.json
