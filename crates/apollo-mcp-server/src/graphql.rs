@@ -45,9 +45,6 @@ pub struct ValidationError(pub String);
 
 /// Able to be executed as a GraphQL operation
 pub trait Executable {
-    /// Get the persisted query ID to be executed, if any
-    fn persisted_query_id(&self) -> Option<String>;
-
     /// Get the operation to execute and its name
     fn operation(&self, input: Value) -> Result<OperationDetails, ValidationError>;
 
@@ -76,46 +73,29 @@ pub trait Executable {
         };
 
         let mut request_body = Map::from_iter([(String::from("variables"), variables)]);
-        let mut private_field_tree = None;
 
-        if let Some(id) = self.persisted_query_id() {
-            request_body.insert(
-                String::from("extensions"),
-                serde_json::json!({
-                    "persistedQuery": {
-                        "version": 1,
-                        "sha256Hash": id,
-                    },
-                    "clientLibrary": client_metadata,
-                }),
-            );
-            op_id = Some(id.to_string());
-        } else {
-            let OperationDetails {
-                query,
-                operation_name,
-                private_fields,
-            } = match self.operation(request.input) {
-                Ok(details) => details,
-                Err(ValidationError(msg)) => {
-                    return Ok(CallToolResult::error(vec![Content::text(msg)]));
-                }
-            };
-
-            private_field_tree = private_fields;
-
-            request_body.insert(String::from("query"), Value::String(query));
-            request_body.insert(
-                String::from("extensions"),
-                serde_json::json!({
-                    "clientLibrary": client_metadata,
-                }),
-            );
-
-            if let Some(op_name) = operation_name {
-                op_id = Some(op_name.clone());
-                request_body.insert(String::from("operationName"), Value::String(op_name));
+        let OperationDetails {
+            query,
+            operation_name,
+            private_fields,
+        } = match self.operation(request.input) {
+            Ok(details) => details,
+            Err(ValidationError(msg)) => {
+                return Ok(CallToolResult::error(vec![Content::text(msg)]));
             }
+        };
+
+        request_body.insert(String::from("query"), Value::String(query));
+        request_body.insert(
+            String::from("extensions"),
+            serde_json::json!({
+                "clientLibrary": client_metadata,
+            }),
+        );
+
+        if let Some(op_name) = operation_name {
+            op_id = Some(op_name.clone());
+            request_body.insert(String::from("operationName"), Value::String(op_name));
         }
 
         let response = match GRAPHQL_CLIENT
@@ -144,7 +124,7 @@ pub trait Executable {
                 // When the operation has @private fields, split the response:
                 // - restricted (without @private fields) goes to structured_content
                 // - full response is preserved in meta for the client to access
-                let (structured_content, meta) = if let Some(tree) = private_field_tree.as_ref() {
+                let (structured_content, meta) = if let Some(tree) = private_fields.as_ref() {
                     let restricted = filter_private_fields(&json, tree);
                     let mut meta = Meta::new();
                     meta.insert("structuredContent".into(), json);
@@ -175,13 +155,7 @@ pub trait Executable {
                 TelemetryAttribute::OperationId.to_key(),
                 op_id.unwrap_or("".to_string()),
             ),
-            KeyValue::new(
-                TelemetryAttribute::OperationSource.to_key(),
-                match self.persisted_query_id() {
-                    Some(_) => "persisted_query",
-                    None => "operation",
-                },
-            ),
+            KeyValue::new(TelemetryAttribute::OperationSource.to_key(), "operation"),
         ];
         meter
             .f64_histogram(TelemetryMetric::OperationDuration.as_str())
@@ -210,13 +184,9 @@ mod test {
     use serde_json::{Map, Value, json};
     use url::Url;
 
-    struct TestExecutableWithoutPersistedQueryId;
+    struct TestExecutable;
 
-    impl Executable for TestExecutableWithoutPersistedQueryId {
-        fn persisted_query_id(&self) -> Option<String> {
-            None
-        }
-
+    impl Executable for TestExecutable {
         fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
             Ok(OperationDetails {
                 query: "query MockOp { mockOp { id } }".to_string(),
@@ -233,30 +203,6 @@ mod test {
                 _ => panic!("Expected a JSON object, but received a different type"),
             };
             Ok(Value::from(json_map))
-        }
-
-        fn headers(&self, _default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
-            HeaderMap::new()
-        }
-    }
-
-    struct TestExecutableWithPersistedQueryId;
-
-    impl Executable for TestExecutableWithPersistedQueryId {
-        fn persisted_query_id(&self) -> Option<String> {
-            Some("4f059505-fe13-4043-819a-461dd82dd5ed".to_string())
-        }
-
-        fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
-            Ok(OperationDetails {
-                query: "query MockOp { mockOp { id } }".to_string(),
-                operation_name: Some("mock_operation".to_string()),
-                private_fields: None,
-            })
-        }
-
-        fn variables(&self, _input: Value) -> Result<Value, ValidationError> {
-            Ok(Value::String("mock_variables".to_string()))
         }
 
         fn headers(&self, _default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
@@ -298,52 +244,7 @@ mod test {
             .await;
 
         // when
-        let test_executable = TestExecutableWithoutPersistedQueryId {};
-        let result = test_executable.execute(mock_request).await.unwrap();
-
-        // then
-        mock.assert(); // verify that the mock http server route was invoked
-        assert!(!result.content.is_empty());
-        assert!(!result.is_error.unwrap());
-    }
-
-    #[tokio::test]
-    async fn calls_graphql_endpoint_with_expected_pq_extensions_in_request_body() {
-        // given
-        let mut server = mockito::Server::new_async().await;
-        let url = Url::parse(server.url().as_str()).unwrap();
-        let mock_request = Request {
-            input: json!({}),
-            endpoint: &url,
-            headers: &HeaderMap::new(),
-        };
-        let expected_request_body = json!({
-            "variables": "mock_variables",
-            "extensions": {
-                "persistedQuery": {
-                    "version": 1,
-                    "sha256Hash": "4f059505-fe13-4043-819a-461dd82dd5ed",
-                },
-                "clientLibrary": {
-                    "name":"mcp",
-                    "version": std::env!("CARGO_PKG_VERSION")
-                }
-            },
-        })
-        .to_string();
-
-        let mock = server
-            .mock("POST", "/")
-            .match_body(expected_request_body.as_str())
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(json!({ "data": {},  }).to_string())
-            .expect(1)
-            .create_async()
-            .await;
-
-        // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -363,7 +264,7 @@ mod test {
         };
 
         // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -397,7 +298,7 @@ mod test {
             .await;
 
         // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -434,7 +335,7 @@ mod test {
             .await;
 
         // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -468,7 +369,7 @@ mod test {
             .await;
 
         // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -502,7 +403,7 @@ mod test {
             .await;
 
         // when
-        let test_executable = TestExecutableWithPersistedQueryId {};
+        let test_executable = TestExecutable {};
         let result = test_executable.execute(mock_request).await.unwrap();
 
         // then
@@ -534,7 +435,7 @@ mod test {
                             );
                             assert_eq!(
                                 attr_map.get("operation.type").map(|s| s.as_ref()),
-                                Some("persisted_query")
+                                Some("operation")
                             );
                             assert_eq!(
                                 attr_map.get("success"),

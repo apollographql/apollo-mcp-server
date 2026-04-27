@@ -354,11 +354,6 @@ impl Operation {
 }
 
 impl graphql::Executable for Operation {
-    // Always returns None: full source text is sent instead of a persisted query hash.
-    fn persisted_query_id(&self) -> Option<String> {
-        None
-    }
-
     fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
         Ok(OperationDetails {
             query: self

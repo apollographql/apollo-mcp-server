@@ -47,10 +47,6 @@ impl Execute {
 }
 
 impl graphql::Executable for Execute {
-    fn persisted_query_id(&self) -> Option<String> {
-        None
-    }
-
     fn operation(&self, input: Value) -> Result<OperationDetails, ValidationError> {
         let input = serde_json::from_value::<Input>(input)
             .map_err(|e| ValidationError(format!("Invalid input: {e}")))?;
