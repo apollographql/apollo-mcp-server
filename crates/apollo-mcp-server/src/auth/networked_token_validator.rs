@@ -115,10 +115,15 @@ fn build_discovery_urls(issuer: &Url) -> Result<Vec<Url>, DiscoveryUrlError> {
         .collect())
 }
 
-/// Subset of the OIDC/OAuth discovery document that we consume.
-///
-/// `jwks_uri` locates the public keys, and `id_token_signing_alg_values_supported`
-/// lets us infer the signing algorithm when a JWK omits `alg` (RFC 7517 §4.4).
+/// Subset of the OIDC/OAuth discovery document that we consume.                                                                                
+///                                                             
+// `jwks_uri` locates the public keys. `id_token_signing_alg_values_supported`                                                                 
+/// is strictly the algorithm list for OIDC ID tokens, but MCP validates OAuth 
+/// access tokens — no standard discovery field advertises the access-token                                                                     
+/// signing algorithm. In practice, the providers this fallback targets                                                                         
+/// (Microsoft Entra ID, Azure AD B2C, AWS Cognito, Ping Identity) sign access                                                                  
+/// tokens with the same algorithm they advertise here, so we reuse this field                                                                  
+/// as a proxy to fill in `alg` when a JWK omits it (RFC 7517 §4.4).
 #[derive(Debug, Deserialize)]
 struct DiscoveryMetadata {
     jwks_uri: String,
