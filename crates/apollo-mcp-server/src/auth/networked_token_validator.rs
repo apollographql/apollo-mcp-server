@@ -214,38 +214,35 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
 /// Resolves the signing algorithm from the list of algorithms the authorization
 /// server advertises in its discovery document, for use when a JWK omits `alg`.
 ///
-/// Returns `None` unless exactly one recognized algorithm is advertised; picking
-/// from a multi-entry list risks an algorithm-confusion attack.
+/// Returns `None` unless the server advertises exactly one algorithm and we
+/// recognize it. Any additional or unrecognized entry counts as ambiguity and
+/// is refused to avoid an algorithm-confusion attack.
 fn resolve_alg(advertised: &[String], server: &Url) -> Option<KeyAlgorithm> {
-    let parsed: Vec<KeyAlgorithm> = advertised
-        .iter()
-        .filter_map(|s| {
-            KeyAlgorithm::from_str(s)
-                .inspect_err(
-                    |_| trace!(alg = %s, "Ignoring unrecognized signing algorithm from discovery"),
-                )
-                .ok()
-        })
-        .collect();
-
-    match parsed.as_slice() {
-        [only] => Some(*only),
-        [] => {
+    let [single] = advertised else {
+        if advertised.is_empty() {
             warn!(
                 server = %server,
                 "Authorization server discovery did not advertise any signing algorithms and the JWK omits `alg`; tokens signed by this key cannot be verified"
             );
-            None
-        }
-        many => {
+        } else {
             error!(
                 server = %server,
-                advertised = ?many,
+                advertised = ?advertised,
                 "Authorization server advertises multiple signing algorithms but the JWK omits `alg`; Apollo MCP Server cannot safely pick one"
             );
-            None
         }
-    }
+        return None;
+    };
+
+    KeyAlgorithm::from_str(single)
+        .inspect_err(|_| {
+            error!(
+                server = %server,
+                alg = %single,
+                "Authorization server discovery advertises an unrecognized signing algorithm and the JWK omits `alg`; cannot safely infer the algorithm"
+            );
+        })
+        .ok()
 }
 
 #[cfg(test)]
@@ -545,10 +542,16 @@ mod tests {
     }
 
     #[test]
-    fn resolve_alg_skips_unrecognized_values() {
+    fn resolve_alg_rejects_unrecognized_sibling_entry() {
         let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
-        let advertised = vec!["BOGUS".to_string(), "RS256".to_string(), "none".to_string()];
-        let result = resolve_alg(&advertised, &server);
-        assert_eq!(result, Some(KeyAlgorithm::RS256));
+        let result = resolve_alg(&["RS256".to_string(), "none".to_string()], &server);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn resolve_alg_rejects_single_unrecognized_entry() {
+        let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
+        let result = resolve_alg(&["BOGUS".to_string()], &server);
+        assert!(result.is_none());
     }
 }
