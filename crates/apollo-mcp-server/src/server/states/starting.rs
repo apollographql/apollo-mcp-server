@@ -12,7 +12,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::host_validation::{HostValidationState, validate_host};
-use crate::operations::apply_description_override;
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     cors::CorsConfig,
@@ -42,7 +41,6 @@ impl Starting {
         let operations: Vec<_> = self
             .operations
             .into_iter()
-            .map(|operation| apply_description_override(operation, &self.config.descriptions))
             .filter_map(|operation| {
                 operation
                     .into_operation(
@@ -53,6 +51,7 @@ impl Starting {
                         self.config.disable_schema_description,
                         self.config.enable_output_schema,
                         &self.config.annotations,
+                        &self.config.descriptions,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);

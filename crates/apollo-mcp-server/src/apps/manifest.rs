@@ -88,6 +88,7 @@ pub(crate) fn load_from_path(
                 disable_schema_description,
                 enable_output_schema,
                 &HashMap::new(),
+                &HashMap::new(),
             ) {
                 Err(err) => {
                     return Err(format!(

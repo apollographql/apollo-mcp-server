@@ -72,6 +72,7 @@ impl Operation {
         disable_schema_description: bool,
         enable_output_schema: bool,
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
+        description_overrides: &HashMap<String, String>,
     ) -> Result<Option<Self>, OperationError> {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
@@ -99,16 +100,19 @@ impl Operation {
             let mut tree_shaker = SchemaTreeShaker::new(graphql_schema);
             tree_shaker.retain_operation(&operation, &document, DepthLimit::Unlimited);
 
-            let description = raw_operation.description.clone().unwrap_or_else(|| {
-                Self::tool_description(
-                    comments,
-                    &mut tree_shaker,
-                    graphql_schema,
-                    &operation,
-                    disable_type_description,
-                    disable_schema_description,
-                )
-            });
+            let description = description_overrides
+                .get(&operation_name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    Self::tool_description(
+                        comments,
+                        &mut tree_shaker,
+                        graphql_schema,
+                        &operation,
+                        disable_type_description,
+                        disable_schema_description,
+                    )
+                });
 
             let mut object = serde_json::to_value(get_json_schema(
                 &operation,
@@ -766,7 +770,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -774,6 +777,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -908,7 +912,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -916,6 +919,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1054,7 +1058,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1062,6 +1065,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1220,7 +1224,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1228,6 +1231,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1372,7 +1376,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1380,6 +1383,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1532,7 +1536,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1540,6 +1543,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1678,7 +1682,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1686,6 +1689,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -1858,7 +1862,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -1866,6 +1869,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2006,7 +2010,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2014,6 +2017,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2149,7 +2153,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2157,6 +2160,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
@@ -2180,7 +2184,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2188,6 +2191,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         );
         assert!(operation.unwrap().is_none());
@@ -2212,7 +2216,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: Some("operation.graphql".to_string()),
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2220,6 +2223,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
@@ -2241,7 +2245,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2249,6 +2252,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r"
@@ -2269,7 +2273,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2277,6 +2280,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2408,7 +2412,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -2416,6 +2419,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2554,7 +2558,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             Some(&CustomScalarMap::from_str("{}").unwrap()),
@@ -2562,6 +2565,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2706,7 +2710,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             custom_scalar_map.ok().as_ref(),
@@ -2714,6 +2717,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -2969,7 +2973,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &schema,
             None,
@@ -2977,6 +2980,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3058,7 +3062,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3066,6 +3069,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3093,7 +3097,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3101,6 +3104,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3120,7 +3124,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3128,6 +3131,7 @@ mod tests {
             false,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3151,7 +3155,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3159,6 +3162,7 @@ mod tests {
             true,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3187,7 +3191,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3195,6 +3198,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3219,7 +3223,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &Schema::parse(
                 r#"
@@ -3246,6 +3249,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3388,7 +3392,6 @@ mod tests {
                     serde_json::Value::String("v".to_string()),
                 )])),
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3396,6 +3399,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3519,7 +3523,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3527,6 +3530,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3555,7 +3559,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3563,6 +3566,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3595,7 +3599,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3603,6 +3606,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3634,7 +3638,6 @@ mod tests {
             headers: None,
             variables: None,
             source_path: None,
-            description: None,
         };
         let operation = Operation::from_document(
             raw_op,
@@ -3644,6 +3647,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3662,7 +3666,6 @@ mod tests {
             headers: None,
             variables: None,
             source_path: None,
-            description: None,
         };
         let operation = Operation::from_document(
             raw_op,
@@ -3672,6 +3675,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3689,7 +3693,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3697,6 +3700,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3725,7 +3729,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3733,6 +3736,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3761,7 +3765,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3769,6 +3772,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3797,7 +3801,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3805,6 +3808,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3837,7 +3841,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3845,6 +3848,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3868,7 +3872,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3876,6 +3879,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
             .unwrap()
@@ -3908,7 +3912,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3916,6 +3919,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -3939,7 +3943,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -3947,6 +3950,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4137,7 +4141,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -4145,6 +4148,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4328,7 +4332,6 @@ mod tests {
                     headers: None,
                     variables: None,
                     source_path: None,
-                    description: None,
                 },
                 &SCHEMA,
                 None,
@@ -4336,6 +4339,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .unwrap()
@@ -4352,7 +4356,6 @@ mod tests {
                     headers: None,
                     variables: None,
                     source_path: None,
-                    description: None,
                 },
                 &SCHEMA,
                 None,
@@ -4360,6 +4363,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .ok()
@@ -4376,7 +4380,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -4384,6 +4387,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4494,7 +4498,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             operation_name: "MutationName",
             stripped_source_text: None,
@@ -4511,7 +4514,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -4519,6 +4521,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4629,7 +4632,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             operation_name: "MutationName",
             stripped_source_text: None,
@@ -4646,7 +4648,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -4654,6 +4655,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4877,13 +4879,14 @@ mod tests {
     #[test]
     fn explicit_description_overrides_auto_generated() {
         let explicit_desc = "My custom tool description from PQ manifest";
+        let description_overrides =
+            HashMap::from([("QueryName".to_string(), explicit_desc.to_string())]);
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: Some(explicit_desc.to_string()),
             },
             &SCHEMA,
             None,
@@ -4892,6 +4895,7 @@ mod tests {
             false,
             false,
             &HashMap::new(),
+            &description_overrides,
         )
         .unwrap()
         .unwrap();
@@ -4899,7 +4903,7 @@ mod tests {
         assert_eq!(
             operation.tool.description.as_deref(),
             Some(explicit_desc),
-            "tool description should use the explicit description from RawOperation"
+            "tool description should use the override keyed by operation name"
         );
     }
 
@@ -4911,7 +4915,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -4919,6 +4922,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -4938,6 +4942,8 @@ mod tests {
     #[test]
     fn explicit_description_overrides_comments() {
         let explicit_desc = "Override from manifest";
+        let description_overrides =
+            HashMap::from([("QueryName".to_string(), explicit_desc.to_string())]);
         let operation = Operation::from_document(
             RawOperation {
                 source_text: "# Comment-based description\nquery QueryName($id: ID) { id }"
@@ -4945,7 +4951,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: Some(explicit_desc.to_string()),
             },
             &SCHEMA,
             None,
@@ -4954,6 +4959,7 @@ mod tests {
             false,
             false,
             &HashMap::new(),
+            &description_overrides,
         )
         .unwrap()
         .unwrap();
@@ -4975,6 +4981,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .unwrap()
@@ -5006,6 +5013,7 @@ mod tests {
             false,
             true,
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5036,6 +5044,7 @@ mod tests {
             false,
             true,
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5065,6 +5074,7 @@ mod tests {
                     false,
                     true,
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .unwrap();
@@ -5083,6 +5093,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .unwrap()
@@ -5119,6 +5130,7 @@ mod tests {
                 false,
                 true,
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .unwrap();
@@ -5146,7 +5158,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -5155,6 +5166,7 @@ mod tests {
             false,
             false,
             &overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5183,7 +5195,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -5192,6 +5203,7 @@ mod tests {
             false,
             false,
             &overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5216,7 +5228,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -5225,6 +5236,7 @@ mod tests {
             false,
             false,
             &overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5241,7 +5253,6 @@ mod tests {
                 headers: None,
                 variables: None,
                 source_path: None,
-                description: None,
             },
             &SCHEMA,
             None,
@@ -5249,6 +5260,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
