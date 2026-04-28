@@ -32,7 +32,7 @@ impl RawOperation {
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
         description_overrides: &HashMap<String, String>,
     ) -> Result<Option<Operation>, OperationError> {
-        Operation::from_document(
+        Operation::from_raw(
             self,
             schema,
             custom_scalars,

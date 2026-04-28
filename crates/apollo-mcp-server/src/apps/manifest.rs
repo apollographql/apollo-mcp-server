@@ -79,7 +79,7 @@ pub(crate) fn load_from_path(
 
         for operation_def in manifest.operations {
             let raw = RawOperation::from((operation_def.body, path.to_str().map(String::from)));
-            let operation = match Operation::from_document(
+            let operation = match Operation::from_raw(
                 raw,
                 schema,
                 custom_scalar_map,

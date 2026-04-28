@@ -63,7 +63,7 @@ impl Operation {
 
     #[expect(clippy::too_many_arguments)]
     #[tracing::instrument(skip_all, name = "load_tool")]
-    pub fn from_document(
+    pub fn from_raw(
         raw_operation: RawOperation,
         graphql_schema: &GraphqlSchema,
         custom_scalar_map: Option<&CustomScalarMap>,
@@ -764,7 +764,7 @@ mod tests {
 
     #[test]
     fn nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
                 headers: None,
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn non_nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: ID!) { id }".to_string(),
                 headers: None,
@@ -1052,7 +1052,7 @@ mod tests {
 
     #[test]
     fn non_nullable_list_of_nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: [ID]!) { id }".to_string(),
                 headers: None,
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[test]
     fn non_nullable_list_of_non_nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: [ID!]!) { id }".to_string(),
                 headers: None,
@@ -1370,7 +1370,7 @@ mod tests {
 
     #[test]
     fn nullable_list_of_nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: [ID]) { id }".to_string(),
                 headers: None,
@@ -1530,7 +1530,7 @@ mod tests {
 
     #[test]
     fn nullable_list_of_non_nullable_named_type() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: [ID!]) { id }".to_string(),
                 headers: None,
@@ -1676,7 +1676,7 @@ mod tests {
 
     #[test]
     fn nullable_list_of_nullable_lists_of_nullable_named_types() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: [[ID]]) { id }".to_string(),
                 headers: None,
@@ -1856,7 +1856,7 @@ mod tests {
 
     #[test]
     fn nullable_input_object() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: RealInputObject) { id }".to_string(),
                 headers: None,
@@ -2004,7 +2004,7 @@ mod tests {
 
     #[test]
     fn non_nullable_enum() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: RealEnum!) { id }".to_string(),
                 headers: None,
@@ -2147,7 +2147,7 @@ mod tests {
 
     #[test]
     fn multiple_operations_should_error() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName { id } query QueryName { id }".to_string(),
                 headers: None,
@@ -2178,7 +2178,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn unnamed_operations_should_be_skipped() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query { id }".to_string(),
                 headers: None,
@@ -2210,7 +2210,7 @@ mod tests {
 
     #[test]
     fn no_operations_should_error() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "fragment Test on Query { id }".to_string(),
                 headers: None,
@@ -2239,7 +2239,7 @@ mod tests {
 
     #[test]
     fn schema_should_error() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "type Query { id: String }".to_string(),
                 headers: None,
@@ -2267,7 +2267,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn unknown_type_should_be_any() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: FakeType) { id }".to_string(),
                 headers: None,
@@ -2406,7 +2406,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn custom_scalar_without_map_should_be_any() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
                 headers: None,
@@ -2552,7 +2552,7 @@ mod tests {
     #[test]
     #[traced_test]
     fn custom_scalar_with_map_but_not_found_should_error() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
                 headers: None,
@@ -2704,7 +2704,7 @@ mod tests {
         let custom_scalar_map =
             CustomScalarMap::from_str("{ \"RealCustomScalar\": { \"type\": \"string\" }}");
 
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: RealCustomScalar) { id }".to_string(),
                 headers: None,
@@ -2934,7 +2934,7 @@ mod tests {
         let document = Parser::new().parse_ast(SCHEMA, "schema.graphql").unwrap();
         let schema = document.to_schema().unwrap();
 
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"
             query GetABZ($state: String!) {
@@ -3046,7 +3046,7 @@ mod tests {
 
     #[test]
     fn tool_comment_description() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"
             # Overridden tool #description
@@ -3083,7 +3083,7 @@ mod tests {
 
     #[test]
     fn tool_empty_comment_description() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"
             #
@@ -3118,7 +3118,7 @@ mod tests {
 
     #[test]
     fn no_schema_description() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
                 headers: None,
@@ -3149,7 +3149,7 @@ mod tests {
 
     #[test]
     fn no_type_description() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
                 headers: None,
@@ -3185,7 +3185,7 @@ mod tests {
 
     #[test]
     fn no_type_description_or_schema_description() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"query GetABZ($state: String!) { id enum }"###.to_string(),
                 headers: None,
@@ -3212,7 +3212,7 @@ mod tests {
 
     #[test]
     fn recursive_inputs() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: r###"query Test($filter: Filter){
                 field(filter: $filter) {
@@ -3383,7 +3383,7 @@ mod tests {
 
     #[test]
     fn with_variable_overrides() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: ID, $name: String) { id }".to_string(),
                 headers: None,
@@ -3516,7 +3516,7 @@ mod tests {
 
     #[test]
     fn input_schema_includes_variable_descriptions() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($idArg: ID) { customQuery(id: $idArg) { id } }"
                     .to_string(),
@@ -3553,7 +3553,7 @@ mod tests {
 
     #[test]
     fn input_schema_includes_joined_variable_descriptions_if_multiple() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($idArg: ID, $flag: Boolean) { customQuery(id: $idArg, flag: $flag) { id @skip(if: $flag) } }".to_string(),
                 headers: None,
@@ -3593,7 +3593,7 @@ mod tests {
 
     #[test]
     fn input_schema_includes_directive_variable_descriptions() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($idArg: ID, $skipArg: Boolean) { customQuery(id: $idArg) { id @skip(if: $skipArg) } }".to_string(),
                 headers: None,
@@ -3639,7 +3639,7 @@ mod tests {
             variables: None,
             source_path: None,
         };
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             raw_op,
             &SCHEMA,
             None,
@@ -3667,7 +3667,7 @@ mod tests {
             variables: None,
             source_path: None,
         };
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             raw_op,
             &SCHEMA,
             None,
@@ -3687,7 +3687,7 @@ mod tests {
 
     #[test]
     fn operation_variable_comments_override_schema_descriptions() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "# operation description\nquery QueryName(# id comment override\n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
                 headers: None,
@@ -3723,7 +3723,7 @@ mod tests {
 
     #[test]
     fn operation_variable_comment_override_supports_multiline_comments() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "# operation description\nquery QueryName(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
                 headers: None,
@@ -3759,7 +3759,7 @@ mod tests {
 
     #[test]
     fn comment_with_parens_has_comments_extracted_correctly() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName # a comment (with parens)\n(# id comment override\n # multi-line comment \n$idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
                 headers: None,
@@ -3795,7 +3795,7 @@ mod tests {
 
     #[test]
     fn multiline_comment_with_odd_spacing_and_parens_has_comments_extracted_correctly() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "#  operation comment\n\nquery QueryName # a comment \n#     extra space\n\n\n#  blank lines (with parens)\n\n# another (paren)\n(# id comment override\n # multi-line comment \n$idArg: ID\n, \n# a flag\n$flag: Boolean) { customQuery(id: $idArg, skip: $flag) { id } }".to_string(),
                 headers: None,
@@ -3835,7 +3835,7 @@ mod tests {
 
     #[test]
     fn operation_with_no_variables_is_handled_properly() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName { customQuery(id: \"123\") { id } }".to_string(),
                 headers: None,
@@ -3866,7 +3866,7 @@ mod tests {
 
     #[test]
     fn commas_between_variables_are_ignored() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName(# id arg\n $idArg: ID,,\n,,\n # a flag\n $flag: Boolean,  ,,) { customQuery(id: $idArg, flag: $flag) { id } }".to_string(),
                 headers: None,
@@ -3906,7 +3906,7 @@ mod tests {
 
     #[test]
     fn input_schema_include_properties_field_even_when_operation_has_no_input_args() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query TestOp { testOp { id } }".to_string(),
                 headers: None,
@@ -3937,7 +3937,7 @@ mod tests {
 
     #[test]
     fn nullable_list_of_nullable_input_objects() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($objects: [RealInputObject]) { id }".to_string(),
                 headers: None,
@@ -4135,7 +4135,7 @@ mod tests {
 
     #[test]
     fn non_nullable_list_of_non_nullable_input_objects() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($objects: [RealInputObject!]!) { id }".to_string(),
                 headers: None,
@@ -4326,7 +4326,7 @@ mod tests {
     #[test]
     fn subscriptions() {
         assert!(
-            Operation::from_document(
+            Operation::from_raw(
                 RawOperation {
                     source_text: "subscription SubscriptionName { id }".to_string(),
                     headers: None,
@@ -4350,7 +4350,7 @@ mod tests {
     #[test]
     fn mutation_mode_none() {
         assert!(
-            Operation::from_document(
+            Operation::from_raw(
                 RawOperation {
                     source_text: "mutation MutationName { id }".to_string(),
                     headers: None,
@@ -4374,7 +4374,7 @@ mod tests {
 
     #[test]
     fn mutation_mode_explicit() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "mutation MutationName { id }".to_string(),
                 headers: None,
@@ -4508,7 +4508,7 @@ mod tests {
 
     #[test]
     fn mutation_mode_all() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "mutation MutationName { id }".to_string(),
                 headers: None,
@@ -4642,7 +4642,7 @@ mod tests {
 
     #[test]
     fn no_variables() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName { id }".to_string(),
                 headers: None,
@@ -4881,7 +4881,7 @@ mod tests {
         let explicit_desc = "My custom tool description from PQ manifest";
         let description_overrides =
             HashMap::from([("QueryName".to_string(), explicit_desc.to_string())]);
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
                 headers: None,
@@ -4909,7 +4909,7 @@ mod tests {
 
     #[test]
     fn no_explicit_description_falls_back_to_auto_generated() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query QueryName($id: ID) { id }".to_string(),
                 headers: None,
@@ -4944,7 +4944,7 @@ mod tests {
         let explicit_desc = "Override from manifest";
         let description_overrides =
             HashMap::from([("QueryName".to_string(), explicit_desc.to_string())]);
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "# Comment-based description\nquery QueryName($id: ID) { id }"
                     .to_string(),
@@ -5152,7 +5152,7 @@ mod tests {
                 ..Default::default()
             },
         )]);
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
                 headers: None,
@@ -5189,7 +5189,7 @@ mod tests {
                 ..Default::default()
             },
         )]);
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
                 headers: None,
@@ -5222,7 +5222,7 @@ mod tests {
                 ..Default::default()
             },
         )]);
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
                 headers: None,
@@ -5247,7 +5247,7 @@ mod tests {
 
     #[test]
     fn no_annotation_overrides_keeps_auto_detected() {
-        let operation = Operation::from_document(
+        let operation = Operation::from_raw(
             RawOperation {
                 source_text: "query GetId { id }".to_string(),
                 headers: None,
