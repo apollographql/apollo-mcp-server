@@ -2536,10 +2536,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
+                StreamableHttpServerConfig::default().with_stateful_mode(true),
             )
         }
 
@@ -2560,6 +2557,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .body(Body::from(body.to_string()))
@@ -2574,6 +2572,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .header("Mcp-Session-Id", session_id)
@@ -2590,6 +2589,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .header("Mcp-Session-Id", session_id)
@@ -2774,10 +2774,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
+                StreamableHttpServerConfig::default().with_stateful_mode(true),
             )
         }
 
@@ -2798,6 +2795,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .body(Body::from(body.to_string()))
@@ -2812,6 +2810,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .header("Mcp-Session-Id", session_id)
@@ -2832,6 +2831,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .header("Mcp-Session-Id", session_id)
@@ -3006,10 +3006,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 LocalSessionManager::default().into(),
-                StreamableHttpServerConfig {
-                    stateful_mode,
-                    ..Default::default()
-                },
+                StreamableHttpServerConfig::default().with_stateful_mode(stateful_mode),
             )
         }
 
@@ -3020,10 +3017,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
+                StreamableHttpServerConfig::default().with_stateful_mode(true),
             )
         }
 
@@ -3044,6 +3038,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .body(Body::from(body.to_string()))
@@ -3057,6 +3052,7 @@ mod integration_tests {
             let mut builder = Request::builder()
                 .method("GET")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Accept", "text/event-stream");
             if let Some(id) = session_id {
                 builder = builder.header("Mcp-Session-Id", id);
@@ -3071,6 +3067,7 @@ mod integration_tests {
             Request::builder()
                 .method("DELETE")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Mcp-Session-Id", session_id)
                 .body(Body::empty())
                 .unwrap()
@@ -3329,10 +3326,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig {
-                    stateful_mode: true,
-                    ..Default::default()
-                },
+                StreamableHttpServerConfig::default().with_stateful_mode(true),
             )
         }
 
@@ -3353,6 +3347,7 @@ mod integration_tests {
             Request::builder()
                 .method("POST")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .body(Body::from(body.to_string()))
@@ -3363,6 +3358,7 @@ mod integration_tests {
             Request::builder()
                 .method("DELETE")
                 .uri("/mcp")
+                .header("Host", "localhost:8000")
                 .header("Mcp-Session-Id", session_id)
                 .body(Body::empty())
                 .unwrap()
