@@ -17,9 +17,6 @@ pub struct RawOperation {
     pub(super) headers: Option<HeaderMap<HeaderValue>>,
     pub(crate) variables: Option<HashMap<String, Value>>,
     pub(super) source_path: Option<String>,
-    /// An explicit tool description provided via config.
-    /// When present, this takes priority over auto-generated descriptions.
-    pub(crate) description: Option<String>,
 }
 
 impl RawOperation {
@@ -33,8 +30,9 @@ impl RawOperation {
         disable_schema_description: bool,
         enable_output_schema: bool,
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
+        description_overrides: &HashMap<String, String>,
     ) -> Result<Option<Operation>, OperationError> {
-        Operation::from_document(
+        Operation::from_raw(
             self,
             schema,
             custom_scalars,
@@ -43,6 +41,7 @@ impl RawOperation {
             disable_schema_description,
             enable_output_schema,
             annotation_overrides,
+            description_overrides,
         )
     }
 }
@@ -54,7 +53,6 @@ impl From<(String, Option<String>)> for RawOperation {
             headers: None,
             variables: None,
             source_path,
-            description: None,
         }
     }
 }
@@ -94,7 +92,6 @@ impl TryFrom<&OperationData> for RawOperation {
             headers,
             variables,
             source_path: None,
-            description: None,
         })
     }
 }
@@ -129,9 +126,6 @@ impl serde::Serialize for RawOperation {
         }
         if let Some(ref path) = self.source_path {
             state.serialize_field("source_path", path)?;
-        }
-        if let Some(ref description) = self.description {
-            state.serialize_field("description", description)?;
         }
 
         state.end()
@@ -185,15 +179,5 @@ mod tests {
             .collect();
 
         assert_eq!(recovered.len(), 2);
-    }
-
-    #[test]
-    fn from_local_file_has_no_description() {
-        let raw_op = RawOperation::from((
-            "query GetUser { user { name } }".to_string(),
-            None::<String>,
-        ));
-
-        assert!(raw_op.description.is_none());
     }
 }

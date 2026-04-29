@@ -46,9 +46,7 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{
-        AnnotationOverrides, MutationMode, Operation, RawOperation, apply_description_override,
-    },
+    operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
 };
 use apollo_mcp_rhai::RhaiEngine;
 
@@ -116,6 +114,7 @@ impl Running {
                         self.disable_schema_description,
                         self.enable_output_schema,
                         &self.annotations,
+                        &self.descriptions,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -160,7 +159,6 @@ impl Running {
             let schema = &*self.schema.read().await;
             operations
                 .into_iter()
-                .map(|operation| apply_description_override(operation, &self.descriptions))
                 .filter_map(|operation| {
                     operation
                         .into_operation(
@@ -171,6 +169,7 @@ impl Running {
                             self.disable_schema_description,
                             self.enable_output_schema,
                             &self.annotations,
+                            &self.descriptions,
                         )
                         .unwrap_or_else(|error| {
                             error!("Invalid operation: {}", error);
@@ -840,6 +839,7 @@ mod tests {
                             false,
                             false,
                             true,
+                            &HashMap::new(),
                             &HashMap::new(),
                         )
                         .unwrap()
@@ -1925,6 +1925,7 @@ mod tests {
                     false,
                     true,
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -1969,6 +1970,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()
@@ -2265,6 +2267,7 @@ mod tests {
                     false,
                     true,
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -2317,6 +2320,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()
@@ -2390,6 +2394,7 @@ mod tests {
                     false,
                     true,
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -2403,6 +2408,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()
@@ -2487,6 +2493,7 @@ mod integration_tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()
@@ -2724,6 +2731,7 @@ mod integration_tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()

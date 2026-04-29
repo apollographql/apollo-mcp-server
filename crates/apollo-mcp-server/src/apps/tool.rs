@@ -322,6 +322,7 @@ mod tests {
                 true,
                 true,
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .unwrap(),
@@ -341,6 +342,7 @@ mod tests {
                 true,
                 true,
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .unwrap(),
@@ -357,6 +359,7 @@ mod tests {
                 true,
                 true,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
             )
             .unwrap()
@@ -505,6 +508,7 @@ mod tests {
                             false,
                             true,
                             &HashMap::new(),
+                            &HashMap::new(),
                         )
                         .unwrap()
                         .unwrap(),
@@ -566,6 +570,7 @@ mod tests {
                             false,
                             true,
                             &HashMap::new(),
+                            &HashMap::new(),
                         )
                         .unwrap()
                         .unwrap(),
@@ -618,6 +623,7 @@ mod tests {
                             false,
                             false,
                             true,
+                            &HashMap::new(),
                             &HashMap::new(),
                         )
                         .unwrap()
@@ -690,6 +696,7 @@ mod tests {
                     true,
                     true,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                 )
                 .unwrap()
