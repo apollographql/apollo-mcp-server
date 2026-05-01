@@ -96,7 +96,7 @@ MCP is a stateful protocol that requires session affinity (sticky sessions).
 
 When an MCP client initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance through the `mcp-session-id` header. You must enable session affinity in your load balancer so that all requests sharing the same `mcp-session-id` are routed to the same backend instance.
 
-Most cloud load balancers—such as AWS Application Load Balancer (ALB) and Google Cloud Load Balancer—don't support header-based session affinity. Use Nginx, HAProxy, or Envoy/Istio for proper session routing.
+Nginx, HAProxy, or Envoy/Istio support proper session routing. Most cloud load balancers—such as the AWS Application Load Balancer (ALB) and the Google Cloud Load Balancer—do not support header-based session affinity.
 
 #### Stateless mode
 

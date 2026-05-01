@@ -7,21 +7,21 @@ Apollo MCP Server follows the [Model Context Protocol error model](https://model
 
 ## Protocol vs. tool errors
 
-The MCP specification defines two error categories, each surfaced differently to the client.
+The MCP specification defines two error categories and surfaces each differently to the client.
 
-**Protocol errors** indicate that the request itself is malformed or unsupported—for example, the client called an unknown tool or sent a malformed JSON-RPC payload. Protocol errors are returned as a JSON-RPC error response with a numeric `code` and a `message`.
+Protocol errors indicate that the request itself is malformed or unsupported—for example, the client called an unknown tool or sent a malformed JSON-RPC payload. The server returns protocol errors as a JSON-RPC error response with a numeric `code` and a `message`.
 
-**Tool execution errors** indicate that the request was valid and the tool ran, but its execution failed. Tool execution errors are returned as a successful JSON-RPC response whose `result` includes `isError: true`. The MCP specification draws this distinction so that clients can pass tool failures back to the LLM for recovery, while protocol failures are surfaced to the application.
+Tool execution errors indicate that the request was valid and the tool ran, but its execution failed. The server returns tool execution errors as a successful JSON-RPC response whose `result` includes `isError: true`. The MCP specification draws this distinction so that clients can pass tool failures back to the LLM for recovery, while the application surfaces protocol failures directly.
 
 ## HTTP status codes
 
-For the Streamable HTTP transport, the HTTP status code reflects the transport layer, not the outcome of a tool call. A `2xx` status means the MCP request was accepted and a JSON-RPC response is returned; clients still need to inspect the response body to determine whether the tool succeeded. A `4xx` or `5xx` status means the request was rejected before reaching the tool handler—common causes include authentication failures (`401`), session validation failures (for an unknown or expired `mcp-session-id`), and routing issues from a load balancer or proxy.
+For the Streamable HTTP transport, the HTTP status code reflects the transport layer, not the outcome of a tool call. For MCP requests that expect a response, a `2xx` status means the MCP request was accepted and the server returns a JSON-RPC response. Clients still need to inspect the response body to determine whether the tool succeeded. A `4xx` or `5xx` status means the request was rejected before reaching the tool handler—common causes include authentication failures (`401`), session validation failures (for an unknown or expired `mcp-session-id`), and routing issues from a load balancer or proxy.
 
-A tool that fails returns HTTP `200 OK` with `isError: true` in the JSON-RPC `result`. Clients should not branch on HTTP status to detect tool failures—they need to parse the JSON-RPC response. Spec-compliant MCP client libraries handle this automatically.
+A tool that fails returns HTTP `200 OK` with `isError: true` in the JSON-RPC `result`. Your spec-compliant MCP client library parses the JSON-RPC response instead of relying on HTTP status.
 
 ## GraphQL errors as tool errors
 
-When a tool runs a GraphQL operation and the GraphQL response includes a non-null `errors` field, Apollo MCP Server returns a tool execution error with the full GraphQL response preserved in `structuredContent`:
+When a tool runs a GraphQL operation and the GraphQL response includes a non-null `errors` field, Apollo MCP Server returns a tool execution error. For clients that support structured content and servers where you enable `enable_output_schema: true`, the server returns the GraphQL response in `structuredContent`:
 
 ```json
 {
@@ -46,33 +46,35 @@ When a tool runs a GraphQL operation and the GraphQL response includes a non-nul
 }
 ```
 
-This applies to both fully failed responses (`data: null` with `errors`) and partial successes (some `data` alongside `errors`). In both cases `isError` is `true`, and clients can parse `structuredContent.errors` for the standard GraphQL error array—including any `extensions` your GraphQL server attaches, such as an error `code`.
+This applies to both fully failed responses (`data: null` with `errors`) and partial successes (some `data` alongside `errors`). In both cases `isError` is `true`, and clients can parse `structuredContent.errors` for the standard GraphQL error array—including any `extensions` your GraphQL server attaches, such as an error `code`. If `structuredContent` isn't enabled or the client negotiates an older MCP protocol version, parse the serialized GraphQL response from the text `content` instead.
 
-For successful GraphQL responses, the same envelope is returned with `isError: false` and the `data` payload in `structuredContent`.
+For successful GraphQL responses, the same envelope is returned with `isError: false` and the GraphQL response body in `structuredContent` when structured content is enabled.
+
+If an operation uses `@private` fields, Apollo MCP Server filters those private fields out of `structuredContent` and preserves the full GraphQL response in the response metadata.
 
 ## Other tool errors
 
-Some failures occur before or around the GraphQL request itself. These are also returned as tool execution errors (`isError: true`), but with a plain text message in `content` rather than a structured GraphQL error:
+Some failures occur before or around the GraphQL request itself. The server also returns these as tool execution errors (`isError: true`), but with a plain text message in `content` rather than a structured GraphQL error:
 
-- The tool input could not be parsed against the operation's input schema.
-- The MCP server could not reach the GraphQL endpoint due to a network or DNS failure.
+- Ensure the tool input matches the operation's input schema.
+- MCP server could not reach the GraphQL endpoint due to a network or DNS failure.
 - The GraphQL endpoint returned a body that is not valid JSON.
 
-## Client handling
+## Handling errors
 
-A minimal client error-handling flow looks like this:
+The recommended client error-handling flow is:
 
-1. Use a spec-compliant MCP client library, or check the JSON-RPC envelope yourself for an `error` field.
+1. Use a spec-compliant MCP client library to ensure consistent error handling.
 2. Treat a JSON-RPC `error` response as a protocol failure—the tool did not run.
-3. If the response is a successful `result`, check `result.isError`. If `true`, parse `result.structuredContent.errors` for GraphQL errors, or fall back to `result.content` for plain text failure messages.
+3. If the response is a successful `result`, check `result.isError`. If `true`, parse `result.structuredContent.errors` for GraphQL errors when structured content is present, or use `result.content` for serialized GraphQL responses and plain text failure messages.
 
 ## Monitoring
 
-Tool and operation outcomes are recorded in the [emitted metrics](/apollo-mcp-server/telemetry#emitted-metrics) with a `success` attribute. Any tool call that returns `isError: true`—including GraphQL errors—is recorded as `success=false`, so you can alert on tool failure rates without parsing response bodies.
+Apollo MCP Server records tool and operation outcomes in the [emitted metrics](/apollo-mcp-server/telemetry#emitted-metrics) with a `success` attribute. Apollo MCP Server marks any tool call that returns `isError: true`—including GraphQL errors—as `success=false`, so you can alert on tool failure rates without parsing response bodies.
 
 ## See also
 
 - [MCP specification: tool error handling](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)
-- [Telemetry](/apollo-mcp-server/telemetry) for monitoring tool and operation success metrics
-- [Deploy: load balancing and session affinity](/apollo-mcp-server/deploy#load-balancing--session-affinity) for transport-level errors caused by session routing
-- [Debugging the MCP Server](/apollo-mcp-server/debugging) for inspecting tool responses with MCP Inspector
+- [Telemetry](/apollo-mcp-server/telemetry) for monitoring tool and operation success metrics.
+- [Deploy: load balancing and session affinity](/apollo-mcp-server/deploy#load-balancing--session-affinity) for transport-level errors caused by session routing.
+- [Debugging Apollo MCP Server](/apollo-mcp-server/debugging) for inspecting tool responses with MCP Inspector
