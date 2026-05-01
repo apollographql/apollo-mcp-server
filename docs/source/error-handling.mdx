@@ -1,0 +1,78 @@
+---
+title: Error Handling
+subtitle: How Apollo MCP Server reports errors to MCP clients
+---
+
+Apollo MCP Server follows the [Model Context Protocol error model](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling), which distinguishes between protocol errors and tool execution errors. Understanding this distinction—and how Apollo MCP Server maps GraphQL errors onto it—is essential for building reliable MCP clients and for monitoring the server in production.
+
+## Protocol vs. tool errors
+
+The MCP specification defines two error categories, each surfaced differently to the client.
+
+**Protocol errors** indicate that the request itself is malformed or unsupported—for example, the client called an unknown tool or sent a malformed JSON-RPC payload. Protocol errors are returned as a JSON-RPC error response with a numeric `code` and a `message`.
+
+**Tool execution errors** indicate that the request was valid and the tool ran, but its execution failed. Tool execution errors are returned as a successful JSON-RPC response whose `result` includes `isError: true`. The MCP specification draws this distinction so that clients can pass tool failures back to the LLM for recovery, while protocol failures are surfaced to the application.
+
+## HTTP status codes
+
+For the Streamable HTTP transport, the HTTP status code reflects the transport layer, not the outcome of a tool call. A `2xx` status means the MCP request was accepted and a JSON-RPC response is returned; clients still need to inspect the response body to determine whether the tool succeeded. A `4xx` or `5xx` status means the request was rejected before reaching the tool handler—common causes include authentication failures (`401`), session validation failures (for an unknown or expired `mcp-session-id`), and routing issues from a load balancer or proxy.
+
+A tool that fails returns HTTP `200 OK` with `isError: true` in the JSON-RPC `result`. Clients should not branch on HTTP status to detect tool failures—they need to parse the JSON-RPC response. Spec-compliant MCP client libraries handle this automatically.
+
+## GraphQL errors as tool errors
+
+When a tool runs a GraphQL operation and the GraphQL response includes a non-null `errors` field, Apollo MCP Server returns a tool execution error with the full GraphQL response preserved in `structuredContent`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "isError": true,
+    "structuredContent": {
+      "data": null,
+      "errors": [
+        {
+          "message": "...",
+          "path": ["..."],
+          "extensions": { "code": "..." }
+        }
+      ]
+    },
+    "content": [
+      { "type": "text", "text": "..." }
+    ]
+  }
+}
+```
+
+This applies to both fully failed responses (`data: null` with `errors`) and partial successes (some `data` alongside `errors`). In both cases `isError` is `true`, and clients can parse `structuredContent.errors` for the standard GraphQL error array—including any `extensions` your GraphQL server attaches, such as an error `code`.
+
+For successful GraphQL responses, the same envelope is returned with `isError: false` and the `data` payload in `structuredContent`.
+
+## Other tool errors
+
+Some failures occur before or around the GraphQL request itself. These are also returned as tool execution errors (`isError: true`), but with a plain text message in `content` rather than a structured GraphQL error:
+
+- The tool input could not be parsed against the operation's input schema.
+- The MCP server could not reach the GraphQL endpoint due to a network or DNS failure.
+- The GraphQL endpoint returned a body that is not valid JSON.
+
+## Client handling
+
+A minimal client error-handling flow looks like this:
+
+1. Use a spec-compliant MCP client library, or check the JSON-RPC envelope yourself for an `error` field.
+2. Treat a JSON-RPC `error` response as a protocol failure—the tool did not run.
+3. If the response is a successful `result`, check `result.isError`. If `true`, parse `result.structuredContent.errors` for GraphQL errors, or fall back to `result.content` for plain text failure messages.
+
+## Monitoring
+
+Tool and operation outcomes are recorded in the [emitted metrics](/apollo-mcp-server/telemetry#emitted-metrics) with a `success` attribute. Any tool call that returns `isError: true`—including GraphQL errors—is recorded as `success=false`, so you can alert on tool failure rates without parsing response bodies.
+
+## See also
+
+- [MCP specification: tool error handling](https://modelcontextprotocol.io/specification/2025-11-25/server/tools#error-handling)
+- [Telemetry](/apollo-mcp-server/telemetry) for monitoring tool and operation success metrics
+- [Deploy: load balancing and session affinity](/apollo-mcp-server/deploy#load-balancing--session-affinity) for transport-level errors caused by session routing
+- [Debugging the MCP Server](/apollo-mcp-server/debugging) for inspecting tool responses with MCP Inspector
