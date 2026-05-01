@@ -2443,7 +2443,8 @@ dependencies = [
 [[package]]
 name = "jwks"
 version = "0.5.3"
-source = "git+https://github.com/chenhunghan/jwks?tag=v0.5.3#ac248c9ff85dfbeba933916938680da3c3430749"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a4cf2e9dd754c698b41139c2ec88304249ecf3dd15cabfeddd48665cdf5c0c"
 dependencies = [
  "base64",
  "jsonwebtoken",
