@@ -3,6 +3,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use opentelemetry::global;
 use opentelemetry::propagation::Extractor;
+use opentelemetry::trace::{TraceContextExt, TraceId};
 use rmcp::RoleServer;
 use rmcp::service::RequestContext;
 use tracing::Instrument;
@@ -66,14 +67,37 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
         .unwrap_or_else(tracing::Span::none)
 }
 
+/// Returns the current OpenTelemetry trace ID as a lowercase 32-character
+/// hex string, or an empty string when no trace context is active.
+///
+/// The format matches the `trace_id=<hex>` prefix emitted by the logging
+/// layer, so callers (including Rhai scripts) can correlate the values they
+/// emit with the rest of the server's output.
+pub fn current_trace_id() -> String {
+    let trace_id = tracing::Span::current()
+        .context()
+        .span()
+        .span_context()
+        .trace_id();
+    if trace_id == TraceId::INVALID {
+        String::new()
+    } else {
+        trace_id.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::{Router, body::Body, http::Request, routing::get};
     use http::HeaderName;
     use opentelemetry::Context as OtelContext;
-    use opentelemetry::trace::TraceContextExt;
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::trace::SdkTracerProvider;
     use tower::ServiceExt;
+    use tracing_opentelemetry::OpenTelemetryLayer;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::registry;
 
     #[tokio::test()]
     async fn middleware_stores_span_context_and_handler_works() {
@@ -143,6 +167,30 @@ mod tests {
         assert_eq!(extractor.get("traceparent"), Some("test-value"));
         assert_eq!(extractor.get("x-custom"), Some("custom-value"));
         assert_eq!(extractor.get("missing"), None);
+    }
+
+    #[test]
+    fn current_trace_id_is_empty_when_no_active_span() {
+        assert_eq!(current_trace_id(), "");
+    }
+
+    #[test]
+    fn current_trace_id_returns_hex_when_span_has_otel_data() {
+        let provider = SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("test");
+        let subscriber = registry().with(OpenTelemetryLayer::new(tracer));
+
+        let captured = tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("test_span");
+            let _guard = span.enter();
+            current_trace_id()
+        });
+
+        let re = regex::Regex::new(r"^[0-9a-f]{32}$").expect("valid regex");
+        assert!(
+            re.is_match(&captured),
+            "expected 32-hex trace_id, got: {captured}"
+        );
     }
 
     #[test]

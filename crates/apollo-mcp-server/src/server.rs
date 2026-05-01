@@ -21,7 +21,7 @@ use crate::host_validation::HostValidationConfig;
 use crate::operations::{AnnotationOverrides, MutationMode, OperationSource};
 use crate::server_info::ServerInfoConfig;
 
-mod states;
+pub(crate) mod states;
 
 use states::StateMachine;
 

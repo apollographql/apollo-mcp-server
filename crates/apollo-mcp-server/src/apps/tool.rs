@@ -15,6 +15,7 @@ use crate::apps::app::{AppTarget, AppTool};
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::operations::Operation;
+use crate::server::states::telemetry::current_trace_id;
 use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::App;
@@ -66,6 +67,7 @@ async fn execute_app_tool(
         headers,
         axum_parts,
         &tool.tool.name,
+        current_trace_id,
     )?;
 
     let graphql_request = graphql::Request {
