@@ -11,7 +11,6 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
-use crate::host_validation::{HostValidationState, validate_host};
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
     cors::CorsConfig,
@@ -205,13 +204,13 @@ impl Starting {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
+                let http_config = host_validation.apply_to(
+                    StreamableHttpServerConfig::default().with_stateful_mode(stateful_mode),
+                );
                 let service = StreamableHttpService::new(
                     move || Ok(running.clone()),
                     LocalSessionManager::default().into(),
-                    StreamableHttpServerConfig {
-                        stateful_mode,
-                        ..Default::default()
-                    },
+                    http_config,
                 );
                 let mut router = axum::Router::new().nest_service("/mcp", service);
                 if let Some(auth) = auth {
@@ -226,15 +225,7 @@ impl Starting {
                     // include trace context as header into the response
                     .layer(OtelInResponseLayer)
                     // start OpenTelemetry trace on incoming request
-                    .layer(axum::middleware::from_fn(otel_context_middleware))
-                    // Host header validation to prevent DNS rebinding attacks
-                    .layer(axum::middleware::from_fn_with_state(
-                        HostValidationState {
-                            config: Arc::new(host_validation),
-                            server_port: port,
-                        },
-                        validate_host,
-                    ));
+                    .layer(axum::middleware::from_fn(otel_context_middleware));
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
