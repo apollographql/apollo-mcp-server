@@ -210,19 +210,6 @@ You can also use the guided OAuth flow in MCP Inspector to test authentication. 
 1. Paste the code in the next step **Request Authorization and acquire authorization code** then click **Continue**.
 1. Click **Continue** to start the **Token Request** step. This completes the authentication flow.
 
-Before continuing, you need to set up the Auth0 client to accept an additional callback URL.
-
-1. In your Auth0 dashboard, navigate to **Applications**.
-1. Select the client for **MCP Inspector**. If you have multiple entries, find the `client_id` value from the MCP Inspector.
-1. In the client's **Settings** -> **Application URIs**, copy and paste the existing callback URL. Then, remove the `/debug` suffix. Make sure the URLs are comma-separated. It should look something like this:
-
-   ```txt
-   http://localhost:6274/oauth/callback/debug,
-   http://localhost:6274/oauth/callback
-   ```
-
-1. Back in MCP Inspector, click **Connect**. You are now authenticated and can run tools as usual.
-
 </ExpansionPanel>
 
 ### Step 5: Make requests with an MCP Client (Goose)
