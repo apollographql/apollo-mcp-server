@@ -21,12 +21,13 @@ fn on_execute_graphql_operation(ctx) {
 
 The `ctx` parameter provides these properties:
 
-| Property           | Type        | Access     | Description                                                                                     |
-| ------------------ | ----------- | ---------- | ----------------------------------------------------------------------------------------------- |
-| `endpoint`         | `String`    | read/write | The URL of the GraphQL endpoint for the request.                                                |
-| `headers`          | `HeaderMap` | read/write | The HTTP headers for the request.                                                               |
-| `incoming_request` | `HttpParts` | read-only  | The original HTTP request received by the MCP server. Only available when using HTTP transport. |
-| `tool_name`        | `String`    | read-only  | The name of the MCP tool that triggered this GraphQL operation.                                 |
+| Property           | Type        | Access     | Description                                                                                                                              |
+| ------------------ | ----------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `endpoint`         | `String`    | read/write | The URL of the GraphQL endpoint for the request.                                                                                         |
+| `headers`          | `HeaderMap` | read/write | The HTTP headers for the request.                                                                                                        |
+| `incoming_request` | `HttpParts` | read-only  | The original HTTP request received by the MCP server. Only available when using HTTP transport.                                          |
+| `tool_name`        | `String`    | read-only  | The name of the MCP tool that triggered this GraphQL operation.                                                                          |
+| `trace_id`         | `String`    | read-only  | The current OpenTelemetry trace ID as a 32-character hex string, or an empty string when no trace context is active. |
 
 ### Working with headers
 
@@ -85,6 +86,18 @@ fn on_execute_graphql_operation(ctx) {
     }
 }
 ```
+
+### Example: Emit structured logs with the current trace ID
+
+Use `ctx.trace_id` to include the current OpenTelemetry trace ID as a discrete field in your structured log lines so log aggregation platforms can correlate logs with distributed traces:
+
+```rhai
+fn on_execute_graphql_operation(ctx) {
+    print(`[MCP Request] trace_id=${ctx.trace_id} tool=${ctx.tool_name}`);
+}
+```
+
+`ctx.trace_id` is a 32-character lowercase hex string when an OpenTelemetry trace context is active, and an empty string otherwise (for example, when the MCP client did not propagate a `traceparent` header and tracing is not configured server-side). The same trace ID is also prefixed onto server log lines, so values emitted from Rhai can be correlated with the rest of the server's output.
 
 ## Error handling with throw
 
