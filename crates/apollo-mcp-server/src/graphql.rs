@@ -55,7 +55,7 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
-    #[tracing::instrument(skip(self, request))]
+    #[tracing::instrument(skip(self, request), fields(apollo.mcp.graphql_query = tracing::field::Empty, apollo.mcp.graphql_response = tracing::field::Empty))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
@@ -84,6 +84,7 @@ pub trait Executable {
             }
         };
 
+        tracing::Span::current().record("apollo.mcp.graphql_query", query.as_str());
         request_body.insert(String::from("query"), Value::String(query));
         request_body.insert(
             String::from("extensions"),
@@ -114,6 +115,10 @@ pub trait Executable {
 
         let result = match response.json::<Value>().await {
             Ok(json) => {
+                if let Ok(s) = serde_json::to_string(&json) {
+                    tracing::Span::current().record("apollo.mcp.graphql_response", s.as_str());
+                }
+
                 let is_error = Some(
                     json.get("errors")
                         .filter(|value| !matches!(value, Value::Null))

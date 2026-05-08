@@ -7,6 +7,10 @@ success = "Sucess flag indicator"
 raw_operation = "Graphql operation text and metadata used for Tool generation"
 client_name = "The client name that initializes with the MCP Server"
 client_version = "The client version that initializes with the MCP Server"
+tool_arguments = "Tool call input arguments as a JSON string"
+tool_result = "Tool call output result as a JSON string"
+graphql_query = "GraphQL query string sent to the endpoint"
+graphql_response = "GraphQL response JSON received from the endpoint"
 
 [metrics.apollo.mcp]
 "initialize.count" = "Number of times initialize has been called"

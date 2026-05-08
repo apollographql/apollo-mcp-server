@@ -642,17 +642,33 @@ impl ServerHandler for Running {
         Ok(self.get_info())
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone()))]
+    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        let span = tracing::Span::current();
+        if let Some(args) = &request.arguments
+            && let Ok(json) = serde_json::to_string(args)
+        {
+            span.record("apollo.mcp.tool_arguments", json.as_str());
+        }
+
         let peer_info = context.peer.peer_info();
         let protocol_version = peer_info.map(|info| &info.protocol_version);
 
-        self.call_tool_impl(request, &context.extensions, protocol_version)
-            .await
+        let result = self
+            .call_tool_impl(request, &context.extensions, protocol_version)
+            .await;
+
+        if let Ok(r) = &result
+            && let Ok(json) = serde_json::to_string(r)
+        {
+            span.record("apollo.mcp.tool_result", json.as_str());
+        }
+
+        result
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
