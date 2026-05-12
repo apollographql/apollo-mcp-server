@@ -662,10 +662,14 @@ impl ServerHandler for Running {
             .call_tool_impl(request, &context.extensions, protocol_version)
             .await;
 
-        if let Ok(r) = &result
-            && let Ok(json) = serde_json::to_string(r)
-        {
-            span.record("apollo.mcp.tool_result", json.as_str());
+        // Strip meta before serializing: _meta.structuredContent holds the unfiltered
+        // @private payload and must not be exported to the span.
+        if let Ok(r) = &result {
+            let mut stripped = r.clone();
+            stripped.meta = None;
+            if let Ok(json) = serde_json::to_string(&stripped) {
+                span.record("apollo.mcp.tool_result", json.as_str());
+            }
         }
 
         result

@@ -115,10 +115,6 @@ pub trait Executable {
 
         let result = match response.json::<Value>().await {
             Ok(json) => {
-                if let Ok(s) = serde_json::to_string(&json) {
-                    tracing::Span::current().record("apollo.mcp.graphql_response", s.as_str());
-                }
-
                 let is_error = Some(
                     json.get("errors")
                         .filter(|value| !matches!(value, Value::Null))
@@ -136,6 +132,11 @@ pub trait Executable {
                 } else {
                     (json, None)
                 };
+
+                // Record the filtered view so @private fields never appear in spans.
+                if let Ok(s) = serde_json::to_string(&structured_content) {
+                    tracing::Span::current().record("apollo.mcp.graphql_response", s.as_str());
+                }
 
                 let result = if is_error == Some(true) {
                     CallToolResult::structured_error(structured_content)
