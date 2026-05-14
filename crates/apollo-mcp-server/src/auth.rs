@@ -139,6 +139,7 @@ pub struct Config {
     /// Not `Vec<Url>`: `Url::parse` appends `/` to bare-authority inputs,
     /// breaking issuer string-matching in clients.
     #[serde(deserialize_with = "deserialize_auth_servers")]
+    #[schemars(with = "Vec<Url>")]
     pub servers: Vec<String>,
 
     /// List of accepted audiences for the OAuth tokens
