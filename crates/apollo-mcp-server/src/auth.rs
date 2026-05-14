@@ -118,12 +118,29 @@ where
     Ok(headers)
 }
 
+fn deserialize_auth_servers<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let servers: Vec<String> = Vec::deserialize(d)?;
+    for s in &servers {
+        Url::parse(s)
+            .map_err(|e| D::Error::custom(format!("invalid auth server URL {s:?}: {e}")))?;
+    }
+    Ok(servers)
+}
+
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
-    /// List of upstream OAuth servers to delegate auth
-    pub servers: Vec<Url>,
+    /// List of upstream OAuth servers to delegate auth.
+    /// Not `Vec<Url>`: `Url::parse` appends `/` to bare-authority inputs,
+    /// breaking issuer string-matching in clients.
+    #[serde(deserialize_with = "deserialize_auth_servers")]
+    #[schemars(with = "Vec<Url>")]
+    pub servers: Vec<String>,
 
     /// List of accepted audiences for the OAuth tokens
     #[serde(default)]
@@ -253,11 +270,13 @@ impl Config {
         required_scopes: HashMap<String, Vec<String>>,
     ) -> Result<Router, TlsConfigError> {
         // Validate server URLs have hosts (fail fast on config errors)
+        #[allow(clippy::expect_used)] // parseability validated at deserialize
         for (i, server) in self.servers.iter().enumerate() {
-            if server.host_str().is_none() {
+            let parsed = Url::parse(server).expect("validated by deserialize_auth_servers");
+            if parsed.host_str().is_none() {
                 return Err(TlsConfigError::ServerUrlMissingHost {
                     index: i,
-                    url: server.to_string(),
+                    url: server.clone(),
                 });
             }
         }
@@ -457,10 +476,16 @@ async fn oauth_validate(
         .discovery_timeout
         .unwrap_or(Duration::from_secs(5));
 
+    #[allow(clippy::expect_used)] // parseability validated at deserialize
+    let auth_servers: Vec<Url> = auth_config
+        .servers
+        .iter()
+        .map(|s| Url::parse(s).expect("validated by deserialize_auth_servers"))
+        .collect();
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
         auth_config.allow_any_audience,
-        &auth_config.servers,
+        &auth_servers,
         &auth_state.client,
         discovery_timeout,
     );
@@ -553,7 +578,7 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            servers: vec![Url::parse("http://localhost:1234").unwrap()],
+            servers: vec!["http://localhost:1234".to_string()],
             audiences: vec!["test-audience".to_string()],
             allow_any_audience: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
@@ -773,7 +798,7 @@ mod tests {
         fn rejects_server_url_without_host() {
             let mut config = test_config();
             // file:// URLs have no host
-            config.servers = vec![Url::parse("file:///some/path").unwrap()];
+            config.servers = vec!["file:///some/path".to_string()];
 
             let router = Router::new();
             let err = config
@@ -1035,6 +1060,28 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let resource_url = Url::parse(resource).unwrap();
             let result = build_resource_metadata_url(&resource_url);
             assert_eq!(result.as_str(), expected);
+        }
+    }
+
+    mod servers_field {
+        use super::*;
+
+        #[test]
+        fn rejects_unparseable_server_url_at_load() {
+            let yaml = r#"
+                servers:
+                  - "not a url"
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let err = serde_yaml::from_str::<Config>(yaml).unwrap_err();
+            assert!(
+                err.to_string().contains("invalid auth server URL"),
+                "got: {err}"
+            );
         }
     }
 
