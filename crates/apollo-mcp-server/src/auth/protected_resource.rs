@@ -10,8 +10,8 @@ pub(super) struct ProtectedResource {
     /// The URL of the resource
     resource: Url,
 
-    /// List of authorization servers protecting this resource
-    authorization_servers: Vec<Url>,
+    /// List of authorization servers protecting this resource.
+    authorization_servers: Vec<String>,
 
     /// List of authentication methods allowed
     bearer_methods_supported: Vec<String>,
@@ -33,5 +33,64 @@ impl From<Config> for ProtectedResource {
             scopes_supported: value.scopes,
             resource_documentation: value.resource_documentation,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::bare_authority_no_slash("https://auth.example.com")]
+    #[case::bare_authority_with_slash("https://auth.example.com/")]
+    #[case::path_no_slash("https://auth.example.com/realms/main")]
+    #[case::path_with_slash("https://auth.example.com/realms/main/")]
+    fn authorization_servers_preserves_raw_input(#[case] raw: &str) {
+        let yaml = format!(
+            r#"
+                servers:
+                  - "{raw}"
+                audiences:
+                  - test-audience
+                resource: https://mcp.example.com/mcp
+                scopes:
+                  - read
+            "#
+        );
+
+        let config: Config = serde_yaml::from_str(&yaml).expect("config parses");
+        let metadata = ProtectedResource::from(config);
+        let json = serde_json::to_value(&metadata).expect("metadata serializes");
+
+        assert_eq!(json["authorization_servers"], serde_json::json!([raw]));
+    }
+
+    #[test]
+    fn multiple_servers_all_preserved() {
+        let yaml = r#"
+            servers:
+              - https://issuer-a.example.com
+              - https://issuer-b.example.com/
+              - https://issuer-c.example.com/realms/main
+            audiences:
+              - test-audience
+            resource: https://mcp.example.com/mcp
+            scopes:
+              - read
+        "#;
+
+        let config: Config = serde_yaml::from_str(yaml).expect("config parses");
+        let metadata = ProtectedResource::from(config);
+        let json = serde_json::to_value(&metadata).expect("metadata serializes");
+
+        assert_eq!(
+            json["authorization_servers"],
+            serde_json::json!([
+                "https://issuer-a.example.com",
+                "https://issuer-b.example.com/",
+                "https://issuer-c.example.com/realms/main",
+            ])
+        );
     }
 }
