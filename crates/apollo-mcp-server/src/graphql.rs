@@ -55,7 +55,7 @@ pub trait Executable {
     fn headers(&self, default_headers: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue>;
 
     /// Execute as a GraphQL operation using the endpoint and headers
-    #[tracing::instrument(skip(self, request))]
+    #[tracing::instrument(skip(self, request), fields(apollo.mcp.graphql_query = tracing::field::Empty, apollo.mcp.graphql_response = tracing::field::Empty))]
     async fn execute(&self, request: Request<'_>) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
@@ -84,6 +84,7 @@ pub trait Executable {
             }
         };
 
+        tracing::Span::current().record("apollo.mcp.graphql_query", query.as_str());
         request_body.insert(String::from("query"), Value::String(query));
         request_body.insert(
             String::from("extensions"),
@@ -132,6 +133,11 @@ pub trait Executable {
                     (json, None)
                 };
 
+                // Record the filtered view so @private fields never appear in spans.
+                if let Ok(s) = serde_json::to_string(&structured_content) {
+                    tracing::Span::current().record("apollo.mcp.graphql_response", s.as_str());
+                }
+
                 let result = if is_error == Some(true) {
                     CallToolResult::structured_error(structured_content)
                 } else {
@@ -173,6 +179,7 @@ pub trait Executable {
 mod test {
     use crate::generated::telemetry::TelemetryMetric;
     use crate::graphql::{Executable, OperationDetails, Request, ValidationError};
+    use crate::operations::private_fields::process_private_directives;
     use http::{HeaderMap, HeaderValue};
     use opentelemetry::global;
     use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
@@ -181,7 +188,42 @@ mod test {
     };
     use rmcp::model::RawContent;
     use serde_json::{Map, Value, json};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+    use tracing::Subscriber;
+    use tracing::field::{Field, Visit};
+    use tracing::span::{Id, Record};
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
     use url::Url;
+
+    type CapturedFields = Arc<Mutex<HashMap<String, String>>>;
+
+    struct CaptureVisitor<'a>(&'a Mutex<HashMap<String, String>>);
+    impl Visit for CaptureVisitor<'_> {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(field.name().to_string(), value.to_string());
+        }
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(field.name().to_string(), format!("{value:?}"));
+        }
+    }
+
+    struct CaptureLayer(CapturedFields);
+    impl<S> Layer<S> for CaptureLayer
+    where
+        S: Subscriber + for<'a> LookupSpan<'a>,
+    {
+        fn on_record(&self, _id: &Id, values: &Record<'_>, _ctx: Context<'_, S>) {
+            values.record(&mut CaptureVisitor(&self.0));
+        }
+    }
 
     struct TestExecutable;
 
@@ -373,6 +415,63 @@ mod test {
 
         // then
         assert!(result.is_error == Some(true));
+    }
+
+    #[tokio::test]
+    async fn span_does_not_record_private_fields_in_graphql_response() {
+        use crate::operations::private_fields::PrivateFieldTree;
+
+        struct PrivateExecutable(PrivateFieldTree);
+        impl Executable for PrivateExecutable {
+            fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
+                Ok(OperationDetails {
+                    query: "query Q { secret }".to_string(),
+                    operation_name: Some("Q".to_string()),
+                    private_fields: Some(self.0.clone()),
+                })
+            }
+            fn variables(&self, _input: Value) -> Result<Value, ValidationError> {
+                Ok(json!({}))
+            }
+            fn headers(&self, _: &HeaderMap<HeaderValue>) -> HeaderMap<HeaderValue> {
+                HeaderMap::new()
+            }
+        }
+
+        let (_stripped, tree) = process_private_directives("query Q { secret @private }")
+            .expect("query should have @private fields");
+
+        let mut server = mockito::Server::new_async().await;
+        let url = Url::parse(server.url().as_str()).unwrap();
+        server
+            .mock("POST", "/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "data": { "secret": "supersecret-pii" } }).to_string())
+            .create_async()
+            .await;
+
+        let captured: CapturedFields = Arc::new(Mutex::new(HashMap::new()));
+        let subscriber = tracing_subscriber::registry().with(CaptureLayer(captured.clone()));
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        PrivateExecutable(tree)
+            .execute(Request {
+                input: json!({}),
+                endpoint: &url,
+                headers: &HeaderMap::new(),
+            })
+            .await
+            .unwrap();
+
+        let fields = captured.lock().unwrap();
+        let response = fields
+            .get("apollo.mcp.graphql_response")
+            .expect("apollo.mcp.graphql_response should be recorded");
+        assert!(
+            !response.contains("supersecret-pii"),
+            "span leaked @private value: {response}"
+        );
     }
 
     #[tokio::test]

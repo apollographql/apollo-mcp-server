@@ -29,6 +29,18 @@ impl TelemetryAttribute {
             TelemetryAttribute::ClientVersion => {
                 Key::from_static_str(TelemetryAttribute::ClientVersion.as_str())
             }
+            TelemetryAttribute::ToolArguments => {
+                Key::from_static_str(TelemetryAttribute::ToolArguments.as_str())
+            }
+            TelemetryAttribute::ToolResult => {
+                Key::from_static_str(TelemetryAttribute::ToolResult.as_str())
+            }
+            TelemetryAttribute::GraphqlQuery => {
+                Key::from_static_str(TelemetryAttribute::GraphqlQuery.as_str())
+            }
+            TelemetryAttribute::GraphqlResponse => {
+                Key::from_static_str(TelemetryAttribute::GraphqlResponse.as_str())
+            }
         }
     }
 
