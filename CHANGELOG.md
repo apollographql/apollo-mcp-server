@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.14.0 (2026-05-15)
+
+### Features
+
+#### Resolve signing algorithm when a JWK omits `alg`
+
+Apollo MCP Server now infers the signing algorithm from the authorization server's discovery metadata when a JWK omits the `alg` field, enabling support for providers like Azure AD B2C, Microsoft Entra ID, and AWS Cognito.
+
+#### Capture tool call arguments and results in OpenTelemetry spans
+
+Tool execution spans now include `apollo.mcp.tool_arguments` and `apollo.mcp.tool_result` attributes on the `call_tool` span, and `apollo.mcp.graphql_query` and `apollo.mcp.graphql_response` on the child `execute` span. This makes it possible to correlate traces in observability dashboards with the actual queries and data that triggered them.
+
+#### Expose `trace_id` to the `on_execute_graphql_operation` Rhai hook
+
+The `on_execute_graphql_operation` Rhai hook now exposes a read-only `ctx.trace_id` property, allowing scripts to access the current OpenTelemetry trace ID for custom structured logging. The value is a 32-character lowercase hex string when an OpenTelemetry trace context is active and an empty string otherwise, matching the format already used for the `trace_id=<hex>` prefix on server log lines. This makes it possible to emit log lines from Rhai with `trace_id` as a discrete field that log aggregators (Splunk, ELK, etc.) can index for correlation with distributed traces.
+
+### Fixes
+
+#### Bump `rmcp` to 1.6 to address DNS rebinding advisory
+
+Updates the `rmcp` Streamable HTTP server transport to 1.6.0, which patches [GHSA-89vp-x53w-74fx](https://github.com/modelcontextprotocol/rust-sdk/security/advisories/GHSA-89vp-x53w-74fx) (CVE-2026-42559). Host header validation is now performed inside `rmcp` itself, with a `tracing::warn!` event on each rejection so log-based alerting on DNS rebinding attempts continues to work; the server's existing `transport.streamable_http.host_validation` configuration is unchanged.
+
+#### Preserve raw authorization server URLs in protected-resource metadata
+
+Apollo MCP Server no longer normalizes the `transport.auth.servers` entries when it sets the `authorization_servers` field in `/.well-known/oauth-protected-resource`. Before, a scheme-authority-only configuration value, like `https://auth.example.com`, was re-parsed through `url::Url`, which added a trailing `/` to the empty path. This normalized form ended up in the metadata and caused mismatches in issuer claims for strict OAuth clients that compare `authorization_servers` with the auth server's discovery `issuer`. Now, server URLs are passed through exactly as they are, so users need to make sure each entry matches their auth server's `issuer` precisely.
+
 ## 1.13.0 (2026-04-22)
 
 ### Features
