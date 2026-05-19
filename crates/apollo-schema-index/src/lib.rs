@@ -21,7 +21,6 @@
 
 use crate::path::PathNode;
 use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
-use apollo_compiler::collections::IndexMap;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Schema};
@@ -30,7 +29,7 @@ use error::{IndexingError, SearchError};
 use heck::ToSnakeCase;
 use itertools::Itertools;
 use path::Scored;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
 use std::time::Instant;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
@@ -42,7 +41,7 @@ use tantivy::{
     Index, TantivyDocument, Term,
     schema::{STORED, Schema as TantivySchema},
 };
-use tracing::{Level, debug, error, info, warn};
+use tracing::{debug, error, info};
 use traverse::SchemaExt;
 
 pub mod error;
@@ -65,7 +64,6 @@ pub const DESCRIPTION_FIELD: &str = "description";
 pub const FIELDS_FIELD: &str = "fields";
 pub const FIELD_NAMES_FIELD: &str = "field_names";
 pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
-pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
 /// Discriminator: "type" for per-type docs, "field" for per-root-field docs.
 pub const DOC_KIND_FIELD: &str = "doc_kind";
 /// Stored metadata for field docs: parent operation type name (Query/Mutation/Subscription).
@@ -106,31 +104,12 @@ impl From<OperationType> for AstOperationType {
     }
 }
 
-pub struct Options {
-    /// The maximum number of matching schema types to include in the results
-    pub max_type_matches: usize,
-
-    /// The maximum number of paths to root to include for each matching schema type
-    pub max_paths_per_type: usize,
-
-    /// The boost factor applied to shorter paths to root (0.0 for no boost, 1.0 for 100% boost)
-    pub short_path_boost_factor: f32,
-
-    /// The percentage of the score of each parent type added to the overall score of the path
-    /// to root 0.0 for 0%, 1.0 for 100%)
-    pub parent_match_boost_factor: f32,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            max_type_matches: 10,
-            max_paths_per_type: 3,
-            short_path_boost_factor: 0.5,
-            parent_match_boost_factor: 0.2,
-        }
-    }
-}
+/// Search options. Currently empty — kept as a struct for API stability so future
+/// tuning knobs (e.g. score-ratio cutoff override) can be added without breaking
+/// callers. Previously contained path-scoring knobs that are no longer needed
+/// after the BFS path-builder was removed.
+#[derive(Default)]
+pub struct Options;
 
 /// Splits camelCase and PascalCase identifiers in the given text into space-separated words.
 ///
@@ -193,7 +172,6 @@ pub struct SchemaIndex {
     description_field: Field,
     fields_field: Field,
     field_names_field: Field,
-    referencing_types_field: Field,
     doc_kind_field: Field,
     field_parent_type_field: Field,
     field_name_field: Field,
@@ -272,8 +250,6 @@ impl SchemaIndex {
                 .set_indexing_options(TextFieldIndexing::default().set_tokenizer("raw"))
                 .set_stored(),
         );
-        let referencing_types_field = index_schema.add_text_field(REFERENCING_TYPES_FIELD, STORED);
-
         // Stored-only metadata fields for per-root-field docs. None of these are
         // indexed for search — they're consulted only after a doc match to
         // discriminate type-docs vs field-docs and to reconstruct the field path.
@@ -292,39 +268,16 @@ impl SchemaIndex {
             .tokenizers()
             .register("en_stem", text_analyzer.clone());
 
-        // Map every type in the schema to the types referencing it
+        // Walk the schema from the supplied root operation types and collect the
+        // set of reachable type names. Each will get its own type doc below.
         let mut index_writer = index.writer(index_memory_bytes)?;
-        let mut type_references: HashMap<String, Vec<String>> = HashMap::default();
-        for (extended_type, path) in schema.traverse(root_types) {
-            let entry = type_references
-                .entry(extended_type.name().to_string())
-                .or_default();
-            if let Some((ref_type, field_name, field_args)) = path.referencing_type() {
-                if let Some(field_name) = field_name {
-                    entry.push(format!(
-                        "{}#{}{}",
-                        ref_type,
-                        field_name.as_str(),
-                        if field_args.is_empty() {
-                            "".to_string()
-                        } else {
-                            format!("#{}", field_args.iter().join(","))
-                        }
-                    ));
-                } else {
-                    entry.push(ref_type.to_string())
-                }
-            }
+        let mut reachable_types: HashSet<String> = HashSet::new();
+        for (extended_type, _path) in schema.traverse(root_types) {
+            reachable_types.insert(extended_type.name().to_string());
         }
 
-        if tracing::enabled!(Level::DEBUG) {
-            for (type_name, references) in &type_references {
-                debug!("Type '{}' is referenced by: {:?}", type_name, references);
-            }
-        }
-
-        // Build an index of each type
-        for (type_name, references) in &type_references {
+        // Build an index of each reachable type
+        for type_name in &reachable_types {
             let type_name = NamedType::new_unchecked(type_name.as_str());
             let extended_type = if let Some(extended_type) = schema.types.get(&type_name) {
                 extended_type
@@ -348,9 +301,6 @@ impl SchemaIndex {
                     .unwrap_or_default(),
             );
 
-            for ref_type in references {
-                doc.add_text(referencing_types_field, ref_type);
-            }
             let fields = match extended_type {
                 ExtendedType::Object(obj) => obj
                     .fields
@@ -501,7 +451,7 @@ impl SchemaIndex {
         let elapsed = start_time.elapsed();
         info!(
             "Indexed {} types and {} root operation fields in {:.2?}",
-            type_references.len(),
+            reachable_types.len(),
             field_doc_count,
             elapsed
         );
@@ -514,7 +464,6 @@ impl SchemaIndex {
             description_field,
             fields_field,
             field_names_field,
-            referencing_types_field,
             doc_kind_field,
             field_parent_type_field,
             field_name_field,
@@ -527,23 +476,20 @@ impl SchemaIndex {
     pub fn search<I>(
         &self,
         terms: I,
-        options: Options,
+        _options: Options,
     ) -> Result<Vec<Scored<PathNode>>, SearchError>
     where
         I: IntoIterator<Item = String>,
     {
         let searcher = self.inner.reader()?.searcher();
         let mut root_paths: Vec<Scored<PathNode>> = Default::default();
-        let mut scores: IndexMap<String, f32> = Default::default();
 
         let query = self.query(terms);
         debug!("Index query: {:?}", query);
 
-        // Get the top GraphQL schema types matching the search terms
+        // Get the top matching documents (mix of type-docs and field-docs).
         let top_docs = searcher.search(&query, &TopDocs::with_limit(100))?;
 
-        // Separate type-doc matches (go through the BFS path-builder below) from
-        // field-doc matches (build their path directly from stored metadata).
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
             let kind = doc
@@ -552,6 +498,8 @@ impl SchemaIndex {
                 .unwrap_or("type");
 
             if kind == "field" {
+                // Field-doc: reconstruct the two-node path
+                // (parent -> field(args) -> return_type) from stored metadata.
                 let parent = doc
                     .get_first(self.field_parent_type_field)
                     .and_then(|v| v.as_str());
@@ -599,6 +547,8 @@ impl SchemaIndex {
                 continue;
             }
 
+            // Type-doc: emit a single-node path. Tree-shaking will retain just
+            // this type at the configured leaf depth.
             if let Some(type_name) = doc
                 .get_first(self.raw_type_name_field)
                 .and_then(|v| v.as_str())
@@ -607,98 +557,15 @@ impl SchemaIndex {
                     "Explanation for {type_name}: {:?}",
                     query.explain(&searcher, doc_address)?
                 );
-                scores.insert(type_name.to_string(), score);
+                let path = PathNode::new(NamedType::new_unchecked(type_name));
+                root_paths.push(Scored::new(path, score));
             } else {
                 // This should never happen, since every type doc has this field defined
                 error!("Doc address {doc_address:?} missing raw type name field");
             }
         }
 
-        // For the top M types, compute the top N root paths to that type
-        for (type_name, score) in scores.iter().take(options.max_type_matches) {
-            let mut root_path_score = *score;
-
-            // Build up root paths by looking up referencing types
-            let mut visited = HashSet::new();
-            let mut queue = VecDeque::new();
-            let mut root_path_count = 0usize;
-
-            // Start with the current type as a Path
-            queue.push_back(PathNode::new(NamedType::new_unchecked(type_name)));
-
-            while let Some(current_path) = queue.pop_front() {
-                if root_path_count >= options.max_paths_per_type {
-                    break;
-                }
-                let current_type = current_path.node_type.to_string();
-                visited.insert(current_type.clone());
-
-                // Create a query to find the document for the current type
-                let term = Term::from_field_text(self.raw_type_name_field, current_type.as_str());
-                let type_query = TermQuery::new(term, IndexRecordOption::Basic);
-                let type_search = searcher.search(&type_query, &TopDocs::with_limit(1))?;
-                let current_type_doc: Option<TantivyDocument> = type_search
-                    .first()
-                    .and_then(|(_, type_doc_address)| searcher.doc(*type_doc_address).ok());
-                let referencing_types: Vec<String> = if let Some(type_doc) = current_type_doc {
-                    type_doc
-                        .get_all(self.referencing_types_field)
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                } else {
-                    // This should never happen since the type was found in the schema traversal
-                    warn!(type_name = current_type, "Type not found");
-                    Vec::new()
-                };
-
-                // The score of each type in the root path contributes to the total score of the path
-                if let Some(score) = scores.get(&current_type) {
-                    root_path_score += options.parent_match_boost_factor * *score;
-                }
-
-                if referencing_types.is_empty() {
-                    // This is a root type (no referencing types)
-                    let root_path = current_path.clone();
-                    root_paths.push(Scored::new(root_path, root_path_score));
-                    root_path_count += 1;
-                } else {
-                    // Continue traversing up to a root type
-                    for ref_type in referencing_types {
-                        let (type_name, field_name, field_args) =
-                            if let Some((type_name, field_name)) = ref_type.split_once('#') {
-                                if let Some((field_name, field_args)) = field_name.split_once('#') {
-                                    (
-                                        type_name.to_string(),
-                                        Some(Name::new_unchecked(field_name)),
-                                        field_args
-                                            .split(',')
-                                            .map(|arg| Name::new_unchecked(arg.trim()))
-                                            .collect::<Vec<_>>(),
-                                    )
-                                } else {
-                                    (
-                                        type_name.to_string(),
-                                        Some(Name::new_unchecked(field_name)),
-                                        vec![],
-                                    )
-                                }
-                            } else {
-                                (ref_type.clone(), None, vec![])
-                            };
-                        if !visited.contains(&ref_type) {
-                            queue.push_back(current_path.clone().add_parent(
-                                field_name,
-                                field_args,
-                                NamedType::new_unchecked(&type_name),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        let mut sorted: Vec<_> = self
-            .boost_shorter_paths(root_paths, options.short_path_boost_factor)
+        let mut sorted: Vec<_> = root_paths
             .into_iter()
             .sorted_by(|a, b| {
                 b.score()
@@ -716,44 +583,6 @@ impl SchemaIndex {
         Ok(sorted)
     }
 
-    /// Apply a boost factor to shorter paths
-    fn boost_shorter_paths(
-        &self,
-        scored_paths: Vec<Scored<PathNode>>,
-        boost_factor: f32,
-    ) -> Vec<Scored<PathNode>> {
-        if scored_paths.is_empty() || boost_factor == 0f32 {
-            return scored_paths;
-        }
-
-        // Calculate the range of path lengths
-        let path_lengths: Vec<usize> = scored_paths
-            .iter()
-            .map(|scored| scored.inner.len())
-            .collect();
-        let min_length = *path_lengths.iter().min().unwrap_or(&1);
-        let max_length = *path_lengths.iter().max().unwrap_or(&1);
-
-        // Only apply boost if there's a range in path lengths
-        if max_length <= min_length {
-            return scored_paths;
-        }
-
-        let length_range = (max_length - min_length) as f32;
-
-        // Apply normalized boost to each path
-        scored_paths
-            .into_iter()
-            .map(|scored_path| {
-                let path_length = scored_path.inner.len();
-                let normalized_length = (path_length - min_length) as f32 / length_range;
-                // Boost shorter paths: 1.0 for shortest, 0.0 for longest
-                let length_boost = 1.0 - normalized_length;
-                let boosted_score = scored_path.score() * (1.0 + boost_factor * length_boost);
-                Scored::new(scored_path.inner, boosted_score)
-            })
-            .collect()
-    }
 
     /// Create the query used to search for a given set of terms.
     fn query<I>(&self, terms: I) -> impl Query
