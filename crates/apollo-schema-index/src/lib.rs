@@ -33,9 +33,11 @@ use path::Scored;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tantivy::collector::TopDocs;
-use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
+use tantivy::query::{BooleanQuery, BoostQuery, Occur, PhraseQuery, Query, TermQuery};
 use tantivy::schema::{Field, IndexRecordOption, TextFieldIndexing, TextOptions, Value};
-use tantivy::tokenizer::{Language, LowerCaser, SimpleTokenizer, Stemmer, TextAnalyzer};
+use tantivy::tokenizer::{
+    Language, LowerCaser, SimpleTokenizer, Stemmer, StopWordFilter, TextAnalyzer,
+};
 use tantivy::{
     Index, TantivyDocument, Term,
     schema::{STORED, Schema as TantivySchema},
@@ -47,11 +49,33 @@ pub mod error;
 mod path;
 mod traverse;
 
+/// English stop words filtered from the analyzer pipeline. Matches the list used
+/// by Tantivy's bundled `StopWordFilter::new(Language::English)`, which is itself
+/// the Apache Lucene `EnglishAnalyzer` set. Filtering these at index AND query
+/// time prevents low-information tokens like "by" from polluting matches (e.g.
+/// "day by day" no longer matches a search for "userByEmail").
+const ENGLISH_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "if", "in", "into", "is", "it",
+    "no", "not", "of", "on", "or", "such", "that", "the", "their", "then", "there", "these",
+    "they", "this", "to", "was", "will", "with",
+];
+
 pub const TYPE_NAME_FIELD: &str = "type_name";
 pub const DESCRIPTION_FIELD: &str = "description";
 pub const FIELDS_FIELD: &str = "fields";
+pub const FIELD_NAMES_FIELD: &str = "field_names";
 pub const RAW_TYPE_NAME_FIELD: &str = "raw_type_name";
 pub const REFERENCING_TYPES_FIELD: &str = "referencing_types";
+/// Discriminator: "type" for per-type docs, "field" for per-root-field docs.
+pub const DOC_KIND_FIELD: &str = "doc_kind";
+/// Stored metadata for field docs: parent operation type name (Query/Mutation/Subscription).
+pub const FIELD_PARENT_TYPE_FIELD: &str = "field_parent_type";
+/// Stored metadata for field docs: the field name itself, exact form.
+pub const FIELD_NAME_FIELD: &str = "field_name";
+/// Stored metadata for field docs: comma-joined argument *type* names.
+pub const FIELD_ARG_TYPES_FIELD: &str = "field_arg_types";
+/// Stored metadata for field docs: the return type (inner named type).
+pub const FIELD_RETURN_TYPE_FIELD: &str = "field_return_type";
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
 /// be included in an [`EnumSet`].
@@ -168,7 +192,13 @@ pub struct SchemaIndex {
     type_name_field: Field,
     description_field: Field,
     fields_field: Field,
+    field_names_field: Field,
     referencing_types_field: Field,
+    doc_kind_field: Field,
+    field_parent_type_field: Field,
+    field_name_field: Field,
+    field_arg_types_field: Field,
+    field_return_type_field: Field,
 }
 
 impl SchemaIndex {
@@ -184,6 +214,9 @@ impl SchemaIndex {
         // TODO: support other languages
         let text_analyzer = TextAnalyzer::builder(SimpleTokenizer::default())
             .filter(LowerCaser)
+            .filter(StopWordFilter::remove(
+                ENGLISH_STOPWORDS.iter().map(|w| (*w).to_string()),
+            ))
             .filter(Stemmer::new(Language::English))
             .build();
 
@@ -192,19 +225,43 @@ impl SchemaIndex {
         let type_name_field = index_schema.add_text_field(
             TYPE_NAME_FIELD,
             TextOptions::default()
-                .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+                .set_indexing_options(
+                    TextFieldIndexing::default()
+                        .set_tokenizer("en_stem")
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+                )
                 .set_stored(),
         );
         let description_field = index_schema.add_text_field(
             DESCRIPTION_FIELD,
             TextOptions::default()
-                .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+                .set_indexing_options(
+                    TextFieldIndexing::default()
+                        .set_tokenizer("en_stem")
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+                )
                 .set_stored(),
         );
         let fields_field = index_schema.add_text_field(
             FIELDS_FIELD,
             TextOptions::default()
-                .set_indexing_options(TextFieldIndexing::default().set_tokenizer("en_stem"))
+                .set_indexing_options(
+                    TextFieldIndexing::default()
+                        .set_tokenizer("en_stem")
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+                )
+                .set_stored(),
+        );
+        // Field names only (without return types), so BM25 length normalization
+        // doesn't bury matches inside the longer `fields` blob.
+        let field_names_field = index_schema.add_text_field(
+            FIELD_NAMES_FIELD,
+            TextOptions::default()
+                .set_indexing_options(
+                    TextFieldIndexing::default()
+                        .set_tokenizer("en_stem")
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
+                )
                 .set_stored(),
         );
 
@@ -216,6 +273,17 @@ impl SchemaIndex {
                 .set_stored(),
         );
         let referencing_types_field = index_schema.add_text_field(REFERENCING_TYPES_FIELD, STORED);
+
+        // Stored-only metadata fields for per-root-field docs. None of these are
+        // indexed for search — they're consulted only after a doc match to
+        // discriminate type-docs vs field-docs and to reconstruct the field path.
+        let doc_kind_field = index_schema.add_text_field(DOC_KIND_FIELD, STORED);
+        let field_parent_type_field =
+            index_schema.add_text_field(FIELD_PARENT_TYPE_FIELD, STORED);
+        let field_name_field = index_schema.add_text_field(FIELD_NAME_FIELD, STORED);
+        let field_arg_types_field = index_schema.add_text_field(FIELD_ARG_TYPES_FIELD, STORED);
+        let field_return_type_field =
+            index_schema.add_text_field(FIELD_RETURN_TYPE_FIELD, STORED);
 
         // Create the index
         let index_schema = index_schema.build();
@@ -315,6 +383,14 @@ impl SchemaIndex {
                 _ => String::new(),
             };
             doc.add_text(fields_field, expand_identifiers(&fields));
+            let field_names = match extended_type {
+                ExtendedType::Object(obj) => obj.fields.keys().join(" "),
+                ExtendedType::Interface(interface) => interface.fields.keys().join(" "),
+                ExtendedType::InputObject(input) => input.fields.keys().join(" "),
+                ExtendedType::Enum(enum_type) => enum_type.values.keys().join(" "),
+                _ => String::new(),
+            };
+            doc.add_text(field_names_field, expand_identifiers(&field_names));
             let field_descriptions = match extended_type {
                 ExtendedType::Enum(enum_type) => enum_type
                     .values
@@ -347,12 +423,88 @@ impl SchemaIndex {
                 _ => String::new(),
             };
             doc.add_text(description_field, expand_identifiers(&field_descriptions));
+            doc.add_text(doc_kind_field, "type");
             index_writer.add_document(doc)?;
+        }
+
+        // Emit one doc per root operation field (Query/Mutation/Subscription direct
+        // fields only — not fields on nested types). These let agent-style searches
+        // for operation names land directly on the operation, rather than going
+        // through the return type's document.
+        let mut field_doc_count = 0usize;
+        for op_kind in [
+            AstOperationType::Query,
+            AstOperationType::Mutation,
+            AstOperationType::Subscription,
+        ] {
+            if !root_types.contains(OperationType::from(op_kind)) {
+                continue;
+            }
+            let Some(root_name) = schema.root_operation(op_kind) else {
+                continue;
+            };
+            let Some(ExtendedType::Object(root_type)) = schema.types.get(root_name) else {
+                continue;
+            };
+
+            for (field_name, field_def) in root_type.fields.iter() {
+                let return_type = field_def.ty.inner_named_type().to_string();
+                let arg_type_names: Vec<String> = field_def
+                    .arguments
+                    .iter()
+                    .map(|arg| arg.ty.inner_named_type().to_string())
+                    .collect();
+
+                // Searchable text combines the field name with its arg type names so
+                // searches that mention an arg type (e.g. "Email") can also land here.
+                // Field name is also duplicated into type_name_field and field_names_field
+                // so it gets the same scoring treatment as a short type-name match.
+                let expanded_field_name = expand_identifiers(field_name.as_str());
+                let args_searchable = arg_type_names
+                    .iter()
+                    .map(|n| expand_identifiers(n))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                let mut doc = TantivyDocument::default();
+                doc.add_text(type_name_field, &expanded_field_name);
+                doc.add_text(field_names_field, &expanded_field_name);
+                doc.add_text(
+                    fields_field,
+                    if args_searchable.is_empty() {
+                        expanded_field_name.clone()
+                    } else {
+                        format!("{} {}", expanded_field_name, args_searchable)
+                    },
+                );
+                doc.add_text(
+                    description_field,
+                    field_def
+                        .description
+                        .as_ref()
+                        .map(|d| expand_identifiers(d))
+                        .unwrap_or_default(),
+                );
+                // Stored metadata used by search() to reconstruct the path directly.
+                doc.add_text(doc_kind_field, "field");
+                doc.add_text(field_parent_type_field, root_name.as_str());
+                doc.add_text(field_name_field, field_name.as_str());
+                doc.add_text(field_arg_types_field, arg_type_names.join(","));
+                doc.add_text(field_return_type_field, &return_type);
+
+                index_writer.add_document(doc)?;
+                field_doc_count += 1;
+            }
         }
         index_writer.commit()?;
 
         let elapsed = start_time.elapsed();
-        info!("Indexed {} types in {:.2?}", type_references.len(), elapsed);
+        info!(
+            "Indexed {} types and {} root operation fields in {:.2?}",
+            type_references.len(),
+            field_doc_count,
+            elapsed
+        );
 
         Ok(Self {
             inner: index,
@@ -361,7 +513,13 @@ impl SchemaIndex {
             type_name_field,
             description_field,
             fields_field,
+            field_names_field,
             referencing_types_field,
+            doc_kind_field,
+            field_parent_type_field,
+            field_name_field,
+            field_arg_types_field,
+            field_return_type_field,
         })
     }
 
@@ -384,9 +542,63 @@ impl SchemaIndex {
         // Get the top GraphQL schema types matching the search terms
         let top_docs = searcher.search(&query, &TopDocs::with_limit(100))?;
 
-        // Map each type name to its score
+        // Separate type-doc matches (go through the BFS path-builder below) from
+        // field-doc matches (build their path directly from stored metadata).
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
+            let kind = doc
+                .get_first(self.doc_kind_field)
+                .and_then(|v| v.as_str())
+                .unwrap_or("type");
+
+            if kind == "field" {
+                let parent = doc
+                    .get_first(self.field_parent_type_field)
+                    .and_then(|v| v.as_str());
+                let field_name = doc
+                    .get_first(self.field_name_field)
+                    .and_then(|v| v.as_str());
+                let return_type = doc
+                    .get_first(self.field_return_type_field)
+                    .and_then(|v| v.as_str());
+                let arg_types_raw = doc
+                    .get_first(self.field_arg_types_field)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                match (parent, field_name, return_type) {
+                    (Some(parent), Some(field), Some(ret)) => {
+                        let field_args: Vec<NamedType> = arg_types_raw
+                            .split(',')
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .map(Name::new_unchecked)
+                            .collect();
+
+                        debug!(
+                            "Explanation for field {}.{}: {:?}",
+                            parent,
+                            field,
+                            query.explain(&searcher, doc_address)?
+                        );
+
+                        let path = PathNode::new(NamedType::new_unchecked(parent)).add_child(
+                            Some(Name::new_unchecked(field)),
+                            field_args,
+                            NamedType::new_unchecked(ret),
+                        );
+                        root_paths.push(Scored::new(path, score));
+                    }
+                    _ => {
+                        error!(
+                            "Field doc at {doc_address:?} missing required metadata: \
+                             parent={parent:?} field={field_name:?} return={return_type:?}"
+                        );
+                    }
+                }
+                continue;
+            }
+
             if let Some(type_name) = doc
                 .get_first(self.raw_type_name_field)
                 .and_then(|v| v.as_str())
@@ -397,7 +609,7 @@ impl SchemaIndex {
                 );
                 scores.insert(type_name.to_string(), score);
             } else {
-                // This should never happen, since every document we add has this field defined
+                // This should never happen, since every type doc has this field defined
                 error!("Doc address {doc_address:?} missing raw type name field");
             }
         }
@@ -485,7 +697,7 @@ impl SchemaIndex {
             }
         }
 
-        Ok(self
+        let mut sorted: Vec<_> = self
             .boost_shorter_paths(root_paths, options.short_path_boost_factor)
             .into_iter()
             .sorted_by(|a, b| {
@@ -493,7 +705,15 @@ impl SchemaIndex {
                     .partial_cmp(&a.score())
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
-            .collect::<Vec<_>>())
+            .collect();
+
+        const SCORE_RATIO_CUTOFF: f32 = 0.25;
+        if let Some(top_score) = sorted.first().map(|s| s.score()) {
+            let threshold = top_score * SCORE_RATIO_CUTOFF;
+            sorted.retain(|s| s.score() >= threshold);
+        }
+
+        Ok(sorted)
     }
 
     /// Apply a boost factor to shorter paths
@@ -540,29 +760,79 @@ impl SchemaIndex {
     where
         I: IntoIterator<Item = String>,
     {
+        // Boost factor applied to phrase matches — multiplies the BM25 score of a phrase
+        // hit before it's summed into the BooleanQuery. Higher = more weight on
+        // consecutive-token matches relative to scattered TermQuery hits.
+        const PHRASE_BOOST: f32 = 3.0;
+        // Allowed gap between phrase tokens. Slop > 0 also takes a different code
+        // path in tantivy's phrase scorer that avoids a debug_assert hit during
+        // union-of-Should iteration with slop=0.
+        const PHRASE_SLOP: u32 = 2;
+
         let mut text_analyzer = self.text_analyzer.clone();
-        let mut query = BooleanQuery::new(
-            terms
-                .into_iter()
-                .flat_map(|term| {
-                    let expanded = expand_identifiers(&term);
-                    let mut terms: Vec<Term> = Vec::new();
-                    let mut token_stream = text_analyzer.token_stream(&expanded);
-                    token_stream.process(&mut |token| {
-                        terms.push(Term::from_field_text(self.type_name_field, &token.text));
-                        terms.push(Term::from_field_text(self.description_field, &token.text));
-                        terms.push(Term::from_field_text(self.fields_field, &token.text));
-                    });
-                    terms
-                })
-                .map(|term| {
-                    (
+        let searchable_fields = [
+            self.type_name_field,
+            self.description_field,
+            self.fields_field,
+            self.field_names_field,
+        ];
+
+        let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
+        let mut all_tokens: Vec<String> = Vec::new();
+
+        let push_phrase_clauses = |tokens: &[String],
+                                   clauses: &mut Vec<(Occur, Box<dyn Query>)>| {
+            if tokens.len() < 2 {
+                return;
+            }
+            for field in searchable_fields {
+                let phrase_terms: Vec<(usize, Term)> = tokens
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (i, Term::from_field_text(field, t)))
+                    .collect();
+                let phrase = PhraseQuery::new_with_offset_and_slop(phrase_terms, PHRASE_SLOP);
+                let boosted = BoostQuery::new(Box::new(phrase), PHRASE_BOOST);
+                clauses.push((Occur::Should, Box::new(boosted) as Box<dyn Query>));
+            }
+        };
+
+        for term in terms {
+            let expanded = expand_identifiers(&term);
+            let mut tokens: Vec<String> = Vec::new();
+            let mut token_stream = text_analyzer.token_stream(&expanded);
+            token_stream.process(&mut |token| {
+                tokens.push(token.text.clone());
+            });
+
+            // TermQuery clauses — one per (token, field) pair.
+            for token in &tokens {
+                for field in searchable_fields {
+                    clauses.push((
                         Occur::Should,
-                        Box::new(TermQuery::new(term, IndexRecordOption::Basic)) as Box<dyn Query>,
-                    )
-                })
-                .collect(),
-        );
+                        Box::new(TermQuery::new(
+                            Term::from_field_text(field, token),
+                            IndexRecordOption::Basic,
+                        )) as Box<dyn Query>,
+                    ));
+                }
+            }
+
+            // Per-term PhraseQuery clauses — fire when a single input term tokenizes
+            // to 2+ tokens (e.g. "slack_userByEmail" → ["slack","user","email"]).
+            push_phrase_clauses(&tokens, &mut clauses);
+
+            all_tokens.extend(tokens);
+        }
+
+        // Combined PhraseQuery clauses across ALL input terms — fires when callers
+        // pass multiple single-token terms (e.g. ["slack","user","email"]). For
+        // single-input-term callers whose term already produced 2+ tokens, this
+        // duplicates the per-term clauses; the duplication just doubles the
+        // effective boost on that phrase, which is benign.
+        push_phrase_clauses(&all_tokens, &mut clauses);
+
+        let mut query = BooleanQuery::new(clauses);
         query.set_minimum_number_should_match(1);
         query
     }
