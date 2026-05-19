@@ -1,23 +1,31 @@
 //! Library for indexing and searching GraphQL schemas.
 //!
-//! To build the index, the types in the schema are traversed depth-first, starting with a set of
-//! supplied root types (Query, Mutation, Subscription). Each type encountered in the traversal is
-//! indexed by:
+//! The schema is traversed depth-first from the supplied root operation types (Query, Mutation,
+//! Subscription). The index is anchored on **fields**, not types: one Tantivy document is
+//! written for each object field, interface field, and enum value reached during traversal.
+//! Each field document carries the following searchable text:
 //!
-//! * The type name
-//! * The type description
-//! * The field names
+//! * `parent_type_name` — the type that owns the field
+//! * `field_name` — the field (or enum value) name; matches here get a per-token boost since
+//!   a hit on the field name is the most direct signal for the typical "find an operation"
+//!   workload
+//! * `arg_names` — the field's argument names (empty for enum values)
+//! * `return_type_name` — the field's return type (empty for enum values)
+//! * `description` — the parent type's description concatenated with the field's description
 //!
-//! Searching for a set of terms returns the top root paths to types matching the search terms.
-//! A root path is a path from a root type (Query, Mutation, or Subscription) to the type. This
-//! provides not only information about the type itself, but also how to construct a query to
-//! retrieve that type.
+//! Scalar and union types do not produce documents on their own; they surface in search only
+//! through the fields that reference them (via `return_type_name`). Custom-scalar descriptions
+//! are not indexed.
 //!
-//! Shorter paths are preferred by a customizable boost factor. If parent types in the path also
-//! match the search terms, a customizable portion of their scores are added to the path score.
-//! The total number of matching types considered can be customized, as can the maximum number of
-//! paths to each type (types may be reachable by more than one path - the shortest paths to root
-//! take precedence over longer paths).
+//! Searching for a set of terms returns root paths anchored at matching field hits. A root
+//! path starts at a root operation type and walks down to the hit, giving the agent both the
+//! match and the chain of selections needed to construct an operation. Paths are built by
+//! looking up the hit's parent type in an in-memory type-reference graph and walking upward
+//! via BFS until a root operation type is reached, so each matching field can produce up to
+//! `Options::max_paths_per_type` distinct root paths.
+//!
+//! Shorter paths are preferred by `Options::short_path_boost_factor`. The total number of
+//! field hits expanded into paths is capped by `Options::max_type_matches`.
 
 use crate::path::PathNode;
 use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
@@ -412,7 +420,10 @@ impl SchemaIndex {
                     field_description: value.description.as_ref().map(|n| n.as_str()).unwrap_or(""),
                 })
                 .collect(),
-            // Scalar/Union: no fields to index. Unions surface through their members.
+            // Scalar and union types produce no documents. Their names remain partially
+            // recoverable via the `return_type_name` text on fields that reference them, but
+            // descriptions on custom scalars/unions are not searchable. Union member types
+            // surface in their own right as object fields/types.
             _ => Vec::new(),
         }
     }
@@ -583,29 +594,35 @@ impl SchemaIndex {
             if out.len() >= max_paths {
                 break;
             }
-            if !visited.insert(current_type.clone()) {
-                continue;
-            }
             let edges = self
                 .type_references
                 .get(&current_type)
                 .cloned()
                 .unwrap_or_default();
             if edges.is_empty() {
-                // Reached a root operation type — emit the path.
+                // Reached a root operation type — emit the path. Don't dedupe on the root
+                // itself: each (root, distinct_path) pair represents a different way for an
+                // agent to reach the leaf, so they should all be returned (subject to
+                // `max_paths`).
                 out.push(current_path);
-            } else {
-                for edge in edges {
-                    if visited.contains(&edge.parent_type) {
-                        continue;
-                    }
-                    let next_path = current_path.clone().add_parent(
-                        edge.field_name.clone(),
-                        edge.field_args.clone(),
-                        NamedType::new_unchecked(&edge.parent_type),
-                    );
-                    queue.push_back((edge.parent_type.clone(), next_path));
+                continue;
+            }
+            // Mark this intermediate type visited so we don't re-expand its edges in cycles
+            // through the type graph (e.g., `User.friend: User`). Roots are already handled
+            // above, so they never participate in cycle prevention.
+            if !visited.insert(current_type.clone()) {
+                continue;
+            }
+            for edge in edges {
+                if visited.contains(&edge.parent_type) {
+                    continue;
                 }
+                let next_path = current_path.clone().add_parent(
+                    edge.field_name.clone(),
+                    edge.field_args.clone(),
+                    NamedType::new_unchecked(&edge.parent_type),
+                );
+                queue.push_back((edge.parent_type.clone(), next_path));
             }
         }
         out

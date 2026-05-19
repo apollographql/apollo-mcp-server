@@ -2,6 +2,8 @@
 source: crates/apollo-mcp-server/src/introspection/tools/search.rs
 expression: content_to_snapshot(result)
 ---
+scalar DateTime
+
 enum UserRole {
   ADMIN
   MODERATOR
@@ -9,18 +11,20 @@ enum UserRole {
   GUEST
 }
 
-type User implements Node {
-  role: UserRole!
-  profile: UserProfile
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DELETED
 }
 
-type UserProfile {
-  firstName: String
-  lastName: String
-  bio: String
-  avatar: Media
-  socialLinks: [SocialLink!]!
-  location: Location
+type User implements Node {
+  role: UserRole!
+  comments: [Comment!]!
+}
+
+type Post implements Node & Content {
+  comments: [Comment!]!
 }
 
 type Comment implements Node {
@@ -33,5 +37,18 @@ type Reaction {
 
 type Query {
   user(id: ID!): User
+  posts(filter: PostFilter): [Post!]!
   comments(postId: ID!): [Comment!]!
+}
+
+input PostFilter {
+  status: ContentStatus
+  authorId: ID
+  tags: [String!]
+  dateRange: DateRangeInput
+}
+
+input DateRangeInput {
+  start: DateTime!
+  end: DateTime!
 }
