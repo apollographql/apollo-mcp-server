@@ -10,7 +10,6 @@ mod graphos;
 pub mod graphs_source;
 mod introspection;
 pub mod logging;
-pub mod manifest;
 mod operation_source;
 mod overrides;
 mod schema_source;
