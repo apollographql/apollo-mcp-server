@@ -22,12 +22,14 @@ pub fn load_local(path: &Path) -> Result<Manifest, LocalLoadError> {
     if let Some(parent) = path.parent() {
         for g in &mut manifest.graphs {
             if g.schema.is_relative() {
-                g.schema = parent.join(&g.schema);
+                let stripped = g.schema.strip_prefix("./").unwrap_or(g.schema.as_path());
+                g.schema = parent.join(stripped);
             }
             for op in &mut g.operations {
                 let op_path = PathBuf::from(&op);
                 if op_path.is_relative() {
-                    *op = parent.join(op_path).to_string_lossy().into_owned();
+                    let stripped = op_path.strip_prefix("./").unwrap_or(op_path.as_path());
+                    *op = parent.join(stripped).to_string_lossy().into_owned();
                 }
             }
         }
