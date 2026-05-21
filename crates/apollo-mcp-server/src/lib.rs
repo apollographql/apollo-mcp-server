@@ -15,6 +15,7 @@ pub mod host_validation;
 mod introspection;
 pub(crate) mod json_schema;
 pub(crate) mod meter;
+pub mod graphs;
 pub mod operations;
 pub(crate) mod prompts;
 pub(crate) mod schema_tree_shake;
