@@ -79,6 +79,18 @@ pub(super) struct Running {
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
     pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    /// Multi-graph mode. When `Some`, list_tools aggregates operations across
+    /// all graphs and the four introspection tools (execute/search/introspect/
+    /// validate) route via `graphs::dispatch_*` instead of the legacy single-
+    /// graph path. The legacy fields above (`schema`, `operations`, `endpoint`,
+    /// `headers`) are unused in this mode.
+    pub(super) multi_graph: Option<crate::graphs::Graphs>,
+    /// Search leaf depth (for multi-graph dispatch_search).
+    pub(super) search_leaf_depth: usize,
+    /// Search minify flag (for multi-graph dispatch_search).
+    pub(super) search_minify: bool,
+    /// Introspect minify flag (for multi-graph dispatch_introspect).
+    pub(super) introspect_minify: bool,
 }
 
 impl Running {
@@ -361,7 +373,41 @@ impl Running {
         let app_param = extract_app_param(extensions);
         let axum_parts = extensions.get::<axum::http::request::Parts>();
 
-        let mut result = if tool_name == INTROSPECT_TOOL_NAME
+        let mut result = if let Some(graphs) = self.multi_graph.as_ref() {
+            // Multi-graph mode: route the four built-in tools to dispatchers.
+            // Operation tools fall through to the legacy match path below.
+            if tool_name == EXECUTE_TOOL_NAME
+                && let Some(execute_tool) = &self.execute_tool
+            {
+                crate::graphs::dispatch_execute(
+                    graphs,
+                    execute_tool,
+                    request.arguments.as_ref(),
+                    axum_parts,
+                    &self.rhai_engine,
+                )
+                .await
+            } else if tool_name == SEARCH_TOOL_NAME && self.search_tool.is_some() {
+                crate::graphs::dispatch_search(
+                    graphs,
+                    self.search_leaf_depth,
+                    self.search_minify,
+                    request.arguments.as_ref(),
+                )
+                .await
+            } else if tool_name == INTROSPECT_TOOL_NAME && self.introspect_tool.is_some() {
+                crate::graphs::dispatch_introspect(
+                    graphs,
+                    self.introspect_minify,
+                    request.arguments.as_ref(),
+                )
+                .await
+            } else if tool_name == VALIDATE_TOOL_NAME && self.validate_tool.is_some() {
+                crate::graphs::dispatch_validate(graphs, request.arguments.as_ref()).await
+            } else {
+                Err(tool_not_found(&tool_name))
+            }
+        } else if tool_name == INTROSPECT_TOOL_NAME
             && let Some(introspect_tool) = &self.introspect_tool
         {
             match serde_json::from_value(Value::from(request.arguments)) {
@@ -831,6 +877,10 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            multi_graph: None,
+            search_leaf_depth: 1,
+            search_minify: false,
+            introspect_minify: false,
         }
     }
 
@@ -2546,6 +2596,10 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                multi_graph: None,
+                search_leaf_depth: 1,
+                search_minify: false,
+                introspect_minify: false,
             }
         }
 
@@ -2784,6 +2838,10 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                multi_graph: None,
+                search_leaf_depth: 1,
+                search_minify: false,
+                introspect_minify: false,
             }
         }
 
@@ -3016,6 +3074,10 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                multi_graph: None,
+                search_leaf_depth: 1,
+                search_minify: false,
+                introspect_minify: false,
             }
         }
 
@@ -3336,6 +3398,10 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                multi_graph: None,
+                search_leaf_depth: 1,
+                search_minify: false,
+                introspect_minify: false,
             }
         }
 

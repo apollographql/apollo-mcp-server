@@ -67,7 +67,7 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
 parking_lot = "0.12.5"
-oci-client = { version = "0.17.0", default-features = false, features = ["rustls-tls"] }
+oci-client = { version = "0.17.0", default-features = false, features = ["native-tls"] }
 tar = "0.4.46"
 tempfile.workspace = true
 

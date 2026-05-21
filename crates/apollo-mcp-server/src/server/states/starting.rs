@@ -191,6 +191,10 @@ impl Starting {
             server_info: self.config.server_info.clone(),
             instructions,
             rhai_engine: engine,
+            multi_graph: None,
+            search_leaf_depth: self.config.search_leaf_depth,
+            search_minify: self.config.search_minify,
+            introspect_minify: self.config.introspect_minify,
         };
 
         match self.config.transport {
