@@ -166,6 +166,54 @@ async fn execute_unknown_graph_returns_error_with_available_names() {
 }
 
 #[tokio::test]
+async fn upstream_401_surfaces_as_upstream_auth_required_with_graph_name() {
+    let mut graph = Server::new_async().await;
+    let _mock = graph
+        .mock("POST", "/")
+        .with_status(401)
+        .with_header("www-authenticate", "Bearer realm=\"demo\"")
+        .expect(1)
+        .create_async()
+        .await;
+
+    let mut map = HashMap::new();
+    map.insert(
+        "g".to_string(),
+        ctx("g", "type Query { id: String }", &format!("{}/", graph.url())),
+    );
+    let graphs: Graphs = Arc::new(RwLock::new(map));
+
+    let execute = Execute::new(MutationMode::None, None);
+    let rhai = Arc::new(Mutex::new(apollo_mcp_rhai::RhaiEngine::new("rhai")));
+
+    let result = dispatch_execute(
+        &graphs,
+        &execute,
+        Some(&obj(serde_json::json!({"graph": "g", "query": "query Q { id }"}))),
+        None,
+        &rhai,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.is_error, Some(true));
+    let structured = result
+        .structured_content
+        .as_ref()
+        .expect("expected structured_content for upstream 401");
+    let obj = structured.as_object().unwrap();
+    assert_eq!(
+        obj.get("error").and_then(|v| v.as_str()),
+        Some("upstream_auth_required")
+    );
+    assert_eq!(obj.get("graph").and_then(|v| v.as_str()), Some("g"));
+    assert_eq!(
+        obj.get("www_authenticate").and_then(|v| v.as_str()),
+        Some("Bearer realm=\"demo\"")
+    );
+}
+
+#[tokio::test]
 async fn search_fans_out_across_graphs_and_tags_results() {
     let mut map = HashMap::new();
     map.insert(

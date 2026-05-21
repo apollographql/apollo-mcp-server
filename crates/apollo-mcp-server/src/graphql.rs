@@ -113,6 +113,23 @@ pub trait Executable {
             }
         };
 
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            let www = response
+                .headers()
+                .get(reqwest::header::WWW_AUTHENTICATE)
+                .and_then(|h| h.to_str().ok())
+                .map(|s| s.to_string());
+            let mut payload = Map::new();
+            payload.insert(
+                "error".to_string(),
+                Value::String("upstream_auth_required".to_string()),
+            );
+            if let Some(w) = www {
+                payload.insert("www_authenticate".to_string(), Value::String(w));
+            }
+            return Ok(CallToolResult::structured_error(Value::Object(payload)));
+        }
+
         let result = match response.json::<Value>().await {
             Ok(json) => {
                 let is_error = Some(

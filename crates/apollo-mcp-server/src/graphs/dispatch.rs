@@ -120,16 +120,31 @@ pub async fn dispatch_execute(
         "variables": input.variables,
     });
 
-    execute_operation(
+    let graph_name = ctx.name.clone();
+    let endpoint = ctx.endpoint.clone();
+    drop(graphs_read);
+
+    let mut result = execute_operation(
         execute_tool,
         &effective_headers,
         exec_args.as_object(),
-        &ctx.endpoint,
+        &endpoint,
         rhai_engine,
         axum_parts,
         "execute",
     )
-    .await
+    .await?;
+
+    // If the upstream signaled 401, tag the structured error with the graph name
+    // so a future v2 mediator can drive a per-graph re-auth flow.
+    if let Some(structured) = result.structured_content.as_mut()
+        && let Some(obj) = structured.as_object_mut()
+        && obj.get("error").and_then(|v| v.as_str()) == Some("upstream_auth_required")
+    {
+        obj.insert("graph".to_string(), Value::String(graph_name));
+    }
+
+    Ok(result)
 }
 
 /// Search one or all graphs.
