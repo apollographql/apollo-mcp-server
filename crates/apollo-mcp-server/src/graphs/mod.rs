@@ -3,6 +3,7 @@ pub mod credentials;
 pub mod dispatch;
 pub mod factory;
 pub mod manifest;
+pub mod server;
 
 pub use context::GraphContext;
 pub use credentials::{CredentialProvider, PassthroughCredentials, default_provider};
@@ -11,3 +12,4 @@ pub use dispatch::{
 };
 pub use factory::{BuildError, build_graph_context};
 pub use manifest::{GraphConfig, LocalLoadError, Manifest, load_local};
+pub use server::{MultiGraphServer, MultiGraphServerOptions};

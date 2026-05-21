@@ -58,6 +58,13 @@ async fn main() -> anyhow::Result<()> {
         spawn_stdio_sighup_handler(config_path.clone());
     }
 
+    // Multi-graph mode: when config.graphs is set, bypass the single-graph
+    // state machine and run the MultiGraphServer.
+    if config.graphs.is_some() {
+        info!("Multi-graph mode enabled");
+        return run_multi_graph(config).await;
+    }
+
     loop {
         let server = build_server(config_path.as_deref())?;
         match server.start().await {
@@ -74,6 +81,93 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => break Err(e.into()),
         }
     }
+}
+
+/// Run the MCP server in multi-graph mode: load the manifest, build a
+/// GraphContext per entry, and serve a MultiGraphServer over the configured
+/// transport.
+async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use apollo_mcp_server::graphs::{
+        Graphs, MultiGraphServer, MultiGraphServerOptions, build_graph_context, load_local,
+    };
+    use apollo_mcp_server::operations::MutationMode;
+    use rmcp::ServiceExt as _;
+    use rmcp::transport::stdio;
+    use tokio::sync::RwLock;
+
+    let graphs_source = config
+        .graphs
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("run_multi_graph called without config.graphs"))?;
+    let manifest = match graphs_source {
+        runtime::graphs_source::GraphsSource::Local { manifest } => {
+            load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?
+        }
+        runtime::graphs_source::GraphsSource::Oci { .. } => {
+            anyhow::bail!("OCI manifest source is not yet wired into the main binary")
+        }
+    };
+
+    info!("Loaded manifest with {} graphs", manifest.graphs.len());
+
+    let mut map = HashMap::new();
+    for graph_config in manifest.graphs {
+        let name = graph_config.name.clone();
+        info!("Building graph '{name}' -> {}", graph_config.endpoint);
+        let ctx = build_graph_context(
+            graph_config,
+            config.introspection.search.index_memory_bytes,
+            MutationMode::None,
+            config.overrides.disable_type_description,
+            config.overrides.disable_schema_description,
+            config.overrides.enable_output_schema,
+            &config.overrides.annotations,
+            &config.overrides.descriptions,
+            None,
+            &config.headers,
+            &config.forward_headers,
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        map.insert(name, ctx);
+    }
+    let graphs: Graphs = Arc::new(RwLock::new(map));
+
+    let opts = MultiGraphServerOptions {
+        search_leaf_depth: config.introspection.search.leaf_depth,
+        search_minify: config.introspection.search.minify,
+        introspect_minify: config.introspection.introspect.minify,
+        ..MultiGraphServerOptions::default()
+    };
+    let server = MultiGraphServer::new(graphs, opts).await;
+
+    match config.transport {
+        Transport::Stdio => {
+            info!("Starting multi-graph MCP server in stdio mode");
+            let service = server.serve(stdio()).await?;
+            service.waiting().await?;
+        }
+        Transport::StreamableHttp { address, port, .. } => {
+            use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+            use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+
+            info!(?address, ?port, "Starting multi-graph MCP server in StreamableHttp mode");
+            let listen_address = std::net::SocketAddr::new(address, port);
+            let http_config = StreamableHttpServerConfig::default().with_stateful_mode(true);
+            let svc = StreamableHttpService::new(
+                move || Ok(server.clone()),
+                LocalSessionManager::default().into(),
+                http_config,
+            );
+            let router = axum::Router::new().nest_service("/mcp", svc);
+            let listener = tokio::net::TcpListener::bind(listen_address).await?;
+            axum::serve(listener, router).await?;
+        }
+    }
+    Ok(())
 }
 
 /// Load and parse configuration from file or environment.

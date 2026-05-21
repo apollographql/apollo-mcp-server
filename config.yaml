@@ -1,0 +1,6 @@
+transport:
+  type: streamable_http
+  port: 5001
+graphs:
+  source: local
+  manifest: ./crates/apollo-mcp-server/examples/sample_graphs/graphs.yaml

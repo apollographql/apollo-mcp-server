@@ -1,0 +1,8 @@
+version: 1
+graphs:
+  - name: north
+    endpoint: http://localhost:14000/
+    schema: ./north/schema.graphql
+  - name: south
+    endpoint: http://localhost:14001/
+    schema: ./south/schema.graphql
