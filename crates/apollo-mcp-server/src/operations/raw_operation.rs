@@ -42,6 +42,34 @@ impl RawOperation {
             enable_output_schema,
             annotation_overrides,
             description_overrides,
+            None,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn into_operation_with_prefix(
+        self,
+        schema: &Valid<apollo_compiler::Schema>,
+        custom_scalars: Option<&CustomScalarMap>,
+        mutation_mode: MutationMode,
+        disable_type_description: bool,
+        disable_schema_description: bool,
+        enable_output_schema: bool,
+        annotation_overrides: &HashMap<String, AnnotationOverrides>,
+        description_overrides: &HashMap<String, String>,
+        name_prefix: Option<&str>,
+    ) -> Result<Option<Operation>, OperationError> {
+        Operation::from_raw(
+            self,
+            schema,
+            custom_scalars,
+            mutation_mode,
+            disable_type_description,
+            disable_schema_description,
+            enable_output_schema,
+            annotation_overrides,
+            description_overrides,
+            name_prefix,
         )
     }
 }

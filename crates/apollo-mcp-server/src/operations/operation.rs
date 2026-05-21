@@ -73,6 +73,7 @@ impl Operation {
         enable_output_schema: bool,
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
         description_overrides: &HashMap<String, String>,
+        name_prefix: Option<&str>,
     ) -> Result<Option<Self>, OperationError> {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
@@ -196,20 +197,24 @@ impl Operation {
                 overrides.apply_to(&mut annotations);
             }
 
+            let tool_name = match name_prefix {
+                Some(prefix) => format!("{prefix}__{operation_name}"),
+                None => operation_name.clone(),
+            };
             let mut tool: Tool =
-                Tool::new(operation_name.clone(), description, schema).annotate(annotations);
+                Tool::new(tool_name.clone(), description, schema).annotate(annotations);
             tool.output_schema = output_schema.map(std::sync::Arc::new);
             let character_count = tool_character_length(&tool);
             match character_count {
                 Ok(length) => info!(
                     "Tool {} loaded with a character count of {}. Estimated tokens: {}",
-                    operation_name,
+                    tool_name,
                     length,
                     length / 4 // We don't know the tokenization algorithm, so we just use 4 characters per token as a rough estimate. https://docs.anthropic.com/en/docs/resources/glossary#tokens
                 ),
                 Err(_) => info!(
                     "Tool {} loaded with an unknown character count",
-                    operation_name
+                    tool_name
                 ),
             }
             Ok(Some(Operation {
@@ -674,6 +679,67 @@ fn get_json_schema(
 }
 
 #[cfg(test)]
+mod prefix_tests {
+    use super::*;
+
+    #[test]
+    fn prefixed_tool_name() {
+        let schema = apollo_compiler::Schema::parse("type Query { id: String }", "s.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let raw = RawOperation::from((
+            "query GetId { id }".to_string(),
+            Some("op.graphql".to_string()),
+        ));
+        let op = raw
+            .into_operation_with_prefix(
+                &schema,
+                None,
+                MutationMode::None,
+                false,
+                false,
+                false,
+                &HashMap::new(),
+                &HashMap::new(),
+                Some("g"),
+            )
+            .unwrap()
+            .unwrap();
+        let tool: &Tool = op.as_ref();
+        assert_eq!(tool.name.as_ref(), "g__GetId");
+    }
+
+    #[test]
+    fn unprefixed_tool_name() {
+        let schema = apollo_compiler::Schema::parse("type Query { id: String }", "s.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let raw = RawOperation::from((
+            "query GetId { id }".to_string(),
+            Some("op.graphql".to_string()),
+        ));
+        let op = raw
+            .into_operation_with_prefix(
+                &schema,
+                None,
+                MutationMode::None,
+                false,
+                false,
+                false,
+                &HashMap::new(),
+                &HashMap::new(),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+        let tool: &Tool = op.as_ref();
+        assert_eq!(tool.name.as_ref(), "GetId");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use std::{collections::HashMap, str::FromStr as _, sync::LazyLock};
 
@@ -779,6 +845,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -921,6 +988,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1067,6 +1135,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1233,6 +1302,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1385,6 +1455,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1545,6 +1616,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1691,6 +1763,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -1871,6 +1944,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2019,6 +2093,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2162,6 +2237,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2193,6 +2269,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         );
         assert!(operation.unwrap().is_none());
 
@@ -2225,6 +2302,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2254,6 +2332,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         );
         insta::assert_debug_snapshot!(operation, @r"
         Err(
@@ -2282,6 +2361,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2421,6 +2501,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2567,6 +2648,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2719,6 +2801,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -2982,6 +3065,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3071,6 +3155,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3106,6 +3191,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3133,6 +3219,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3164,6 +3251,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3200,6 +3288,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3251,6 +3340,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3401,6 +3491,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3532,6 +3623,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3568,6 +3660,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3608,6 +3701,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3649,6 +3743,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3677,6 +3772,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3702,6 +3798,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3738,6 +3835,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3774,6 +3872,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3810,6 +3909,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3850,6 +3950,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3881,6 +3982,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
             .unwrap()
             .unwrap();
@@ -3921,6 +4023,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -3952,6 +4055,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4150,6 +4254,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4341,6 +4446,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                None,
             )
             .unwrap()
             .is_none()
@@ -4365,6 +4471,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                None,
             )
             .ok()
             .unwrap()
@@ -4389,6 +4496,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4523,6 +4631,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4657,6 +4766,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4896,6 +5006,7 @@ mod tests {
             false,
             &HashMap::new(),
             &description_overrides,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4924,6 +5035,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -4960,6 +5072,7 @@ mod tests {
             false,
             &HashMap::new(),
             &description_overrides,
+            None,
         )
         .unwrap()
         .unwrap();
@@ -5167,6 +5280,7 @@ mod tests {
             false,
             &overrides,
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -5204,6 +5318,7 @@ mod tests {
             false,
             &overrides,
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -5237,6 +5352,7 @@ mod tests {
             false,
             &overrides,
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
@@ -5262,6 +5378,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            None,
         )
         .unwrap()
         .unwrap();
