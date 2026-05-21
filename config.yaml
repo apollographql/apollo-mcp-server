@@ -1,3 +1,0 @@
-transport:
-  type: streamable_http
-  port: 5001
