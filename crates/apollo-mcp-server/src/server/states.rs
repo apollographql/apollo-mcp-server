@@ -479,6 +479,10 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            multi_graph: None,
+            search_leaf_depth: 1,
+            search_minify: false,
+            introspect_minify: false,
         }
     }
 

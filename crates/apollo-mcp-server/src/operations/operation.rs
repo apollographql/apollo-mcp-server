@@ -212,10 +212,7 @@ impl Operation {
                     length,
                     length / 4 // We don't know the tokenization algorithm, so we just use 4 characters per token as a rough estimate. https://docs.anthropic.com/en/docs/resources/glossary#tokens
                 ),
-                Err(_) => info!(
-                    "Tool {} loaded with an unknown character count",
-                    tool_name
-                ),
+                Err(_) => info!("Tool {} loaded with an unknown character count", tool_name),
             }
             Ok(Some(Operation {
                 tool,

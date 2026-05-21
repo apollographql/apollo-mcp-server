@@ -6,6 +6,7 @@ use serde::Deserialize;
 /// Where to load the multi-graph manifest from.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(tag = "source", rename_all = "snake_case", deny_unknown_fields)]
+#[allow(dead_code, reason = "fields read by future Loading-state wiring")]
 pub enum GraphsSource {
     /// Load the manifest from a YAML file on the local filesystem.
     Local { manifest: PathBuf },

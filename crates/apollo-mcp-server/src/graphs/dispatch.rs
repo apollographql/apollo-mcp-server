@@ -287,7 +287,11 @@ pub async fn dispatch_introspect(
     let starting_type = input
         .type_name
         .as_deref()
-        .or_else(|| schema.root_operation(OperationType::Query).map(Name::as_str))
+        .or_else(|| {
+            schema
+                .root_operation(OperationType::Query)
+                .map(Name::as_str)
+        })
         .map(|s| s.to_string())
         .ok_or_else(|| {
             McpError::new(
@@ -360,7 +364,7 @@ pub async fn dispatch_validate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graphs::{credentials::default_provider, GraphContext};
+    use crate::graphs::{GraphContext, credentials::default_provider};
     use apollo_compiler::Schema;
     use apollo_schema_index::{OperationType, SchemaIndex};
     use reqwest::header::HeaderMap;
@@ -451,7 +455,9 @@ mod tests {
         );
         let graphs: Graphs = Arc::new(RwLock::new(map));
         let execute_tool = Execute::new(MutationMode::None, None);
-        let rhai = Arc::new(parking_lot::Mutex::new(apollo_mcp_rhai::RhaiEngine::new("rhai")));
+        let rhai = Arc::new(parking_lot::Mutex::new(apollo_mcp_rhai::RhaiEngine::new(
+            "rhai",
+        )));
 
         let args = obj(serde_json::json!({"graph": "nope", "query": "{ alpha }"}));
         let result = dispatch_execute(&graphs, &execute_tool, args.as_ref(), None, &rhai)

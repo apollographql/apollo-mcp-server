@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! End-to-end multi-graph dispatch test.
 //!
 //! Stands up two mock GraphQL upstreams via mockito, constructs two
@@ -84,11 +85,19 @@ async fn execute_routes_to_the_correct_graph() {
     let mut map = HashMap::new();
     map.insert(
         "a".to_string(),
-        ctx("a", "type Query { id: String }", &format!("{}/", graph_a.url())),
+        ctx(
+            "a",
+            "type Query { id: String }",
+            &format!("{}/", graph_a.url()),
+        ),
     );
     map.insert(
         "b".to_string(),
-        ctx("b", "type Query { id: String }", &format!("{}/", graph_b.url())),
+        ctx(
+            "b",
+            "type Query { id: String }",
+            &format!("{}/", graph_b.url()),
+        ),
     );
     let graphs: Graphs = Arc::new(RwLock::new(map));
 
@@ -98,7 +107,9 @@ async fn execute_routes_to_the_correct_graph() {
     let result_a = dispatch_execute(
         &graphs,
         &execute,
-        Some(&obj(serde_json::json!({"graph": "a", "query": "query Q { id }"}))),
+        Some(&obj(
+            serde_json::json!({"graph": "a", "query": "query Q { id }"}),
+        )),
         None,
         &rhai,
     )
@@ -108,7 +119,9 @@ async fn execute_routes_to_the_correct_graph() {
     let result_b = dispatch_execute(
         &graphs,
         &execute,
-        Some(&obj(serde_json::json!({"graph": "b", "query": "query Q { id }"}))),
+        Some(&obj(
+            serde_json::json!({"graph": "b", "query": "query Q { id }"}),
+        )),
         None,
         &rhai,
     )
@@ -179,7 +192,11 @@ async fn upstream_401_surfaces_as_upstream_auth_required_with_graph_name() {
     let mut map = HashMap::new();
     map.insert(
         "g".to_string(),
-        ctx("g", "type Query { id: String }", &format!("{}/", graph.url())),
+        ctx(
+            "g",
+            "type Query { id: String }",
+            &format!("{}/", graph.url()),
+        ),
     );
     let graphs: Graphs = Arc::new(RwLock::new(map));
 
@@ -189,7 +206,9 @@ async fn upstream_401_surfaces_as_upstream_auth_required_with_graph_name() {
     let result = dispatch_execute(
         &graphs,
         &execute,
-        Some(&obj(serde_json::json!({"graph": "g", "query": "query Q { id }"}))),
+        Some(&obj(
+            serde_json::json!({"graph": "g", "query": "query Q { id }"}),
+        )),
         None,
         &rhai,
     )

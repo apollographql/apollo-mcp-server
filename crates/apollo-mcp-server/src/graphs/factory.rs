@@ -8,11 +8,11 @@ use apollo_schema_index::{OperationType, SchemaIndex};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::RwLock;
 
+use super::manifest::GraphConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::OperationError;
 use crate::headers::ForwardHeaders;
 use crate::operations::{AnnotationOverrides, MutationMode, Operation, RawOperation};
-use super::manifest::GraphConfig;
 
 use super::context::GraphContext;
 use super::credentials::default_provider;
@@ -79,13 +79,12 @@ pub async fn build_graph_context(
         MutationMode::None => OperationType::Query.into(),
         _ => OperationType::Query | OperationType::Mutation,
     };
-    let index =
-        SchemaIndex::new(&parsed, root_types, index_memory_bytes).map_err(|source| {
-            BuildError::Index {
-                graph: config.name.clone(),
-                source,
-            }
-        })?;
+    let index = SchemaIndex::new(&parsed, root_types, index_memory_bytes).map_err(|source| {
+        BuildError::Index {
+            graph: config.name.clone(),
+            source,
+        }
+    })?;
 
     let raw_ops = load_raw_operations(&config)?;
 

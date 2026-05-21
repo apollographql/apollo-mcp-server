@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::path::PathBuf;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

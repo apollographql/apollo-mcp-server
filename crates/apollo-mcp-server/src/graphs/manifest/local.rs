@@ -5,7 +5,10 @@ use super::types::Manifest;
 #[derive(Debug, thiserror::Error)]
 pub enum LocalLoadError {
     #[error("failed to read manifest file {path}: {source}")]
-    Read { path: PathBuf, source: std::io::Error },
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("failed to parse manifest YAML: {0}")]
     Parse(#[from] serde_yaml::Error),
 }
@@ -63,7 +66,10 @@ mod tests {
         let manifest = load_local(&manifest_path).unwrap();
         let g = &manifest.graphs[0];
         assert_eq!(g.schema, dir.path().join("a/schema.graphql"));
-        assert_eq!(g.operations[0], dir.path().join("a/ops/list.graphql").to_string_lossy());
+        assert_eq!(
+            g.operations[0],
+            dir.path().join("a/ops/list.graphql").to_string_lossy()
+        );
     }
 
     #[test]
