@@ -9,6 +9,7 @@ mod filtering_exporter;
 mod graphos;
 mod introspection;
 pub mod logging;
+pub mod manifest;
 mod operation_source;
 mod overrides;
 mod schema_source;
