@@ -176,8 +176,12 @@ pub async fn dispatch_search(
 
     let mut contents: Vec<Content> = Vec::new();
     for ctx in targets {
+        let per_graph = search_one(ctx, &input.terms, leaf_depth, minify)?;
+        if per_graph.is_empty() {
+            continue;
+        }
         contents.push(Content::text(format!("# graph: {}", ctx.name)));
-        contents.extend(search_one(ctx, &input.terms, leaf_depth, minify)?);
+        contents.extend(per_graph);
     }
     Ok(CallToolResult::success(contents))
 }
@@ -427,6 +431,55 @@ mod tests {
             .join("\n");
         assert!(combined.contains("# graph: a"));
         assert!(combined.contains("# graph: b"));
+    }
+
+    #[tokio::test]
+    async fn search_omits_graphs_with_no_matches() {
+        let mut map = HashMap::new();
+        map.insert(
+            "match".to_string(),
+            ctx_for(
+                "match",
+                "type Query { glacier: Glacier } type Glacier { id: ID! }",
+                "http://m.test/",
+            ),
+        );
+        map.insert(
+            "nomatch".to_string(),
+            ctx_for(
+                "nomatch",
+                "type Query { penguin: Penguin } type Penguin { id: ID! }",
+                "http://n.test/",
+            ),
+        );
+        let graphs: Graphs = Arc::new(RwLock::new(map));
+
+        let args = obj(serde_json::json!({"terms": ["glacier"]}));
+        let result = dispatch_search(&graphs, 1, false, args.as_ref())
+            .await
+            .unwrap();
+
+        use std::ops::Deref;
+        let combined: String = result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let rmcp::model::RawContent::Text(t) = c.deref() {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            combined.contains("# graph: match"),
+            "expected matching graph in output: {combined}"
+        );
+        assert!(
+            !combined.contains("# graph: nomatch"),
+            "expected non-matching graph to be omitted: {combined}"
+        );
     }
 
     #[tokio::test]
