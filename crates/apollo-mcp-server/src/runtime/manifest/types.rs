@@ -5,6 +5,7 @@ use url::Url;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct Manifest {
     pub version: u32,
     pub graphs: Vec<GraphConfig>,
@@ -12,6 +13,7 @@ pub struct Manifest {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[allow(dead_code)]
 pub struct GraphConfig {
     pub name: String,
     #[schemars(schema_with = "Url::json_schema")]
