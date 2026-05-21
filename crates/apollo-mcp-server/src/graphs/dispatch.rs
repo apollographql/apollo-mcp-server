@@ -82,6 +82,7 @@ fn parse_args<T: for<'de> Deserialize<'de>>(args: Option<&JsonObject>) -> Result
 }
 
 /// Execute a query against the named graph.
+#[tracing::instrument(skip_all, fields(apollo.mcp.graph_name = tracing::field::Empty))]
 pub async fn dispatch_execute(
     graphs: &Graphs,
     execute_tool: &Execute,
@@ -93,6 +94,7 @@ pub async fn dispatch_execute(
         Ok(v) => v,
         Err(e) => return Ok(invalid_input(e)),
     };
+    tracing::Span::current().record("apollo.mcp.graph_name", input.graph.as_str());
 
     let graphs_read = graphs.read().await;
     let Some(ctx) = graphs_read.get(&input.graph) else {

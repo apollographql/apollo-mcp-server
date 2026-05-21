@@ -1,5 +1,6 @@
 [attributes.apollo.mcp]
 tool_name = "The tool name"
+graph_name = "The graph namespace (multi-graph mode), if applicable"
 operation_id = "The operation id - either persisted query id, operation name, or unknown"
 operation_source = "The operation source - either operation (local file/op collection), persisted query, or LLM generated"
 request_id = "The request id"

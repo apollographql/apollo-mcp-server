@@ -8,6 +8,9 @@ impl TelemetryAttribute {
             TelemetryAttribute::ToolName => {
                 Key::from_static_str(TelemetryAttribute::ToolName.as_str())
             }
+            TelemetryAttribute::GraphName => {
+                Key::from_static_str(TelemetryAttribute::GraphName.as_str())
+            }
             TelemetryAttribute::OperationId => {
                 Key::from_static_str(TelemetryAttribute::OperationId.as_str())
             }
