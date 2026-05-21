@@ -7,6 +7,7 @@ mod config;
 mod endpoint;
 mod filtering_exporter;
 mod graphos;
+pub mod graphs_source;
 mod introspection;
 pub mod logging;
 pub mod manifest;
@@ -322,6 +323,7 @@ mod test {
                     required_scopes: {},
                 },
                 schema: Uplink,
+                graphs: None,
                 transport: Stdio,
             }
             "#);

@@ -12,7 +12,8 @@ use apollo_mcp_server::server_info::ServerInfoConfig;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides, telemetry::Telemetry,
+    graphs_source::GraphsSource, introspection::Introspection, logging::Logging,
+    overrides::Overrides, telemetry::Telemetry,
 };
 
 /// Configuration for the MCP server
@@ -71,6 +72,13 @@ pub struct Config {
 
     /// The schema to load for operations
     pub schema: SchemaSource,
+
+    /// Multi-graph configuration source. When present, supersedes the legacy
+    /// single-graph keys above (`schema`, `operations`, `endpoint`). The old
+    /// keys are kept for now to keep the build green during the multi-graph
+    /// refactor; they will be removed in tasks 8-10.
+    #[serde(default)]
+    pub graphs: Option<GraphsSource>,
 
     /// The type of server transport to use
     pub transport: Transport,
@@ -172,6 +180,34 @@ mod test {
             config.instructions.as_deref(),
             Some("Use semantic search before listing.")
         );
+    }
+
+    #[test]
+    fn it_parses_graphs_local_source() {
+        let yaml = r#"
+            graphs:
+              source: local
+              manifest: ./graphs.yaml
+        "#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(
+            config.graphs,
+            Some(super::GraphsSource::Local { .. })
+        ));
+    }
+
+    #[test]
+    fn it_parses_graphs_oci_source() {
+        let yaml = r#"
+            graphs:
+              source: oci
+              image: ghcr.io/acme/bundle:v1
+        "#;
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(matches!(
+            config.graphs,
+            Some(super::GraphsSource::Oci { .. })
+        ));
     }
 
     #[test]
