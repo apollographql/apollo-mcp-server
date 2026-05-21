@@ -1,9 +1,8 @@
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use super::types::Manifest;
 
 #[derive(Debug, thiserror::Error)]
-#[allow(dead_code)]
 pub enum LocalLoadError {
     #[error("failed to read manifest file {path}: {source}")]
     Read { path: PathBuf, source: std::io::Error },
@@ -11,30 +10,8 @@ pub enum LocalLoadError {
     Parse(#[from] serde_yaml::Error),
 }
 
-/// Normalize a path by removing `.` and `..` components where possible.
-#[allow(dead_code)]
-fn normalize_path(path: &Path) -> PathBuf {
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {
-                // Skip `.` components
-            }
-            Component::ParentDir => {
-                // Handle `..` by popping the last component if it's not a root or parent ref
-                if !normalized.pop() {
-                    normalized.push(component);
-                }
-            }
-            _ => normalized.push(component),
-        }
-    }
-    normalized
-}
-
 /// Load a manifest from a YAML file on disk. Relative file paths inside the
 /// manifest (schema, operations) are resolved against the manifest's parent dir.
-#[allow(dead_code)]
 pub fn load_local(path: &Path) -> Result<Manifest, LocalLoadError> {
     let text = std::fs::read_to_string(path).map_err(|source| LocalLoadError::Read {
         path: path.to_path_buf(),
@@ -45,13 +22,12 @@ pub fn load_local(path: &Path) -> Result<Manifest, LocalLoadError> {
     if let Some(parent) = path.parent() {
         for g in &mut manifest.graphs {
             if g.schema.is_relative() {
-                g.schema = normalize_path(&parent.join(&g.schema));
+                g.schema = parent.join(&g.schema);
             }
             for op in &mut g.operations {
                 let op_path = PathBuf::from(&op);
                 if op_path.is_relative() {
-                    let resolved = normalize_path(&parent.join(&op_path));
-                    *op = resolved.to_string_lossy().into_owned();
+                    *op = parent.join(op_path).to_string_lossy().into_owned();
                 }
             }
         }
