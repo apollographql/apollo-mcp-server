@@ -3,9 +3,9 @@
 
 use std::fmt;
 
-use opentelemetry::trace::TraceId;
+use opentelemetry::Context;
+use opentelemetry::trace::{TraceContextExt, TraceId};
 use tracing::Subscriber;
-use tracing_opentelemetry::OtelData;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{Format, FormatEvent, FormatFields, Full, Writer};
 use tracing_subscriber::fmt::time::SystemTime;
@@ -42,17 +42,19 @@ where
     }
 }
 
-/// Walk the span ancestry looking for the first `OtelData` with a valid trace ID.
-fn extract_trace_id<S, N>(ctx: &FmtContext<'_, S, N>) -> Option<TraceId>
+/// Read the trace ID from the currently attached OpenTelemetry context.
+///
+/// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span is
+/// entered (when `context_activation` is enabled, which is the default), so
+/// during event formatting the current OTel context corresponds to the
+/// innermost active span.
+fn extract_trace_id<S, N>(_ctx: &FmtContext<'_, S, N>) -> Option<TraceId>
 where
     S: Subscriber + for<'a> LookupSpan<'a>,
     N: for<'a> FormatFields<'a> + 'static,
 {
-    ctx.event_scope()?.find_map(|span_ref| {
-        let extensions = span_ref.extensions();
-        let trace_id = extensions.get::<OtelData>()?.trace_id()?;
-        (trace_id != TraceId::INVALID).then_some(trace_id)
-    })
+    let trace_id = Context::current().span().span_context().trace_id();
+    (trace_id != TraceId::INVALID).then_some(trace_id)
 }
 
 #[cfg(test)]

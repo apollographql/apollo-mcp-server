@@ -20,7 +20,7 @@ apollo-schema-index = { path = "../apollo-schema-index" }
 axum = "0.8.4"
 axum-extra = { version = "0.12.0", features = ["typed-header"] }
 axum-otel-metrics = "0.12.0"
-axum-tracing-opentelemetry = "0.33.0"
+axum-tracing-opentelemetry = "0.38.0"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["env", "yaml"] }
@@ -32,8 +32,8 @@ jsonschema = "0.42.0"
 jsonwebtoken = { version = "10.3", features = ["rust_crypto"] }
 jwks = "0.5.3"
 lz-str = "0.2.1"
-opentelemetry = "0.31.0"
-opentelemetry-otlp = { version = "0.31.0", features = [
+opentelemetry = "0.32.0"
+opentelemetry-otlp = { version = "0.32.0", features = [
   "grpc-tonic",
   "tonic",
   "http-proto",
@@ -41,13 +41,13 @@ opentelemetry-otlp = { version = "0.31.0", features = [
   "trace",
   "reqwest-rustls",
 ] }
-opentelemetry-semantic-conventions = "0.31.0"
-opentelemetry_sdk = { version = "0.31.0", features = [
+opentelemetry-semantic-conventions = "0.32.0"
+opentelemetry_sdk = { version = "0.32.0", features = [
   "spec_unstable_metrics_views",
 ] }
 regex = "1.11.1"
 reqwest-middleware = "0.5.1"
-reqwest-tracing = { version = "0.7.0", features = ["opentelemetry_0_31"] }
+reqwest-tracing = { version = "0.7.1", features = ["opentelemetry_0_32"] }
 reqwest.workspace = true
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rmcp.workspace = true
@@ -62,7 +62,7 @@ tokio-util = "0.7.15"
 tonic = "0.14"
 tower-http = { version = "0.6.6", features = ["cors", "trace"] }
 tracing-appender = "0.2.3"
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
 url.workspace = true
@@ -76,7 +76,7 @@ chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 mockito = "1.7.0"
-opentelemetry_sdk = { version = "0.31.0", features = ["testing"] }
+opentelemetry_sdk = { version = "0.32.0", features = ["testing"] }
 rstest.workspace = true
 secrecy.workspace = true
 serde_yaml = "0.9.34"

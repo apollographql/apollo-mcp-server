@@ -33,10 +33,10 @@ where
         self.inner.export(batch)
     }
 
-    fn shutdown(&mut self) -> OTelSdkResult {
+    fn shutdown(&self) -> OTelSdkResult {
         self.inner.shutdown()
     }
-    fn force_flush(&mut self) -> OTelSdkResult {
+    fn force_flush(&self) -> OTelSdkResult {
         self.inner.force_flush()
     }
     fn set_resource(&mut self, r: &Resource) {
@@ -54,12 +54,56 @@ mod tests {
     use opentelemetry::trace::{SpanContext, SpanKind, Status, TraceState};
     use opentelemetry::{InstrumentationScope, Key, KeyValue, SpanId, TraceFlags, TraceId};
     use opentelemetry_sdk::Resource;
-    use opentelemetry_sdk::error::{OTelSdkError, OTelSdkResult};
+    use opentelemetry_sdk::error::OTelSdkResult;
     use opentelemetry_sdk::trace::{SpanData, SpanEvents, SpanExporter, SpanLinks};
     use std::collections::HashSet;
     use std::fmt::Debug;
     use std::future::ready;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::SystemTime;
+
+    /// Inner exporter used in tests: counts invocations of every lifecycle
+    /// method and panics if a filtered `apollo.*` attribute leaks through
+    /// `export`.
+    #[derive(Debug, Default, Clone)]
+    struct RecordingExporter {
+        exports: Arc<AtomicUsize>,
+        shutdowns: Arc<AtomicUsize>,
+        force_flushes: Arc<AtomicUsize>,
+        set_resources: Arc<AtomicUsize>,
+    }
+
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    impl SpanExporter for RecordingExporter {
+        fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+            for span in &batch {
+                if span
+                    .attributes
+                    .iter()
+                    .any(|kv| kv.key.as_str().starts_with("apollo."))
+                {
+                    panic!("Omitted apollo.* attribute leaked through the filter");
+                }
+            }
+            self.exports.fetch_add(1, Ordering::SeqCst);
+            ready(Ok(()))
+        }
+
+        fn shutdown(&self) -> OTelSdkResult {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn force_flush(&self) -> OTelSdkResult {
+            self.force_flushes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn set_resource(&mut self, _resource: &Resource) {
+            self.set_resources.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 
     #[cfg_attr(coverage_nightly, coverage(off))]
     fn create_mock_span_data() -> SpanData {
@@ -95,139 +139,54 @@ mod tests {
 
     #[tokio::test]
     async fn filtering_exporter_filters_omitted_apollo_attributes() {
-        #[derive(Debug)]
-        struct TestExporter {}
-
-        #[cfg_attr(coverage_nightly, coverage(off))]
-        impl SpanExporter for TestExporter {
-            fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
-                batch.into_iter().for_each(|span| {
-                    if span
-                        .attributes
-                        .iter()
-                        .any(|kv| kv.key.as_str().starts_with("apollo."))
-                    {
-                        panic!("Omitted attributes were not filtered");
-                    }
-                });
-
-                ready(Ok(()))
-            }
-
-            fn shutdown(&mut self) -> OTelSdkResult {
-                Ok(())
-            }
-
-            fn force_flush(&mut self) -> OTelSdkResult {
-                Ok(())
-            }
-
-            fn set_resource(&mut self, _resource: &Resource) {}
-        }
-
         let mut omitted = HashSet::new();
         omitted.insert(Key::from_static_str("apollo.mock"));
-        let mock_exporter = TestExporter {};
-        let mock_span_data = create_mock_span_data();
+        let recorder = RecordingExporter::default();
+        let exports = recorder.exports.clone();
 
-        let filtering_exporter = FilteringExporter::new(mock_exporter, omitted);
+        let filtering_exporter = FilteringExporter::new(recorder, omitted);
         filtering_exporter
-            .export(vec![mock_span_data])
+            .export(vec![create_mock_span_data()])
             .await
             .expect("Export error");
+
+        assert_eq!(exports.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
     async fn filtering_exporter_calls_inner_exporter_on_shutdown() {
-        #[derive(Debug)]
-        struct TestExporter {}
+        let recorder = RecordingExporter::default();
+        let shutdowns = recorder.shutdowns.clone();
+        let force_flushes = recorder.force_flushes.clone();
 
-        #[cfg_attr(coverage_nightly, coverage(off))]
-        impl SpanExporter for TestExporter {
-            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
-                ready(Err(OTelSdkError::InternalFailure(
-                    "unexpected call".to_string(),
-                )))
-            }
-
-            fn shutdown(&mut self) -> OTelSdkResult {
-                Ok(())
-            }
-
-            fn force_flush(&mut self) -> OTelSdkResult {
-                Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
-            }
-
-            fn set_resource(&mut self, _resource: &Resource) {
-                unreachable!("should not be called");
-            }
-        }
-
-        let mock_exporter = TestExporter {};
-
-        let mut filtering_exporter = FilteringExporter::new(mock_exporter, HashSet::new());
+        let filtering_exporter = FilteringExporter::new(recorder, HashSet::new());
         assert!(filtering_exporter.shutdown().is_ok());
+
+        assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
+        assert_eq!(force_flushes.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn filtering_exporter_calls_inner_exporter_on_force_flush() {
-        #[derive(Debug)]
-        struct TestExporter {}
+        let recorder = RecordingExporter::default();
+        let shutdowns = recorder.shutdowns.clone();
+        let force_flushes = recorder.force_flushes.clone();
 
-        #[cfg_attr(coverage_nightly, coverage(off))]
-        impl SpanExporter for TestExporter {
-            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
-                ready(Err(OTelSdkError::InternalFailure(
-                    "unexpected call".to_string(),
-                )))
-            }
-
-            fn shutdown(&mut self) -> OTelSdkResult {
-                Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
-            }
-
-            fn force_flush(&mut self) -> OTelSdkResult {
-                Ok(())
-            }
-
-            fn set_resource(&mut self, _resource: &Resource) {
-                unreachable!("should not be called");
-            }
-        }
-
-        let mock_exporter = TestExporter {};
-
-        let mut filtering_exporter = FilteringExporter::new(mock_exporter, HashSet::new());
+        let filtering_exporter = FilteringExporter::new(recorder, HashSet::new());
         assert!(filtering_exporter.force_flush().is_ok());
+
+        assert_eq!(force_flushes.load(Ordering::SeqCst), 1);
+        assert_eq!(shutdowns.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
     async fn filtering_exporter_calls_inner_exporter_on_set_resource() {
-        #[derive(Debug)]
-        struct TestExporter {}
+        let recorder = RecordingExporter::default();
+        let set_resources = recorder.set_resources.clone();
 
-        #[cfg_attr(coverage_nightly, coverage(off))]
-        impl SpanExporter for TestExporter {
-            fn export(&self, _batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
-                ready(Err(OTelSdkError::InternalFailure(
-                    "unexpected call".to_string(),
-                )))
-            }
-
-            fn shutdown(&mut self) -> OTelSdkResult {
-                Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
-            }
-
-            fn force_flush(&mut self) -> OTelSdkResult {
-                Err(OTelSdkError::InternalFailure("unexpected call".to_string()))
-            }
-
-            fn set_resource(&mut self, _resource: &Resource) {}
-        }
-
-        let mock_exporter = TestExporter {};
-
-        let mut filtering_exporter = FilteringExporter::new(mock_exporter, HashSet::new());
+        let mut filtering_exporter = FilteringExporter::new(recorder, HashSet::new());
         filtering_exporter.set_resource(&Resource::builder_empty().build());
+
+        assert_eq!(set_resources.load(Ordering::SeqCst), 1);
     }
 }
