@@ -4,6 +4,7 @@ use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use std::collections::HashSet;
 use std::fmt::Debug;
+use std::time::Duration;
 
 #[derive(Debug)]
 pub struct FilteringExporter<E> {
@@ -33,6 +34,9 @@ where
         self.inner.export(batch)
     }
 
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
     fn shutdown(&self) -> OTelSdkResult {
         self.inner.shutdown()
     }
@@ -61,7 +65,7 @@ mod tests {
     use std::future::ready;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::SystemTime;
+    use std::time::{Duration, SystemTime};
 
     /// Inner exporter used in tests: counts invocations of every lifecycle
     /// method and panics if a filtered `apollo.*` attribute leaks through
@@ -70,6 +74,7 @@ mod tests {
     struct RecordingExporter {
         exports: Arc<AtomicUsize>,
         shutdowns: Arc<AtomicUsize>,
+        shutdown_timeouts: Arc<std::sync::Mutex<Vec<Duration>>>,
         force_flushes: Arc<AtomicUsize>,
         set_resources: Arc<AtomicUsize>,
     }
@@ -88,6 +93,14 @@ mod tests {
             }
             self.exports.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
+        }
+
+        fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+            self.shutdown_timeouts
+                .lock()
+                .expect("lock poisoned")
+                .push(timeout);
+            Ok(())
         }
 
         fn shutdown(&self) -> OTelSdkResult {
@@ -164,6 +177,20 @@ mod tests {
 
         assert_eq!(shutdowns.load(Ordering::SeqCst), 1);
         assert_eq!(force_flushes.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn filtering_exporter_calls_inner_exporter_on_shutdown_with_timeout() {
+        let recorder = RecordingExporter::default();
+        let timeouts = recorder.shutdown_timeouts.clone();
+        let shutdowns = recorder.shutdowns.clone();
+
+        let filtering_exporter = FilteringExporter::new(recorder, HashSet::new());
+        let timeout = Duration::from_secs(3);
+        assert!(filtering_exporter.shutdown_with_timeout(timeout).is_ok());
+
+        assert_eq!(*timeouts.lock().expect("lock poisoned"), vec![timeout]);
+        assert_eq!(shutdowns.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
