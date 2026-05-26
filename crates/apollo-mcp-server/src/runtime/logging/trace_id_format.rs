@@ -18,6 +18,8 @@ pub struct TraceIdFormat {
 }
 
 impl TraceIdFormat {
+    /// Wraps `inner` with a `trace_id=<hex>` prefix derived from the active
+    /// OpenTelemetry context, if any.
     pub fn new(inner: Format<Full, SystemTime>) -> Self {
         Self { inner }
     }
@@ -34,7 +36,7 @@ where
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> fmt::Result {
-        if let Some(trace_id) = extract_trace_id(ctx) {
+        if let Some(trace_id) = current_trace_id() {
             write!(writer, "trace_id={trace_id} ")?;
         }
 
@@ -42,17 +44,14 @@ where
     }
 }
 
-/// Read the trace ID from the currently attached OpenTelemetry context.
+/// Reads the trace ID from the currently attached OpenTelemetry context, or
+/// `None` if no span with a valid trace is active.
 ///
-/// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span is
-/// entered (when `context_activation` is enabled, which is the default), so
+/// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span
+/// is entered (when `context_activation` is enabled, which is the default), so
 /// during event formatting the current OTel context corresponds to the
 /// innermost active span.
-fn extract_trace_id<S, N>(_ctx: &FmtContext<'_, S, N>) -> Option<TraceId>
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-    N: for<'a> FormatFields<'a> + 'static,
-{
+fn current_trace_id() -> Option<TraceId> {
     let trace_id = Context::current().span().span_context().trace_id();
     (trace_id != TraceId::INVALID).then_some(trace_id)
 }

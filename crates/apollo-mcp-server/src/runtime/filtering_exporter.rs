@@ -1,11 +1,24 @@
-use opentelemetry::{Key, KeyValue};
+//! [`SpanExporter`] decorator that strips configured `apollo.*` attributes
+//! from each span before delegating to an inner exporter.
+//!
+//! Users opt attributes out via `telemetry.exporters.tracing.omitted_attributes`
+//! in YAML; the keys land in [`FilteringExporter::new`] and are removed at
+//! export time so the inner exporter (typically OTLP) never sees them.
+
+use opentelemetry::Key;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use std::collections::HashSet;
-use std::fmt::Debug;
 use std::time::Duration;
 
+/// Wraps an inner [`SpanExporter`] and drops any `apollo.*` attribute whose
+/// key appears in `omitted` before the span is exported.
+///
+/// All other attributes (including non-`apollo.*` keys and `apollo.*` keys
+/// not listed in `omitted`) pass through untouched. Lifecycle methods
+/// (`shutdown`, `shutdown_with_timeout`, `force_flush`, `set_resource`) are
+/// forwarded transparently.
 #[derive(Debug)]
 pub struct FilteringExporter<E> {
     inner: E,
@@ -13,6 +26,8 @@ pub struct FilteringExporter<E> {
 }
 
 impl<E> FilteringExporter<E> {
+    /// Builds a [`FilteringExporter`] around `inner` that will strip every
+    /// attribute in `omitted` from exported spans.
     pub fn new(inner: E, omitted: impl IntoIterator<Item = Key>) -> Self {
         Self {
             inner,
@@ -27,8 +42,9 @@ where
 {
     fn export(&self, mut batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
         for span in &mut batch {
-            span.attributes
-                .retain(|kv| filter_omitted_apollo_attributes(kv, &self.omitted));
+            span.attributes.retain(|kv| {
+                !(kv.key.as_str().starts_with("apollo.") && self.omitted.contains(&kv.key))
+            });
         }
 
         self.inner.export(batch)
@@ -37,31 +53,29 @@ where
     fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
         self.inner.shutdown_with_timeout(timeout)
     }
+
     fn shutdown(&self) -> OTelSdkResult {
         self.inner.shutdown()
     }
+
     fn force_flush(&self) -> OTelSdkResult {
         self.inner.force_flush()
     }
+
     fn set_resource(&mut self, r: &Resource) {
         self.inner.set_resource(r)
     }
 }
 
-fn filter_omitted_apollo_attributes(kv: &KeyValue, omitted_attributes: &HashSet<Key>) -> bool {
-    !kv.key.as_str().starts_with("apollo.") || !omitted_attributes.contains(&kv.key)
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::runtime::filtering_exporter::FilteringExporter;
+    use super::*;
     use opentelemetry::trace::{SpanContext, SpanKind, Status, TraceState};
     use opentelemetry::{InstrumentationScope, Key, KeyValue, SpanId, TraceFlags, TraceId};
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::error::OTelSdkResult;
     use opentelemetry_sdk::trace::{SpanData, SpanEvents, SpanExporter, SpanLinks};
     use std::collections::HashSet;
-    use std::fmt::Debug;
     use std::future::ready;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -83,13 +97,13 @@ mod tests {
     impl SpanExporter for RecordingExporter {
         fn export(&self, batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
             for span in &batch {
-                if span
-                    .attributes
-                    .iter()
-                    .any(|kv| kv.key.as_str().starts_with("apollo."))
-                {
-                    panic!("Omitted apollo.* attribute leaked through the filter");
-                }
+                assert!(
+                    !span
+                        .attributes
+                        .iter()
+                        .any(|kv| kv.key.as_str().starts_with("apollo.")),
+                    "apollo.* attribute leaked through the filter",
+                );
             }
             self.exports.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
@@ -158,10 +172,12 @@ mod tests {
         let exports = recorder.exports.clone();
 
         let filtering_exporter = FilteringExporter::new(recorder, omitted);
-        filtering_exporter
-            .export(vec![create_mock_span_data()])
-            .await
-            .expect("Export error");
+        assert!(
+            filtering_exporter
+                .export(vec![create_mock_span_data()])
+                .await
+                .is_ok()
+        );
 
         assert_eq!(exports.load(Ordering::SeqCst), 1);
     }
