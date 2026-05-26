@@ -3,9 +3,9 @@
 
 use std::fmt;
 
-use opentelemetry::trace::TraceId;
+use opentelemetry::Context;
+use opentelemetry::trace::{TraceContextExt, TraceId};
 use tracing::Subscriber;
-use tracing_opentelemetry::OtelData;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{Format, FormatEvent, FormatFields, Full, Writer};
 use tracing_subscriber::fmt::time::SystemTime;
@@ -18,6 +18,8 @@ pub struct TraceIdFormat {
 }
 
 impl TraceIdFormat {
+    /// Wraps `inner` with a `trace_id=<hex>` prefix derived from the active
+    /// OpenTelemetry context, if any.
     pub fn new(inner: Format<Full, SystemTime>) -> Self {
         Self { inner }
     }
@@ -34,7 +36,7 @@ where
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> fmt::Result {
-        if let Some(trace_id) = extract_trace_id(ctx) {
+        if let Some(trace_id) = current_trace_id() {
             write!(writer, "trace_id={trace_id} ")?;
         }
 
@@ -42,17 +44,16 @@ where
     }
 }
 
-/// Walk the span ancestry looking for the first `OtelData` with a valid trace ID.
-fn extract_trace_id<S, N>(ctx: &FmtContext<'_, S, N>) -> Option<TraceId>
-where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-    N: for<'a> FormatFields<'a> + 'static,
-{
-    ctx.event_scope()?.find_map(|span_ref| {
-        let extensions = span_ref.extensions();
-        let trace_id = extensions.get::<OtelData>()?.trace_id()?;
-        (trace_id != TraceId::INVALID).then_some(trace_id)
-    })
+/// Reads the trace ID from the currently attached OpenTelemetry context, or
+/// `None` if no span with a valid trace is active.
+///
+/// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span
+/// is entered (when `context_activation` is enabled, which is the default), so
+/// during event formatting the current OTel context corresponds to the
+/// innermost active span.
+fn current_trace_id() -> Option<TraceId> {
+    let trace_id = Context::current().span().span_context().trace_id();
+    (trace_id != TraceId::INVALID).then_some(trace_id)
 }
 
 #[cfg(test)]
