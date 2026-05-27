@@ -728,6 +728,20 @@ impl ServerHandler for Running {
         self.get_prompt_impl(request)
     }
 
+    #[tracing::instrument(skip_all)]
+    async fn set_level(
+        &self,
+        request: rmcp::model::SetLevelRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        // We do not advertise the `logging` capability and do not emit
+        // `notifications/message`. This override exists only to accept
+        // `logging/setLevel` from clients that send it without checking
+        // capabilities, so they see an empty success instead of `-32601`.
+        debug!(level = ?request.level, "received logging/setLevel; no-op");
+        Ok(())
+    }
+
     fn get_info(&self) -> ServerInfo {
         let meter = &meter::METER;
         meter
@@ -3446,6 +3460,188 @@ mod integration_tests {
                 0,
                 "closed peer should be removed after update_operations"
             );
+        }
+    }
+
+    mod logging_setlevel {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+
+        fn create_test_running() -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                prompts: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                annotations: HashMap::new(),
+                health_check: None,
+                server_info: Default::default(),
+                instructions: None,
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig::default().with_stateful_mode(true),
+            )
+        }
+
+        fn build_initialize_request() -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": { "name": "test-client", "version": "1.0.0" }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_notification_request(session_id: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized"
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn build_set_level_request(session_id: &str, level: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "logging/setLevel",
+                "params": { "level": level }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session_id)
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        fn extract_session_id<B>(response: &http::Response<B>) -> String {
+            response
+                .headers()
+                .get("mcp-session-id")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }
+
+        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
+        where
+            B: BodyExt,
+            B::Error: std::fmt::Debug,
+        {
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+            for line in body_str.lines() {
+                if let Some(data) = line.strip_prefix("data: ")
+                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
+                {
+                    return val;
+                }
+            }
+            panic!("no JSON data found in SSE response");
+        }
+
+        async fn initialize_session(
+            running: &Running,
+            session_manager: &Arc<LocalSessionManager>,
+        ) -> String {
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service.oneshot(build_initialize_request()).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session_id = extract_session_id(&response);
+
+            let service = create_service(running.clone(), Arc::clone(session_manager));
+            let response = service
+                .oneshot(build_notification_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+            session_id
+        }
+
+        #[tokio::test]
+        async fn returns_empty_success_for_any_level() {
+            let running = create_test_running();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager).await;
+
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_set_level_request(&session_id, "debug"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert!(
+                body.get("error").is_none(),
+                "set_level should not return an error: {body}"
+            );
+            assert_eq!(body["result"], json!({}));
         }
     }
 }
