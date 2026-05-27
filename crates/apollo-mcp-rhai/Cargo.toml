@@ -16,7 +16,7 @@ reqwest.workspace = true
 rhai = { version = "1.24.0", features = ["sync", "serde"] }
 rmcp.workspace = true
 serde_json.workspace = true
-sha2 = "0.10.9"
+sha2 = "0.11.0"
 tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
