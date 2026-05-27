@@ -118,36 +118,31 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
             config.graphos.platform_api_config()?,
         )),
         runtime::OperationSource::Introspect => OperationSource::None,
-        runtime::OperationSource::Local { paths } if !paths.is_empty() => {
-            OperationSource::from(paths)
-        }
         runtime::OperationSource::Manifest { path } => {
             OperationSource::from(ManifestSource::LocalHotReload(vec![path]))
         }
         runtime::OperationSource::Uplink => {
             OperationSource::from(ManifestSource::Uplink(config.graphos.uplink_config()?))
         }
-
-        // TODO: Inference requires many different combinations and preferences
-        // TODO: We should maybe make this more explicit.
+        runtime::OperationSource::Local { paths } if !paths.is_empty() => {
+            OperationSource::from(paths)
+        }
         runtime::OperationSource::Local { .. } | runtime::OperationSource::Infer => {
-            if config.introspection.any_enabled() {
-                warn!("No operations specified, falling back to introspection");
-                OperationSource::None
-            } else if let Ok(graph_ref) = config.graphos.graph_ref() {
+            if let Ok(graph_ref) = config.graphos.graph_ref() {
+                let api_config = config.graphos.platform_api_config()?;
                 warn!(
-                    "No operations specified, falling back to the default collection in {}",
-                    graph_ref
+                    "No operations.source configured. Loading the default GraphOS operation collection for graph `{graph_ref}`."
                 );
-                OperationSource::Collection(CollectionSource::Default(
-                    graph_ref,
-                    config.graphos.platform_api_config()?,
-                ))
+                OperationSource::Collection(CollectionSource::Default(graph_ref, api_config))
             } else {
-                anyhow::bail!(ServerError::NoOperations)
+                OperationSource::None
             }
         }
     };
+
+    if matches!(operation_source, OperationSource::None) && !config.introspection.any_enabled() {
+        anyhow::bail!(ServerError::NoOperations);
+    }
 
     let explorer_graph_ref = config
         .overrides
