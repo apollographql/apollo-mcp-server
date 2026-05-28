@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpstreamAuthConfig {
     #[serde(rename = "type")]
     pub auth_type: String,
@@ -95,6 +96,7 @@ mod tests {
         assert_eq!(auth.token_url, "https://api.preview.platform.athenahealth.com/oauth2/v1/token");
         assert_eq!(auth.client_id_env, "ATHENA_PREVIEW_CREDS_CLIENT_ID");
         assert_eq!(auth.client_secret_env, "ATHENA_PREVIEW_CREDS_CLIENT_SECRET");
+        assert_eq!(auth.auth_type, "oauth2_client_credentials");
     }
 
     #[test]
