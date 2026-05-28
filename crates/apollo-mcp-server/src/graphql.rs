@@ -101,6 +101,7 @@ pub trait Executable {
         let response = match GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
             .headers(self.headers(request.headers))
+            .header("content-type", "application/json")
             .body(Value::Object(request_body).to_string())
             .send()
             .await

@@ -107,7 +107,7 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
             (load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?, None)
         }
         runtime::graphs_source::GraphsSource::Oci { image } => {
-            let (m, td) = load_oci(&image).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            let (m, td) = load_oci(&image).await.map_err(anyhow::Error::from)?;
             (m, Some(td))
         }
     };

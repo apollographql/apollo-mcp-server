@@ -14,14 +14,6 @@ pub enum GraphsSource {
     Oci { image: String },
 }
 
-impl Default for GraphsSource {
-    fn default() -> Self {
-        GraphsSource::Local {
-            manifest: PathBuf::from("./graphs.yaml"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

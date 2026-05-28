@@ -279,15 +279,18 @@ pub async fn dispatch_introspect(
         Err(e) => return Ok(invalid_input(e)),
     };
 
-    let graphs_read = graphs.read().await;
-    let Some(ctx) = graphs_read.get(&input.graph) else {
-        return Ok(unknown_graph(
-            &input.graph,
-            &graphs_read.keys().cloned().collect::<Vec<_>>(),
-        ));
+    let schema_lock = {
+        let graphs_read = graphs.read().await;
+        let Some(ctx) = graphs_read.get(&input.graph) else {
+            return Ok(unknown_graph(
+                &input.graph,
+                &graphs_read.keys().cloned().collect::<Vec<_>>(),
+            ));
+        };
+        ctx.schema.clone()
     };
 
-    let schema = ctx.schema.read().await;
+    let schema = schema_lock.read().await;
     let starting_type = input
         .type_name
         .as_deref()
@@ -342,15 +345,18 @@ pub async fn dispatch_validate(
         Err(e) => return Ok(invalid_input(e)),
     };
 
-    let graphs_read = graphs.read().await;
-    let Some(ctx) = graphs_read.get(&input.graph) else {
-        return Ok(unknown_graph(
-            &input.graph,
-            &graphs_read.keys().cloned().collect::<Vec<_>>(),
-        ));
+    let schema_lock = {
+        let graphs_read = graphs.read().await;
+        let Some(ctx) = graphs_read.get(&input.graph) else {
+            return Ok(unknown_graph(
+                &input.graph,
+                &graphs_read.keys().cloned().collect::<Vec<_>>(),
+            ));
+        };
+        ctx.schema.clone()
     };
 
-    let schema = ctx.schema.read().await;
+    let schema = schema_lock.read().await;
     match apollo_compiler::ExecutableDocument::parse_and_validate(
         &schema,
         input.query.as_str(),
@@ -373,8 +379,24 @@ mod tests {
     use apollo_schema_index::{OperationType, SchemaIndex};
     use reqwest::header::HeaderMap;
     use std::collections::HashMap;
+    use std::ops::Deref;
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    fn text_of(result: CallToolResult) -> String {
+        result
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let rmcp::model::RawContent::Text(t) = c.deref() {
+                    Some(t.text.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 
     fn ctx_for(name: &str, sdl: &str, endpoint: &str) -> GraphContext {
         let schema = Schema::parse(sdl, "s.graphql").unwrap().validate().unwrap();
@@ -416,19 +438,7 @@ mod tests {
             .await
             .unwrap();
 
-        use std::ops::Deref;
-        let combined: String = result
-            .content
-            .iter()
-            .filter_map(|c| {
-                if let rmcp::model::RawContent::Text(t) = c.deref() {
-                    Some(t.text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let combined = text_of(result);
         assert!(combined.contains("# graph: a"));
         assert!(combined.contains("# graph: b"));
     }
@@ -459,19 +469,7 @@ mod tests {
             .await
             .unwrap();
 
-        use std::ops::Deref;
-        let combined: String = result
-            .content
-            .iter()
-            .filter_map(|c| {
-                if let rmcp::model::RawContent::Text(t) = c.deref() {
-                    Some(t.text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let combined = text_of(result);
         assert!(
             combined.contains("# graph: match"),
             "expected matching graph in output: {combined}"
@@ -548,19 +546,7 @@ mod tests {
         let result = dispatch_introspect(&graphs, false, args.as_ref())
             .await
             .unwrap();
-        use std::ops::Deref;
-        let combined: String = result
-            .content
-            .iter()
-            .filter_map(|c| {
-                if let rmcp::model::RawContent::Text(t) = c.deref() {
-                    Some(t.text.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let combined = text_of(result);
         assert!(combined.contains("type Query"));
         assert!(combined.contains("alpha"));
     }

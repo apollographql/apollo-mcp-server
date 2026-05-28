@@ -73,14 +73,9 @@ pub struct Config {
     /// The schema to load for operations
     pub schema: SchemaSource,
 
-    /// Multi-graph configuration source. When present, supersedes the legacy
-    /// single-graph keys above (`schema`, `operations`, `endpoint`). The old
-    /// keys are kept for now to keep the build green during the multi-graph
-    /// refactor; they will be removed in tasks 8-10.
-    ///
-    /// Not yet consumed by main.rs in this PoC; loading is exercised by tests.
+    /// Multi-graph configuration source. When present, `main` bypasses the
+    /// single-graph state machine and runs `MultiGraphServer` instead.
     #[serde(default)]
-    #[allow(dead_code)]
     pub graphs: Option<GraphsSource>,
 
     /// The type of server transport to use
