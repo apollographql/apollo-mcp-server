@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use oci_client::{
     Client, Reference,
-    client::ClientConfig,
+    client::{ClientConfig, ClientProtocol},
     manifest::{IMAGE_LAYER_GZIP_MEDIA_TYPE, IMAGE_LAYER_MEDIA_TYPE},
     secrets::RegistryAuth,
 };
@@ -61,7 +61,10 @@ pub async fn load_oci(image: &str) -> Result<(Manifest, tempfile::TempDir), OciL
         source,
     })?;
 
-    let client = Client::new(ClientConfig::default());
+    let client = Client::new(ClientConfig {
+        protocol: ClientProtocol::Http,
+        ..ClientConfig::default()
+    });
     let auth = RegistryAuth::Anonymous;
 
     let (image_manifest, _digest) = client
