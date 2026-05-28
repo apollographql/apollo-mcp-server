@@ -4,6 +4,15 @@ use std::path::PathBuf;
 use url::Url;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct UpstreamAuthConfig {
+    #[serde(rename = "type")]
+    pub auth_type: String,
+    pub token_url: String,
+    pub client_id_env: String,
+    pub client_secret_env: String,
+}
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub version: u32,
@@ -21,6 +30,8 @@ pub struct GraphConfig {
     pub operations: Vec<String>,
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub upstream_auth: Option<UpstreamAuthConfig>,
 }
 
 #[cfg(test)]
@@ -63,5 +74,39 @@ mod tests {
         "#;
         let result: Result<Manifest, _> = serde_yaml::from_str(yaml);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn it_parses_upstream_auth() {
+        let yaml = r#"
+            version: 1
+            graphs:
+              - name: athena
+                endpoint: http://localhost:4000/
+                schema: ./schema.graphql
+                upstream_auth:
+                  type: oauth2_client_credentials
+                  token_url: "https://api.preview.platform.athenahealth.com/oauth2/v1/token"
+                  client_id_env: ATHENA_PREVIEW_CREDS_CLIENT_ID
+                  client_secret_env: ATHENA_PREVIEW_CREDS_CLIENT_SECRET
+        "#;
+        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        let auth = m.graphs[0].upstream_auth.as_ref().unwrap();
+        assert_eq!(auth.token_url, "https://api.preview.platform.athenahealth.com/oauth2/v1/token");
+        assert_eq!(auth.client_id_env, "ATHENA_PREVIEW_CREDS_CLIENT_ID");
+        assert_eq!(auth.client_secret_env, "ATHENA_PREVIEW_CREDS_CLIENT_SECRET");
+    }
+
+    #[test]
+    fn it_parses_without_upstream_auth() {
+        let yaml = r#"
+            version: 1
+            graphs:
+              - name: petstore
+                endpoint: http://localhost:4000/
+                schema: ./schema.graphql
+        "#;
+        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        assert!(m.graphs[0].upstream_auth.is_none());
     }
 }

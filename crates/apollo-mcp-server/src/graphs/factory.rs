@@ -200,6 +200,7 @@ mod tests {
             schema,
             operations: vec![op.display().to_string()],
             headers: HashMap::new(),
+            upstream_auth: None,
         };
 
         let ctx = build_graph_context(
@@ -240,6 +241,7 @@ mod tests {
             schema: dir.path().join("schema.graphql"),
             operations: vec![ops_dir.display().to_string()],
             headers: HashMap::new(),
+            upstream_auth: None,
         };
 
         let ctx = build_graph_context(
