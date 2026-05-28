@@ -91,7 +91,7 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use apollo_mcp_server::graphs::{
-        Graphs, MultiGraphServer, MultiGraphServerOptions, build_graph_context, load_local,
+        Graphs, MultiGraphServer, MultiGraphServerOptions, build_graph_context, load_local, load_oci,
     };
     use apollo_mcp_server::operations::MutationMode;
     use rmcp::ServiceExt as _;
@@ -102,12 +102,13 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
         .graphs
         .clone()
         .ok_or_else(|| anyhow::anyhow!("run_multi_graph called without config.graphs"))?;
-    let manifest = match graphs_source {
+    let (manifest, _oci_tempdir): (_, Option<tempfile::TempDir>) = match graphs_source {
         runtime::graphs_source::GraphsSource::Local { manifest } => {
-            load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?
+            (load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?, None)
         }
-        runtime::graphs_source::GraphsSource::Oci { .. } => {
-            anyhow::bail!("OCI manifest source is not yet wired into the main binary")
+        runtime::graphs_source::GraphsSource::Oci { image } => {
+            let (m, td) = load_oci(&image).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+            (m, Some(td))
         }
     };
 

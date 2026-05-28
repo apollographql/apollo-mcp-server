@@ -11,5 +11,5 @@ pub use dispatch::{
     Graphs, dispatch_execute, dispatch_introspect, dispatch_search, dispatch_validate,
 };
 pub use factory::{BuildError, build_graph_context};
-pub use manifest::{GraphConfig, LocalLoadError, Manifest, load_local};
+pub use manifest::{GraphConfig, LocalLoadError, Manifest, load_local, load_oci};
 pub use server::{MultiGraphServer, MultiGraphServerOptions};
