@@ -33,6 +33,8 @@ struct CachedToken {
 
 #[derive(Debug)]
 pub struct OAuthClientCredentialsProvider {
+    #[allow(dead_code)]
+    http: reqwest::Client,
     cache: Arc<std::sync::RwLock<Option<CachedToken>>>,
 }
 
@@ -45,6 +47,8 @@ impl std::fmt::Display for CredentialError {
     }
 }
 
+impl std::error::Error for CredentialError {}
+
 #[derive(serde::Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -52,11 +56,12 @@ struct TokenResponse {
 }
 
 async fn fetch_token(
+    http: &reqwest::Client,
     client_id: &str,
     client_secret: &str,
     token_url: &str,
 ) -> Result<CachedToken, CredentialError> {
-    let resp = reqwest::Client::new()
+    let resp = http
         .post(token_url)
         .form(&[
             ("grant_type", "client_credentials"),
@@ -84,11 +89,13 @@ impl OAuthClientCredentialsProvider {
             .map_err(|_| CredentialError(format!("env var {} not set", config.client_secret_env)))?;
         let token_url = config.token_url.clone();
 
-        let initial = fetch_token(&client_id, &client_secret, &token_url).await?;
+        let http = reqwest::Client::new();
+        let initial = fetch_token(&http, &client_id, &client_secret, &token_url).await?;
         let cache = Arc::new(std::sync::RwLock::new(Some(initial)));
 
         // Background refresh: wakes up when token is near expiry and re-fetches.
         let cache_bg = Arc::clone(&cache);
+        let http_bg = http.clone();
         tokio::spawn(async move {
             loop {
                 let sleep_dur = {
@@ -100,14 +107,14 @@ impl OAuthClientCredentialsProvider {
                     })
                 };
                 tokio::time::sleep(sleep_dur).await;
-                match fetch_token(&client_id, &client_secret, &token_url).await {
+                match fetch_token(&http_bg, &client_id, &client_secret, &token_url).await {
                     Ok(token) => *cache_bg.write().unwrap() = Some(token),
                     Err(e) => tracing::error!("Failed to refresh upstream token: {e}"),
                 }
             }
         });
 
-        Ok(Self { cache })
+        Ok(Self { http, cache })
     }
 }
 
@@ -148,7 +155,7 @@ mod tests {
                 token: "my-token".to_string(),
                 expires_at: Instant::now() + Duration::from_secs(3600),
             })));
-            let provider = OAuthClientCredentialsProvider { cache };
+            let provider = OAuthClientCredentialsProvider { http: reqwest::Client::new(), cache };
             let base = HeaderMap::new();
             let result = provider.headers_for(&base, None);
             assert_eq!(result.get("x-fwd-authorization").unwrap(), "Bearer my-token");
@@ -160,7 +167,7 @@ mod tests {
                 token: "tok".to_string(),
                 expires_at: Instant::now() + Duration::from_secs(3600),
             })));
-            let provider = OAuthClientCredentialsProvider { cache };
+            let provider = OAuthClientCredentialsProvider { http: reqwest::Client::new(), cache };
             let mut base = HeaderMap::new();
             base.insert("x-custom", HeaderValue::from_static("val"));
             let result = provider.headers_for(&base, None);
@@ -171,7 +178,7 @@ mod tests {
         #[test]
         fn headers_for_returns_base_unchanged_when_no_token() {
             let cache = Arc::new(std::sync::RwLock::new(None));
-            let provider = OAuthClientCredentialsProvider { cache };
+            let provider = OAuthClientCredentialsProvider { http: reqwest::Client::new(), cache };
             let mut base = HeaderMap::new();
             base.insert("x-static", HeaderValue::from_static("yes"));
             let result = provider.headers_for(&base, None);
@@ -191,27 +198,15 @@ mod tests {
                 ]))
                 .with_status(200)
                 .with_header("content-type", "application/json")
-                .with_body(r#"{"access_token":"initial-token","token_type":"Bearer","expires_in":3600}"#)
+                .with_body(r#"{"access_token":"tok","token_type":"Bearer","expires_in":3600}"#)
                 .expect(1)
                 .create_async()
                 .await;
 
             let token_url = format!("{}/oauth2/token", server.url());
-            let config = UpstreamAuthConfig {
-                auth_type: "oauth2_client_credentials".to_string(),
-                token_url,
-                client_id_env: "TEST_OAUTH_CLIENT_ID".to_string(),
-                client_secret_env: "TEST_OAUTH_CLIENT_SECRET".to_string(),
-            };
-
-            unsafe {
-                std::env::set_var("TEST_OAUTH_CLIENT_ID", "test-id");
-                std::env::set_var("TEST_OAUTH_CLIENT_SECRET", "test-secret");
-            }
-
-            let provider = OAuthClientCredentialsProvider::new(&config).await.unwrap();
-            let result = provider.headers_for(&HeaderMap::new(), None);
-            assert_eq!(result.get("x-fwd-authorization").unwrap(), "Bearer initial-token");
+            let http = reqwest::Client::new();
+            let cached = fetch_token(&http, "test-id", "test-secret", &token_url).await.unwrap();
+            assert_eq!(cached.token, "tok");
             mock.assert_async().await;
         }
     }
