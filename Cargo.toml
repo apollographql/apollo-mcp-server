@@ -31,6 +31,7 @@ rmcp = { version = "1.6", features = [
   "transport-streamable-http-server",
 ] }
 reqwest = { version = "0.13.0", default-features = false, features = [
+  "form",
   "gzip",
   "json",
   "native-tls-vendored",
