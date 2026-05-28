@@ -15,7 +15,7 @@ use crate::headers::ForwardHeaders;
 use crate::operations::{AnnotationOverrides, MutationMode, Operation, RawOperation};
 
 use super::context::GraphContext;
-use super::credentials::default_provider;
+use super::credentials::{CredentialProvider, OAuthClientCredentialsProvider, default_provider};
 
 #[derive(Debug, thiserror::Error)]
 pub enum BuildError {
@@ -46,6 +46,8 @@ pub enum BuildError {
         #[source]
         source: apollo_schema_index::error::IndexingError,
     },
+    #[error("failed to initialize upstream credentials for graph '{graph}': {message}")]
+    CredentialInit { graph: String, message: String },
 }
 
 #[expect(clippy::too_many_arguments)]
@@ -124,6 +126,19 @@ pub async fn build_graph_context(
         headers.insert(name, value);
     }
 
+    let credentials: Arc<dyn CredentialProvider> = match &config.upstream_auth {
+        Some(auth) => {
+            let provider = OAuthClientCredentialsProvider::new(auth)
+                .await
+                .map_err(|e| BuildError::CredentialInit {
+                    graph: config.name.clone(),
+                    message: e.to_string(),
+                })?;
+            Arc::new(provider)
+        }
+        None => default_provider(),
+    };
+
     Ok(GraphContext {
         name: config.name,
         schema: Arc::new(RwLock::new(parsed)),
@@ -134,7 +149,7 @@ pub async fn build_graph_context(
         search_index: index,
         mutation_mode,
         custom_scalar_map,
-        credentials: default_provider(),
+        credentials,
     })
 }
 
@@ -262,5 +277,31 @@ mod tests {
 
         let ops = ctx.operations.read().await;
         assert_eq!(ops.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn it_builds_context_with_passthrough_when_no_upstream_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema = write_file(dir.path(), "schema.graphql", "type Query { id: String }");
+
+        let config = GraphConfig {
+            name: "g".into(),
+            endpoint: url::Url::parse("http://localhost:4000/").unwrap(),
+            schema,
+            operations: vec![],
+            headers: HashMap::new(),
+            upstream_auth: None,
+        };
+
+        let ctx = build_graph_context(
+            config, 15_000_000, MutationMode::None, false, false, false,
+            &HashMap::new(), &HashMap::new(), None, &HeaderMap::new(), &vec![],
+        )
+        .await
+        .unwrap();
+
+        // PassthroughCredentials returns base unchanged — no x-fwd-authorization
+        let result = ctx.credentials.headers_for(&HeaderMap::new(), None);
+        assert!(result.get("x-fwd-authorization").is_none());
     }
 }
