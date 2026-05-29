@@ -73,9 +73,9 @@ transport:
       - https://auth.other.com
 ```
 
-Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be considered valid. A token whose `iss` claim is missing or does not match any configured issuer is rejected with `401 Unauthorized`.
+Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be considered valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
 
-When `issuers` is empty (the default), issuer validation is skipped entirely, so existing configurations are unaffected.
+When `issuers` is empty (the default), the server skips issuer validation entirely, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
 
 ## Configure scope enforcement
 
