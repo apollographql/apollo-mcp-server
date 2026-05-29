@@ -58,6 +58,25 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 </Caution>
 
+## Configuring allowed issuers
+
+You can specify which JWT issuers are allowed to access your MCP Server.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    issuers:
+      - https://auth.example.com
+      - https://auth.other.com
+```
+
+Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be considered valid. A token whose `iss` claim is missing or does not match any configured issuer is rejected with `401 Unauthorized`.
+
+When `issuers` is empty (the default), issuer validation is skipped entirely, so existing configurations are unaffected.
+
 ## Configure scope enforcement
 
 Use the `scope_mode` option to control how the MCP Server validates scopes from OAuth tokens.

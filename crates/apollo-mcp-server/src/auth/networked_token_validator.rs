@@ -13,6 +13,7 @@ use super::valid_token::ValidateToken;
 /// from the network.
 pub(super) struct NetworkedTokenValidator<'a> {
     audiences: &'a [String],
+    issuers: &'a [String],
     allow_any_audience: bool,
     upstreams: &'a Vec<Url>,
     client: &'a reqwest::Client,
@@ -22,6 +23,7 @@ pub(super) struct NetworkedTokenValidator<'a> {
 impl<'a> NetworkedTokenValidator<'a> {
     pub fn new(
         audiences: &'a [String],
+        issuers: &'a [String],
         allow_any_audience: bool,
         upstreams: &'a Vec<Url>,
         client: &'a reqwest::Client,
@@ -29,6 +31,7 @@ impl<'a> NetworkedTokenValidator<'a> {
     ) -> Self {
         Self {
             audiences,
+            issuers,
             allow_any_audience,
             upstreams,
             client,
@@ -194,6 +197,10 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
 
     fn get_audiences(&self) -> &[String] {
         self.audiences
+    }
+
+    fn get_issuers(&self) -> &[String] {
+        self.issuers
     }
 
     fn get_servers(&self) -> &Vec<Url> {

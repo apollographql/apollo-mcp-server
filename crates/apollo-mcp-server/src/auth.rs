@@ -146,6 +146,15 @@ pub struct Config {
     #[serde(default)]
     pub audiences: Vec<String>,
 
+    /// List of accepted token issuers (the JWT `iss` claim).
+    ///
+    /// When non-empty, a token's `iss` claim must exactly match one of these
+    /// values or the token is rejected. When empty (default), issuer validation
+    /// is skipped. Not `Vec<Url>`: like `servers`, `Url::parse` appends `/` to
+    /// bare-authority inputs, which would break exact `iss` string matching.
+    #[serde(default)]
+    pub issuers: Vec<String>,
+
     /// Allow any audience (skip validation) - use with caution
     #[serde(default)]
     pub allow_any_audience: bool,
@@ -484,6 +493,7 @@ async fn oauth_validate(
         .collect();
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
+        &auth_config.issuers,
         auth_config.allow_any_audience,
         &auth_servers,
         &auth_state.client,
@@ -580,6 +590,7 @@ mod tests {
         Config {
             servers: vec!["http://localhost:1234".to_string()],
             audiences: vec!["test-audience".to_string()],
+            issuers: vec![],
             allow_any_audience: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
@@ -1082,6 +1093,51 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 err.to_string().contains("invalid auth server URL"),
                 "got: {err}"
             );
+        }
+    }
+
+    mod issuers_field {
+        use super::*;
+
+        #[test]
+        fn yaml_deserialization_with_issuers() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                issuers:
+                  - https://auth.example.com
+                  - https://auth.other.com
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(
+                config.issuers,
+                vec![
+                    "https://auth.example.com".to_string(),
+                    "https://auth.other.com".to_string()
+                ]
+            );
+        }
+
+        #[test]
+        fn yaml_deserialization_without_issuers_defaults_to_empty() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.issuers.is_empty());
         }
     }
 

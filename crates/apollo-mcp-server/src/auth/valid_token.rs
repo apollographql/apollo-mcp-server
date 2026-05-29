@@ -33,6 +33,9 @@ pub(super) trait ValidateToken {
     /// Get the list of allowed audiences
     fn get_audiences(&self) -> &[String];
 
+    /// Get the list of accepted issuers (empty = skip issuer validation)
+    fn get_issuers(&self) -> &[String];
+
     /// Get the available upstream servers
     fn get_servers(&self) -> &Vec<Url>;
 
@@ -53,6 +56,11 @@ pub(super) trait ValidateToken {
             /// so this field defaults to an empty vec when absent.
             #[serde(default, deserialize_with = "deserialize_audience")]
             pub aud: Vec<String>,
+
+            /// The issuer of this token (`iss`). Optional in the struct so tokens
+            /// without it still deserialize; enforced in `validate` when issuers are configured.
+            #[serde(default)]
+            pub iss: Option<String>,
 
             /// The user who owns this token
             pub sub: String,
@@ -149,6 +157,10 @@ pub(super) trait ValidateToken {
                     val.set_audience(self.get_audiences());
                 }
 
+                if !self.get_issuers().is_empty() {
+                    val.set_issuer(self.get_issuers());
+                }
+
                 val
             };
 
@@ -160,6 +172,14 @@ pub(super) trait ValidateToken {
                     // so we enforce it here.
                     if !self.allow_any_audience() && token_data.claims.aud.is_empty() {
                         warn!("Token is missing the required `aud` claim");
+                        break;
+                    }
+                    // When issuer validation is enabled, explicitly reject tokens
+                    // with a missing `iss` claim. The `jsonwebtoken` crate skips its
+                    // own issuer check when the claim is absent from the raw JWT,
+                    // so we enforce it here.
+                    if !self.get_issuers().is_empty() && token_data.claims.iss.is_none() {
+                        warn!("Token is missing the required `iss` claim");
                         break;
                     }
                     return Some(ValidToken {
@@ -191,6 +211,7 @@ mod test {
 
     struct TestTokenValidator {
         audiences: Vec<String>,
+        issuers: Vec<String>,
         allow_any_audience: bool,
         key_pair: (String, Jwk),
         servers: Vec<Url>,
@@ -203,6 +224,10 @@ mod test {
 
         fn get_audiences(&self) -> &[String] {
             &self.audiences
+        }
+
+        fn get_issuers(&self) -> &[String] {
+            &self.issuers
         }
 
         fn get_servers(&self) -> &Vec<url::Url> {
@@ -284,6 +309,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -326,6 +352,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -362,6 +389,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -399,6 +427,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -450,6 +479,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -485,6 +515,7 @@ mod test {
         // allow_any_audience should skip audience validation entirely
         let test_validator = TestTokenValidator {
             audiences: vec![],
+            issuers: vec![],
             allow_any_audience: true,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -527,6 +558,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![],
+            issuers: vec![],
             allow_any_audience: true,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -578,6 +610,7 @@ mod test {
         // With allow_any_audience=false and configured audiences, missing aud should fail
         let test_validator = TestTokenValidator {
             audiences: vec!["expected-audience".to_string()],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -630,6 +663,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![expected_audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -645,6 +679,280 @@ mod test {
                 .then_some(())
                 .ok_or("Expected warning for validation failure".to_string())
         });
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_matching_issuer() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let issuer = "https://auth.example.com".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "aud": "test-audience",
+            "iss": "https://auth.example.com",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            issuers: vec![issuer],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .token
+                .token(),
+            token
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_different_issuer() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let issuer = "https://auth.example.com".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "aud": "test-audience",
+            "iss": "https://evil.example.com",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            issuers: vec![issuer],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("InvalidIssuer"))
+                .then_some(())
+                .ok_or("Expected warning for validation failure".to_string())
+        });
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_when_issuer_matches_any_configured() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        // Token's `iss` matches the SECOND configured issuer, exercising the
+        // allowlist (any-match) semantics rather than just the first entry.
+        let claims = json!({
+            "aud": "test-audience",
+            "iss": "https://auth.other.com",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            issuers: vec![
+                "https://auth.example.com".to_string(),
+                "https://auth.other.com".to_string(),
+            ],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .token
+                .token(),
+            token
+        );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_missing_issuer_when_issuer_required() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let issuer = "https://auth.example.com".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        // Create a JWT without the `iss` claim
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // With configured issuers, a missing iss claim should fail
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            issuers: vec![issuer],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("missing the required `iss` claim"))
+                .then_some(())
+                .ok_or("Expected warning for missing iss claim".to_string())
+        });
+    }
+
+    #[tokio::test]
+    async fn it_validates_jwt_with_no_issuers_configured() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        // No `iss` claim at all - should still be valid when issuers are not configured
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id.clone());
+            h
+        };
+
+        let claims = json!({
+            "aud": "test-audience",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+
+        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // Empty issuers list - issuer validation is skipped (backward compatible)
+        let test_validator = TestTokenValidator {
+            audiences: vec![audience],
+            issuers: vec![],
+            allow_any_audience: false,
+            key_pair: (key_id, jwk),
+            servers: vec![server],
+        };
+
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .token
+                .token(),
+            token
+        );
     }
 
     #[traced_test]
@@ -666,6 +974,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec![audience],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
@@ -706,6 +1015,7 @@ mod test {
 
         let test_validator = TestTokenValidator {
             audiences: vec!["test-audience".to_string()],
+            issuers: vec![],
             allow_any_audience: false,
             key_pair: (key_id, jwk),
             servers: vec![server],
