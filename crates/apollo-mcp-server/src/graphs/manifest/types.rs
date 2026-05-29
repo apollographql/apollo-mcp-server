@@ -11,6 +11,8 @@ pub struct UpstreamAuthConfig {
     pub token_url: String,
     pub client_id_env: String,
     pub client_secret_env: String,
+    #[serde(default)]
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -97,6 +99,27 @@ mod tests {
         assert_eq!(auth.client_id_env, "ATHENA_PREVIEW_CREDS_CLIENT_ID");
         assert_eq!(auth.client_secret_env, "ATHENA_PREVIEW_CREDS_CLIENT_SECRET");
         assert_eq!(auth.auth_type, "oauth2_client_credentials");
+        assert_eq!(auth.scope, None);
+    }
+
+    #[test]
+    fn it_parses_upstream_auth_with_scope() {
+        let yaml = r#"
+            version: 1
+            graphs:
+              - name: athena
+                endpoint: http://localhost:4000/
+                schema: ./schema.graphql
+                upstream_auth:
+                  type: oauth2_client_credentials
+                  token_url: "https://api.preview.platform.athenahealth.com/oauth2/v1/token"
+                  client_id_env: ATHENA_PREVIEW_CREDS_CLIENT_ID
+                  client_secret_env: ATHENA_PREVIEW_CREDS_CLIENT_SECRET
+                  scope: "athena/service/Athenanet.MDP.*"
+        "#;
+        let m: Manifest = serde_yaml::from_str(yaml).unwrap();
+        let auth = m.graphs[0].upstream_auth.as_ref().unwrap();
+        assert_eq!(auth.scope.as_deref(), Some("athena/service/Athenanet.MDP.*"));
     }
 
     #[test]

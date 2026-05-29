@@ -60,14 +60,16 @@ async fn fetch_token(
     client_id: &str,
     client_secret: &str,
     token_url: &str,
+    scope: Option<&str>,
 ) -> Result<CachedToken, CredentialError> {
+    let mut params = vec![("grant_type", "client_credentials")];
+    if let Some(s) = scope {
+        params.push(("scope", s));
+    }
     let resp = http
         .post(token_url)
-        .form(&[
-            ("grant_type", "client_credentials"),
-            ("client_id", client_id),
-            ("client_secret", client_secret),
-        ])
+        .basic_auth(client_id, Some(client_secret))
+        .form(&params)
         .send()
         .await
         .map_err(|e| CredentialError(e.to_string()))?;
@@ -89,8 +91,9 @@ impl OAuthClientCredentialsProvider {
             .map_err(|_| CredentialError(format!("env var {} not set", config.client_secret_env)))?;
         let token_url = config.token_url.clone();
 
+        let scope = config.scope.clone();
         let http = reqwest::Client::new();
-        let initial = fetch_token(&http, &client_id, &client_secret, &token_url).await?;
+        let initial = fetch_token(&http, &client_id, &client_secret, &token_url, scope.as_deref()).await?;
         let cache = Arc::new(std::sync::RwLock::new(Some(initial)));
 
         // Background refresh: wakes up when token is near expiry and re-fetches.
@@ -107,7 +110,7 @@ impl OAuthClientCredentialsProvider {
                     })
                 };
                 tokio::time::sleep(sleep_dur).await;
-                match fetch_token(&http_bg, &client_id, &client_secret, &token_url).await {
+                match fetch_token(&http_bg, &client_id, &client_secret, &token_url, scope.as_deref()).await {
                     Ok(token) => *cache_bg.write().unwrap() = Some(token),
                     Err(e) => tracing::error!("Failed to refresh upstream token: {e}"),
                 }
@@ -189,12 +192,36 @@ mod tests {
         #[tokio::test]
         async fn new_fetches_initial_token_from_token_endpoint() {
             let mut server = mockito::Server::new_async().await;
+            // Credentials go in Basic auth header, not the form body
+            let mock = server
+                .mock("POST", "/oauth2/token")
+                .match_header("Authorization", mockito::Matcher::Regex(r"^Basic ".to_string()))
+                .match_body(mockito::Matcher::UrlEncoded(
+                    "grant_type".into(),
+                    "client_credentials".into(),
+                ))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"access_token":"tok","token_type":"Bearer","expires_in":3600}"#)
+                .expect(1)
+                .create_async()
+                .await;
+
+            let token_url = format!("{}/oauth2/token", server.url());
+            let http = reqwest::Client::new();
+            let cached = fetch_token(&http, "test-id", "test-secret", &token_url, None).await.unwrap();
+            assert_eq!(cached.token, "tok");
+            mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn fetch_token_includes_scope_when_provided() {
+            let mut server = mockito::Server::new_async().await;
             let mock = server
                 .mock("POST", "/oauth2/token")
                 .match_body(mockito::Matcher::AllOf(vec![
                     mockito::Matcher::UrlEncoded("grant_type".into(), "client_credentials".into()),
-                    mockito::Matcher::UrlEncoded("client_id".into(), "test-id".into()),
-                    mockito::Matcher::UrlEncoded("client_secret".into(), "test-secret".into()),
+                    mockito::Matcher::UrlEncoded("scope".into(), "athena/service/Athenanet.MDP.*".into()),
                 ]))
                 .with_status(200)
                 .with_header("content-type", "application/json")
@@ -205,7 +232,7 @@ mod tests {
 
             let token_url = format!("{}/oauth2/token", server.url());
             let http = reqwest::Client::new();
-            let cached = fetch_token(&http, "test-id", "test-secret", &token_url).await.unwrap();
+            let cached = fetch_token(&http, "id", "secret", &token_url, Some("athena/service/Athenanet.MDP.*")).await.unwrap();
             assert_eq!(cached.token, "tok");
             mock.assert_async().await;
         }
