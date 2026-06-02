@@ -4,6 +4,7 @@ pub mod dispatch;
 pub mod factory;
 pub mod local_dir;
 pub mod manifest;
+pub mod schema_oci;
 pub mod server;
 
 pub use context::GraphContext;
