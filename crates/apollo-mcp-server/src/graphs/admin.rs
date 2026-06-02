@@ -122,19 +122,25 @@ async fn activate(
 
     let ctx = match Arc::try_unwrap(arc_ctx) {
         Ok(ctx) => ctx,
-        Err(_) => {
-            // Unexpected extra reference — put back and fail.
-            staging.insert(graph_id, GraphStagingState::Staging);
+        Err(arc_ctx) => {
+            // Arc::try_unwrap failure is unexpected; restore staged state so caller can retry.
+            staging.insert(
+                graph_id,
+                GraphStagingState::Staged {
+                    sha,
+                    context: arc_ctx,
+                    staged_at: tokio::time::Instant::now(),
+                },
+            );
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
     };
 
-    // Insert into active map and record sha.
+    // Both maps updated while active is write-locked to prevent a status window between the two writes.
     {
         let mut active = state.active.write().await;
         active.insert(graph_id.clone(), ctx);
-    }
-    {
+        // Hold active_shas write while active is still locked to close the visibility gap.
         let mut shas = state.active_shas.write().await;
         shas.insert(graph_id, sha);
     }
