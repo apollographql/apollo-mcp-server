@@ -63,24 +63,31 @@ pub fn watch_and_stage(
                     if seen.get(&path).map(|s| s == &content).unwrap_or(false) {
                         continue; // unchanged
                     }
-                    seen.insert(path.clone(), content.clone());
 
                     let Ok(cfg) = parse_per_graph_config(&content) else {
                         tracing::warn!(?path, "failed to parse per-graph config, skipping");
                         continue;
                     };
 
-                    // Skip if already staged or staging at this sha.
+                    // Check if already staged or staging at this sha.
                     {
                         let staging_map = staging.read().await;
                         match staging_map.get(&cfg.name) {
                             Some(GraphStagingState::Staged { sha, .. }) if sha == &cfg.sha => {
+                                // Already staged at this sha: update seen and skip.
+                                seen.insert(path.clone(), content.clone());
                                 continue
                             }
-                            Some(GraphStagingState::Staging) => continue,
+                            Some(GraphStagingState::Staging) => {
+                                // Currently staging: do NOT update seen (file may change again).
+                                continue
+                            }
                             _ => {}
                         }
                     }
+
+                    // Update seen, mark as staging, and spawn task.
+                    seen.insert(path.clone(), content.clone());
 
                     // Mark as staging.
                     {
