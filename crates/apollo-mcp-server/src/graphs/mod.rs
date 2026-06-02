@@ -1,5 +1,6 @@
 pub mod context;
 pub mod credentials;
+pub mod local_dir;
 pub mod dispatch;
 pub mod factory;
 pub mod manifest;

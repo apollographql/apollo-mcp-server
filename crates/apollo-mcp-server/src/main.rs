@@ -110,6 +110,11 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
             let (m, td) = load_oci(&image).await.map_err(anyhow::Error::from)?;
             (m, Some(td))
         }
+        runtime::graphs_source::GraphsSource::LocalDir { .. } => {
+            return Err(anyhow::anyhow!(
+                "LocalDir source is not yet supported in run_multi_graph"
+            ));
+        }
     };
 
     info!("Loaded manifest with {} graphs", manifest.graphs.len());
