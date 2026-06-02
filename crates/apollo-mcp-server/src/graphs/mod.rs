@@ -6,6 +6,7 @@ pub mod local_dir;
 pub mod manifest;
 pub mod schema_oci;
 pub mod server;
+pub mod staging;
 
 pub use context::GraphContext;
 pub use credentials::{CredentialProvider, PassthroughCredentials, default_provider};
