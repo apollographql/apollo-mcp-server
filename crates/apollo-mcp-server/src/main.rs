@@ -102,45 +102,56 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
         .graphs
         .clone()
         .ok_or_else(|| anyhow::anyhow!("run_multi_graph called without config.graphs"))?;
-    let (manifest, _oci_tempdir): (_, Option<tempfile::TempDir>) = match graphs_source {
+    let graphs_source_clone = graphs_source.clone();
+
+    let (manifest_opt, _oci_tempdir): (_, Option<tempfile::TempDir>) = match graphs_source {
         runtime::graphs_source::GraphsSource::Local { manifest } => {
-            (load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?, None)
+            (Some(load_local(&manifest).map_err(|e| anyhow::anyhow!("{e}"))?), None)
         }
         runtime::graphs_source::GraphsSource::Oci { image } => {
             let (m, td) = load_oci(&image).await.map_err(anyhow::Error::from)?;
-            (m, Some(td))
+            (Some(m), Some(td))
         }
-        runtime::graphs_source::GraphsSource::LocalDir { .. } => {
-            return Err(anyhow::anyhow!(
-                "LocalDir source is not yet supported in run_multi_graph"
-            ));
-        }
+        runtime::graphs_source::GraphsSource::LocalDir { .. } => (None, None),
     };
 
-    info!("Loaded manifest with {} graphs", manifest.graphs.len());
-
     let mut map = HashMap::new();
-    for graph_config in manifest.graphs {
-        let name = graph_config.name.clone();
-        info!("Building graph '{name}' -> {}", graph_config.endpoint);
-        let ctx = build_graph_context(
-            graph_config,
-            config.introspection.search.index_memory_bytes,
-            MutationMode::None,
-            config.overrides.disable_type_description,
-            config.overrides.disable_schema_description,
-            config.overrides.enable_output_schema,
-            &config.overrides.annotations,
-            &config.overrides.descriptions,
-            None,
-            &config.headers,
-            &config.forward_headers,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-        map.insert(name, ctx);
+    if let Some(manifest) = manifest_opt {
+        info!("Loaded manifest with {} graphs", manifest.graphs.len());
+        for graph_config in manifest.graphs {
+            let name = graph_config.name.clone();
+            info!("Building graph '{name}' -> {}", graph_config.endpoint);
+            let ctx = build_graph_context(
+                graph_config,
+                config.introspection.search.index_memory_bytes,
+                MutationMode::None,
+                config.overrides.disable_type_description,
+                config.overrides.disable_schema_description,
+                config.overrides.enable_output_schema,
+                &config.overrides.annotations,
+                &config.overrides.descriptions,
+                None,
+                &config.headers,
+                &config.forward_headers,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            map.insert(name, ctx);
+        }
     }
     let graphs: Graphs = Arc::new(RwLock::new(map));
+
+    let staging = apollo_mcp_server::graphs::staging::new_staging_map();
+    if let runtime::graphs_source::GraphsSource::LocalDir { dir } = graphs_source_clone {
+        apollo_mcp_server::graphs::local_dir::watch_and_stage(
+            dir,
+            staging.clone(),
+            std::time::Duration::from_secs(3),
+            config.introspection.search.index_memory_bytes,
+        );
+    }
+
+    let admin_state = apollo_mcp_server::graphs::admin::AdminState::new(staging, graphs.clone());
 
     let opts = MultiGraphServerOptions {
         search_leaf_depth: config.introspection.search.leaf_depth,
@@ -168,7 +179,9 @@ async fn run_multi_graph(config: runtime::Config) -> anyhow::Result<()> {
                 LocalSessionManager::default().into(),
                 http_config,
             );
-            let router = axum::Router::new().nest_service("/mcp", svc);
+            let router = axum::Router::new()
+                .nest_service("/mcp", svc)
+                .nest("/admin", apollo_mcp_server::graphs::admin::admin_router(admin_state));
             let listener = tokio::net::TcpListener::bind(listen_address).await?;
             axum::serve(listener, router).await?;
         }
