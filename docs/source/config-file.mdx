@@ -305,9 +305,10 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 
 | Option                            | Type                  | Default       | Description                                                                                                                                                                                                      |
 | :-------------------------------- | :-------------------- | :------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `servers`                         | `List<URL>`           |               | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint).                                                                                                            |
+| `servers`                         | `List<URL \| object>` |               | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint). Each entry is a bare URL string, or an object with `url` and an optional `issuers` list.                   |
+| `servers[].url`                   | `URL`                 |               | The upstream OAuth server URL (object form only).                                                                                                                                                                |
+| `servers[].issuers`               | `List<string>`        | `[]`          | Accepted token issuers for tokens this server signs. The JWT `iss` claim must match one of these values, bound to the server whose keys verified the signature (skipped if empty).                               |
 | `audiences`                       | `List<string>`        | `[]`          | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                                                                                 |
-| `issuers`                         | `List<string>`        | `[]`          | List of accepted token issuers. The JWT `iss` claim must match one of these values (skipped if empty)                                                                                                            |
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
@@ -328,19 +329,20 @@ transport:
   auth:
     # List of upstream delegated OAuth servers
     # These must support RFC 8414 or OIDC metadata discovery.
+    # Each entry is a bare URL string, or an object with `url` and an
+    # optional per-server `issuers` list. When a server lists `issuers`, the
+    # JWT `iss` claim of a token its keys signed must match one of those
+    # values; bare-string servers skip issuer validation.
     servers:
-      - https://auth.example.com
+      - url: https://auth.example.com
+        issuers:
+          - https://auth.example.com
 
     # List of accepted audiences from upstream signed JWTs
     # (Ignored if allow_any_audience is set to true)
     # See: https://www.ory.sh/docs/hydra/guides/audiences
     audiences:
       - mcp.example.audience
-
-    # List of accepted token issuers. The JWT iss claim must match one of
-    # these values. When empty (the default), the server skips issuer validation.
-    issuers:
-      - https://auth.example.com
 
     # Set to true to skip audience validation (use with caution)
     allow_any_audience: false

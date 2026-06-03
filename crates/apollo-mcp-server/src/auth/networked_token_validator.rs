@@ -7,15 +7,18 @@ use serde::Deserialize;
 use tracing::{error, info, trace, warn};
 use url::Url;
 
+use super::AuthServer;
 use super::valid_token::ValidateToken;
 
 /// Implementation of the `ValidateToken` trait which fetches key information
 /// from the network.
 pub(super) struct NetworkedTokenValidator<'a> {
     audiences: &'a [String],
-    issuers: &'a [String],
     allow_any_audience: bool,
-    upstreams: &'a Vec<Url>,
+    servers: &'a [AuthServer],
+    /// Parsed upstream URLs, owned so `get_servers` can hand out a slice. Index
+    /// alignment with `servers` is maintained by construction.
+    upstreams: Vec<Url>,
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
 }
@@ -23,16 +26,20 @@ pub(super) struct NetworkedTokenValidator<'a> {
 impl<'a> NetworkedTokenValidator<'a> {
     pub fn new(
         audiences: &'a [String],
-        issuers: &'a [String],
         allow_any_audience: bool,
-        upstreams: &'a Vec<Url>,
+        servers: &'a [AuthServer],
         client: &'a reqwest::Client,
         discovery_timeout: Duration,
     ) -> Self {
+        #[allow(clippy::expect_used)] // parseability validated at deserialize
+        let upstreams = servers
+            .iter()
+            .map(|s| Url::parse(&s.url).expect("validated by deserialize_auth_servers"))
+            .collect();
         Self {
             audiences,
-            issuers,
             allow_any_audience,
+            servers,
             upstreams,
             client,
             discovery_timeout,
@@ -199,12 +206,21 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         self.audiences
     }
 
-    fn get_issuers(&self) -> &[String] {
-        self.issuers
+    fn get_issuers_for(&self, server: &Url) -> &[String] {
+        // Bind issuer validation to the server whose JWKS is being tried, so a
+        // token's accepted issuers are exactly those configured for the signer.
+        // `upstreams` is the parsed, index-aligned view of `servers`; zipping
+        // them keeps that pairing explicit and avoids panicking indexing.
+        self.upstreams
+            .iter()
+            .zip(self.servers.iter())
+            .find(|(url, _)| *url == server)
+            .map(|(_, s)| s.issuers.as_slice())
+            .unwrap_or_default()
     }
 
-    fn get_servers(&self) -> &Vec<Url> {
-        self.upstreams
+    fn get_servers(&self) -> &[Url] {
+        &self.upstreams
     }
 
     /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS

@@ -118,17 +118,74 @@ where
     Ok(headers)
 }
 
-fn deserialize_auth_servers<'de, D>(d: D) -> Result<Vec<String>, D::Error>
+/// An upstream OAuth server to delegate authentication to, together with the
+/// token issuers accepted for tokens it signs.
+///
+/// Deserializes from either a bare URL string (issuer validation disabled for
+/// that server) or an object with explicit `issuers`:
+///
+/// ```yaml
+/// servers:
+///   - https://auth.example.com                 # bare form, no issuer check
+///   - url: https://auth.other.example.com       # object form
+///     issuers:
+///       - https://auth.other.example.com
+/// ```
+///
+/// `url` is kept as a `String` rather than `Url`: `Url::parse` appends `/` to
+/// bare-authority inputs, which would break exact `iss` string matching and
+/// alter the value advertised in the protected-resource metadata.
+#[derive(Debug, Clone, JsonSchema)]
+pub struct AuthServer {
+    /// The upstream OAuth server URL (used for OIDC/OAuth discovery).
+    pub url: String,
+
+    /// Accepted token issuers (the JWT `iss` claim) for tokens signed by this
+    /// server's JWKS. When non-empty, a token verified by this server's keys
+    /// must carry an `iss` claim matching one of these values, or it is
+    /// rejected. When empty (the default), issuer validation is skipped for
+    /// this server.
+    pub issuers: Vec<String>,
+}
+
+impl<'de> Deserialize<'de> for AuthServer {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error;
+
+        /// Accepts either a bare URL string or the structured `{ url, issuers }`
+        /// object. The object arm uses `deny_unknown_fields` so typos surface
+        /// as errors rather than being silently dropped.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            Bare(String),
+            Structured {
+                url: String,
+                #[serde(default)]
+                issuers: Vec<String>,
+            },
+        }
+
+        let (url, issuers) = match Repr::deserialize(d)? {
+            Repr::Bare(url) => (url, Vec::new()),
+            Repr::Structured { url, issuers } => (url, issuers),
+        };
+
+        Url::parse(&url)
+            .map_err(|e| D::Error::custom(format!("invalid auth server URL {url:?}: {e}")))?;
+
+        Ok(AuthServer { url, issuers })
+    }
+}
+
+fn deserialize_auth_servers<'de, D>(d: D) -> Result<Vec<AuthServer>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    use serde::de::Error;
-    let servers: Vec<String> = Vec::deserialize(d)?;
-    for s in &servers {
-        Url::parse(s)
-            .map_err(|e| D::Error::custom(format!("invalid auth server URL {s:?}: {e}")))?;
-    }
-    Ok(servers)
+    Vec::<AuthServer>::deserialize(d)
 }
 
 /// Auth configuration options
@@ -136,24 +193,18 @@ where
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// List of upstream OAuth servers to delegate auth.
-    /// Not `Vec<Url>`: `Url::parse` appends `/` to bare-authority inputs,
-    /// breaking issuer string-matching in clients.
+    ///
+    /// Each entry is either a bare URL string or an object with `url` and an
+    /// optional per-server `issuers` list (the accepted JWT `iss` values for
+    /// tokens that server signs). Issuer validation is bound to the server
+    /// whose JWKS verifies a token's signature, matching Apollo Router's
+    /// per-JWKS `issuers` semantics.
     #[serde(deserialize_with = "deserialize_auth_servers")]
-    #[schemars(with = "Vec<Url>")]
-    pub servers: Vec<String>,
+    pub servers: Vec<AuthServer>,
 
     /// List of accepted audiences for the OAuth tokens
     #[serde(default)]
     pub audiences: Vec<String>,
-
-    /// List of accepted token issuers (the JWT `iss` claim).
-    ///
-    /// When non-empty, a token's `iss` claim must exactly match one of these
-    /// values or the token is rejected. When empty (default), issuer validation
-    /// is skipped. Not `Vec<Url>`: like `servers`, `Url::parse` appends `/` to
-    /// bare-authority inputs, which would break exact `iss` string matching.
-    #[serde(default)]
-    pub issuers: Vec<String>,
 
     /// Allow any audience (skip validation) - use with caution
     #[serde(default)]
@@ -281,11 +332,11 @@ impl Config {
         // Validate server URLs have hosts (fail fast on config errors)
         #[allow(clippy::expect_used)] // parseability validated at deserialize
         for (i, server) in self.servers.iter().enumerate() {
-            let parsed = Url::parse(server).expect("validated by deserialize_auth_servers");
+            let parsed = Url::parse(&server.url).expect("validated by deserialize_auth_servers");
             if parsed.host_str().is_none() {
                 return Err(TlsConfigError::ServerUrlMissingHost {
                     index: i,
-                    url: server.clone(),
+                    url: server.url.clone(),
                 });
             }
         }
@@ -485,17 +536,10 @@ async fn oauth_validate(
         .discovery_timeout
         .unwrap_or(Duration::from_secs(5));
 
-    #[allow(clippy::expect_used)] // parseability validated at deserialize
-    let auth_servers: Vec<Url> = auth_config
-        .servers
-        .iter()
-        .map(|s| Url::parse(s).expect("validated by deserialize_auth_servers"))
-        .collect();
     let validator = NetworkedTokenValidator::new(
         &auth_config.audiences,
-        &auth_config.issuers,
         auth_config.allow_any_audience,
-        &auth_servers,
+        &auth_config.servers,
         &auth_state.client,
         discovery_timeout,
     );
@@ -588,9 +632,11 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
-            servers: vec!["http://localhost:1234".to_string()],
+            servers: vec![AuthServer {
+                url: "http://localhost:1234".to_string(),
+                issuers: vec![],
+            }],
             audiences: vec!["test-audience".to_string()],
-            issuers: vec![],
             allow_any_audience: false,
             resource: Url::parse("http://localhost:4000").unwrap(),
             resource_documentation: None,
@@ -809,7 +855,10 @@ mod tests {
         fn rejects_server_url_without_host() {
             let mut config = test_config();
             // file:// URLs have no host
-            config.servers = vec!["file:///some/path".to_string()];
+            config.servers = vec![AuthServer {
+                url: "file:///some/path".to_string(),
+                issuers: vec![],
+            }];
 
             let router = Router::new();
             let err = config
@@ -1100,23 +1149,43 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         use super::*;
 
         #[test]
-        fn yaml_deserialization_with_issuers() {
+        fn bare_string_server_has_no_issuers() {
             let yaml = r#"
                 servers:
                   - http://localhost:1234
                 audiences:
                   - test-audience
-                issuers:
-                  - https://auth.example.com
-                  - https://auth.other.com
                 resource: http://localhost:4000
                 scopes:
                   - read
             "#;
 
             let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.servers.len(), 1);
+            assert_eq!(config.servers[0].url, "http://localhost:1234");
+            assert!(config.servers[0].issuers.is_empty());
+        }
+
+        #[test]
+        fn object_server_carries_its_own_issuers() {
+            let yaml = r#"
+                servers:
+                  - url: http://localhost:1234
+                    issuers:
+                      - https://auth.example.com
+                      - https://auth.other.com
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.servers.len(), 1);
+            assert_eq!(config.servers[0].url, "http://localhost:1234");
             assert_eq!(
-                config.issuers,
+                config.servers[0].issuers,
                 vec![
                     "https://auth.example.com".to_string(),
                     "https://auth.other.com".to_string()
@@ -1125,10 +1194,10 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         }
 
         #[test]
-        fn yaml_deserialization_without_issuers_defaults_to_empty() {
+        fn object_server_without_issuers_defaults_to_empty() {
             let yaml = r#"
                 servers:
-                  - http://localhost:1234
+                  - url: http://localhost:1234
                 audiences:
                   - test-audience
                 resource: http://localhost:4000
@@ -1137,7 +1206,53 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             "#;
 
             let config: Config = serde_yaml::from_str(yaml).unwrap();
-            assert!(config.issuers.is_empty());
+            assert!(config.servers[0].issuers.is_empty());
+        }
+
+        #[test]
+        fn bare_and_object_forms_mix_in_one_list() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                  - url: https://auth.other.com
+                    issuers:
+                      - https://auth.other.com
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.servers.len(), 2);
+            assert_eq!(config.servers[0].url, "http://localhost:1234");
+            assert!(config.servers[0].issuers.is_empty());
+            assert_eq!(config.servers[1].url, "https://auth.other.com");
+            assert_eq!(
+                config.servers[1].issuers,
+                vec!["https://auth.other.com".to_string()]
+            );
+        }
+
+        #[test]
+        fn invalid_server_url_is_rejected() {
+            let yaml = r#"
+                servers:
+                  - "not a url"
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let err = serde_yaml::from_str::<Config>(yaml)
+                .expect_err("invalid server URL should fail to parse");
+            assert!(
+                err.to_string().contains("invalid auth server URL"),
+                "unexpected error: {err}"
+            );
         }
     }
 

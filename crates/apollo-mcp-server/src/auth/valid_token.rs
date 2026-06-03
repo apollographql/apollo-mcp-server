@@ -33,11 +33,12 @@ pub(super) trait ValidateToken {
     /// Get the list of allowed audiences
     fn get_audiences(&self) -> &[String];
 
-    /// Get the list of accepted issuers (empty = skip issuer validation)
-    fn get_issuers(&self) -> &[String];
+    /// Get the accepted issuers for tokens verified by `server`'s JWKS
+    /// (empty = skip issuer validation for that server).
+    fn get_issuers_for(&self, server: &Url) -> &[String];
 
     /// Get the available upstream servers
-    fn get_servers(&self) -> &Vec<Url>;
+    fn get_servers(&self) -> &[Url];
 
     /// Fetch the key by its ID
     async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk>;
@@ -125,6 +126,11 @@ pub(super) trait ValidateToken {
                 continue;
             };
 
+            // Issuers accepted for tokens this server signs. Bound to the server
+            // whose JWKS verifies the signature, so a token signed by one server
+            // cannot pass by claiming another configured server's issuer.
+            let issuers = self.get_issuers_for(server);
+
             let validation = {
                 let Some(alg) = jwk.alg else {
                     warn!("Skipping JWK with no algorithm specified");
@@ -157,8 +163,8 @@ pub(super) trait ValidateToken {
                     val.set_audience(self.get_audiences());
                 }
 
-                if !self.get_issuers().is_empty() {
-                    val.set_issuer(self.get_issuers());
+                if !issuers.is_empty() {
+                    val.set_issuer(issuers);
                 }
 
                 val
@@ -174,11 +180,11 @@ pub(super) trait ValidateToken {
                         warn!("Token is missing the required `aud` claim");
                         break;
                     }
-                    // When issuer validation is enabled, explicitly reject tokens
-                    // with a missing `iss` claim. The `jsonwebtoken` crate skips its
-                    // own issuer check when the claim is absent from the raw JWT,
-                    // so we enforce it here.
-                    if !self.get_issuers().is_empty() && token_data.claims.iss.is_none() {
+                    // When issuer validation is enabled for this server, explicitly
+                    // reject tokens with a missing `iss` claim. The `jsonwebtoken`
+                    // crate skips its own issuer check when the claim is absent from
+                    // the raw JWT, so we enforce it here.
+                    if !issuers.is_empty() && token_data.claims.iss.is_none() {
                         warn!("Token is missing the required `iss` claim");
                         break;
                     }
@@ -209,12 +215,53 @@ mod test {
 
     use super::ValidateToken;
 
+    /// A single upstream server in the test validator: its URL, the one
+    /// `(kid, jwk)` it will serve, and the issuers configured for it.
+    struct TestServer {
+        url: Url,
+        key_pair: (String, Jwk),
+        issuers: Vec<String>,
+    }
+
     struct TestTokenValidator {
         audiences: Vec<String>,
-        issuers: Vec<String>,
         allow_any_audience: bool,
-        key_pair: (String, Jwk),
-        servers: Vec<Url>,
+        servers: Vec<TestServer>,
+        /// Parsed server URLs, owned so `get_servers` can return a slice.
+        /// Kept index-aligned with `servers`.
+        server_urls: Vec<Url>,
+    }
+
+    impl TestTokenValidator {
+        /// Build a validator from `(server, key_pair, issuers)` tuples.
+        fn new(audiences: Vec<String>, allow_any_audience: bool, servers: Vec<TestServer>) -> Self {
+            let server_urls = servers.iter().map(|s| s.url.clone()).collect();
+            Self {
+                audiences,
+                allow_any_audience,
+                servers,
+                server_urls,
+            }
+        }
+
+        /// Convenience for the common single-server case.
+        fn single(
+            audiences: Vec<String>,
+            issuers: Vec<String>,
+            allow_any_audience: bool,
+            key_pair: (String, Jwk),
+            server: Url,
+        ) -> Self {
+            Self::new(
+                audiences,
+                allow_any_audience,
+                vec![TestServer {
+                    url: server,
+                    key_pair,
+                    issuers,
+                }],
+            )
+        }
     }
 
     impl ValidateToken for TestTokenValidator {
@@ -226,25 +273,27 @@ mod test {
             &self.audiences
         }
 
-        fn get_issuers(&self) -> &[String] {
-            &self.issuers
+        fn get_issuers_for(&self, server: &Url) -> &[String] {
+            self.server_urls
+                .iter()
+                .zip(self.servers.iter())
+                .find(|(url, _)| *url == server)
+                .map(|(_, s)| s.issuers.as_slice())
+                .unwrap_or_default()
         }
 
-        fn get_servers(&self) -> &Vec<url::Url> {
-            &self.servers
+        fn get_servers(&self) -> &[url::Url] {
+            &self.server_urls
         }
 
         async fn get_key(&self, server: &url::Url, key_id: &str) -> Option<jwks::Jwk> {
-            // Return nothing if the server is not known to us
-            if !self.get_servers().contains(server) {
-                return None;
-            }
-
-            // Only return the key if it is the one we know
-            self.key_pair
+            // Find the requested server, then return its key only if the `kid` matches.
+            let test_server = self.servers.iter().find(|s| &s.url == server)?;
+            test_server
+                .key_pair
                 .0
                 .eq(key_id)
-                .then_some(self.key_pair.1.clone())
+                .then_some(test_server.key_pair.1.clone())
         }
     }
 
@@ -307,13 +356,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         let token = jwt.token().to_string();
         assert_eq!(
@@ -350,13 +394,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -387,13 +426,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -425,13 +459,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -477,13 +506,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         assert_eq!(
             test_validator
@@ -513,13 +537,8 @@ mod test {
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
         // allow_any_audience should skip audience validation entirely
-        let test_validator = TestTokenValidator {
-            audiences: vec![],
-            issuers: vec![],
-            allow_any_audience: true,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![], vec![], true, (key_id, jwk), server);
 
         let token = jwt.token().to_string();
         assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
@@ -556,13 +575,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![],
-            issuers: vec![],
-            allow_any_audience: true,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![], vec![], true, (key_id, jwk), server);
 
         assert_eq!(
             test_validator
@@ -608,13 +622,13 @@ mod test {
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
         // With allow_any_audience=false and configured audiences, missing aud should fail
-        let test_validator = TestTokenValidator {
-            audiences: vec!["expected-audience".to_string()],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator = TestTokenValidator::single(
+            vec!["expected-audience".to_string()],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -661,13 +675,13 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![expected_audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator = TestTokenValidator::single(
+            vec![expected_audience],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -715,13 +729,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![issuer],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
         assert_eq!(
             test_validator
@@ -769,13 +778,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![issuer],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -809,8 +813,9 @@ mod test {
             h
         };
 
-        // Token's `iss` matches the SECOND configured issuer, exercising the
-        // allowlist (any-match) semantics rather than just the first entry.
+        // The signing server has TWO issuers configured; the token's `iss`
+        // matches the second, exercising the per-server allowlist (any-match)
+        // semantics rather than just the first entry.
         let claims = json!({
             "aud": "test-audience",
             "iss": "https://auth.other.com",
@@ -824,16 +829,16 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![
+        let test_validator = TestTokenValidator::single(
+            vec![audience],
+            vec![
                 "https://auth.example.com".to_string(),
                 "https://auth.other.com".to_string(),
             ],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+            false,
+            (key_id, jwk),
+            server,
+        );
 
         assert_eq!(
             test_validator
@@ -882,13 +887,8 @@ mod test {
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
         // With configured issuers, a missing iss claim should fail
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![issuer],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -936,13 +936,161 @@ mod test {
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
         // Empty issuers list - issuer validation is skipped (backward compatible)
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
+
+        assert_eq!(
+            test_validator
+                .validate(jwt)
+                .await
+                .expect("valid token")
+                .token
+                .token(),
+            token
+        );
+    }
+
+    // --- Multi-server issuer binding ---------------------------------------
+    //
+    // These exercise the case Dale flagged in review: with more than one
+    // configured server, issuer validation must be bound to the server whose
+    // JWKS verified the signature, not applied as one global allowlist.
+
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_token_signed_by_one_server_claiming_another_servers_issuer() {
+        use serde_json::json;
+
+        // Two servers share the same `kid` but use different signing secrets —
+        // the realistic collision that made a global issuer list exploitable.
+        let shared_kid = "shared-kid".to_string();
+        let (server_a_encode, server_a_decode) = create_key("DEADBEEF");
+        let (_server_b_encode, server_b_decode) = create_key("CAFED00D");
+
+        let server_a_url = Url::from_str("https://auth-a.example.com").expect("valid server A URL");
+        let server_b_url = Url::from_str("https://auth-b.example.com").expect("valid server B URL");
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        // Token is signed by SERVER A's key, but claims SERVER B's issuer.
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(shared_kid.clone());
+            h
         };
+        let claims = json!({
+            "aud": "test-audience",
+            "iss": "https://auth-b.example.com",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+        let token = encode(&header, &claims, &server_a_encode).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        // Each server accepts only its own issuer.
+        let test_validator = TestTokenValidator::new(
+            vec!["test-audience".to_string()],
+            false,
+            vec![
+                TestServer {
+                    url: server_a_url,
+                    key_pair: (
+                        shared_kid.clone(),
+                        Jwk {
+                            alg: Some(KeyAlgorithm::HS512),
+                            decoding_key: server_a_decode,
+                        },
+                    ),
+                    issuers: vec!["https://auth-a.example.com".to_string()],
+                },
+                TestServer {
+                    url: server_b_url,
+                    key_pair: (
+                        shared_kid,
+                        Jwk {
+                            alg: Some(KeyAlgorithm::HS512),
+                            decoding_key: server_b_decode,
+                        },
+                    ),
+                    issuers: vec!["https://auth-b.example.com".to_string()],
+                },
+            ],
+        );
+
+        // Server A verifies the signature but rejects `iss=B` (InvalidIssuer);
+        // Server B would accept `iss=B` but its key fails the signature. So the
+        // token is rejected overall — exactly the cross-server leak being closed.
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("InvalidIssuer"))
+                .then_some(())
+                .ok_or("Expected InvalidIssuer warning from the signing server".to_string())
+        });
+    }
+
+    #[tokio::test]
+    async fn it_validates_token_against_its_own_servers_issuer_with_multiple_servers() {
+        use serde_json::json;
+
+        // Two servers, distinct keys and issuers. A token signed by server B's
+        // key and claiming server B's issuer must validate, even though server A
+        // is also configured with a different issuer.
+        let kid_a = "kid-a".to_string();
+        let kid_b = "kid-b".to_string();
+        let (_server_a_encode, server_a_decode) = create_key("DEADBEEF");
+        let (server_b_encode, server_b_decode) = create_key("CAFED00D");
+
+        let server_a_url = Url::from_str("https://auth-a.example.com").expect("valid server A URL");
+        let server_b_url = Url::from_str("https://auth-b.example.com").expect("valid server B URL");
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(kid_b.clone());
+            h
+        };
+        let claims = json!({
+            "aud": "test-audience",
+            "iss": "https://auth-b.example.com",
+            "exp": in_the_future,
+            "sub": "test user"
+        });
+        let token = encode(&header, &claims, &server_b_encode).expect("encode JWT");
+        let jwt = Authorization::bearer(&token).expect("create bearer token");
+
+        let test_validator = TestTokenValidator::new(
+            vec!["test-audience".to_string()],
+            false,
+            vec![
+                TestServer {
+                    url: server_a_url,
+                    key_pair: (
+                        kid_a,
+                        Jwk {
+                            alg: Some(KeyAlgorithm::HS512),
+                            decoding_key: server_a_decode,
+                        },
+                    ),
+                    issuers: vec!["https://auth-a.example.com".to_string()],
+                },
+                TestServer {
+                    url: server_b_url,
+                    key_pair: (
+                        kid_b,
+                        Jwk {
+                            alg: Some(KeyAlgorithm::HS512),
+                            decoding_key: server_b_decode,
+                        },
+                    ),
+                    issuers: vec!["https://auth-b.example.com".to_string()],
+                },
+            ],
+        );
 
         assert_eq!(
             test_validator
@@ -972,13 +1120,8 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec![audience],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
@@ -1013,13 +1156,13 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator {
-            audiences: vec!["test-audience".to_string()],
-            issuers: vec![],
-            allow_any_audience: false,
-            key_pair: (key_id, jwk),
-            servers: vec![server],
-        };
+        let test_validator = TestTokenValidator::single(
+            vec!["test-audience".to_string()],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
 
         test_validator
             .validate(jwt)

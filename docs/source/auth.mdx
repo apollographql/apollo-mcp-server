@@ -60,22 +60,43 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 ## Configuring allowed issuers
 
-You can specify which JWT issuers are allowed to access your MCP Server.
+You can specify which JWT issuers are allowed to access your MCP Server. Issuer validation is configured per authorization server, so that each server's accepted issuers apply only to tokens its own keys signed. This matches the per-JWKS `issuers` behavior in [GraphOS Router's JWT authentication](/graphos/routing/security/jwt).
+
+To configure issuers, give a server entry the object form with a `url` and an `issuers` list:
 
 ```yaml title="mcp.yaml"
 transport:
   type: streamable_http
   auth:
     servers:
-      - https://auth.example.com
-    issuers:
-      - https://auth.example.com
-      - https://auth.other.com
+      - url: https://auth.example.com
+        issuers:
+          - https://auth.example.com
+      - url: https://auth.other.com
+        issuers:
+          - https://auth.other.com
 ```
 
-Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be considered valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
+When a server entry lists `issuers`, a token whose signature is verified by that server's keys must carry an `iss` claim matching one of the listed values. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match an accepted issuer for the server that signed it.
 
-When `issuers` is empty (the default), the server skips issuer validation entirely, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
+A server entry written as a bare URL string skips issuer validation for that server, so existing configurations are unaffected:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com # no issuer validation
+      - url: https://auth.other.com # issuer validation enabled
+        issuers:
+          - https://auth.other.com
+```
+
+<Note>
+
+Binding issuers to each server prevents a token signed by one configured server from being accepted while claiming a different configured server's issuer. To validate the source of every token, give each server its own `issuers` list.
+
+</Note>
 
 ## Configure scope enforcement
 
