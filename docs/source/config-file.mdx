@@ -307,7 +307,7 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | :-------------------------------- | :-------------------- | :------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `servers`                         | `List<URL \| object>` |               | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint). Each entry is a bare URL string, or an object with `url` and an optional `issuers` list.                   |
 | `servers[].url`                   | `URL`                 |               | The upstream OAuth server URL (object form only).                                                                                                                                                                |
-| `servers[].issuers`               | `List<string>`        | `[]`          | Accepted token issuers for tokens this server signs. The JWT `iss` claim must match one of these values, bound to the server whose keys verified the signature (skipped if empty).                               |
+| `servers[].issuers`               | `List<string>`        | `[]`          | Accepted token issuers for tokens this server signs. The JWT `iss` claim must match one of these values, bound to the server whose keys verify the signature (skipped if empty).                                 |
 | `audiences`                       | `List<string>`        | `[]`          | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                                                                                 |
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
@@ -327,16 +327,16 @@ Below is an example configuration using `StreamableHTTP` transport with authenti
 transport:
   type: streamable_http
   auth:
-    # List of upstream delegated OAuth servers
+    # List of upstream delegated OAuth servers.
     # These must support RFC 8414 or OIDC metadata discovery.
-    # Each entry is a bare URL string, or an object with `url` and an
-    # optional per-server `issuers` list. When a server lists `issuers`, the
-    # JWT `iss` claim of a token its keys signed must match one of those
-    # values; bare-string servers skip issuer validation.
+    # The recommended approach is to use an object with a `url` and an
+    # `issuers` list. When a server lists `issuers`, the JWT `iss` claim of a
+    # token its keys sign must match one of those values to ensure secure
+    # token validation.
     servers:
-      - url: https://auth.example.com
+      - url: "https://auth.example.com"
         issuers:
-          - https://auth.example.com
+          - "https://auth.example.com"
 
     # List of accepted audiences from upstream signed JWTs
     # (Ignored if allow_any_audience is set to true)

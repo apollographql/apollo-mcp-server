@@ -60,9 +60,9 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 ## Configure allowed issuers
 
-Specify which JWT issuers can access your MCP Server. Configure issuer validation per authorization server, so each server's accepted issuers apply only to the tokens signed by its own keys. This matches the per-JWKS `issuers` behavior in [JWT authentication for GraphOS Router](/graphos/routing/security/jwt).
+Specify which JWT issuers Apollo MCP Server accepts. Configure issuer validation per authorization server, so each server's accepted issuers apply only to the tokens signed by its own keys. This matches the per-JWKS `issuers` behavior in [JWT authentication for GraphOS Router](/graphos/routing/security/jwt).
 
-To configure issuers, give a server entry the object form with a `url` and an `issuers` list:
+To configure issuers, provide a server entry in object form with a `url` and an `issuers` list:
 
 ```yaml title="mcp.yaml"
 transport:
