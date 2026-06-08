@@ -2,23 +2,20 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use jsonwebtoken::jwk::KeyAlgorithm;
-use jwks::{Jwk, Jwks};
+use jwks::Jwks;
 use serde::Deserialize;
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use super::AuthServer;
-use super::valid_token::ValidateToken;
+use super::valid_token::{ValidateToken, VerificationKey};
 
 /// Implementation of the `ValidateToken` trait which fetches key information
 /// from the network.
 pub(super) struct NetworkedTokenValidator<'a> {
     audiences: &'a [String],
+    issuers: &'a [String],
     allow_any_audience: bool,
-    servers: &'a [AuthServer],
-    /// Parsed upstream URLs, owned so `get_servers` can hand out a slice. Index
-    /// alignment with `servers` is maintained by construction.
-    upstreams: Vec<Url>,
+    upstreams: &'a Vec<Url>,
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
 }
@@ -26,20 +23,16 @@ pub(super) struct NetworkedTokenValidator<'a> {
 impl<'a> NetworkedTokenValidator<'a> {
     pub fn new(
         audiences: &'a [String],
+        issuers: &'a [String],
         allow_any_audience: bool,
-        servers: &'a [AuthServer],
+        upstreams: &'a Vec<Url>,
         client: &'a reqwest::Client,
         discovery_timeout: Duration,
     ) -> Self {
-        #[allow(clippy::expect_used)] // parseability validated at deserialize
-        let upstreams = servers
-            .iter()
-            .map(|s| Url::parse(&s.url).expect("validated by deserialize_auth_servers"))
-            .collect();
         Self {
             audiences,
+            issuers,
             allow_any_audience,
-            servers,
             upstreams,
             client,
             discovery_timeout,
@@ -136,6 +129,12 @@ fn build_discovery_urls(issuer: &Url) -> Result<Vec<Url>, DiscoveryUrlError> {
 /// as a proxy to fill in `alg` when a JWK omits it (RFC 7517 §4.4).
 #[derive(Debug, Deserialize)]
 struct DiscoveryMetadata {
+    /// The authorization server's issuer identifier. RFC 8414 and OpenID
+    /// Connect Discovery both require this field, and it must equal the `iss`
+    /// claim of tokens the server issues (OpenID Connect Core §2, RFC 9068
+    /// §2.2). Used to bind issuer validation to the server whose JWKS verified
+    /// the signature.
+    issuer: String,
     jwks_uri: String,
     #[serde(default)]
     id_token_signing_alg_values_supported: Vec<String>,
@@ -206,21 +205,12 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         self.audiences
     }
 
-    fn get_issuers_for(&self, server: &Url) -> &[String] {
-        // Bind issuer validation to the server whose JWKS is being tried, so a
-        // token's accepted issuers are exactly those configured for the signer.
-        // `upstreams` is the parsed, index-aligned view of `servers`; zipping
-        // them keeps that pairing explicit and avoids panicking indexing.
-        self.upstreams
-            .iter()
-            .zip(self.servers.iter())
-            .find(|(url, _)| *url == server)
-            .map(|(_, s)| s.issuers.as_slice())
-            .unwrap_or_default()
+    fn get_issuers(&self) -> &[String] {
+        self.issuers
     }
 
-    fn get_servers(&self) -> &[Url] {
-        &self.upstreams
+    fn get_servers(&self) -> &Vec<Url> {
+        self.upstreams
     }
 
     /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS
@@ -228,14 +218,17 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
     /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
-    async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk> {
+    async fn get_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
         let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
         let mut jwk = jwks.keys.remove(key_id)?;
         if jwk.alg.is_none() {
             jwk.alg = resolve_alg(&metadata.id_token_signing_alg_values_supported, server);
         }
-        Some(jwk)
+        Some(VerificationKey {
+            jwk,
+            issuer: Some(metadata.issuer),
+        })
     }
 }
 

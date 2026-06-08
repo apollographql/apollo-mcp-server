@@ -28,7 +28,7 @@ impl From<Config> for ProtectedResource {
     fn from(value: Config) -> Self {
         Self {
             resource: value.resource,
-            authorization_servers: value.servers.into_iter().map(|s| s.url).collect(),
+            authorization_servers: value.servers,
             bearer_methods_supported: vec!["header".to_string()], // The spec only supports header auth
             scopes_supported: value.scopes,
             resource_documentation: value.resource_documentation,

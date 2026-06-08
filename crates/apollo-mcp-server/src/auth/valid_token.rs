@@ -25,6 +25,20 @@ impl Deref for ValidToken {
     }
 }
 
+/// A signing key resolved from an authorization server, together with that
+/// server's discovered issuer identifier.
+///
+/// `issuer` is the `iss` value the authorization server advertises in its
+/// discovery metadata. It is used to bind issuer validation to the server
+/// whose JWKS verified the signature: a token's `iss` claim must equal this
+/// value, so a token signed by one configured server cannot pass by claiming
+/// a different configured server's issuer. `None` when the server's issuer
+/// could not be determined.
+pub(super) struct VerificationKey {
+    pub(super) jwk: Jwk,
+    pub(super) issuer: Option<String>,
+}
+
 /// Trait to handle validation of tokens
 pub(super) trait ValidateToken {
     /// Whether to skip audience validation (allow any audience)
@@ -33,15 +47,15 @@ pub(super) trait ValidateToken {
     /// Get the list of allowed audiences
     fn get_audiences(&self) -> &[String];
 
-    /// Get the accepted issuers for tokens verified by `server`'s JWKS
-    /// (empty = skip issuer validation for that server).
-    fn get_issuers_for(&self, server: &Url) -> &[String];
+    /// Get the list of accepted issuers (empty = skip issuer validation)
+    fn get_issuers(&self) -> &[String];
 
     /// Get the available upstream servers
-    fn get_servers(&self) -> &[Url];
+    fn get_servers(&self) -> &Vec<Url>;
 
-    /// Fetch the key by its ID
-    async fn get_key(&self, server: &Url, key_id: &str) -> Option<Jwk>;
+    /// Fetch the signing key by its ID, along with the issuing server's
+    /// discovered issuer identifier.
+    async fn get_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey>;
 
     /// Attempt to validate a token against the validator
     async fn validate(&self, token: Authorization<Bearer>) -> Option<ValidToken> {
@@ -122,14 +136,13 @@ pub(super) trait ValidateToken {
         let key_id = header.kid.as_ref()?;
 
         for server in self.get_servers() {
-            let Some(jwk) = self.get_key(server, key_id).await else {
+            let Some(VerificationKey {
+                jwk,
+                issuer: discovered_issuer,
+            }) = self.get_key(server, key_id).await
+            else {
                 continue;
             };
-
-            // Issuers accepted for tokens this server signs. Bound to the server
-            // whose JWKS verifies the signature, so a token signed by one server
-            // cannot pass by claiming another configured server's issuer.
-            let issuers = self.get_issuers_for(server);
 
             let validation = {
                 let Some(alg) = jwk.alg else {
@@ -163,8 +176,8 @@ pub(super) trait ValidateToken {
                     val.set_audience(self.get_audiences());
                 }
 
-                if !issuers.is_empty() {
-                    val.set_issuer(issuers);
+                if !self.get_issuers().is_empty() {
+                    val.set_issuer(self.get_issuers());
                 }
 
                 val
@@ -180,13 +193,45 @@ pub(super) trait ValidateToken {
                         warn!("Token is missing the required `aud` claim");
                         break;
                     }
-                    // When issuer validation is enabled for this server, explicitly
-                    // reject tokens with a missing `iss` claim. The `jsonwebtoken`
-                    // crate skips its own issuer check when the claim is absent from
-                    // the raw JWT, so we enforce it here.
-                    if !issuers.is_empty() && token_data.claims.iss.is_none() {
-                        warn!("Token is missing the required `iss` claim");
-                        break;
+                    if !self.get_issuers().is_empty() {
+                        // When issuer validation is enabled, explicitly reject tokens
+                        // with a missing `iss` claim. The `jsonwebtoken` crate skips its
+                        // own issuer check when the claim is absent from the raw JWT,
+                        // so we enforce it here.
+                        let Some(token_issuer) = token_data.claims.iss.as_deref() else {
+                            warn!("Token is missing the required `iss` claim");
+                            break;
+                        };
+
+                        // Bind the issuer to the server whose JWKS verified the
+                        // signature: the token's `iss` must equal that server's
+                        // discovered issuer identifier. This prevents a token signed
+                        // by one configured server from being accepted while claiming
+                        // a different configured server's issuer. Fail closed if the
+                        // server's issuer could not be determined.
+                        // Bind the issuer to the server whose JWKS verified the
+                        // signature: the token's `iss` must equal that server's
+                        // discovered issuer identifier. This prevents a token signed
+                        // by one configured server from being accepted while claiming
+                        // a different configured server's issuer. Fail closed if the
+                        // server's issuer could not be determined.
+                        match discovered_issuer.as_deref() {
+                            Some(server_issuer) if server_issuer == token_issuer => {}
+                            Some(server_issuer) => {
+                                warn!(
+                                    token_issuer = %token_issuer,
+                                    server_issuer = %server_issuer,
+                                    "Token `iss` does not match the issuer of the server that signed it"
+                                );
+                                break;
+                            }
+                            None => {
+                                warn!(
+                                    "Cannot verify token `iss`: the signing server did not advertise an issuer"
+                                );
+                                break;
+                            }
+                        }
                     }
                     return Some(ValidToken {
                         token,
@@ -213,38 +258,47 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::ValidateToken;
+    use super::{ValidateToken, VerificationKey};
 
     /// A single upstream server in the test validator: its URL, the one
-    /// `(kid, jwk)` it will serve, and the issuers configured for it.
+    /// `(kid, jwk)` it will serve, and the issuer it advertises in discovery.
     struct TestServer {
         url: Url,
         key_pair: (String, Jwk),
-        issuers: Vec<String>,
+        discovered_issuer: Option<String>,
     }
 
     struct TestTokenValidator {
         audiences: Vec<String>,
+        issuers: Vec<String>,
         allow_any_audience: bool,
         servers: Vec<TestServer>,
-        /// Parsed server URLs, owned so `get_servers` can return a slice.
+        /// Parsed server URLs, owned so `get_servers` can return a `&Vec<Url>`.
         /// Kept index-aligned with `servers`.
         server_urls: Vec<Url>,
     }
 
     impl TestTokenValidator {
-        /// Build a validator from `(server, key_pair, issuers)` tuples.
-        fn new(audiences: Vec<String>, allow_any_audience: bool, servers: Vec<TestServer>) -> Self {
+        fn new(
+            audiences: Vec<String>,
+            issuers: Vec<String>,
+            allow_any_audience: bool,
+            servers: Vec<TestServer>,
+        ) -> Self {
             let server_urls = servers.iter().map(|s| s.url.clone()).collect();
             Self {
                 audiences,
+                issuers,
                 allow_any_audience,
                 servers,
                 server_urls,
             }
         }
 
-        /// Convenience for the common single-server case.
+        /// Convenience for the common single-server case. The server's
+        /// discovered issuer defaults to the configured server URL with any
+        /// trailing slash trimmed, matching how a compliant server advertises
+        /// its issuer identifier; pass `discovered_issuer` to override.
         fn single(
             audiences: Vec<String>,
             issuers: Vec<String>,
@@ -252,13 +306,15 @@ mod test {
             key_pair: (String, Jwk),
             server: Url,
         ) -> Self {
+            let discovered_issuer = Some(server.as_str().trim_end_matches('/').to_string());
             Self::new(
                 audiences,
+                issuers,
                 allow_any_audience,
                 vec![TestServer {
                     url: server,
                     key_pair,
-                    issuers,
+                    discovered_issuer,
                 }],
             )
         }
@@ -273,27 +329,21 @@ mod test {
             &self.audiences
         }
 
-        fn get_issuers_for(&self, server: &Url) -> &[String] {
-            self.server_urls
-                .iter()
-                .zip(self.servers.iter())
-                .find(|(url, _)| *url == server)
-                .map(|(_, s)| s.issuers.as_slice())
-                .unwrap_or_default()
+        fn get_issuers(&self) -> &[String] {
+            &self.issuers
         }
 
-        fn get_servers(&self) -> &[url::Url] {
+        fn get_servers(&self) -> &Vec<url::Url> {
             &self.server_urls
         }
 
-        async fn get_key(&self, server: &url::Url, key_id: &str) -> Option<jwks::Jwk> {
+        async fn get_key(&self, server: &url::Url, key_id: &str) -> Option<VerificationKey> {
             // Find the requested server, then return its key only if the `kid` matches.
             let test_server = self.servers.iter().find(|s| &s.url == server)?;
-            test_server
-                .key_pair
-                .0
-                .eq(key_id)
-                .then_some(test_server.key_pair.1.clone())
+            test_server.key_pair.0.eq(key_id).then(|| VerificationKey {
+                jwk: test_server.key_pair.1.clone(),
+                issuer: test_server.discovered_issuer.clone(),
+            })
         }
     }
 
@@ -813,9 +863,10 @@ mod test {
             h
         };
 
-        // The signing server has TWO issuers configured; the token's `iss`
-        // matches the second, exercising the per-server allowlist (any-match)
-        // semantics rather than just the first entry.
+        // The configured allowlist holds two issuers. The signing server
+        // advertises the SECOND one as its discovered issuer, and the token's
+        // `iss` matches it — exercising both the allowlist (any-match) and the
+        // discovery binding to the actual signer.
         let claims = json!({
             "aud": "test-audience",
             "iss": "https://auth.other.com",
@@ -829,15 +880,18 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        let test_validator = TestTokenValidator::single(
+        let test_validator = TestTokenValidator::new(
             vec![audience],
             vec![
                 "https://auth.example.com".to_string(),
                 "https://auth.other.com".to_string(),
             ],
             false,
-            (key_id, jwk),
-            server,
+            vec![TestServer {
+                url: server,
+                key_pair: (key_id, jwk),
+                discovered_issuer: Some("https://auth.other.com".to_string()),
+            }],
         );
 
         assert_eq!(
@@ -952,9 +1006,10 @@ mod test {
 
     // --- Multi-server issuer binding ---------------------------------------
     //
-    // These exercise the case Dale flagged in review: with more than one
-    // configured server, issuer validation must be bound to the server whose
-    // JWKS verified the signature, not applied as one global allowlist.
+    // These exercise the cross-server case: issuer validation is bound to the
+    // discovered issuer of the server whose JWKS verified the signature, so a
+    // token signed by one server cannot pass by claiming another server's
+    // issuer — even when both issuers are in the configured allowlist.
 
     #[traced_test]
     #[tokio::test]
@@ -962,7 +1017,7 @@ mod test {
         use serde_json::json;
 
         // Two servers share the same `kid` but use different signing secrets —
-        // the realistic collision that made a global issuer list exploitable.
+        // the realistic collision that makes a cross-server claim worth testing.
         let shared_kid = "shared-kid".to_string();
         let (server_a_encode, server_a_decode) = create_key("DEADBEEF");
         let (_server_b_encode, server_b_decode) = create_key("CAFED00D");
@@ -987,9 +1042,14 @@ mod test {
         let token = encode(&header, &claims, &server_a_encode).expect("encode JWT");
         let jwt = Authorization::bearer(&token).expect("create bearer token");
 
-        // Each server accepts only its own issuer.
+        // Both issuers are in the allowlist, so the cross-server protection must
+        // come from the discovery binding, not the allowlist.
         let test_validator = TestTokenValidator::new(
             vec!["test-audience".to_string()],
+            vec![
+                "https://auth-a.example.com".to_string(),
+                "https://auth-b.example.com".to_string(),
+            ],
             false,
             vec![
                 TestServer {
@@ -1001,7 +1061,7 @@ mod test {
                             decoding_key: server_a_decode,
                         },
                     ),
-                    issuers: vec!["https://auth-a.example.com".to_string()],
+                    discovered_issuer: Some("https://auth-a.example.com".to_string()),
                 },
                 TestServer {
                     url: server_b_url,
@@ -1012,23 +1072,23 @@ mod test {
                             decoding_key: server_b_decode,
                         },
                     ),
-                    issuers: vec!["https://auth-b.example.com".to_string()],
+                    discovered_issuer: Some("https://auth-b.example.com".to_string()),
                 },
             ],
         );
 
-        // Server A verifies the signature but rejects `iss=B` (InvalidIssuer);
-        // Server B would accept `iss=B` but its key fails the signature. So the
-        // token is rejected overall — exactly the cross-server leak being closed.
+        // Server A verifies the signature but its discovered issuer
+        // (`auth-a`) does not match the token's `iss` (`auth-b`); server B's key
+        // fails the signature. So the token is rejected overall.
         assert_eq!(test_validator.validate(jwt).await, None);
 
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
                 .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("InvalidIssuer"))
+                .any(|line| line.contains("does not match the issuer of the server that signed it"))
                 .then_some(())
-                .ok_or("Expected InvalidIssuer warning from the signing server".to_string())
+                .ok_or("Expected issuer-mismatch warning from the signing server".to_string())
         });
     }
 
@@ -1036,9 +1096,9 @@ mod test {
     async fn it_validates_token_against_its_own_servers_issuer_with_multiple_servers() {
         use serde_json::json;
 
-        // Two servers, distinct keys and issuers. A token signed by server B's
-        // key and claiming server B's issuer must validate, even though server A
-        // is also configured with a different issuer.
+        // Two servers with distinct keys and issuers. A token signed by server
+        // B and claiming server B's issuer must validate, even though server A
+        // is also configured.
         let kid_a = "kid-a".to_string();
         let kid_b = "kid-b".to_string();
         let (_server_a_encode, server_a_decode) = create_key("DEADBEEF");
@@ -1065,6 +1125,10 @@ mod test {
 
         let test_validator = TestTokenValidator::new(
             vec!["test-audience".to_string()],
+            vec![
+                "https://auth-a.example.com".to_string(),
+                "https://auth-b.example.com".to_string(),
+            ],
             false,
             vec![
                 TestServer {
@@ -1076,7 +1140,7 @@ mod test {
                             decoding_key: server_a_decode,
                         },
                     ),
-                    issuers: vec!["https://auth-a.example.com".to_string()],
+                    discovered_issuer: Some("https://auth-a.example.com".to_string()),
                 },
                 TestServer {
                     url: server_b_url,
@@ -1087,7 +1151,7 @@ mod test {
                             decoding_key: server_b_decode,
                         },
                     ),
-                    issuers: vec!["https://auth-b.example.com".to_string()],
+                    discovered_issuer: Some("https://auth-b.example.com".to_string()),
                 },
             ],
         );

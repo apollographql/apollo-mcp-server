@@ -60,43 +60,24 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 ## Configure allowed issuers
 
-Specify which JWT issuers Apollo MCP Server accepts. Configure issuer validation per authorization server, so each server's accepted issuers apply only to the tokens signed by its own keys. This matches the per-JWKS `issuers` behavior in [JWT authentication for GraphOS Router](/graphos/routing/security/jwt).
-
-To configure issuers, provide a server entry in object form with a `url` and an `issuers` list:
+Specify which JWT issuers Apollo MCP Server accepts.
 
 ```yaml title="mcp.yaml"
 transport:
   type: streamable_http
   auth:
     servers:
-      - url: "https://auth.example.com"
-        issuers:
-          - "https://auth.example.com"
-      - url: "https://auth.other.com"
-        issuers:
-          - "https://auth.other.com"
+      - "https://auth.example.com"
+    issuers:
+      - "https://auth.example.com"
+      - "https://auth.other.com"
 ```
 
-When a server entry lists `issuers`, a token whose signature that server's keys verify must carry an `iss` claim matching one of the listed values. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match an accepted issuer for the server that signed it.
+Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
 
-A server entry written as a bare URL string skips issuer validation for that server, so your existing configurations are unaffected:
+The server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata. This means a token signed by one configured server cannot be accepted while it claims a different configured server's issuer, which keeps issuer validation correct when you delegate to multiple servers.
 
-```yaml title="mcp.yaml"
-transport:
-  type: streamable_http
-  auth:
-    servers:
-      - "https://auth.example.com" # No issuer validation
-      - url: "https://auth.other.com" # Issuer validation enabled
-        issuers:
-          - "https://auth.other.com"
-```
-
-<Note>
-
-Binding issuers to each server prevents a token signed by one configured server from being accepted while it claims a different configured server's issuer. To validate the source of every token, give each server its own `issuers` list.
-
-</Note>
+When `issuers` is empty (the default), the server skips issuer validation, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
 
 ## Configure scope enforcement
 
