@@ -58,6 +58,27 @@ Skipping audience validation reduces security. Only use `allow_any_audience: tru
 
 </Caution>
 
+## Configure allowed issuers
+
+Specify which JWT issuers Apollo MCP Server accepts.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - "https://auth.example.com"
+    issuers:
+      - "https://auth.example.com"
+      - "https://auth.other.com"
+```
+
+Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
+
+The server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata. This means a token signed by one configured server cannot be accepted while it claims a different configured server's issuer, which keeps issuer validation correct when you delegate to multiple servers.
+
+When `issuers` is empty (the default), the server skips issuer validation, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
+
 ## Configure scope enforcement
 
 Use the `scope_mode` option to control how the MCP Server validates scopes from OAuth tokens.
