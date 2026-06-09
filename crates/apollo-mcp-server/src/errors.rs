@@ -44,6 +44,20 @@ pub enum OperationError {
     Manifest(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_error_manifest_display() {
+        let err = OperationError::Manifest("connection refused".into());
+        assert_eq!(
+            err.to_string(),
+            "Error fetching Uplink persisted-query manifest: connection refused"
+        );
+    }
+}
+
 /// An error in server initialization
 #[derive(Debug, thiserror::Error)]
 pub enum ServerError {

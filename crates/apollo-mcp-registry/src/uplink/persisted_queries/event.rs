@@ -23,3 +23,15 @@ impl Debug for Event {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_manifest_error_formats_message() {
+        let event = Event::ManifestError("timeout".into());
+        let output = format!("{event:?}");
+        assert_eq!(output, "ManifestError(timeout)");
+    }
+}
