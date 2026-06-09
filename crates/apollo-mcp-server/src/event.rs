@@ -5,7 +5,6 @@ use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::fmt::Result;
 use std::io;
-use tower::BoxError;
 
 /// MCP Server events
 pub enum Event {
@@ -23,7 +22,7 @@ pub enum Event {
 
     /// A transient error occurred fetching the Uplink persisted-query manifest;
     /// the server retains its existing tool catalog
-    ManifestError(BoxError),
+    ManifestError(Box<dyn std::error::Error + Send + Sync + 'static>),
 
     /// Rhai scripts in the rhai/ directory have changed
     RhaiScriptsChanged,
