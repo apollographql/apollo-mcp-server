@@ -16,7 +16,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_token_validator::NetworkedTokenValidator;
+use networked_key_resolver::NetworkedKeyResolver;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,14 +24,14 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
-mod networked_token_validator;
+mod networked_key_resolver;
 mod protected_resource;
 mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
+use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
-use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
@@ -491,14 +491,13 @@ async fn oauth_validate(
         .iter()
         .map(|s| Url::parse(s).expect("validated by deserialize_auth_servers"))
         .collect();
-    let validator = NetworkedTokenValidator::new(
-        &auth_config.audiences,
-        &auth_config.issuers,
-        auth_config.allow_any_audience,
-        &auth_servers,
-        &auth_state.client,
-        discovery_timeout,
-    );
+    let validator = TokenValidator {
+        audiences: &auth_config.audiences,
+        issuers: &auth_config.issuers,
+        allow_any_audience: auth_config.allow_any_audience,
+        servers: &auth_servers,
+        keys: NetworkedKeyResolver::new(&auth_state.client, discovery_timeout),
+    };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
         tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());

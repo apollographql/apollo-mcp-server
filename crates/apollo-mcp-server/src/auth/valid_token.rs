@@ -38,26 +38,38 @@ pub(super) struct VerificationKey {
     pub(super) issuer: String,
 }
 
-/// Trait to handle validation of tokens
-pub(super) trait ValidateToken {
-    /// Whether to skip audience validation (allow any audience)
-    fn allow_any_audience(&self) -> bool;
-
-    /// Get the list of allowed audiences
-    fn get_audiences(&self) -> &[String];
-
-    /// Get the list of accepted issuers (empty = skip issuer validation)
-    fn get_issuers(&self) -> &[String];
-
-    /// Get the available upstream servers
-    fn get_servers(&self) -> &[Url];
-
+/// Resolves a signing key for a `(server, key_id)` pair, returning it together
+/// with the issuer that server advertises in discovery.
+///
+/// This is the single seam that production fetches over the network and tests
+/// substitute in memory. Everything else about validation lives in
+/// [`TokenValidator`], so adding a new validation input does not touch this
+/// trait or its implementations.
+pub(super) trait KeyResolver {
     /// Fetch the signing key by its ID, along with the issuing server's
-    /// discovered issuer identifier.
-    async fn get_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey>;
+    /// discovered issuer identifier. Returns `None` when the server does not
+    /// serve a key with that `key_id`.
+    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey>;
+}
 
-    /// Attempt to validate a token against the validator
-    async fn validate(&self, token: Authorization<Bearer>) -> Option<ValidToken> {
+/// Validates bearer JWTs against the configured audiences, issuers, and upstream
+/// servers, resolving signing keys through `keys`.
+pub(super) struct TokenValidator<'a, R: KeyResolver> {
+    /// Accepted audiences. Ignored when `allow_any_audience` is set.
+    pub(super) audiences: &'a [String],
+    /// Accepted issuers (empty = skip issuer validation).
+    pub(super) issuers: &'a [String],
+    /// Skip audience validation entirely.
+    pub(super) allow_any_audience: bool,
+    /// Upstream authorization servers to try, in order.
+    pub(super) servers: &'a [Url],
+    /// Resolves signing keys (the network seam).
+    pub(super) keys: R,
+}
+
+impl<R: KeyResolver> TokenValidator<'_, R> {
+    /// Attempt to validate a token against the configured rules.
+    pub(super) async fn validate(&self, token: Authorization<Bearer>) -> Option<ValidToken> {
         /// Claims which must be present in the JWT (and must match validation)
         /// in order for a JWT to be considered valid.
         ///
@@ -134,11 +146,11 @@ pub(super) trait ValidateToken {
         let header = decode_header(jwt).ok()?;
         let key_id = header.kid.as_ref()?;
 
-        for server in self.get_servers() {
+        for server in self.servers {
             let Some(VerificationKey {
                 jwk,
                 issuer: discovered_issuer,
-            }) = self.get_key(server, key_id).await
+            }) = self.keys.resolve_key(server, key_id).await
             else {
                 continue;
             };
@@ -169,14 +181,14 @@ pub(super) trait ValidateToken {
                         continue;
                     }
                 });
-                if self.allow_any_audience() {
+                if self.allow_any_audience {
                     val.validate_aud = false;
                 } else {
-                    val.set_audience(self.get_audiences());
+                    val.set_audience(self.audiences);
                 }
 
-                if !self.get_issuers().is_empty() {
-                    val.set_issuer(self.get_issuers());
+                if !self.issuers.is_empty() {
+                    val.set_issuer(self.issuers);
                 }
 
                 val
@@ -188,11 +200,11 @@ pub(super) trait ValidateToken {
                     // with a missing `aud` claim. The `jsonwebtoken` crate skips its
                     // own audience check when the claim is absent from the raw JWT,
                     // so we enforce it here.
-                    if !self.allow_any_audience() && token_data.claims.aud.is_empty() {
+                    if !self.allow_any_audience && token_data.claims.aud.is_empty() {
                         warn!("Token is missing the required `aud` claim");
                         break;
                     }
-                    if !self.get_issuers().is_empty() {
+                    if !self.issuers.is_empty() {
                         // When issuer validation is enabled, explicitly reject tokens
                         // with a missing `iss` claim. The `jsonwebtoken` crate skips its
                         // own issuer check when the claim is absent from the raw JWT,
@@ -241,23 +253,41 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{ValidateToken, VerificationKey};
+    use super::{KeyResolver, TokenValidator, ValidToken, VerificationKey};
 
-    /// A single upstream server in the test validator: its URL, the one
-    /// `(kid, jwk)` it will serve, and the issuer it advertises in discovery.
+    /// A single upstream server in the stub resolver: its URL, the one
+    /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
     struct TestServer {
         url: Url,
         key_pair: (String, Jwk),
         discovered_issuer: String,
     }
 
+    /// In-memory [`KeyResolver`] that stands in for the network in tests.
+    struct StubKeyResolver<'a> {
+        servers: &'a [TestServer],
+    }
+
+    impl KeyResolver for StubKeyResolver<'_> {
+        async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
+            // Find the requested server, then return its key only if the `kid` matches.
+            let test_server = self.servers.iter().find(|s| &s.url == server)?;
+            test_server.key_pair.0.eq(key_id).then(|| VerificationKey {
+                jwk: test_server.key_pair.1.clone(),
+                issuer: test_server.discovered_issuer.clone(),
+            })
+        }
+    }
+
+    /// Thin test harness that owns the validation inputs and delegates to the
+    /// real [`TokenValidator`] through a [`StubKeyResolver`]. Keeps the test
+    /// call sites concise while exercising the production validation path.
     struct TestTokenValidator {
         audiences: Vec<String>,
         issuers: Vec<String>,
         allow_any_audience: bool,
         servers: Vec<TestServer>,
-        /// Parsed server URLs, owned so `get_servers` can return a `&[Url]`.
-        /// Kept index-aligned with `servers`.
+        /// Parsed server URLs, kept index-aligned with `servers`.
         server_urls: Vec<Url>,
     }
 
@@ -278,10 +308,9 @@ mod test {
             }
         }
 
-        /// Convenience for the common single-server case. The server's
-        /// discovered issuer defaults to the configured server URL with any
-        /// trailing slash trimmed, matching how a compliant server advertises
-        /// its issuer identifier; pass `discovered_issuer` to override.
+        /// Convenience for the common single-server case. The discovered issuer
+        /// defaults to the server URL with any trailing slash trimmed, matching
+        /// how a compliant server advertises its issuer identifier.
         fn single(
             audiences: Vec<String>,
             issuers: Vec<String>,
@@ -301,32 +330,20 @@ mod test {
                 }],
             )
         }
-    }
 
-    impl ValidateToken for TestTokenValidator {
-        fn allow_any_audience(&self) -> bool {
-            self.allow_any_audience
-        }
-
-        fn get_audiences(&self) -> &[String] {
-            &self.audiences
-        }
-
-        fn get_issuers(&self) -> &[String] {
-            &self.issuers
-        }
-
-        fn get_servers(&self) -> &[url::Url] {
-            &self.server_urls
-        }
-
-        async fn get_key(&self, server: &url::Url, key_id: &str) -> Option<VerificationKey> {
-            // Find the requested server, then return its key only if the `kid` matches.
-            let test_server = self.servers.iter().find(|s| &s.url == server)?;
-            test_server.key_pair.0.eq(key_id).then(|| VerificationKey {
-                jwk: test_server.key_pair.1.clone(),
-                issuer: test_server.discovered_issuer.clone(),
-            })
+        /// Run the real [`TokenValidator`] against this harness's inputs.
+        async fn validate(&self, token: Authorization<Bearer>) -> Option<ValidToken> {
+            TokenValidator {
+                audiences: &self.audiences,
+                issuers: &self.issuers,
+                allow_any_audience: self.allow_any_audience,
+                servers: &self.server_urls,
+                keys: StubKeyResolver {
+                    servers: &self.servers,
+                },
+            }
+            .validate(token)
+            .await
         }
     }
 
@@ -1180,6 +1197,39 @@ mod test {
                 .then_some(())
                 .ok_or("Expected warning for missing algorithm".to_string())
         });
+    }
+
+    #[tokio::test]
+    async fn it_rejects_when_no_server_serves_the_kid() {
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        // The token's `kid` does not match any key the configured server serves.
+        let jwt = create_jwt(
+            "token-kid".to_string(),
+            encode_key,
+            audience.clone(),
+            in_the_future,
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        // The server only serves `server-kid`, so key resolution finds nothing.
+        let test_validator = TestTokenValidator::single(
+            vec![audience],
+            vec![],
+            false,
+            ("server-kid".to_string(), jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
     }
 
     /// Build and validate a JWT with the given claims JSON, returning the
