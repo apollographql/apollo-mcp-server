@@ -70,78 +70,6 @@ pub(super) struct TokenValidator<'a, R: KeyResolver> {
 impl<R: KeyResolver> TokenValidator<'_, R> {
     /// Attempt to validate a token against the configured rules.
     pub(super) async fn validate(&self, token: Authorization<Bearer>) -> Option<ValidToken> {
-        /// Claims which must be present in the JWT (and must match validation)
-        /// in order for a JWT to be considered valid.
-        ///
-        /// See: https://auth0.com/docs/secure/tokens/json-web-tokens/json-web-token-claims#registered-claims
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        pub struct Claims {
-            /// The intended audience of this token.
-            /// Can be either a single string or an array of strings per JWT spec. (https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.3)
-            /// Some providers (e.g., AWS Cognito) omit `aud` entirely in access tokens,
-            /// so this field defaults to an empty vec when absent.
-            #[serde(default, deserialize_with = "deserialize_audience")]
-            pub aud: Vec<String>,
-
-            /// The issuer of this token (`iss`). Optional in the struct so tokens
-            /// without it still deserialize; enforced in `validate` when issuers are configured.
-            #[serde(default)]
-            pub iss: Option<String>,
-
-            /// The user who owns this token
-            pub sub: String,
-
-            /// OAuth scope claim (space-separated list per RFC 6749)
-            #[serde(default)]
-            pub scope: Option<String>,
-
-            /// Non-standard scope claim. Okta emits this as an array of
-            /// strings; Microsoft Entra emits it as a space-separated string.
-            /// Used as a fallback when the RFC 9068 `scope` claim is absent.
-            #[serde(default)]
-            pub scp: Option<ScpClaim>,
-        }
-
-        #[derive(Clone, Debug, Serialize, Deserialize)]
-        #[serde(untagged)]
-        enum ScpClaim {
-            Array(Vec<String>),
-            String(String),
-        }
-
-        impl Claims {
-            /// Resolve the scopes granted by this token, preferring the
-            /// RFC 9068 `scope` claim and falling back to the `scp` claim
-            /// used by Okta (array) and Microsoft Entra (space-separated string).
-            fn scopes(self) -> Vec<String> {
-                match (self.scope, self.scp) {
-                    (Some(s), _) | (None, Some(ScpClaim::String(s))) => {
-                        s.split_whitespace().map(String::from).collect()
-                    }
-                    (None, Some(ScpClaim::Array(v))) => v,
-                    (None, None) => Vec::new(),
-                }
-            }
-        }
-
-        fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-        where
-            D: serde::Deserializer<'de>,
-        {
-            #[derive(Deserialize)]
-            #[serde(untagged)]
-            enum Audience {
-                Single(String),
-                Multiple(Vec<String>),
-            }
-
-            Ok(match Option::<Audience>::deserialize(deserializer)? {
-                Some(Audience::Single(s)) => vec![s],
-                Some(Audience::Multiple(v)) => v,
-                None => Vec::new(),
-            })
-        }
-
         let jwt = token.token();
         let header = decode_header(jwt).ok()?;
         let key_id = header.kid.as_ref()?;
@@ -160,27 +88,11 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                     warn!("Skipping JWK with no algorithm specified");
                     continue;
                 };
-                let mut val = Validation::new(match alg {
-                    jwk::KeyAlgorithm::HS256 => Algorithm::HS256,
-                    jwk::KeyAlgorithm::HS384 => Algorithm::HS384,
-                    jwk::KeyAlgorithm::HS512 => Algorithm::HS512,
-                    jwk::KeyAlgorithm::ES256 => Algorithm::ES256,
-                    jwk::KeyAlgorithm::ES384 => Algorithm::ES384,
-                    jwk::KeyAlgorithm::RS256 => Algorithm::RS256,
-                    jwk::KeyAlgorithm::RS384 => Algorithm::RS384,
-                    jwk::KeyAlgorithm::RS512 => Algorithm::RS512,
-                    jwk::KeyAlgorithm::PS256 => Algorithm::PS256,
-                    jwk::KeyAlgorithm::PS384 => Algorithm::PS384,
-                    jwk::KeyAlgorithm::PS512 => Algorithm::PS512,
-                    jwk::KeyAlgorithm::EdDSA => Algorithm::EdDSA,
-
-                    // No other validation key type is supported by this library, so we
-                    // warn and fail if we encounter one.
-                    other => {
-                        warn!("Skipping JWT signed by unsupported algorithm: {other:?}");
-                        continue;
-                    }
-                });
+                let Some(algorithm) = jwt_algorithm(alg) else {
+                    warn!("Skipping JWT signed by unsupported algorithm: {alg:?}");
+                    continue;
+                };
+                let mut val = Validation::new(algorithm);
                 if self.allow_any_audience {
                     val.validate_aud = false;
                 } else {
@@ -242,6 +154,101 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
     }
 }
 
+/// Claims which must be present in the JWT (and must match validation) in order
+/// for a JWT to be considered valid.
+///
+/// See: https://auth0.com/docs/secure/tokens/json-web-tokens/json-web-token-claims#registered-claims
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Claims {
+    /// The intended audience of this token.
+    /// Can be either a single string or an array of strings per JWT spec. (https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.3)
+    /// Some providers (e.g., AWS Cognito) omit `aud` entirely in access tokens,
+    /// so this field defaults to an empty vec when absent.
+    #[serde(default, deserialize_with = "deserialize_audience")]
+    aud: Vec<String>,
+
+    /// The issuer of this token (`iss`). Optional in the struct so tokens
+    /// without it still deserialize; enforced in `validate` when issuers are configured.
+    #[serde(default)]
+    iss: Option<String>,
+
+    /// The subject the token was issued for. Required so a token without a
+    /// `sub` claim is rejected at deserialize time.
+    sub: String,
+
+    /// OAuth scope claim (space-separated list per RFC 6749)
+    #[serde(default)]
+    scope: Option<String>,
+
+    /// Non-standard scope claim. Okta emits this as an array of
+    /// strings; Microsoft Entra emits it as a space-separated string.
+    /// Used as a fallback when the RFC 9068 `scope` claim is absent.
+    #[serde(default)]
+    scp: Option<ScpClaim>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+enum ScpClaim {
+    Array(Vec<String>),
+    String(String),
+}
+
+impl Claims {
+    /// Resolve the scopes granted by this token, preferring the RFC 9068
+    /// `scope` claim and falling back to the `scp` claim used by Okta (array)
+    /// and Microsoft Entra (space-separated string).
+    fn scopes(self) -> Vec<String> {
+        match (self.scope, self.scp) {
+            (Some(s), _) | (None, Some(ScpClaim::String(s))) => {
+                s.split_whitespace().map(String::from).collect()
+            }
+            (None, Some(ScpClaim::Array(v))) => v,
+            (None, None) => Vec::new(),
+        }
+    }
+}
+
+/// Accepts the JWT `aud` claim as either a single string or an array of
+/// strings, normalizing both to a `Vec<String>` (empty when absent).
+fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Audience {
+        Single(String),
+        Multiple(Vec<String>),
+    }
+
+    Ok(match Option::<Audience>::deserialize(deserializer)? {
+        Some(Audience::Single(s)) => vec![s],
+        Some(Audience::Multiple(v)) => v,
+        None => Vec::new(),
+    })
+}
+
+/// Maps a JWKS key algorithm to the `jsonwebtoken` [`Algorithm`] used for
+/// verification, returning `None` for algorithms this library does not support.
+fn jwt_algorithm(alg: jwk::KeyAlgorithm) -> Option<Algorithm> {
+    Some(match alg {
+        jwk::KeyAlgorithm::HS256 => Algorithm::HS256,
+        jwk::KeyAlgorithm::HS384 => Algorithm::HS384,
+        jwk::KeyAlgorithm::HS512 => Algorithm::HS512,
+        jwk::KeyAlgorithm::ES256 => Algorithm::ES256,
+        jwk::KeyAlgorithm::ES384 => Algorithm::ES384,
+        jwk::KeyAlgorithm::RS256 => Algorithm::RS256,
+        jwk::KeyAlgorithm::RS384 => Algorithm::RS384,
+        jwk::KeyAlgorithm::RS512 => Algorithm::RS512,
+        jwk::KeyAlgorithm::PS256 => Algorithm::PS256,
+        jwk::KeyAlgorithm::PS384 => Algorithm::PS384,
+        jwk::KeyAlgorithm::PS512 => Algorithm::PS512,
+        jwk::KeyAlgorithm::EdDSA => Algorithm::EdDSA,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
@@ -253,7 +260,7 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{KeyResolver, TokenValidator, ValidToken, VerificationKey};
+    use super::{Claims, KeyResolver, TokenValidator, ValidToken, VerificationKey, jwt_algorithm};
 
     /// A single upstream server in the stub resolver: its URL, the one
     /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
@@ -1232,104 +1239,49 @@ mod test {
         assert_eq!(test_validator.validate(jwt).await, None);
     }
 
-    /// Build and validate a JWT with the given claims JSON, returning the
-    /// extracted scopes from the resulting `ValidToken`.
-    async fn validate_with_claims(claims: serde_json::Value) -> Vec<String> {
-        let key_id = "some-example-id".to_string();
-        let (encode_key, decode_key) = create_key("DEADBEEF");
-        let jwk = Jwk {
-            alg: Some(KeyAlgorithm::HS512),
-            decoding_key: decode_key,
-        };
-
-        let header = {
-            let mut h = Header::new(Algorithm::HS512);
-            h.kid = Some(key_id.clone());
-            h
-        };
-        let token = encode(&header, &claims, &encode_key).expect("encode JWT");
-        let jwt = Authorization::bearer(&token).expect("create bearer token");
-
-        let server =
-            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
-
-        let test_validator = TestTokenValidator::single(
-            vec!["test-audience".to_string()],
-            vec![],
-            false,
-            (key_id, jwk),
-            server,
-        );
-
-        test_validator
-            .validate(jwt)
-            .await
-            .expect("valid token")
-            .scopes
+    /// Deserialize [`Claims`] from JSON and resolve its scopes. Exercises the
+    /// `scope`/`scp` claim handling directly, without the JWT round-trip.
+    fn scopes_of(claims: serde_json::Value) -> Vec<String> {
+        serde_json::from_value::<Claims>(claims)
+            .expect("deserialize claims")
+            .scopes()
     }
 
-    #[tokio::test]
-    async fn it_extracts_scopes_from_scope_claim() {
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
-        let scopes = validate_with_claims(serde_json::json!({
-            "aud": "test-audience",
-            "exp": in_the_future,
-            "sub": "test user",
-            "scope": "read write"
-        }))
-        .await;
+    #[test]
+    fn scopes_come_from_scope_claim() {
+        let scopes = scopes_of(serde_json::json!({ "sub": "u", "scope": "read write" }));
         assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
     }
 
-    #[tokio::test]
-    async fn it_extracts_scopes_from_scp_array_claim() {
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
-        let scopes = validate_with_claims(serde_json::json!({
-            "aud": "test-audience",
-            "exp": in_the_future,
-            "sub": "test user",
-            "scp": ["read", "write"]
-        }))
-        .await;
+    #[test]
+    fn scopes_fall_back_to_scp_array() {
+        let scopes = scopes_of(serde_json::json!({ "sub": "u", "scp": ["read", "write"] }));
         assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
     }
 
-    #[tokio::test]
-    async fn it_extracts_scopes_from_scp_string_claim() {
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
-        let scopes = validate_with_claims(serde_json::json!({
-            "aud": "test-audience",
-            "exp": in_the_future,
-            "sub": "test user",
-            "scp": "read write"
-        }))
-        .await;
+    #[test]
+    fn scopes_fall_back_to_scp_string() {
+        let scopes = scopes_of(serde_json::json!({ "sub": "u", "scp": "read write" }));
         assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
     }
 
-    #[tokio::test]
-    async fn it_prefers_scope_over_scp_when_both_present() {
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
-        let scopes = validate_with_claims(serde_json::json!({
-            "aud": "test-audience",
-            "exp": in_the_future,
-            "sub": "test user",
-            "scope": "read",
-            "scp": ["write"]
-        }))
-        .await;
+    #[test]
+    fn scope_claim_wins_over_scp() {
+        let scopes =
+            scopes_of(serde_json::json!({ "sub": "u", "scope": "read", "scp": ["write"] }));
         assert_eq!(scopes, vec!["read".to_string()]);
     }
 
-    #[tokio::test]
-    async fn it_returns_empty_scopes_when_neither_claim_present() {
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
-        let scopes = validate_with_claims(serde_json::json!({
-            "aud": "test-audience",
-            "exp": in_the_future,
-            "sub": "test user"
-        }))
-        .await;
+    #[test]
+    fn scopes_empty_when_neither_claim_present() {
+        let scopes = scopes_of(serde_json::json!({ "sub": "u" }));
         assert!(scopes.is_empty());
+    }
+
+    #[test]
+    fn jwt_algorithm_maps_supported_algorithms() {
+        assert_eq!(jwt_algorithm(KeyAlgorithm::HS512), Some(Algorithm::HS512));
+        assert_eq!(jwt_algorithm(KeyAlgorithm::RS256), Some(Algorithm::RS256));
+        assert_eq!(jwt_algorithm(KeyAlgorithm::EdDSA), Some(Algorithm::EdDSA));
     }
 }
