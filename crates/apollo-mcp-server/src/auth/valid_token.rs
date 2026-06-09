@@ -50,7 +50,7 @@ pub(super) trait ValidateToken {
     fn get_issuers(&self) -> &[String];
 
     /// Get the available upstream servers
-    fn get_servers(&self) -> &Vec<Url>;
+    fn get_servers(&self) -> &[Url];
 
     /// Fetch the signing key by its ID, along with the issuing server's
     /// discovered issuer identifier.
@@ -256,7 +256,7 @@ mod test {
         issuers: Vec<String>,
         allow_any_audience: bool,
         servers: Vec<TestServer>,
-        /// Parsed server URLs, owned so `get_servers` can return a `&Vec<Url>`.
+        /// Parsed server URLs, owned so `get_servers` can return a `&[Url]`.
         /// Kept index-aligned with `servers`.
         server_urls: Vec<Url>,
     }
@@ -316,7 +316,7 @@ mod test {
             &self.issuers
         }
 
-        fn get_servers(&self) -> &Vec<url::Url> {
+        fn get_servers(&self) -> &[url::Url] {
             &self.server_urls
         }
 

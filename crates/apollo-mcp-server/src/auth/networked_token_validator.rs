@@ -15,7 +15,7 @@ pub(super) struct NetworkedTokenValidator<'a> {
     audiences: &'a [String],
     issuers: &'a [String],
     allow_any_audience: bool,
-    upstreams: &'a Vec<Url>,
+    upstreams: &'a [Url],
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
 }
@@ -25,7 +25,7 @@ impl<'a> NetworkedTokenValidator<'a> {
         audiences: &'a [String],
         issuers: &'a [String],
         allow_any_audience: bool,
-        upstreams: &'a Vec<Url>,
+        upstreams: &'a [Url],
         client: &'a reqwest::Client,
         discovery_timeout: Duration,
     ) -> Self {
@@ -209,7 +209,7 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         self.issuers
     }
 
-    fn get_servers(&self) -> &Vec<Url> {
+    fn get_servers(&self) -> &[Url] {
         self.upstreams
     }
 
