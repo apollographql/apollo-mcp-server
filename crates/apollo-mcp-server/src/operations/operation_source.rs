@@ -45,8 +45,11 @@ impl OperationSource {
             OperationSource::Manifest(source) => source
                 .into_stream()
                 .await
-                .map(|ManifestEvent::UpdateManifest(operations)| {
-                    Event::OperationsUpdated(raw_operations_from_manifest(operations))
+                .map(|event| match event {
+                    ManifestEvent::UpdateManifest(operations) => {
+                        Event::OperationsUpdated(raw_operations_from_manifest(operations))
+                    }
+                    ManifestEvent::ManifestError(e) => Event::ManifestError(e),
                 })
                 .boxed(),
             OperationSource::Collection(collection_source) => collection_source

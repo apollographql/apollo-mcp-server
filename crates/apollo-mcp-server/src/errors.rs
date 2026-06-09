@@ -5,6 +5,7 @@ use apollo_mcp_registry::platform_api::operation_collections::error::CollectionE
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
 use rmcp::serde_json;
 use tokio::task::JoinError;
+use tower::BoxError;
 use url::ParseError;
 
 /// An error in operation parsing
@@ -39,6 +40,9 @@ pub enum OperationError {
 
     #[error("Error loading collection: {0}")]
     Collection(CollectionError),
+
+    #[error("Error fetching Uplink persisted-query manifest: {0}")]
+    Manifest(BoxError),
 }
 
 /// An error in server initialization

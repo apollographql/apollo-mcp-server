@@ -42,8 +42,12 @@ impl ManifestSource {
                             .collect(),
                     ),
                     Err(e) => {
-                        tracing::error!("error from manifest stream: {}", e);
-                        Event::UpdateManifest(vec![])
+                        tracing::error!(
+                            "transient error fetching persisted query manifest; \
+                             retaining previous catalog: {}",
+                            e
+                        );
+                        Event::ManifestError(e)
                     }
                 })
                 .boxed(),

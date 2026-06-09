@@ -211,6 +211,16 @@ impl StateMachine {
                 }
                 _ => State::Error(ServerError::Operation(OperationError::Collection(e))),
             },
+            ServerEvent::ManifestError(e) => match state {
+                State::Running(running) => {
+                    tracing::error!(
+                        "Transient Uplink manifest fetch error while running, \
+                         keeping existing operations: {e}"
+                    );
+                    running.into()
+                }
+                _ => State::Error(ServerError::Operation(OperationError::Manifest(e))),
+            },
             ServerEvent::RhaiScriptsChanged => match state {
                 State::Running(running) => {
                     running.reload_rhai_scripts();
@@ -554,6 +564,42 @@ mod tests {
         assert!(
             matches!(new_state, State::Running(_)),
             "expected server to remain Running after operations update"
+        );
+    }
+
+    // A ManifestError (transient Uplink fetch failure) while Running should NOT kill the server
+    // and must NOT clear the existing tool catalog.
+    #[tokio::test]
+    async fn manifest_error_keeps_running_server_alive_and_retains_catalog() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        let event = ServerEvent::ManifestError(
+            "connection timeout fetching persisted query manifest".into(),
+        );
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Running(_)),
+            "expected server to remain Running after ManifestError"
+        );
+    }
+
+    // A ManifestError during startup (before Running) should be fatal.
+    #[tokio::test]
+    async fn manifest_error_during_startup_is_fatal() {
+        let event = ServerEvent::ManifestError("timeout on first fetch".into());
+
+        let state = State::Configuring(Configuring {
+            config: test_config(),
+        });
+
+        let new_state = process_event(state, event).await;
+
+        assert!(
+            matches!(new_state, State::Error(_)),
+            "expected ManifestError during startup to be fatal"
         );
     }
 
