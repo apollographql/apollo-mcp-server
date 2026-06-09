@@ -227,7 +227,7 @@ impl ValidateToken for NetworkedTokenValidator<'_> {
         }
         Some(VerificationKey {
             jwk,
-            issuer: Some(metadata.issuer),
+            issuer: metadata.issuer,
         })
     }
 }

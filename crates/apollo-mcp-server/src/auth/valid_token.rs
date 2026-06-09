@@ -32,11 +32,10 @@ impl Deref for ValidToken {
 /// discovery metadata. It is used to bind issuer validation to the server
 /// whose JWKS verified the signature: a token's `iss` claim must equal this
 /// value, so a token signed by one configured server cannot pass by claiming
-/// a different configured server's issuer. `None` when the server's issuer
-/// could not be determined.
+/// a different configured server's issuer.
 pub(super) struct VerificationKey {
     pub(super) jwk: Jwk,
-    pub(super) issuer: Option<String>,
+    pub(super) issuer: String,
 }
 
 /// Trait to handle validation of tokens
@@ -207,30 +206,14 @@ pub(super) trait ValidateToken {
                         // signature: the token's `iss` must equal that server's
                         // discovered issuer identifier. This prevents a token signed
                         // by one configured server from being accepted while claiming
-                        // a different configured server's issuer. Fail closed if the
-                        // server's issuer could not be determined.
-                        // Bind the issuer to the server whose JWKS verified the
-                        // signature: the token's `iss` must equal that server's
-                        // discovered issuer identifier. This prevents a token signed
-                        // by one configured server from being accepted while claiming
-                        // a different configured server's issuer. Fail closed if the
-                        // server's issuer could not be determined.
-                        match discovered_issuer.as_deref() {
-                            Some(server_issuer) if server_issuer == token_issuer => {}
-                            Some(server_issuer) => {
-                                warn!(
-                                    token_issuer = %token_issuer,
-                                    server_issuer = %server_issuer,
-                                    "Token `iss` does not match the issuer of the server that signed it"
-                                );
-                                break;
-                            }
-                            None => {
-                                warn!(
-                                    "Cannot verify token `iss`: the signing server did not advertise an issuer"
-                                );
-                                break;
-                            }
+                        // a different configured server's issuer.
+                        if discovered_issuer != token_issuer {
+                            warn!(
+                                token_issuer = %token_issuer,
+                                server_issuer = %discovered_issuer,
+                                "Token `iss` does not match the issuer of the server that signed it"
+                            );
+                            break;
                         }
                     }
                     return Some(ValidToken {
@@ -265,7 +248,7 @@ mod test {
     struct TestServer {
         url: Url,
         key_pair: (String, Jwk),
-        discovered_issuer: Option<String>,
+        discovered_issuer: String,
     }
 
     struct TestTokenValidator {
@@ -306,7 +289,7 @@ mod test {
             key_pair: (String, Jwk),
             server: Url,
         ) -> Self {
-            let discovered_issuer = Some(server.as_str().trim_end_matches('/').to_string());
+            let discovered_issuer = server.as_str().trim_end_matches('/').to_string();
             Self::new(
                 audiences,
                 issuers,
@@ -890,7 +873,7 @@ mod test {
             vec![TestServer {
                 url: server,
                 key_pair: (key_id, jwk),
-                discovered_issuer: Some("https://auth.other.com".to_string()),
+                discovered_issuer: "https://auth.other.com".to_string(),
             }],
         );
 
@@ -1061,7 +1044,7 @@ mod test {
                             decoding_key: server_a_decode,
                         },
                     ),
-                    discovered_issuer: Some("https://auth-a.example.com".to_string()),
+                    discovered_issuer: "https://auth-a.example.com".to_string(),
                 },
                 TestServer {
                     url: server_b_url,
@@ -1072,7 +1055,7 @@ mod test {
                             decoding_key: server_b_decode,
                         },
                     ),
-                    discovered_issuer: Some("https://auth-b.example.com".to_string()),
+                    discovered_issuer: "https://auth-b.example.com".to_string(),
                 },
             ],
         );
@@ -1140,7 +1123,7 @@ mod test {
                             decoding_key: server_a_decode,
                         },
                     ),
-                    discovered_issuer: Some("https://auth-a.example.com".to_string()),
+                    discovered_issuer: "https://auth-a.example.com".to_string(),
                 },
                 TestServer {
                     url: server_b_url,
@@ -1151,7 +1134,7 @@ mod test {
                             decoding_key: server_b_decode,
                         },
                     ),
-                    discovered_issuer: Some("https://auth-b.example.com".to_string()),
+                    discovered_issuer: "https://auth-b.example.com".to_string(),
                 },
             ],
         );
