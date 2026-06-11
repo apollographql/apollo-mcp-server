@@ -7,33 +7,18 @@ use serde::Deserialize;
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use super::valid_token::{ValidateToken, VerificationKey};
+use super::valid_token::{KeyResolver, VerificationKey};
 
-/// Implementation of the `ValidateToken` trait which fetches key information
-/// from the network.
-pub(super) struct NetworkedTokenValidator<'a> {
-    audiences: &'a [String],
-    issuers: &'a [String],
-    allow_any_audience: bool,
-    upstreams: &'a Vec<Url>,
+/// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
+/// discovery.
+pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
 }
 
-impl<'a> NetworkedTokenValidator<'a> {
-    pub fn new(
-        audiences: &'a [String],
-        issuers: &'a [String],
-        allow_any_audience: bool,
-        upstreams: &'a Vec<Url>,
-        client: &'a reqwest::Client,
-        discovery_timeout: Duration,
-    ) -> Self {
+impl<'a> NetworkedKeyResolver<'a> {
+    pub fn new(client: &'a reqwest::Client, discovery_timeout: Duration) -> Self {
         Self {
-            audiences,
-            issuers,
-            allow_any_audience,
-            upstreams,
             client,
             discovery_timeout,
         }
@@ -196,29 +181,13 @@ async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration)
     }
 }
 
-impl ValidateToken for NetworkedTokenValidator<'_> {
-    fn allow_any_audience(&self) -> bool {
-        self.allow_any_audience
-    }
-
-    fn get_audiences(&self) -> &[String] {
-        self.audiences
-    }
-
-    fn get_issuers(&self) -> &[String] {
-        self.issuers
-    }
-
-    fn get_servers(&self) -> &Vec<Url> {
-        self.upstreams
-    }
-
+impl KeyResolver for NetworkedKeyResolver<'_> {
     /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS
     /// fetch) independently, so a cold-cache lookup can take up to 2×
     /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
-    async fn get_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
+    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
         let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
         let mut jwk = jwks.keys.remove(key_id)?;

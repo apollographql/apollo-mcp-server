@@ -16,7 +16,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_token_validator::NetworkedTokenValidator;
+use networked_key_resolver::NetworkedKeyResolver;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -24,14 +24,14 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
-mod networked_token_validator;
+mod networked_key_resolver;
 mod protected_resource;
 mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
+use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
-use valid_token::ValidateToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
@@ -262,9 +262,12 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
 /// Internal state for the auth middleware, containing both config and pre-built HTTP client
 #[derive(Clone)]
 struct AuthState {
-    config: Config,
+    config: Arc<Config>,
     client: reqwest::Client,
     resource_metadata_url: Url,
+    /// Upstream OAuth server URLs, parsed once at startup so the per-request
+    /// path neither re-parses nor allocates them.
+    auth_servers: Arc<[Url]>,
     /// Per-operation required scopes, keyed by operation name.
     required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
@@ -278,17 +281,24 @@ impl Config {
         router: Router,
         required_scopes: HashMap<String, Vec<String>>,
     ) -> Result<Router, TlsConfigError> {
-        // Validate server URLs have hosts (fail fast on config errors)
+        // Parse and validate server URLs once at startup (fail fast on config
+        // errors). The parsed list is reused for every request via `AuthState`.
         #[allow(clippy::expect_used)] // parseability validated at deserialize
-        for (i, server) in self.servers.iter().enumerate() {
-            let parsed = Url::parse(server).expect("validated by deserialize_auth_servers");
-            if parsed.host_str().is_none() {
-                return Err(TlsConfigError::ServerUrlMissingHost {
-                    index: i,
-                    url: server.clone(),
-                });
-            }
-        }
+        let auth_servers = self
+            .servers
+            .iter()
+            .enumerate()
+            .map(|(i, server)| {
+                let parsed = Url::parse(server).expect("validated by deserialize_auth_servers");
+                if parsed.host_str().is_none() {
+                    return Err(TlsConfigError::ServerUrlMissingHost {
+                        index: i,
+                        url: server.clone(),
+                    });
+                }
+                Ok(parsed)
+            })
+            .collect::<Result<Vec<Url>, _>>()?;
 
         let scheme = self.resource.scheme();
         if scheme != "http" && scheme != "https" {
@@ -314,7 +324,7 @@ impl Config {
         async fn protected_resource(
             State(auth_state): State<AuthState>,
         ) -> Json<ProtectedResource> {
-            Json(auth_state.config.into())
+            Json(ProtectedResource::from(auth_state.config.as_ref().clone()))
         }
 
         // Build HTTP client with TLS configuration and discovery headers
@@ -322,9 +332,10 @@ impl Config {
         let resource_metadata_url = build_resource_metadata_url(&self.resource);
         let metadata_route_path = resource_metadata_url.path().to_string();
         let auth_state = AuthState {
-            config: self.clone(),
+            config: Arc::new(self.clone()),
             client,
             resource_metadata_url,
+            auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(required_scopes),
         };
 
@@ -344,6 +355,10 @@ impl Config {
         )))
     }
 }
+
+/// Default timeout for OIDC/OAuth discovery and JWKS requests when
+/// `transport.auth.discovery_timeout` is not configured.
+const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// MCP discovery methods that are allowed without authentication when
 /// `allow_anonymous_mcp_discovery` is enabled.
@@ -483,22 +498,15 @@ async fn oauth_validate(
 
     let discovery_timeout = auth_config
         .discovery_timeout
-        .unwrap_or(Duration::from_secs(5));
+        .unwrap_or(DEFAULT_DISCOVERY_TIMEOUT);
 
-    #[allow(clippy::expect_used)] // parseability validated at deserialize
-    let auth_servers: Vec<Url> = auth_config
-        .servers
-        .iter()
-        .map(|s| Url::parse(s).expect("validated by deserialize_auth_servers"))
-        .collect();
-    let validator = NetworkedTokenValidator::new(
-        &auth_config.audiences,
-        &auth_config.issuers,
-        auth_config.allow_any_audience,
-        &auth_servers,
-        &auth_state.client,
-        discovery_timeout,
-    );
+    let validator = TokenValidator {
+        audiences: &auth_config.audiences,
+        issuers: &auth_config.issuers,
+        allow_any_audience: auth_config.allow_any_audience,
+        servers: &auth_state.auth_servers,
+        keys: NetworkedKeyResolver::new(&auth_state.client, discovery_timeout),
+    };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
         tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
@@ -606,10 +614,16 @@ mod tests {
 
     fn test_auth_state(config: Config) -> AuthState {
         let resource_metadata_url = build_resource_metadata_url(&config.resource);
+        let auth_servers = config
+            .servers
+            .iter()
+            .map(|s| Url::parse(s).expect("valid test server URL"))
+            .collect::<Vec<_>>();
         AuthState {
-            config,
+            config: Arc::new(config),
             client: reqwest::Client::new(),
             resource_metadata_url,
+            auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(HashMap::new()),
         }
     }
