@@ -20,16 +20,25 @@ enum ContentStatus {
 
 type User implements Node {
   role: UserRole!
+  comments: [Comment!]!
 }
 
 type Post implements Node & Content {
-  author: User!
+  comments: [Comment!]!
+}
+
+type Comment implements Node {
+  reactions: [Reaction!]!
+}
+
+type Reaction {
+  user: User!
 }
 
 type Query {
   user(id: ID!): User
-  postsOld(filter: [ID!]): [Post!]! @deprecated(reason: "Use posts instead")
   posts(filter: PostFilter): [Post!]!
+  comments(postId: ID!): [Comment!]!
 }
 
 input PostFilter {
