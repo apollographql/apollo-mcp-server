@@ -47,6 +47,19 @@ pub enum ScopeMode {
     RequireAny,
 }
 
+impl ScopeMode {
+    /// Whether the `present` scopes satisfy the `required` scopes under this
+    /// mode. Callers skip this check when no scopes are configured, so
+    /// `required` is expected to be non-empty.
+    fn is_satisfied_by(self, required: &[String], present: &[String]) -> bool {
+        match self {
+            ScopeMode::Disabled => true,
+            ScopeMode::RequireAll => required.iter().all(|req| present.contains(req)),
+            ScopeMode::RequireAny => required.iter().any(|req| present.contains(req)),
+        }
+    }
+}
+
 /// Errors that can occur when building a TLS-configured HTTP client
 #[derive(Debug, thiserror::Error)]
 pub enum TlsConfigError {
@@ -521,17 +534,9 @@ async fn oauth_validate(
 
     // Scope validation: only applies when scopes are configured
     if !auth_config.scopes.is_empty() {
-        let sufficient = match auth_config.scope_mode {
-            ScopeMode::Disabled => true,
-            ScopeMode::RequireAll => auth_config
-                .scopes
-                .iter()
-                .all(|req| valid_token.scopes.contains(req)),
-            ScopeMode::RequireAny => auth_config
-                .scopes
-                .iter()
-                .any(|req| valid_token.scopes.contains(req)),
-        };
+        let sufficient = auth_config
+            .scope_mode
+            .is_satisfied_by(&auth_config.scopes, &valid_token.scopes);
 
         if !sufficient {
             // Compute missing scopes for diagnostic logging
@@ -701,14 +706,7 @@ mod tests {
         use rstest::rstest;
 
         fn is_sufficient(mode: ScopeMode, required: &[String], present: &[String]) -> bool {
-            if required.is_empty() {
-                return true;
-            }
-            match mode {
-                ScopeMode::Disabled => true,
-                ScopeMode::RequireAll => required.iter().all(|req| present.contains(req)),
-                ScopeMode::RequireAny => required.iter().any(|req| present.contains(req)),
-            }
+            required.is_empty() || mode.is_satisfied_by(required, present)
         }
 
         fn s(vals: &[&str]) -> Vec<String> {
