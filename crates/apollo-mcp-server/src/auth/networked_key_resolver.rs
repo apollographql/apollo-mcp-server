@@ -2,12 +2,12 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use jsonwebtoken::jwk::KeyAlgorithm;
-use jwks::Jwks;
+use jwks::{Jwk, Jwks};
 use serde::Deserialize;
 use tracing::{error, info, trace, warn};
 use url::Url;
 
-use super::valid_token::{KeyResolver, VerificationKey};
+use super::valid_token::KeyResolver;
 
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
 /// discovery.
@@ -187,17 +187,14 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
     /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
-    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
+    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
         let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
         let mut jwk = jwks.keys.remove(key_id)?;
         if jwk.alg.is_none() {
             jwk.alg = resolve_alg(&metadata.id_token_signing_alg_values_supported, server);
         }
-        Some(VerificationKey {
-            jwk,
-            issuer: metadata.issuer,
-        })
+        Some((jwk, metadata.issuer))
     }
 }
 

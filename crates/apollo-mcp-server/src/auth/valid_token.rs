@@ -25,19 +25,6 @@ impl Deref for ValidToken {
     }
 }
 
-/// A signing key resolved from an authorization server, together with that
-/// server's discovered issuer identifier.
-///
-/// `issuer` is the `iss` value the authorization server advertises in its
-/// discovery metadata. It is used to bind issuer validation to the server
-/// whose JWKS verified the signature: a token's `iss` claim must equal this
-/// value, so a token signed by one configured server cannot pass by claiming
-/// a different configured server's issuer.
-pub(super) struct VerificationKey {
-    pub(super) jwk: Jwk,
-    pub(super) issuer: String,
-}
-
 /// Resolves a signing key for a `(server, key_id)` pair, returning it together
 /// with the issuer that server advertises in discovery.
 ///
@@ -46,10 +33,14 @@ pub(super) struct VerificationKey {
 /// [`TokenValidator`], so adding a new validation input does not touch this
 /// trait or its implementations.
 pub(super) trait KeyResolver {
-    /// Fetch the signing key by its ID, along with the issuing server's
-    /// discovered issuer identifier. Returns `None` when the server does not
-    /// serve a key with that `key_id`.
-    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey>;
+    /// Fetch the signing key for `key_id`, together with the issuer the server
+    /// advertises in its discovery metadata. Returns `None` when the server
+    /// does not serve a key with that `key_id`.
+    ///
+    /// The returned issuer is the value issuer validation binds to: a token's
+    /// `iss` claim must equal it, so a token signed by one configured server
+    /// cannot pass by claiming a different server's issuer.
+    async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)>;
 }
 
 /// Validates bearer JWTs against the configured audiences, issuers, and upstream
@@ -75,11 +66,7 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         let key_id = header.kid.as_ref()?;
 
         for server in self.servers {
-            let Some(VerificationKey {
-                jwk,
-                issuer: discovered_issuer,
-            }) = self.keys.resolve_key(server, key_id).await
-            else {
+            let Some((jwk, discovered_issuer)) = self.keys.resolve_key(server, key_id).await else {
                 continue;
             };
 
@@ -260,7 +247,7 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{Claims, KeyResolver, TokenValidator, ValidToken, VerificationKey, jwt_algorithm};
+    use super::{Claims, KeyResolver, TokenValidator, ValidToken, jwt_algorithm};
 
     /// A single upstream server in the stub resolver: its URL, the one
     /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
@@ -276,12 +263,14 @@ mod test {
     }
 
     impl KeyResolver for StubKeyResolver<'_> {
-        async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<VerificationKey> {
+        async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
             // Find the requested server, then return its key only if the `kid` matches.
             let test_server = self.servers.iter().find(|s| &s.url == server)?;
-            test_server.key_pair.0.eq(key_id).then(|| VerificationKey {
-                jwk: test_server.key_pair.1.clone(),
-                issuer: test_server.discovered_issuer.clone(),
+            test_server.key_pair.0.eq(key_id).then(|| {
+                (
+                    test_server.key_pair.1.clone(),
+                    test_server.discovered_issuer.clone(),
+                )
             })
         }
     }
