@@ -58,6 +58,17 @@ impl ScopeMode {
             ScopeMode::RequireAny => required.iter().any(|req| present.contains(req)),
         }
     }
+
+    /// The wire string for this mode, matching the serde `snake_case` rename.
+    /// Used when rendering the `scope_mode` hint in the `WWW-Authenticate`
+    /// header.
+    fn as_str(self) -> &'static str {
+        match self {
+            ScopeMode::Disabled => "disabled",
+            ScopeMode::RequireAll => "require_all",
+            ScopeMode::RequireAny => "require_any",
+        }
+    }
 }
 
 /// Errors that can occur when building a TLS-configured HTTP client
@@ -698,6 +709,26 @@ mod tests {
             assert!(www_auth.contains("Bearer"));
             assert!(www_auth.contains("resource_metadata"));
             assert!(!www_auth.contains("scope="));
+        }
+    }
+
+    mod scope_mode {
+        use super::*;
+
+        #[test]
+        fn as_str_matches_serde_rename() {
+            for mode in [
+                ScopeMode::Disabled,
+                ScopeMode::RequireAll,
+                ScopeMode::RequireAny,
+            ] {
+                let serde = serde_json::to_string(&mode).expect("serialize scope mode");
+                assert_eq!(
+                    format!("\"{}\"", mode.as_str()),
+                    serde,
+                    "as_str drifted from the serde rename for {mode:?}"
+                );
+            }
         }
     }
 

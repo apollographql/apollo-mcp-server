@@ -62,11 +62,7 @@ impl Header for WwwAuthenticate {
                     header.push_str(&format!(r#", scope="{}""#, scope));
                 }
                 if let Some(scope_mode) = scope_mode {
-                    let mode_str = serde_json::to_string(&scope_mode)
-                        .unwrap_or_else(|_| "unknown".to_string())
-                        .trim_matches('"')
-                        .to_string();
-                    header.push_str(&format!(r#", scope_mode="{}""#, mode_str));
+                    header.push_str(&format!(r#", scope_mode="{}""#, scope_mode.as_str()));
                 }
                 header
             }
