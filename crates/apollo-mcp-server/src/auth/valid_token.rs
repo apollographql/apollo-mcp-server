@@ -1195,6 +1195,40 @@ mod test {
         });
     }
 
+    #[traced_test]
+    #[tokio::test]
+    async fn it_rejects_jwk_with_unsupported_algorithm() {
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        // The JWK advertises a key-management algorithm the validator does not
+        // support for token signing, so `jwt_algorithm` returns `None`.
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::RSA1_5),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("unsupported algorithm"))
+                .then_some(())
+                .ok_or("Expected warning for unsupported algorithm".to_string())
+        });
+    }
+
     #[tokio::test]
     async fn it_rejects_when_no_server_serves_the_kid() {
         let (encode_key, decode_key) = create_key("DEADBEEF");
@@ -1268,9 +1302,37 @@ mod test {
     }
 
     #[test]
-    fn jwt_algorithm_maps_supported_algorithms() {
-        assert_eq!(jwt_algorithm(KeyAlgorithm::HS512), Some(Algorithm::HS512));
-        assert_eq!(jwt_algorithm(KeyAlgorithm::RS256), Some(Algorithm::RS256));
-        assert_eq!(jwt_algorithm(KeyAlgorithm::EdDSA), Some(Algorithm::EdDSA));
+    fn null_audience_deserializes_to_empty() {
+        let claims: Claims = serde_json::from_value(serde_json::json!({ "sub": "u", "aud": null }))
+            .expect("deserialize claims");
+        assert!(claims.aud.is_empty());
+    }
+
+    #[test]
+    fn jwt_algorithm_maps_every_supported_algorithm() {
+        use KeyAlgorithm::*;
+        let supported = [
+            (HS256, Algorithm::HS256),
+            (HS384, Algorithm::HS384),
+            (HS512, Algorithm::HS512),
+            (ES256, Algorithm::ES256),
+            (ES384, Algorithm::ES384),
+            (RS256, Algorithm::RS256),
+            (RS384, Algorithm::RS384),
+            (RS512, Algorithm::RS512),
+            (PS256, Algorithm::PS256),
+            (PS384, Algorithm::PS384),
+            (PS512, Algorithm::PS512),
+            (EdDSA, Algorithm::EdDSA),
+        ];
+        for (key_alg, expected) in supported {
+            assert_eq!(jwt_algorithm(key_alg), Some(expected), "{key_alg:?}");
+        }
+    }
+
+    #[test]
+    fn jwt_algorithm_returns_none_for_unsupported() {
+        // `RSA1_5` is a key-management algorithm, not a token-signing one.
+        assert_eq!(jwt_algorithm(KeyAlgorithm::RSA1_5), None);
     }
 }
