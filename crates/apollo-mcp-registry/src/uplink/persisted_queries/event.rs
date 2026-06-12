@@ -1,10 +1,14 @@
 use std::fmt::Debug;
 use std::fmt::Formatter;
 
+use tower::BoxError;
+
 /// Persisted Query events
 pub enum Event {
     /// The persisted query manifest was updated
     UpdateManifest(Vec<(String, String)>),
+    /// A transient error occurred while fetching the manifest; the previous catalog is retained
+    ManifestError(BoxError),
 }
 
 impl Debug for Event {
@@ -13,6 +17,21 @@ impl Debug for Event {
             Event::UpdateManifest(_) => {
                 write!(f, "UpdateManifest(<redacted>)")
             }
+            Event::ManifestError(e) => {
+                write!(f, "ManifestError({e})")
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_manifest_error_formats_message() {
+        let event = Event::ManifestError("timeout".into());
+        let output = format!("{event:?}");
+        assert_eq!(output, "ManifestError(timeout)");
     }
 }

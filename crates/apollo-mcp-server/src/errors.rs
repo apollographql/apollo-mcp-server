@@ -39,6 +39,23 @@ pub enum OperationError {
 
     #[error("Error loading collection: {0}")]
     Collection(CollectionError),
+
+    #[error("Error fetching Uplink persisted-query manifest: {0}")]
+    Manifest(Box<dyn std::error::Error + Send + Sync + 'static>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn operation_error_manifest_display() {
+        let err = OperationError::Manifest("connection refused".into());
+        assert_eq!(
+            err.to_string(),
+            "Error fetching Uplink persisted-query manifest: connection refused"
+        );
+    }
 }
 
 /// An error in server initialization
