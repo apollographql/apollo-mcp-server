@@ -41,14 +41,7 @@ impl ManifestSource {
                             .map(|(k, v)| (k.operation_id.clone(), v.clone()))
                             .collect(),
                     ),
-                    Err(e) => {
-                        tracing::error!(
-                            "transient error fetching persisted query manifest; \
-                             retaining previous catalog: {}",
-                            e
-                        );
-                        Event::ManifestError(e)
-                    }
+                    Err(e) => Event::ManifestError(e),
                 })
                 .boxed(),
             Err(e) => {

@@ -213,8 +213,8 @@ impl StateMachine {
             },
             ServerEvent::ManifestError(e) => match state {
                 State::Running(running) => {
-                    tracing::error!(
-                        "Transient Uplink manifest fetch error while running, \
+                    tracing::warn!(
+                        "Transient manifest fetch error while running, \
                          keeping existing operations: {e}"
                     );
                     running.into()
@@ -574,15 +574,31 @@ mod tests {
         let running = create_running_server();
         let state = State::Running(running);
 
-        let event = ServerEvent::ManifestError(
-            "connection timeout fetching persisted query manifest".into(),
-        );
+        // Populate the catalog first so we can assert it is retained.
+        let state = process_event(
+            state,
+            ServerEvent::OperationsUpdated(vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("test.graphql".to_string()),
+            ))]),
+        )
+        .await;
 
-        let new_state = process_event(state, event).await;
+        let new_state = process_event(
+            state,
+            ServerEvent::ManifestError(
+                "connection timeout fetching persisted query manifest".into(),
+            ),
+        )
+        .await;
 
-        assert!(
-            matches!(new_state, State::Running(_)),
-            "expected server to remain Running after ManifestError"
+        let State::Running(running) = new_state else {
+            panic!("expected server to remain Running after ManifestError");
+        };
+        assert_eq!(
+            running.operations.read().await.len(),
+            1,
+            "ManifestError must not clear the existing tool catalog"
         );
     }
 
