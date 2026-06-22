@@ -639,7 +639,9 @@ impl ServerHandler for Running {
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
-        Ok(self.get_info())
+        let mut info = self.get_info();
+        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
+        Ok(info)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -757,11 +759,10 @@ impl ServerHandler for Running {
         capabilities.prompts =
             (!self.prompts.is_empty()).then_some(PromptsCapability { list_changed: None });
 
-        let protocol_version = if self.enable_output_schema {
-            ProtocolVersion::default()
-        } else {
-            ProtocolVersion::V_2025_03_26
-        };
+        // Advertise our latest supported version as the default. The actual
+        // negotiated value is set per client in `initialize` via
+        // `negotiate_protocol_version`.
+        let protocol_version = LATEST_PROTOCOL_VERSION.clone();
 
         let mut impl_ = Implementation::new(
             self.server_info.name().to_string(),
@@ -783,6 +784,29 @@ impl ServerHandler for Running {
             result = result.with_instructions(instructions);
         }
         result
+    }
+}
+
+/// Latest MCP protocol version this server implements. Advertised when the
+/// client requests a version we do not support.
+const LATEST_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_06_18;
+
+/// MCP protocol versions this server implements.
+const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion; 2] =
+    [LATEST_PROTOCOL_VERSION, ProtocolVersion::V_2025_03_26];
+
+/// Negotiate the protocol version for the `initialize` response.
+///
+/// Per the MCP lifecycle spec, the server echoes the client's requested version
+/// when it implements that version, otherwise it responds with its latest
+/// supported version. This keeps negotiation independent of `enable_output_schema`:
+/// the `outputSchema` / `structuredContent` fields are gated separately by
+/// [`Running::client_supports_output_schema`].
+fn negotiate_protocol_version(requested: &ProtocolVersion) -> ProtocolVersion {
+    if SUPPORTED_PROTOCOL_VERSIONS.contains(requested) {
+        requested.clone()
+    } else {
+        LATEST_PROTOCOL_VERSION.clone()
     }
 }
 
@@ -2038,6 +2062,7 @@ mod tests {
 
     mod get_info {
         use super::*;
+        use rstest::rstest;
 
         #[test]
         fn get_info_should_use_default_metadata_when_config_is_empty() {
@@ -2129,37 +2154,42 @@ mod tests {
         }
 
         #[test]
-        fn advertises_default_version_when_output_schema_disabled() {
-            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-                .unwrap()
-                .validate()
-                .unwrap();
+        fn advertises_latest_supported_version_regardless_of_output_schema() {
+            let schema = Arc::new(RwLock::new(
+                Schema::parse("type Query { id: String }", "schema.graphql")
+                    .unwrap()
+                    .validate()
+                    .unwrap(),
+            ));
 
-            let running = Running {
-                enable_output_schema: false,
-                ..test_running(Arc::new(RwLock::new(schema)))
-            };
+            // The advertised version no longer depends on `enable_output_schema`;
+            // output schema fields are gated separately by the negotiated version.
+            for enable_output_schema in [false, true] {
+                let running = Running {
+                    enable_output_schema,
+                    ..test_running(Arc::clone(&schema))
+                };
 
-            let info = running.get_info();
+                let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_03_26);
+                assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+            }
         }
 
-        #[test]
-        fn advertises_v2025_06_18_when_output_schema_enabled() {
-            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
-                .unwrap()
-                .validate()
-                .unwrap();
-
-            let running = Running {
-                enable_output_schema: true,
-                ..test_running(Arc::new(RwLock::new(schema)))
-            };
-
-            let info = running.get_info();
-
-            assert_eq!(info.protocol_version, ProtocolVersion::default());
+        // A supported version is echoed back; an unsupported one falls back to
+        // our latest. The `downgrade_newer` case is the AMS-525 regression: a
+        // client offering a newer version than we implement must be downgraded
+        // rather than refused.
+        #[rstest]
+        #[case::echo_2025_03_26(ProtocolVersion::V_2025_03_26, ProtocolVersion::V_2025_03_26)]
+        #[case::echo_2025_06_18(ProtocolVersion::V_2025_06_18, ProtocolVersion::V_2025_06_18)]
+        #[case::downgrade_newer(ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2025_06_18)]
+        #[case::fallback_older(ProtocolVersion::V_2024_11_05, ProtocolVersion::V_2025_06_18)]
+        fn negotiate_returns_supported_or_latest(
+            #[case] requested: ProtocolVersion,
+            #[case] expected: ProtocolVersion,
+        ) {
+            assert_eq!(negotiate_protocol_version(&requested), expected);
         }
     }
 
@@ -2733,6 +2763,26 @@ mod integration_tests {
                     tool["name"]
                 );
             }
+        }
+
+        #[tokio::test]
+        async fn negotiates_down_when_client_requests_newer_version() {
+            // Regression for AMS-525: with output schema enabled, a client offering
+            // 2025-11-25 over streamable_http previously received 2025-11-25 verbatim
+            // and was refused. The server must downgrade to its latest supported
+            // version (2025-06-18) instead.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2025-11-25"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
         }
     }
 
