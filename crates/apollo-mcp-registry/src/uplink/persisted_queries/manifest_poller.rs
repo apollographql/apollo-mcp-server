@@ -193,13 +193,28 @@ fn create_uplink_stream(
             }
         }))
     })
-    .filter_map(|result| async move {
-        match result {
-            Ok(Some(manifest)) => Some(Ok(manifest)),
-            Ok(None) => Some(Ok(PersistedQueryManifest::default())),
-            Err(e) => Some(Err(e.into())),
+    .filter_map(|result| async move { classify_uplink_manifest_result(result) })
+}
+
+/// Maps a raw uplink manifest result into a stream item.
+///
+/// Transient errors are logged and dropped (`None`) so the uplink poll loop keeps polling
+/// and recovers on the next tick, rather than surfacing a `ManifestError` that would be
+/// fatal at startup. Only non-retryable errors are forwarded. A successful response is
+/// passed through and an empty response (`Ok(None)`) becomes an empty manifest. Mirrors
+/// the operation collection path's `is_transient` handling.
+fn classify_uplink_manifest_result(
+    result: Result<Option<PersistedQueryManifest>, crate::uplink::Error>,
+) -> Option<Result<PersistedQueryManifest, BoxError>> {
+    match result {
+        Ok(Some(manifest)) => Some(Ok(manifest)),
+        Ok(None) => Some(Ok(PersistedQueryManifest::default())),
+        Err(e) if e.is_transient() => {
+            tracing::warn!("transient error fetching persisted query manifest, will retry: {e}");
+            None
         }
-    })
+        Err(e) => Some(Err(e.into())),
+    }
 }
 
 fn create_hot_reload_stream(
@@ -245,4 +260,45 @@ fn create_hot_reload_stream(
             manifest
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::uplink::Error;
+
+    #[test]
+    fn classify_passes_through_loaded_manifest() {
+        let result = Ok(Some(PersistedQueryManifest::default()));
+        assert!(matches!(
+            classify_uplink_manifest_result(result),
+            Some(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn classify_treats_empty_response_as_empty_manifest() {
+        assert!(matches!(
+            classify_uplink_manifest_result(Ok(None)),
+            Some(Ok(_))
+        ));
+    }
+
+    #[test]
+    fn classify_drops_transient_error_so_the_poll_loop_retries() {
+        let result = Err(Error::FetchFailedSingle);
+        assert!(classify_uplink_manifest_result(result).is_none());
+    }
+
+    #[test]
+    fn classify_forwards_non_retryable_error() {
+        let result = Err(Error::UplinkErrorNoRetry {
+            code: "UNKNOWN_REF".to_string(),
+            message: "Graph not found".to_string(),
+        });
+        assert!(matches!(
+            classify_uplink_manifest_result(result),
+            Some(Err(_))
+        ));
+    }
 }

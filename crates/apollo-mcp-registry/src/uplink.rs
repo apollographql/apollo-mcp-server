@@ -36,6 +36,23 @@ pub enum Error {
     UplinkErrorNoRetry { code: String, message: String },
 }
 
+impl Error {
+    /// Returns `true` if the uplink poll loop treats this error as transient and keeps
+    /// polling, recovering on a later tick. Only `UplinkErrorNoRetry` stops the loop.
+    /// Callers use this to decide whether a manifest fetch error should be surfaced or
+    /// quietly retried. The match is exhaustive on purpose so a new variant must be
+    /// classified explicitly rather than silently defaulting to retryable.
+    pub(crate) fn is_transient(&self) -> bool {
+        match self {
+            Error::Http(_)
+            | Error::FetchFailedSingle
+            | Error::FetchFailedMultiple { .. }
+            | Error::UplinkError { .. } => true,
+            Error::UplinkErrorNoRetry { .. } => false,
+        }
+    }
+}
+
 /// Represents a request to Apollo Uplink
 #[derive(Debug)]
 pub struct UplinkRequest {
@@ -648,6 +665,27 @@ mod test {
         assert_eq!(
             error4.to_string(),
             "uplink error, the request will not be retried: code=UNKNOWN_REF message=Graph not found"
+        );
+    }
+
+    #[test]
+    fn is_transient_classifies_retryable_errors() {
+        // The poll loop keeps retrying every variant except UplinkErrorNoRetry.
+        assert!(Error::FetchFailedSingle.is_transient());
+        assert!(Error::FetchFailedMultiple { url_count: 3 }.is_transient());
+        assert!(
+            Error::UplinkError {
+                code: "TIMEOUT".to_string(),
+                message: "retry later".to_string(),
+            }
+            .is_transient()
+        );
+        assert!(
+            !Error::UplinkErrorNoRetry {
+                code: "UNKNOWN_REF".to_string(),
+                message: "Graph not found".to_string(),
+            }
+            .is_transient()
         );
     }
 
