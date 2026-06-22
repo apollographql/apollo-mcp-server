@@ -4,7 +4,6 @@ use url::Url;
 use super::Config;
 
 /// OAuth 2.1 Protected Resource Response
-// TODO: This might be better found in an existing rust crate (or contributed upstream to one)
 #[derive(Serialize)]
 pub(super) struct ProtectedResource {
     /// The URL of the resource
