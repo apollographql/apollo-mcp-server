@@ -1,6 +1,4 @@
 //! WWW Authenticate header definition.
-//!
-//! TODO: This might be nice to upstream to hyper.
 
 use headers::{Header, HeaderValue};
 use http::header::WWW_AUTHENTICATE;
@@ -68,7 +66,8 @@ impl Header for WwwAuthenticate {
             }
         };
 
-        // TODO: This shouldn't error, but it can so we might need to do something else here
+        // `from_str` is fallible even though our inputs are controlled, so log and skip
+        // rather than panic if it ever rejects the constructed value.
         match HeaderValue::from_str(&encoded) {
             Ok(value) => values.extend(std::iter::once(value)),
             Err(e) => warn!("could not construct WWW-AUTHENTICATE header: {e}"),

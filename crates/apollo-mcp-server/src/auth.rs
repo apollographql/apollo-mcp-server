@@ -219,7 +219,6 @@ pub struct Config {
     /// Accepts human-readable durations (e.g., "5s", "10s", "30s").
     /// Defaults to 5 seconds when not specified.
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
-    #[serde(serialize_with = "humantime_serde::serialize")]
     #[schemars(with = "Option<String>")]
     pub discovery_timeout: Option<Duration>,
 
@@ -250,6 +249,18 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
+/// Joins a URL's path into its non-empty segments separated by `/`, dropping
+/// leading and trailing slashes. Shared by the protected-resource and discovery
+/// well-known URL builders.
+fn normalized_path_segments(url: &Url) -> String {
+    url.path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Constructs the protected resource metadata URL per RFC 9728 Section 3.
 ///
 /// The well-known URI is formed by inserting `/.well-known/oauth-protected-resource`
@@ -266,13 +277,7 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
         return url;
     }
 
-    let path = url
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = normalized_path_segments(&url);
 
     if path.is_empty() {
         url.set_path("/.well-known/oauth-protected-resource");

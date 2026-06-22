@@ -48,13 +48,7 @@ fn build_discovery_urls(issuer: &Url) -> Result<Vec<Url>, DiscoveryUrlError> {
     normalized.set_query(None);
     normalized.set_fragment(None);
 
-    let path = normalized
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = super::normalized_path_segments(&normalized);
 
     let Some(host) = normalized.host_str() else {
         return Err(DiscoveryUrlError::MissingHost(issuer.clone()));
