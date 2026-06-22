@@ -41,10 +41,7 @@ impl ManifestSource {
                             .map(|(k, v)| (k.operation_id.clone(), v.clone()))
                             .collect(),
                     ),
-                    Err(e) => {
-                        tracing::error!("error from manifest stream: {}", e);
-                        Event::UpdateManifest(vec![])
-                    }
+                    Err(e) => Event::ManifestError(e),
                 })
                 .boxed(),
             Err(e) => {

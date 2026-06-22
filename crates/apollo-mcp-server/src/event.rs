@@ -20,6 +20,10 @@ pub enum Event {
     /// An error occurred when loading operations from collection
     CollectionError(CollectionError),
 
+    /// A transient error occurred fetching the Uplink persisted-query manifest;
+    /// the server retains its existing tool catalog
+    ManifestError(Box<dyn std::error::Error + Send + Sync + 'static>),
+
     /// Rhai scripts in the rhai/ directory have changed
     RhaiScriptsChanged,
 
@@ -44,6 +48,9 @@ impl Debug for Event {
             }
             Event::CollectionError(e) => {
                 write!(f, "OperationError({e:?})")
+            }
+            Event::ManifestError(e) => {
+                write!(f, "ManifestError({e})")
             }
             Event::RhaiScriptsChanged => {
                 write!(f, "RhaiScriptsChanged")
@@ -91,6 +98,13 @@ mod tests {
         let event = Event::CollectionError(CollectionError::Response("TEST".to_string()));
         let output = format!("{:?}", event);
         assert_eq!(output, r#"OperationError(Response("TEST"))"#);
+    }
+
+    #[test]
+    fn debug_event_manifest_error() {
+        let event = Event::ManifestError("timeout".into());
+        let output = format!("{:?}", event);
+        assert_eq!(output, "ManifestError(timeout)");
     }
 
     #[test]

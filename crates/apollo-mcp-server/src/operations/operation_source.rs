@@ -45,8 +45,11 @@ impl OperationSource {
             OperationSource::Manifest(source) => source
                 .into_stream()
                 .await
-                .map(|ManifestEvent::UpdateManifest(operations)| {
-                    Event::OperationsUpdated(raw_operations_from_manifest(operations))
+                .map(|event| match event {
+                    ManifestEvent::UpdateManifest(operations) => {
+                        Event::OperationsUpdated(raw_operations_from_manifest(operations))
+                    }
+                    ManifestEvent::ManifestError(e) => Event::ManifestError(e),
                 })
                 .boxed(),
             OperationSource::Collection(collection_source) => collection_source
@@ -213,10 +216,29 @@ impl From<Vec<PathBuf>> for OperationSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use apollo_mcp_registry::uplink::persisted_queries::ManifestSource;
     use futures::StreamExt;
     use std::env::temp_dir;
     use std::fs;
     use std::io::Write;
+    use std::path::PathBuf;
+
+    // A LocalStatic manifest pointing at a missing file causes load_local_manifests to
+    // return Err, which exercises the ManifestError forwarding path in into_stream().
+    #[tokio::test]
+    async fn manifest_error_is_forwarded_from_manifest_source() {
+        let source = ManifestSource::LocalStatic(vec![PathBuf::from(
+            "/nonexistent/manifest_poller_test_file.json",
+        )]);
+        let op_source = OperationSource::Manifest(source);
+        let mut stream = op_source.into_stream().await;
+
+        let event = stream.next().await.expect("expected an event");
+        assert!(
+            matches!(event, Event::ManifestError(_)),
+            "expected ManifestError forwarded from manifest stream, got: {event:?}",
+        );
+    }
 
     #[tokio::test]
     async fn deduplication_of_overlapping_paths() {
