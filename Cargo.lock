@@ -225,6 +225,7 @@ dependencies = [
  "axum-extra",
  "axum-otel-metrics",
  "axum-tracing-opentelemetry",
+ "base64",
  "bon",
  "chrono",
  "clap",
