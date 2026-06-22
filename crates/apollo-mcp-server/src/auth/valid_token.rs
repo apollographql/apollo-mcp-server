@@ -343,6 +343,16 @@ mod test {
         }
     }
 
+    /// A JWT `exp` timestamp comfortably in the future.
+    fn future_exp() -> i64 {
+        chrono::Utc::now().timestamp() + 1000
+    }
+
+    /// A JWT `exp` timestamp in the past, for expiry tests.
+    fn past_exp() -> i64 {
+        chrono::Utc::now().timestamp() - 1000
+    }
+
     /// Creates a key for signing / verifying JWTs
     fn create_key(base64_secret: &str) -> (EncodingKey, DecodingKey) {
         let encode =
@@ -396,7 +406,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
 
         let server =
@@ -429,7 +439,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(
             key_id.clone(),
             bad_encode_key,
@@ -466,7 +476,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_past = chrono::Utc::now().timestamp() - 1000;
+        let in_the_past = past_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_past);
 
         let server =
@@ -499,7 +509,7 @@ mod test {
 
         let audience = "test-audience".to_string();
         let bad_audience = "not-test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, bad_audience, in_the_future);
 
         let server =
@@ -532,7 +542,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -576,7 +586,7 @@ mod test {
         };
 
         let audience = "any-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, audience, in_the_future);
 
         let server =
@@ -601,7 +611,7 @@ mod test {
             decoding_key: decode_key,
         };
 
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         // Create a JWT without the `aud` claim (like AWS Cognito access tokens)
         let header = {
@@ -647,7 +657,7 @@ mod test {
             decoding_key: decode_key,
         };
 
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         // Create a JWT without the `aud` claim
         let header = {
@@ -701,7 +711,7 @@ mod test {
         };
 
         let expected_audience = "expected-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -754,7 +764,7 @@ mod test {
 
         let audience = "test-audience".to_string();
         let issuer = "https://auth.example.com".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -803,7 +813,7 @@ mod test {
 
         let audience = "test-audience".to_string();
         let issuer = "https://auth.example.com".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -851,7 +861,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -915,7 +925,7 @@ mod test {
 
         let audience = "test-audience".to_string();
         let issuer = "https://auth.example.com".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         // Create a JWT without the `iss` claim
         let header = {
@@ -964,7 +974,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         // No `iss` claim at all - should still be valid when issuers are not configured
         let header = {
@@ -1021,7 +1031,7 @@ mod test {
         let server_a_url = Url::from_str("https://auth-a.example.com").expect("valid server A URL");
         let server_b_url = Url::from_str("https://auth-b.example.com").expect("valid server B URL");
 
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         // Token is signed by SERVER A's key, but claims SERVER B's issuer.
         let header = {
@@ -1103,7 +1113,7 @@ mod test {
         let server_a_url = Url::from_str("https://auth-a.example.com").expect("valid server A URL");
         let server_b_url = Url::from_str("https://auth-b.example.com").expect("valid server B URL");
 
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
 
         let header = {
             let mut h = Header::new(Algorithm::HS512);
@@ -1174,7 +1184,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
 
         let server =
@@ -1208,7 +1218,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         let jwt = create_jwt(key_id.clone(), encode_key, audience.clone(), in_the_future);
 
         let server =
@@ -1238,7 +1248,7 @@ mod test {
         };
 
         let audience = "test-audience".to_string();
-        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let in_the_future = future_exp();
         // The token's `kid` does not match any key the configured server serves.
         let jwt = create_jwt(
             "token-kid".to_string(),
