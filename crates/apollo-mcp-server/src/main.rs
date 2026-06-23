@@ -1,3 +1,5 @@
+//! Entry point for the Apollo MCP Server binary.
+
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
