@@ -792,8 +792,8 @@ impl ServerHandler for Running {
 const LATEST_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_06_18;
 
 /// MCP protocol versions this server implements.
-const SUPPORTED_PROTOCOL_VERSIONS: [ProtocolVersion; 2] =
-    [LATEST_PROTOCOL_VERSION, ProtocolVersion::V_2025_03_26];
+const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] =
+    &[LATEST_PROTOCOL_VERSION, ProtocolVersion::V_2025_03_26];
 
 /// Negotiate the protocol version for the `initialize` response.
 ///
@@ -2153,8 +2153,12 @@ mod tests {
             );
         }
 
-        #[test]
-        fn advertises_latest_supported_version_regardless_of_output_schema() {
+        #[rstest]
+        #[case::output_schema_disabled(false)]
+        #[case::output_schema_enabled(true)]
+        fn advertises_latest_supported_version_regardless_of_output_schema(
+            #[case] enable_output_schema: bool,
+        ) {
             let schema = Arc::new(RwLock::new(
                 Schema::parse("type Query { id: String }", "schema.graphql")
                     .unwrap()
@@ -2164,16 +2168,14 @@ mod tests {
 
             // The advertised version no longer depends on `enable_output_schema`;
             // output schema fields are gated separately by the negotiated version.
-            for enable_output_schema in [false, true] {
-                let running = Running {
-                    enable_output_schema,
-                    ..test_running(Arc::clone(&schema))
-                };
+            let running = Running {
+                enable_output_schema,
+                ..test_running(Arc::clone(&schema))
+            };
 
-                let info = running.get_info();
+            let info = running.get_info();
 
-                assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
-            }
+            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
         }
 
         // A supported version is echoed back; an unsupported one falls back to
