@@ -1,10 +1,9 @@
 name: Code Review
 on:
-  # pull_request:
-  #   types: [opened, synchronize, ready_for_review]
-  #   paths:
-  #     - "**/*.rs"
-  # TEMPORARY: Disabling this workflow on reviews while we try out Claude new code review product
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - "**/*.rs"
   workflow_dispatch:
 
 concurrency:
@@ -36,12 +35,12 @@ jobs:
 
           # If manual label is present, always use that
           if [ "$HAS_OPUS_LABEL" == "true" ]; then
-            MODEL="claude-opus-4-5-20251101"
+            MODEL="opus"
             echo "model=$MODEL" >> $GITHUB_OUTPUT
             echo "📊 Using Opus (manual override via label)"
             exit 0
           elif [ "$HAS_SONNET_LABEL" == "true" ]; then
-            MODEL="claude-sonnet-4-5-20250929"
+            MODEL="sonnet"
             echo "model=$MODEL" >> $GITHUB_OUTPUT
             echo "📊 Using Sonnet (manual override via label)"
             exit 0
@@ -53,11 +52,11 @@ jobs:
           TOTAL_LINES=$((ADDITIONS + DELETIONS))
 
           if [ $TOTAL_LINES -gt 500 ]; then
-            MODEL="claude-opus-4-5-20251101"
+            MODEL="opus"
             echo "model=$MODEL" >> $GITHUB_OUTPUT
             echo "📊 PR Size: $TOTAL_LINES lines changed - Using Opus (automatic)"
           else
-            MODEL="claude-sonnet-4-5-20250929"
+            MODEL="sonnet"
             echo "model=$MODEL" >> $GITHUB_OUTPUT
             echo "📊 PR Size: $TOTAL_LINES lines changed - Using Sonnet (default)"
           fi
