@@ -6,12 +6,13 @@ on:
         types: [created]
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
-    cancel-in-progress: true
+    group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number }}
+    cancel-in-progress: false
 
 jobs:
     claude:
         runs-on: ubuntu-latest
+        if: contains(github.event.comment.body, '@claude')
         permissions:
             id-token: write
             pull-requests: write
