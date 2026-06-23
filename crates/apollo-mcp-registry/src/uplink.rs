@@ -439,6 +439,8 @@ mod test {
     use std::str::FromStr;
     use std::time::Duration;
     use url::Url;
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn streams_schema_from_uplink() {
@@ -668,11 +670,32 @@ mod test {
         );
     }
 
+    #[tokio::test]
+    async fn http_error_is_transient() {
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let response = reqwest::get(mock_server.uri()).await.unwrap();
+        let error = Error::Http(response.error_for_status().unwrap_err());
+
+        assert!(error.is_transient());
+    }
+
     #[test]
-    fn is_transient_classifies_retryable_errors() {
-        // The poll loop keeps retrying every variant except UplinkErrorNoRetry.
+    fn fetch_failed_single_is_transient() {
         assert!(Error::FetchFailedSingle.is_transient());
+    }
+
+    #[test]
+    fn fetch_failed_multiple_is_transient() {
         assert!(Error::FetchFailedMultiple { url_count: 3 }.is_transient());
+    }
+
+    #[test]
+    fn uplink_error_with_retry_is_transient() {
         assert!(
             Error::UplinkError {
                 code: "TIMEOUT".to_string(),
@@ -680,6 +703,10 @@ mod test {
             }
             .is_transient()
         );
+    }
+
+    #[test]
+    fn uplink_error_no_retry_is_not_transient() {
         assert!(
             !Error::UplinkErrorNoRetry {
                 code: "UNKNOWN_REF".to_string(),
