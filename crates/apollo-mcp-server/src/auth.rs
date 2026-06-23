@@ -656,6 +656,10 @@ mod tests {
     }
 
     mod oauth_validate {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
         use super::*;
 
         #[tokio::test]
@@ -716,12 +720,7 @@ mod tests {
             assert!(!www_auth.contains("scope="));
         }
 
-        #[tokio::test]
-        async fn valid_token_with_insufficient_scopes_returns_forbidden() {
-            use base64::Engine as _;
-            use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-            use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-
+        async fn valid_token_with_insufficient_scopes_response() -> (StatusCode, String) {
             let mut server = mockito::Server::new_async().await;
             let kid = "test-kid";
             let secret = b"hs512-integration-test-signing-secret";
@@ -779,17 +778,38 @@ mod tests {
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
 
-            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+            let status = res.status();
             let www_auth = res
                 .headers()
                 .get(WWW_AUTHENTICATE)
                 .unwrap()
                 .to_str()
                 .unwrap();
+
+            (status, www_auth.to_string())
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_returns_forbidden() {
+            let (status, _) = valid_token_with_insufficient_scopes_response().await;
+
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_sets_insufficient_scope_error() {
+            let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
+
             assert!(
                 www_auth.contains(r#"error="insufficient_scope""#),
                 "got: {www_auth}"
             );
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_includes_required_scope() {
+            let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
+
             assert!(www_auth.contains(r#"scope="write""#), "got: {www_auth}");
         }
     }
