@@ -15,8 +15,12 @@ jobs:
         permissions:
             id-token: write
             pull-requests: write
-            contents: read
+            contents: write
+            issues: write
+            actions: read
         steps:
+            - name: Checkout repository
+              uses: actions/checkout@v7
             - uses: anthropics/claude-code-action@v1
               id: claude
               with:
@@ -38,7 +42,7 @@ jobs:
 
             - name: Post failure comment
               if: failure() && steps.claude.outcome == 'failure'
-              uses: actions/github-script@v7
+              uses: actions/github-script@v9
               with:
                   script: |
                       github.rest.issues.createComment({
