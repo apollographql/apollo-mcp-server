@@ -214,8 +214,7 @@ impl StateMachine {
             ServerEvent::ManifestError(e) => match state {
                 State::Running(running) => {
                     tracing::warn!(
-                        "Transient manifest fetch error while running, \
-                         keeping existing operations: {e}"
+                        "Manifest error while running, keeping existing operations: {e}"
                     );
                     running.into()
                 }
@@ -567,8 +566,7 @@ mod tests {
         );
     }
 
-    // A ManifestError (transient Uplink fetch failure) while Running should NOT kill the server
-    // and must NOT clear the existing tool catalog.
+    // A ManifestError while Running should NOT kill the server or clear the catalog.
     #[tokio::test]
     async fn manifest_error_keeps_running_server_alive_and_retains_catalog() {
         let running = create_running_server();
@@ -616,6 +614,34 @@ mod tests {
         assert!(
             matches!(new_state, State::Error(_)),
             "expected ManifestError during startup to be fatal"
+        );
+    }
+
+    // Contrast with ManifestError: an authoritative empty manifest (HTTP 200 with no
+    // operations) arrives as OperationsUpdated([]) and SHOULD clear the operations.
+    #[tokio::test]
+    async fn empty_operations_update_clears_operations_while_running() {
+        let running = create_running_server();
+        let state = State::Running(running);
+
+        // Load one operation, then deliver an authoritative empty update.
+        let state = process_event(
+            state,
+            ServerEvent::OperationsUpdated(vec![RawOperation::from((
+                "query GetId { id }".to_string(),
+                Some("test.graphql".to_string()),
+            ))]),
+        )
+        .await;
+
+        let new_state = process_event(state, ServerEvent::OperationsUpdated(vec![])).await;
+
+        let State::Running(running) = new_state else {
+            panic!("expected server to remain Running after an intentional empty update");
+        };
+        assert!(
+            running.operations.read().await.is_empty(),
+            "an authoritative empty manifest should clear the operations"
         );
     }
 

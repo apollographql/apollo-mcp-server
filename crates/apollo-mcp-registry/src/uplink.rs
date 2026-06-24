@@ -36,6 +36,23 @@ pub enum Error {
     UplinkErrorNoRetry { code: String, message: String },
 }
 
+impl Error {
+    /// Returns `true` if the uplink poll loop treats this error as transient and keeps
+    /// polling, recovering on a later tick. Only `UplinkErrorNoRetry` stops the loop.
+    /// Callers use this to decide whether a manifest fetch error should be surfaced or
+    /// quietly retried. The match is exhaustive on purpose so a new variant must be
+    /// classified explicitly rather than silently defaulting to retryable.
+    pub(crate) fn is_transient(&self) -> bool {
+        match self {
+            Error::Http(_)
+            | Error::FetchFailedSingle
+            | Error::FetchFailedMultiple { .. }
+            | Error::UplinkError { .. } => true,
+            Error::UplinkErrorNoRetry { .. } => false,
+        }
+    }
+}
+
 /// Represents a request to Apollo Uplink
 #[derive(Debug)]
 pub struct UplinkRequest {
@@ -422,6 +439,8 @@ mod test {
     use std::str::FromStr;
     use std::time::Duration;
     use url::Url;
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[tokio::test]
     async fn streams_schema_from_uplink() {
@@ -648,6 +667,52 @@ mod test {
         assert_eq!(
             error4.to_string(),
             "uplink error, the request will not be retried: code=UNKNOWN_REF message=Graph not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_error_is_transient() {
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+
+        let response = reqwest::get(mock_server.uri()).await.unwrap();
+        let error = Error::Http(response.error_for_status().unwrap_err());
+
+        assert!(error.is_transient());
+    }
+
+    #[test]
+    fn fetch_failed_single_is_transient() {
+        assert!(Error::FetchFailedSingle.is_transient());
+    }
+
+    #[test]
+    fn fetch_failed_multiple_is_transient() {
+        assert!(Error::FetchFailedMultiple { url_count: 3 }.is_transient());
+    }
+
+    #[test]
+    fn uplink_error_with_retry_is_transient() {
+        assert!(
+            Error::UplinkError {
+                code: "TIMEOUT".to_string(),
+                message: "retry later".to_string(),
+            }
+            .is_transient()
+        );
+    }
+
+    #[test]
+    fn uplink_error_no_retry_is_not_transient() {
+        assert!(
+            !Error::UplinkErrorNoRetry {
+                code: "UNKNOWN_REF".to_string(),
+                message: "Graph not found".to_string(),
+            }
+            .is_transient()
         );
     }
 
