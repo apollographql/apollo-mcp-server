@@ -14,7 +14,7 @@ BINARY_DOWNLOAD_PREFIX="${APOLLO_MCP_SERVER_BINARY_DOWNLOAD_PREFIX:="https://git
 
 # Apollo MCP Server version defined in apollo-mcp-server's Cargo.toml
 # Note: Change this line manually during the release steps.
-PACKAGE_VERSION="v1.14.0"
+PACKAGE_VERSION="v1.15.0"
 
 download_binary_and_run_installer() {
     downloader --check

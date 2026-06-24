@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.15.0 (2026-06-24)
+
+### Features
+
+#### Add issuer validation for OAuth tokens
+
+Apollo MCP Server can now validate the `iss` (issuer) claim of incoming JWTs. Set `transport.auth.issuers` to a list of accepted issuer values; a token's `iss` claim must match one of them or the request is rejected. Issuer validation is also bound to the authorization server that signed the token: the `iss` claim must equal the issuer that server advertises in its discovery metadata, so a token signed by one configured server cannot be accepted while it claims a different configured server's issuer. When `issuers` is empty (the default), issuer validation is skipped, so existing configurations are unaffected.
+
+### Fixes
+
+#### Accept `logging/setLevel` requests as a no-op
+
+Apollo MCP Server now accepts `logging/setLevel` requests with an empty success response. Previously, clients that eagerly call `setLevel` immediately after `initialize` (notably the MCPJam inspector) received a `-32601 Method not found` response, which surfaced as a red error row in the inspector's logging panel and led users to believe their server was broken. The server does not advertise the `logging` capability and does not stream `notifications/message` to clients. The requested level has no effect on the existing stderr, file, and OpenTelemetry logging pipeline, which is the path recommended by the upcoming MCP [2026-07-28](https://modelcontextprotocol.io/specification/draft/server/utilities/logging) revision that deprecates this feature.
+
+#### Stop ignoring `apollo_graph_ref` when inferring the operation source
+
+When `operations.source` was not configured, Apollo MCP Server inferred the source by checking introspection settings first, which meant a configured `apollo_graph_ref` was silently ignored whenever any introspection tool (`execute`, `introspect`, `search`, `validate`) was also enabled. Now, when both `apollo_graph_ref` and `apollo_key` are available, the default GraphOS operation collection is loaded regardless of introspection settings. Users who have configured both will see operation tools alongside any enabled introspection tools.
+
+#### Fix protocol version negotiation when output schema is enabled
+
+Enabling `overrides.enable_output_schema` previously forced the MCP `initialize` response to advertise protocol version `2025-11-25`. Over the `streamable_http` transport that version was returned to clients verbatim, so any client that did not support `2025-11-25` was refused with `Server's protocol version is not supported: 2025-11-25`. With the flag disabled the server advertised `2025-03-26` and connected normally.
+
+The server now negotiates the protocol version per the MCP lifecycle spec, echoing the client's requested version when it is supported and otherwise responding with the latest version the server supports (`2025-06-18`). The negotiated version no longer depends on `enable_output_schema`. The `outputSchema` and `structuredContent` fields stay gated by the negotiated version (`2025-06-18` and later), so older clients keep connecting without those fields.
+
+#### Retain tool catalog on transient Uplink manifest fetch failure
+
+When `operations.source: uplink` is configured, a transient Uplink persisted-query manifest fetch failure (network timeout, DNS failure, HTTP 5xx, or a retryable `retry_later` response) previously caused the server to silently replace its active tool catalog with an empty list. The server continued reporting `/health` as UP and sent `tools/list_changed` to clients, which then received `{"tools": []}` with no error signal.
+
+Apollo MCP Server now retains the last known good tool catalog when a transient Uplink manifest fetch error occurs and logs the error. The catalog is only cleared when Uplink authoritatively returns a valid empty manifest (HTTP 200 with an empty persisted query collection), which represents an intentional operator action. A manifest fetch failure during initial startup before the first successful load remains fatal.
+
+#### Tolerate transient Uplink manifest fetch errors during startup
+
+A transient Uplink persisted-query manifest fetch error (network timeout, DNS failure, HTTP 5xx, or a retryable `retry_later` response) is now retried instead of being treated as fatal. Previously the first such error during startup would exit the server, even though the Uplink poll loop would have recovered on the next tick.
+
+Apollo MCP Server now distinguishes transient errors (logged at warn and retried by the poll loop) from non-retryable errors such as an invalid API key (which remain fatal during startup and surface as an error while running). This matches how operation collections already behave, and the keep-last-good handling added previously is unchanged.
+
 ## 1.14.0 (2026-05-15)
 
 ### Features
