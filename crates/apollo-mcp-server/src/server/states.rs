@@ -213,11 +213,7 @@ impl StateMachine {
             },
             ServerEvent::ManifestError(e) => match state {
                 State::Running(running) => {
-                    // Transient uplink errors are filtered out upstream in
-                    // create_uplink_stream, so only non-retryable errors reach here.
-                    // Keep the last known good operations and log at error level,
-                    // matching the CollectionError handling above.
-                    tracing::error!(
+                    tracing::warn!(
                         "Manifest error while running, keeping existing operations: {e}"
                     );
                     running.into()
@@ -570,8 +566,7 @@ mod tests {
         );
     }
 
-    // A ManifestError (a non-retryable manifest fetch failure, since transient ones are
-    // filtered upstream) while Running should NOT kill the server or clear the catalog.
+    // A ManifestError while Running should NOT kill the server or clear the catalog.
     #[tokio::test]
     async fn manifest_error_keeps_running_server_alive_and_retains_catalog() {
         let running = create_running_server();
