@@ -219,7 +219,6 @@ pub struct Config {
     /// Accepts human-readable durations (e.g., "5s", "10s", "30s").
     /// Defaults to 5 seconds when not specified.
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
-    #[serde(serialize_with = "humantime_serde::serialize")]
     #[schemars(with = "Option<String>")]
     pub discovery_timeout: Option<Duration>,
 
@@ -250,6 +249,18 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
+/// Joins a URL's path into its non-empty segments separated by `/`, dropping
+/// leading and trailing slashes. Shared by the protected-resource and discovery
+/// well-known URL builders.
+fn normalized_path_segments(url: &Url) -> String {
+    url.path()
+        .trim_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Constructs the protected resource metadata URL per RFC 9728 Section 3.
 ///
 /// The well-known URI is formed by inserting `/.well-known/oauth-protected-resource`
@@ -266,13 +277,7 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
         return url;
     }
 
-    let path = url
-        .path()
-        .trim_matches('/')
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = normalized_path_segments(&url);
 
     if path.is_empty() {
         url.set_path("/.well-known/oauth-protected-resource");
@@ -651,6 +656,10 @@ mod tests {
     }
 
     mod oauth_validate {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
         use super::*;
 
         #[tokio::test]
@@ -709,6 +718,99 @@ mod tests {
             assert!(www_auth.contains("Bearer"));
             assert!(www_auth.contains("resource_metadata"));
             assert!(!www_auth.contains("scope="));
+        }
+
+        async fn valid_token_with_insufficient_scopes_response() -> (StatusCode, String) {
+            let mut server = mockito::Server::new_async().await;
+            let kid = "test-kid";
+            let secret = b"hs512-integration-test-signing-secret";
+
+            let discovery = format!(
+                r#"{{"issuer":"{url}","jwks_uri":"{url}/jwks","id_token_signing_alg_values_supported":["HS512"]}}"#,
+                url = server.url()
+            );
+            let _discovery = server
+                .mock("GET", "/.well-known/oauth-authorization-server")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(discovery)
+                .create_async()
+                .await;
+
+            // Symmetric (`oct`) JWK whose secret matches the signing key below.
+            let jwks = format!(
+                r#"{{"keys":[{{"kty":"oct","alg":"HS512","use":"sig","kid":"{kid}","k":"{k}"}}]}}"#,
+                k = URL_SAFE_NO_PAD.encode(secret)
+            );
+            let _jwks = server
+                .mock("GET", "/jwks")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(jwks)
+                .create_async()
+                .await;
+
+            // A genuinely valid token that carries `read` but not the required `write`.
+            let exp = chrono::Utc::now().timestamp() + 1000;
+            let claims = serde_json::json!({
+                "aud": "test-audience",
+                "exp": exp,
+                "sub": "test-user",
+                "scope": "read",
+            });
+            let header = {
+                let mut h = Header::new(Algorithm::HS512);
+                h.kid = Some(kid.to_string());
+                h
+            };
+            let token =
+                encode(&header, &claims, &EncodingKey::from_secret(secret)).expect("encode JWT");
+
+            let mut config = test_config();
+            config.servers = vec![server.url()];
+            config.scopes = vec!["write".to_string()];
+            let app = test_router(config);
+
+            let req = Request::builder()
+                .uri("/test")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            let status = res.status();
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap();
+
+            (status, www_auth.to_string())
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_returns_forbidden() {
+            let (status, _) = valid_token_with_insufficient_scopes_response().await;
+
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_sets_insufficient_scope_error() {
+            let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
+
+            assert!(
+                www_auth.contains(r#"error="insufficient_scope""#),
+                "got: {www_auth}"
+            );
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scopes_includes_required_scope() {
+            let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
+
+            assert!(www_auth.contains(r#"scope="write""#), "got: {www_auth}");
         }
     }
 
