@@ -65,6 +65,15 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         let header = decode_header(jwt).ok()?;
         let key_id = header.kid.as_ref()?;
 
+        // Cheap pre-network gate: drop tokens whose unverified `iss` / `aud`
+        // claims cannot possibly satisfy this deployment's configuration before
+        // calling [`KeyResolver::resolve_key`], which is the only outbound
+        // network call on this path. Defends against the pre-auth JWKS
+        // amplification DoS in SECOPS-6447 — see [`Self::unverified_claims_could_match`].
+        if !self.unverified_claims_could_match(jwt) {
+            return None;
+        }
+
         for server in self.servers {
             let Some((jwk, discovered_issuer)) = self.keys.resolve_key(server, key_id).await else {
                 continue;
@@ -139,6 +148,58 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         info!("Token did not pass validation");
         None
     }
+
+    /// Returns `false` when the unverified JWT payload cannot possibly satisfy
+    /// this deployment's `iss` / `aud` configuration, so the caller can bail
+    /// out before any network call.
+    ///
+    /// Mirrors the post-verify claim checks in [`Self::validate`]: anything
+    /// rejected here would also be rejected after signature verification, so
+    /// this is strictly an early-exit — never an authorization decision. That
+    /// is what makes it safe to read these claims before the signature is
+    /// checked.
+    fn unverified_claims_could_match(&self, jwt: &str) -> bool {
+        let Some(claims) = decode_unverified_payload(jwt) else {
+            // Not a structurally valid JWT, or the payload isn't JSON — the
+            // resolver/decoder would reject it anyway, so short-circuit.
+            warn!("Token payload could not be decoded for pre-network claim check");
+            return false;
+        };
+
+        if !self.issuers.is_empty() {
+            let Some(iss) = claims.iss.as_deref() else {
+                warn!("Token is missing the required `iss` claim");
+                return false;
+            };
+            if !self.issuers.iter().any(|configured| configured == iss) {
+                warn!(
+                    token_issuer = %iss,
+                    "Token `iss` does not match any configured issuer"
+                );
+                return false;
+            }
+        }
+
+        if !self.allow_any_audience {
+            if claims.aud.is_empty() {
+                warn!("Token is missing the required `aud` claim");
+                return false;
+            }
+            let matches_audience = claims
+                .aud
+                .iter()
+                .any(|a| self.audiences.iter().any(|configured| configured == a));
+            if !matches_audience {
+                warn!(
+                    token_audiences = ?claims.aud,
+                    "Token `aud` does not match any configured audience"
+                );
+                return false;
+            }
+        }
+
+        true
+    }
 }
 
 /// Claims which must be present in the JWT (and must match validation) in order
@@ -196,6 +257,56 @@ impl Claims {
     }
 }
 
+/// Subset of [`Claims`] used for the pre-network gate in
+/// [`TokenValidator::unverified_claims_could_match`]: only the fields needed
+/// to decide whether the token could ever satisfy the configured `iss` / `aud`.
+///
+/// This struct is only ever populated from the *unverified* JWT payload, so
+/// values must be used to reject tokens — never to authorize them. The fields
+/// match [`Claims`] so the deserialization rules stay consistent across the
+/// pre- and post-verify checks.
+#[derive(Debug, Deserialize)]
+struct UnverifiedClaims {
+    #[serde(default)]
+    iss: Option<String>,
+
+    #[serde(default, deserialize_with = "deserialize_audience")]
+    aud: Vec<String>,
+}
+
+/// Decode just the payload of a JWT (the middle of the three `.`-separated
+/// segments) without verifying the signature.
+///
+/// A base64-url decode and a `serde_json::from_slice` into a two-field struct,
+/// nothing else. The work is bounded by the input token size (which `axum`
+/// caps via the `Authorization` header limit), so this adds at most a few
+/// microseconds of local CPU per request and replaces the uncached outbound
+/// HTTP calls that previously fired before the same rejection decision
+/// (SECOPS-6447).
+///
+/// Returns `None` for anything that isn't a structurally valid JWT or whose
+/// payload isn't valid JSON. Callers must use the returned claims only to
+/// *reject* tokens — see [`UnverifiedClaims`] and
+/// [`TokenValidator::unverified_claims_could_match`].
+fn decode_unverified_payload(jwt: &str) -> Option<UnverifiedClaims> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
+    // RFC 7519: a JWT is exactly three base64url segments joined by `.`.
+    // We only need the middle segment; reject anything with a different shape
+    // so this helper can never silently accept malformed input.
+    let mut parts = jwt.split('.');
+    let _header = parts.next()?;
+    let payload_b64 = parts.next()?;
+    let _signature = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    let payload = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    serde_json::from_slice(&payload).ok()
+}
+
 /// Accepts the JWT `aud` claim as either a single string or an array of
 /// strings, normalizing both to a `Vec<String>` (empty when absent).
 fn deserialize_audience<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -239,6 +350,8 @@ fn jwt_algorithm(alg: jwk::KeyAlgorithm) -> Option<Algorithm> {
 #[cfg(test)]
 mod test {
     use std::str::FromStr;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use headers::{Authorization, authorization::Bearer};
     use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, encode, jwk::KeyAlgorithm};
@@ -258,12 +371,18 @@ mod test {
     }
 
     /// In-memory [`KeyResolver`] that stands in for the network in tests.
+    ///
+    /// Counts calls to [`KeyResolver::resolve_key`] so tests can assert that
+    /// the pre-network gate in [`TokenValidator::validate`] never hits the
+    /// network seam (SECOPS-6447 acceptance criterion).
     struct StubKeyResolver<'a> {
         servers: &'a [TestServer],
+        resolve_calls: Arc<AtomicUsize>,
     }
 
     impl KeyResolver for StubKeyResolver<'_> {
         async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
+            self.resolve_calls.fetch_add(1, Ordering::SeqCst);
             // Find the requested server, then return its key only if the `kid` matches.
             let test_server = self.servers.iter().find(|s| &s.url == server)?;
             test_server.key_pair.0.eq(key_id).then(|| {
@@ -285,6 +404,9 @@ mod test {
         servers: Vec<TestServer>,
         /// Parsed server URLs, kept index-aligned with `servers`.
         server_urls: Vec<Url>,
+        /// Shared with [`StubKeyResolver`] so [`Self::resolve_calls`] reflects
+        /// every call made during [`Self::validate`].
+        resolve_calls: Arc<AtomicUsize>,
     }
 
     impl TestTokenValidator {
@@ -301,7 +423,14 @@ mod test {
                 allow_any_audience,
                 servers,
                 server_urls,
+                resolve_calls: Arc::new(AtomicUsize::new(0)),
             }
+        }
+
+        /// Number of times the underlying [`KeyResolver`] was invoked during
+        /// the most recent (or all preceding) calls to [`Self::validate`].
+        fn resolve_calls(&self) -> usize {
+            self.resolve_calls.load(Ordering::SeqCst)
         }
 
         /// Convenience for the common single-server case. The discovered issuer
@@ -336,6 +465,7 @@ mod test {
                 servers: &self.server_urls,
                 keys: StubKeyResolver {
                     servers: &self.servers,
+                    resolve_calls: Arc::clone(&self.resolve_calls),
                 },
             }
             .validate(token)
@@ -510,13 +640,16 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
+        // Rejection now happens in the pre-network gate (SECOPS-6447 / AMS-529);
+        // the warning identifies that path rather than the post-verify
+        // `InvalidAudience` message the older flow emitted.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
                 .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("InvalidAudience"))
+                .any(|line| line.contains("does not match any configured audience"))
                 .then_some(())
-                .ok_or("Expected warning for validation failure".to_string())
+                .ok_or("Expected warning for aud mismatch".to_string())
         });
     }
 
@@ -731,13 +864,16 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
+        // Rejection happens in the pre-network gate (SECOPS-6447 / AMS-529);
+        // earlier code paths emitted `InvalidAudience` from the post-verify
+        // step, which is no longer reached for this case.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
                 .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("InvalidAudience"))
+                .any(|line| line.contains("does not match any configured audience"))
                 .then_some(())
-                .ok_or("Expected warning for validation failure".to_string())
+                .ok_or("Expected warning for aud mismatch".to_string())
         });
     }
 
@@ -829,13 +965,16 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
+        // Rejection happens in the pre-network gate (SECOPS-6447 / AMS-529);
+        // the post-verify `InvalidIssuer` path is no longer reached for this
+        // case.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
                 .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("InvalidIssuer"))
+                .any(|line| line.contains("does not match any configured issuer"))
                 .then_some(())
-                .ok_or("Expected warning for validation failure".to_string())
+                .ok_or("Expected warning for iss mismatch".to_string())
         });
     }
 
@@ -1260,6 +1399,407 @@ mod test {
         );
 
         assert_eq!(test_validator.validate(jwt).await, None);
+    }
+
+    // --- Pre-network claim gate (SECOPS-6447) ------------------------------
+    //
+    // The post-verify checks above run *after* the network call to resolve a
+    // signing key. These tests exercise the cheap pre-network gate added in
+    // AMS-529: tokens whose unverified `iss` / `aud` claims cannot satisfy the
+    // configured allowlists must be rejected with **zero** calls to the
+    // [`KeyResolver`] seam.
+    //
+    // Each test asserts both the rejection *and*
+    // `test_validator.resolve_calls() == 0` so a regression that loses the
+    // pre-network short-circuit is caught directly.
+
+    /// Builds a JWT with arbitrary claims (matching `Algorithm::HS512`); used
+    /// by the pre-network gate tests to vary `iss` / `aud` independently.
+    fn create_jwt_with_claims(
+        key_id: String,
+        key: EncodingKey,
+        claims: serde_json::Value,
+    ) -> Authorization<Bearer> {
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(key_id);
+            h
+        };
+        let token = encode(&header, &claims, &key).expect("encode JWT");
+        Authorization::bearer(&token).expect("create bearer token")
+    }
+
+    /// Matching `iss` and `aud` must pass the pre-network gate, so the
+    /// resolver is still consulted as part of normal validation.
+    #[tokio::test]
+    async fn pre_check_passes_when_iss_and_aud_match() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let issuer = "https://auth.example.com".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            json!({
+                "aud": audience,
+                "iss": issuer,
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
+
+        assert!(test_validator.validate(jwt).await.is_some());
+        assert_eq!(
+            test_validator.resolve_calls(),
+            1,
+            "pre-check should pass through to the resolver"
+        );
+    }
+
+    /// `iss` not in the configured allowlist must be rejected before the
+    /// resolver is consulted — this is the core SECOPS-6447 acceptance check.
+    #[traced_test]
+    #[tokio::test]
+    async fn pre_check_rejects_mismatched_iss_without_calling_resolver() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            json!({
+                "aud": "test-audience",
+                "iss": "https://evil.example.com",
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["test-audience".to_string()],
+            vec!["https://auth.example.com".to_string()],
+            false,
+            (key_id, jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(
+            test_validator.resolve_calls(),
+            0,
+            "rejected token must not reach the network seam"
+        );
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("does not match any configured issuer"))
+                .then_some(())
+                .ok_or("Expected warning for iss mismatch".to_string())
+        });
+    }
+
+    /// `aud` not in the configured allowlist must be rejected before the
+    /// resolver is consulted.
+    #[traced_test]
+    #[tokio::test]
+    async fn pre_check_rejects_mismatched_aud_without_calling_resolver() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            json!({
+                "aud": "wrong-audience",
+                "iss": "https://auth.example.com",
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["expected-audience".to_string()],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(
+            test_validator.resolve_calls(),
+            0,
+            "rejected token must not reach the network seam"
+        );
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("does not match any configured audience"))
+                .then_some(())
+                .ok_or("Expected warning for aud mismatch".to_string())
+        });
+    }
+
+    /// A multi-valued `aud` (array) where none of the values match the
+    /// configured audiences must also be rejected pre-network.
+    #[tokio::test]
+    async fn pre_check_rejects_array_aud_with_no_matches_without_calling_resolver() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            json!({
+                "aud": ["wrong-1", "wrong-2"],
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["expected-audience".to_string()],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(test_validator.resolve_calls(), 0);
+    }
+
+    /// Missing `iss` when issuers are configured must be rejected pre-network,
+    /// matching the post-verify "missing required `iss` claim" behaviour.
+    #[traced_test]
+    #[tokio::test]
+    async fn pre_check_rejects_missing_iss_when_issuers_configured_without_calling_resolver() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            // No `iss` claim.
+            json!({
+                "aud": "test-audience",
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["test-audience".to_string()],
+            vec!["https://auth.example.com".to_string()],
+            false,
+            (key_id, jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(test_validator.resolve_calls(), 0);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("missing the required `iss` claim"))
+                .then_some(())
+                .ok_or("Expected warning for missing iss claim".to_string())
+        });
+    }
+
+    /// Missing `aud` when audience validation is required must be rejected
+    /// pre-network. Mirrors the post-verify check on line ~102 of `validate`.
+    #[traced_test]
+    #[tokio::test]
+    async fn pre_check_rejects_missing_aud_when_audience_required_without_calling_resolver() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            // No `aud` claim.
+            json!({
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["expected-audience".to_string()],
+            vec![],
+            false,
+            (key_id, jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(test_validator.resolve_calls(), 0);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("missing the required `aud` claim"))
+                .then_some(())
+                .ok_or("Expected warning for missing aud claim".to_string())
+        });
+    }
+
+    /// With `allow_any_audience` and no configured issuers, the pre-check is a
+    /// no-op: even tokens with bogus `iss` / `aud` proceed to the resolver.
+    /// Guards against the pre-check accidentally tightening defaults.
+    #[tokio::test]
+    async fn pre_check_is_noop_when_no_issuers_and_allow_any_audience() {
+        use serde_json::json;
+
+        let key_id = "some-example-id".to_string();
+        let (encode_key, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt_with_claims(
+            key_id.clone(),
+            encode_key,
+            json!({
+                "aud": "anything",
+                "iss": "https://anyone.example.com",
+                "exp": in_the_future,
+                "sub": "test user",
+            }),
+        );
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator =
+            TestTokenValidator::single(vec![], vec![], true, (key_id, jwk), server);
+
+        assert!(test_validator.validate(jwt).await.is_some());
+        assert_eq!(
+            test_validator.resolve_calls(),
+            1,
+            "no-op pre-check must still consult the resolver"
+        );
+    }
+
+    /// A token that isn't structurally a JWT is dropped pre-network — without
+    /// it, the resolver would still never succeed, but it would be invoked
+    /// once for nothing.
+    #[traced_test]
+    #[tokio::test]
+    async fn pre_check_rejects_malformed_payload_without_calling_resolver() {
+        // Build a token whose header parses (kid present) but whose payload is
+        // not valid JSON. Hand-rolled so we keep control of what's well-formed.
+        // The header below is `{"alg":"HS512","kid":"some-example-id","typ":"JWT"}`.
+        let header_b64 = "eyJhbGciOiJIUzUxMiIsImtpZCI6InNvbWUtZXhhbXBsZS1pZCIsInR5cCI6IkpXVCJ9";
+        // Payload bytes that decode to the ASCII string "not-json".
+        let payload_b64 = "bm90LWpzb24";
+        let signature_b64 = "AAAA";
+        let token_str = format!("{header_b64}.{payload_b64}.{signature_b64}");
+        let jwt = Authorization::bearer(&token_str).expect("create bearer token");
+
+        let (_, decode_key) = create_key("DEADBEEF");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+
+        let test_validator = TestTokenValidator::single(
+            vec!["test-audience".to_string()],
+            vec!["https://auth.example.com".to_string()],
+            false,
+            ("some-example-id".to_string(), jwk),
+            server,
+        );
+
+        assert_eq!(test_validator.validate(jwt).await, None);
+        assert_eq!(test_validator.resolve_calls(), 0);
+
+        logs_assert(|lines: &[&str]| {
+            lines
+                .iter()
+                .filter(|line| line.contains("WARN"))
+                .any(|line| line.contains("could not be decoded for pre-network claim check"))
+                .then_some(())
+                .ok_or("Expected warning for undecodable payload".to_string())
+        });
     }
 
     /// Deserialize [`Claims`] from JSON and resolve its scopes. Exercises the
