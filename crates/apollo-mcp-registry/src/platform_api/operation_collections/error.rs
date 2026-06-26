@@ -1,7 +1,4 @@
 use reqwest::header::{InvalidHeaderName, InvalidHeaderValue};
-use tokio::sync::mpsc::Sender;
-
-use super::event::CollectionEvent;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionError {
@@ -22,40 +19,22 @@ pub enum CollectionError {
 }
 
 impl CollectionError {
-    /// Returns `true` if the error is transient (will be retried), `false` otherwise.
+    /// Returns `true` if the error is transient according to the Platform API fetch policy.
     pub(super) fn is_transient(&self) -> bool {
-        if matches!(self, CollectionError::Request(req_err) if
+        matches!(self, CollectionError::Request(req_err) if
             req_err.is_connect()
             || req_err.is_timeout()
             || req_err.is_request()
             || req_err.status().is_some_and(|status| {
                 status.is_server_error() || status == reqwest::StatusCode::TOO_MANY_REQUESTS
             })
-        ) {
-            tracing::warn!(
-                "Failed to fetch operation collection with transient error, will retry: {self}"
-            );
-            true
-        } else {
-            tracing::error!("Failed to fetch operation collection with permanent error: {self}");
-            false
-        }
-    }
-
-    /// Sends the error to the collection stream.
-    pub(super) async fn send_to_stream(self, sender: &Sender<CollectionEvent>) {
-        if let Err(e) = sender.send(CollectionEvent::CollectionError(self)).await {
-            tracing::debug!(
-                "Failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
-            );
-        }
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::sync::mpsc::channel;
     use wiremock::matchers::any;
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -163,15 +142,5 @@ mod tests {
 
         let error = CollectionError::Request(reqwest_error);
         assert!(error.is_transient());
-    }
-
-    #[tokio::test]
-    async fn send_to_stream_with_closed_channel() {
-        let (sender, receiver) = channel(1);
-        drop(receiver);
-
-        let error = CollectionError::Response("permission denied".to_string());
-        // Should not panic even if channel is closed
-        error.send_to_stream(&sender).await;
     }
 }

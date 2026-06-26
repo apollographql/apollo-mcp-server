@@ -271,6 +271,7 @@ async fn write_init_response(
         true
     }
 }
+
 impl CollectionSource {
     pub fn into_stream(self) -> Pin<Box<dyn Stream<Item = CollectionEvent> + Send>> {
         match self {
@@ -303,17 +304,16 @@ impl CollectionSource {
                     OperationCollectionResult::NotFoundError(NotFoundError { message })
                     | OperationCollectionResult::PermissionError(PermissionError { message })
                     | OperationCollectionResult::ValidationError(ValidationError { message }) => {
-                        if let Err(e) = sender
-                            .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                message,
-                            )))
-                            .await
-                        {
+                        let err = CollectionError::Response(message);
+                        tracing::error!(
+                            "Failed to fetch operation collection with permanent error: {err}"
+                        );
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
                             tracing::debug!(
                                 "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                             );
-                            return;
                         }
+                        return;
                     }
                     OperationCollectionResult::OperationCollection(collection) => {
                         let should_poll = write_init_response(
@@ -328,8 +328,19 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if !err.is_transient() {
-                        err.send_to_stream(&sender).await;
+                    if err.is_transient() {
+                        tracing::warn!(
+                            "Failed to fetch operation collection with transient error, will retry: {err}"
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to fetch operation collection with permanent error: {err}"
+                        );
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                        }
                         return;
                     }
                 }
@@ -366,10 +377,7 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if !err.is_transient() {
-                            err.send_to_stream(&sender).await;
-                            break;
-                        }
+                        tracing::warn!("Failed to poll operation collection, will retry: {err}");
                     }
                 }
             }
@@ -410,40 +418,39 @@ impl CollectionSource {
                                 }
                             }
                             DefaultCollectionResult::PermissionError(error) => {
-                                if let Err(e) = sender
-                                    .send(CollectionEvent::CollectionError(
-                                        CollectionError::Response(error.message),
-                                    ))
-                                    .await
+                                let err = CollectionError::Response(error.message);
+                                tracing::error!(
+                                    "Failed to fetch operation collection with permanent error: {err}"
+                                );
+                                if let Err(e) =
+                                    sender.send(CollectionEvent::CollectionError(err)).await
                                 {
                                     tracing::debug!(
                                         "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                                     );
-                                    return;
                                 }
+                                return;
                             }
                         }
                     }
                     Some(OperationCollectionDefaultQueryVariant::InvalidRefFormat(err)) => {
-                        if let Err(e) = sender
-                            .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                err.message,
-                            )))
-                            .await
-                        {
+                        let err = CollectionError::Response(err.message);
+                        tracing::error!(
+                            "Failed to fetch operation collection with permanent error: {err}"
+                        );
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
                             tracing::debug!(
                                 "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                             );
-                            return;
                         }
+                        return;
                     }
                     None => {
-                        if let Err(e) = sender
-                            .send(CollectionEvent::CollectionError(CollectionError::Response(
-                                format!("{graph_ref} not found"),
-                            )))
-                            .await
-                        {
+                        let err = CollectionError::Response(format!("{graph_ref} not found"));
+                        tracing::error!(
+                            "Failed to fetch operation collection with permanent error: {err}"
+                        );
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
                             tracing::debug!(
                                 "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                             );
@@ -452,8 +459,19 @@ impl CollectionSource {
                     }
                 },
                 Err(err) => {
-                    if !err.is_transient() {
-                        err.send_to_stream(&sender).await;
+                    if err.is_transient() {
+                        tracing::warn!(
+                            "Failed to fetch operation collection with transient error, will retry: {err}"
+                        );
+                    } else {
+                        tracing::error!(
+                            "Failed to fetch operation collection with permanent error: {err}"
+                        );
+                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                            tracing::debug!(
+                                "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
+                            );
+                        }
                         return;
                     }
                 }
@@ -490,10 +508,7 @@ impl CollectionSource {
                         tracing::debug!("Operation collection unchanged");
                     }
                     Err(err) => {
-                        if !err.is_transient() {
-                            err.send_to_stream(&sender).await;
-                            break;
-                        }
+                        tracing::warn!("Failed to poll operation collection, will retry: {err}");
                     }
                 }
             }
@@ -617,4 +632,359 @@ where
     response_body
         .data
         .ok_or(CollectionError::Response("missing data".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use secrecy::SecretString;
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use url::Url;
+    use wiremock::matchers::{body_string_contains, method};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn collection_query_response(updated_at: &str, body: &str) -> String {
+        serde_json::json!({
+            "data": {
+                "operationCollection": {
+                    "__typename": "OperationCollection",
+                    "operations": [{
+                        "lastUpdatedAt": updated_at,
+                        "id": "op-1",
+                        "name": "GetUser",
+                        "currentOperationRevision": {
+                            "body": body,
+                            "headers": null,
+                            "variables": null
+                        }
+                    }]
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn collection_poll_response(updated_at: &str) -> String {
+        serde_json::json!({
+            "data": {
+                "operationCollection": {
+                    "__typename": "OperationCollection",
+                    "operations": [{
+                        "lastUpdatedAt": updated_at,
+                        "id": "op-1"
+                    }]
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn collection_poll_permission_error_response() -> String {
+        serde_json::json!({
+            "data": {
+                "operationCollection": {
+                    "__typename": "PermissionError",
+                    "message": "not authorized"
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn default_collection_query_response(updated_at: &str, body: &str) -> String {
+        serde_json::json!({
+            "data": {
+                "variant": {
+                    "__typename": "GraphVariant",
+                    "mcpDefaultCollection": {
+                        "__typename": "OperationCollection",
+                        "operations": [{
+                            "lastUpdatedAt": updated_at,
+                            "id": "op-1",
+                            "name": "GetUser",
+                            "currentOperationRevision": {
+                                "body": body,
+                                "headers": null,
+                                "variables": null
+                            }
+                        }]
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn default_collection_poll_response(updated_at: &str) -> String {
+        serde_json::json!({
+            "data": {
+                "variant": {
+                    "__typename": "GraphVariant",
+                    "mcpDefaultCollection": {
+                        "__typename": "OperationCollection",
+                        "operations": [{
+                            "lastUpdatedAt": updated_at,
+                            "id": "op-1"
+                        }]
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn default_collection_poll_permission_error_response() -> String {
+        serde_json::json!({
+            "data": {
+                "variant": {
+                    "__typename": "GraphVariant",
+                    "mcpDefaultCollection": {
+                        "__typename": "PermissionError",
+                        "message": "not authorized"
+                    }
+                }
+            }
+        })
+        .to_string()
+    }
+
+    fn entries_response(updated_at: &str, body: &str) -> String {
+        serde_json::json!({
+            "data": {
+                "operationCollectionEntries": [{
+                    "id": "op-1",
+                    "lastUpdatedAt": updated_at,
+                    "name": "GetUser",
+                    "currentOperationRevision": {
+                        "body": body,
+                        "headers": null,
+                        "variables": null
+                    }
+                }]
+            }
+        })
+        .to_string()
+    }
+
+    fn platform_api_config(mock_server: &MockServer) -> PlatformApiConfig {
+        PlatformApiConfig::new(
+            SecretString::from("test-key"),
+            Duration::from_millis(10),
+            Duration::from_secs(5),
+            Some(Url::parse(&mock_server.uri()).unwrap()),
+        )
+    }
+
+    fn json_response(body: String) -> ResponseTemplate {
+        ResponseTemplate::new(200)
+            .insert_header("content-type", "application/json")
+            .set_body_string(body)
+    }
+
+    async fn next_event(
+        stream: &mut Pin<Box<dyn Stream<Item = CollectionEvent> + Send>>,
+        mock_server: &MockServer,
+    ) -> CollectionEvent {
+        match timeout(Duration::from_secs(2), stream.next()).await {
+            Ok(Some(event)) => event,
+            Ok(None) => panic!("expected collection stream to remain open"),
+            Err(_) => {
+                let received_requests = mock_server
+                    .received_requests()
+                    .await
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+                    .collect::<Vec<_>>();
+                panic!(
+                    "expected next collection event before timeout; received requests: {received_requests:?}"
+                );
+            }
+        }
+    }
+
+    fn assert_update_body(event: CollectionEvent, expected_body: &str) {
+        let CollectionEvent::UpdateOperationCollection(operations) = event else {
+            panic!("expected operation collection update, got {event:?}");
+        };
+
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations[0].source_text, expected_body);
+    }
+
+    #[tokio::test]
+    async fn collection_id_initial_load_succeeds() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionQuery""#,
+            ))
+            .respond_with(json_response(collection_query_response(
+                "2024-01-01T00:00:00Z",
+                "query GetUser { user { name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream = CollectionSource::Id(
+            "collection-id".to_string(),
+            platform_api_config(&mock_server),
+        )
+        .into_stream();
+
+        assert_update_body(
+            next_event(&mut stream, &mock_server).await,
+            "query GetUser { user { name } }",
+        );
+    }
+
+    #[tokio::test]
+    async fn collection_id_polling_continues_after_response_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionQuery""#,
+            ))
+            .respond_with(json_response(collection_query_response(
+                "2024-01-01T00:00:00Z",
+                "query GetUser { user { name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionPollingQuery""#,
+            ))
+            .respond_with(json_response(collection_poll_permission_error_response()))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionPollingQuery""#,
+            ))
+            .respond_with(json_response(collection_poll_response(
+                "2024-01-02T00:00:00Z",
+            )))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionEntriesQuery""#,
+            ))
+            .respond_with(json_response(entries_response(
+                "2024-01-02T00:00:00Z",
+                "query GetUser { user { id name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream = CollectionSource::Id(
+            "collection-id".to_string(),
+            platform_api_config(&mock_server),
+        )
+        .into_stream();
+
+        let _initial_update = next_event(&mut stream, &mock_server).await;
+        assert_update_body(
+            next_event(&mut stream, &mock_server).await,
+            "query GetUser { user { id name } }",
+        );
+    }
+
+    #[tokio::test]
+    async fn default_collection_initial_load_succeeds() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionDefaultQuery""#,
+            ))
+            .respond_with(json_response(default_collection_query_response(
+                "2024-01-01T00:00:00Z",
+                "query GetUser { user { name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream =
+            CollectionSource::Default("graph@main".to_string(), platform_api_config(&mock_server))
+                .into_stream();
+
+        assert_update_body(
+            next_event(&mut stream, &mock_server).await,
+            "query GetUser { user { name } }",
+        );
+    }
+
+    #[tokio::test]
+    async fn default_collection_polling_continues_after_response_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionDefaultQuery""#,
+            ))
+            .respond_with(json_response(default_collection_query_response(
+                "2024-01-01T00:00:00Z",
+                "query GetUser { user { name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionDefaultPollingQuery""#,
+            ))
+            .respond_with(json_response(
+                default_collection_poll_permission_error_response(),
+            ))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionDefaultPollingQuery""#,
+            ))
+            .respond_with(json_response(default_collection_poll_response(
+                "2024-01-02T00:00:00Z",
+            )))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionEntriesQuery""#,
+            ))
+            .respond_with(json_response(entries_response(
+                "2024-01-02T00:00:00Z",
+                "query GetUser { user { id name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream =
+            CollectionSource::Default("graph@main".to_string(), platform_api_config(&mock_server))
+                .into_stream();
+
+        let _initial_update = next_event(&mut stream, &mock_server).await;
+        assert_update_body(
+            next_event(&mut stream, &mock_server).await,
+            "query GetUser { user { id name } }",
+        );
+    }
 }
