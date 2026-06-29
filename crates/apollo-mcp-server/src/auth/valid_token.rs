@@ -87,45 +87,33 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                     warn!("Skipping JWT signed by unsupported algorithm: {alg:?}");
                     continue;
                 };
+                // The pre-network gate (`unverified_claims_could_match`) is
+                // the sole owner of the `iss` / `aud` allowlist rule, so we
+                // deliberately disable `jsonwebtoken`'s own iss/aud checks
+                // here. Keeping the rule in one place prevents the two sides
+                // from drifting apart over time.
                 let mut val = Validation::new(algorithm);
-                if self.allow_any_audience {
-                    val.validate_aud = false;
-                } else {
-                    val.set_audience(self.audiences);
-                }
-
-                if !self.issuers.is_empty() {
-                    val.set_issuer(self.issuers);
-                }
-
+                val.validate_aud = false;
                 val
             };
 
             match decode::<Claims>(jwt, &jwk.decoding_key, &validation) {
                 Ok(token_data) => {
-                    // When audience validation is enabled, explicitly reject tokens
-                    // with a missing `aud` claim. The `jsonwebtoken` crate skips its
-                    // own audience check when the claim is absent from the raw JWT,
-                    // so we enforce it here.
-                    if !self.allow_any_audience && token_data.claims.aud.is_empty() {
-                        warn!("Token is missing the required `aud` claim");
-                        break;
-                    }
+                    // Bind the token's `iss` to the issuer the signing server
+                    // advertises in its discovery metadata. This is the one
+                    // iss/aud check the pre-network gate cannot perform,
+                    // since it depends on which server's JWKS verified the
+                    // signature. Without it, a token signed by one configured
+                    // server could pass while claiming a different configured
+                    // server's issuer.
                     if !self.issuers.is_empty() {
-                        // When issuer validation is enabled, explicitly reject tokens
-                        // with a missing `iss` claim. The `jsonwebtoken` crate skips its
-                        // own issuer check when the claim is absent from the raw JWT,
-                        // so we enforce it here.
+                        // Defensive: the pre-network gate already requires
+                        // `iss` when issuers are configured, so this should
+                        // not fire in practice.
                         let Some(token_issuer) = token_data.claims.iss.as_deref() else {
                             warn!("Token is missing the required `iss` claim");
                             break;
                         };
-
-                        // Bind the issuer to the server whose JWKS verified the
-                        // signature: the token's `iss` must equal that server's
-                        // discovered issuer identifier. This prevents a token signed
-                        // by one configured server from being accepted while claiming
-                        // a different configured server's issuer.
                         if discovered_issuer != token_issuer {
                             warn!(
                                 token_issuer = %token_issuer,
@@ -148,15 +136,19 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         None
     }
 
-    /// Returns `false` when the unverified JWT payload cannot possibly satisfy
-    /// this deployment's `iss` / `aud` configuration, so the caller can bail
-    /// out before any network call.
+    /// Returns `false` when the JWT payload cannot satisfy this deployment's
+    /// `iss` / `aud` configuration. This is the sole owner of that
+    /// allowlist rule: [`Self::validate`] deliberately disables
+    /// `jsonwebtoken`'s own iss/aud checks so the rule lives in exactly one
+    /// place.
     ///
-    /// Mirrors the post-verify claim checks in [`Self::validate`]: anything
-    /// rejected here would also be rejected after signature verification, so
-    /// this is strictly an early-exit — never an authorization decision. That
-    /// is what makes it safe to read these claims before the signature is
-    /// checked.
+    /// Safety of reading claims before the signature is verified: a
+    /// successful signature check proves the payload bytes were not
+    /// tampered with after signing — it cannot change a claim's value. So
+    /// matching `iss` / `aud` against the configured allowlist before the
+    /// signature is checked yields the same answer as matching after,
+    /// against byte-identical data. The result is only ever used to
+    /// *reject* a token; nothing here can authorize one.
     fn unverified_claims_could_match(&self, jwt: &str) -> bool {
         let Some(claims) = decode_unverified_payload(jwt) else {
             // Not a structurally valid JWT, or the payload isn't JSON — the
