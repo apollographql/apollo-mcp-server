@@ -1364,19 +1364,10 @@ mod test {
         assert_eq!(test_validator.validate(jwt).await, None);
     }
 
-    // --- Pre-network claim gate ---------------------------------------------
-    //
-    // The post-verify checks above run *after* the network call to resolve a
-    // signing key. These tests exercise the pre-network gate: tokens whose
-    // unverified `iss` / `aud` claims cannot satisfy the configured allowlists
-    // must be rejected with **zero** calls to the [`KeyResolver`] seam.
-    //
-    // Each test asserts both the rejection *and*
-    // `test_validator.resolve_calls() == 0` so a regression that loses the
-    // pre-network short-circuit is caught directly.
+    // Pre-network gate: tokens whose `iss`/`aud` fail the configured allowlists
+    // are rejected before any key resolution occurs.
 
-    /// Builds a JWT with arbitrary claims (matching `Algorithm::HS512`); used
-    /// by the pre-network gate tests to vary `iss` / `aud` independently.
+    /// Builds a minimal JWT for varying `iss`/`aud` in pre-network gate tests.
     fn create_jwt_with_claims(
         key_id: String,
         key: EncodingKey,
