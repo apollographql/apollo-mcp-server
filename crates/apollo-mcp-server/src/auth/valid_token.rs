@@ -136,19 +136,9 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         None
     }
 
-    /// Returns `false` when the JWT payload cannot satisfy this deployment's
-    /// `iss` / `aud` configuration. This is the sole owner of that
-    /// allowlist rule: [`Self::validate`] deliberately disables
-    /// `jsonwebtoken`'s own iss/aud checks so the rule lives in exactly one
-    /// place.
-    ///
-    /// Safety of reading claims before the signature is verified: a
-    /// successful signature check proves the payload bytes were not
-    /// tampered with after signing — it cannot change a claim's value. So
-    /// matching `iss` / `aud` against the configured allowlist before the
-    /// signature is checked yields the same answer as matching after,
-    /// against byte-identical data. The result is only ever used to
-    /// *reject* a token; nothing here can authorize one.
+    /// Sole owner of the `iss` / `aud` allowlist rule. Used only to *reject*
+    /// tokens, never to authorize — which is what makes it safe to read
+    /// claims before signature verification.
     fn unverified_claims_could_match(&self, jwt: &str) -> bool {
         let Some(claims) = decode_unverified_payload(jwt) else {
             // Not a structurally valid JWT, or the payload isn't JSON — the
@@ -248,14 +238,9 @@ impl Claims {
     }
 }
 
-/// Subset of [`Claims`] used for the pre-network gate in
-/// [`TokenValidator::unverified_claims_could_match`]: only the fields needed
-/// to decide whether the token could ever satisfy the configured `iss` / `aud`.
+/// JWT claims read before signature verification, used only to *reject* tokens.
 ///
-/// This struct is only ever populated from the *unverified* JWT payload, so
-/// values must be used to reject tokens — never to authorize them. The fields
-/// match [`Claims`] so the deserialization rules stay consistent across the
-/// pre- and post-verify checks.
+/// Values from this struct must never be used to authorize a request.
 #[derive(Debug, Deserialize)]
 struct UnverifiedClaims {
     #[serde(default)]
@@ -265,20 +250,10 @@ struct UnverifiedClaims {
     aud: Vec<String>,
 }
 
-/// Decode just the payload of a JWT (the middle of the three `.`-separated
-/// segments) without verifying the signature.
+/// Decode the JWT payload without verifying the signature.
 ///
-/// A base64-url decode and a `serde_json::from_slice` into a two-field struct,
-/// nothing else. The work is bounded by the input token size (which `axum`
-/// caps via the `Authorization` header limit), so this adds at most a few
-/// microseconds of local CPU per request and replaces the uncached outbound
-/// HTTP calls that previously fired before the same rejection decision
-/// (SECOPS-6447).
-///
-/// Returns `None` for anything that isn't a structurally valid JWT or whose
-/// payload isn't valid JSON. Callers must use the returned claims only to
-/// *reject* tokens — see [`UnverifiedClaims`] and
-/// [`TokenValidator::unverified_claims_could_match`].
+/// Returns `None` for malformed JWTs. The returned claims must be used only
+/// to *reject* tokens, never to authorize them.
 fn decode_unverified_payload(jwt: &str) -> Option<UnverifiedClaims> {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -365,7 +340,7 @@ mod test {
     ///
     /// Counts calls to [`KeyResolver::resolve_key`] so tests can assert that
     /// the pre-network gate in [`TokenValidator::validate`] never hits the
-    /// network seam (SECOPS-6447 acceptance criterion).
+    /// network seam when the pre-network gate rejects a token early.
     struct StubKeyResolver<'a> {
         servers: &'a [TestServer],
         resolve_calls: Arc<AtomicUsize>,
@@ -631,9 +606,8 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
-        // Rejection now happens in the pre-network gate (SECOPS-6447 / AMS-529);
-        // the warning identifies that path rather than the post-verify
-        // `InvalidAudience` message the older flow emitted.
+        // Rejection happens in the pre-network gate; the warning identifies
+        // that path rather than the post-verify `InvalidAudience` message.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
@@ -855,9 +829,8 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
-        // Rejection happens in the pre-network gate (SECOPS-6447 / AMS-529);
-        // earlier code paths emitted `InvalidAudience` from the post-verify
-        // step, which is no longer reached for this case.
+        // Rejection happens in the pre-network gate; the post-verify
+        // `InvalidAudience` path is not reached for this case.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
@@ -956,9 +929,8 @@ mod test {
 
         assert_eq!(test_validator.validate(jwt).await, None);
 
-        // Rejection happens in the pre-network gate (SECOPS-6447 / AMS-529);
-        // the post-verify `InvalidIssuer` path is no longer reached for this
-        // case.
+        // Rejection happens in the pre-network gate; the post-verify
+        // `InvalidIssuer` path is not reached for this case.
         logs_assert(|lines: &[&str]| {
             lines
                 .iter()
@@ -1392,13 +1364,12 @@ mod test {
         assert_eq!(test_validator.validate(jwt).await, None);
     }
 
-    // --- Pre-network claim gate (SECOPS-6447) ------------------------------
+    // --- Pre-network claim gate ---------------------------------------------
     //
     // The post-verify checks above run *after* the network call to resolve a
-    // signing key. These tests exercise the cheap pre-network gate added in
-    // AMS-529: tokens whose unverified `iss` / `aud` claims cannot satisfy the
-    // configured allowlists must be rejected with **zero** calls to the
-    // [`KeyResolver`] seam.
+    // signing key. These tests exercise the pre-network gate: tokens whose
+    // unverified `iss` / `aud` claims cannot satisfy the configured allowlists
+    // must be rejected with **zero** calls to the [`KeyResolver`] seam.
     //
     // Each test asserts both the rejection *and*
     // `test_validator.resolve_calls() == 0` so a regression that loses the
@@ -1462,7 +1433,7 @@ mod test {
     }
 
     /// `iss` not in the configured allowlist must be rejected before the
-    /// resolver is consulted — this is the core SECOPS-6447 acceptance check.
+    /// resolver is consulted.
     #[traced_test]
     #[tokio::test]
     async fn pre_check_rejects_mismatched_iss_without_calling_resolver() {
