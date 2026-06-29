@@ -68,8 +68,7 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
         // Cheap pre-network gate: drop tokens whose unverified `iss` / `aud`
         // claims cannot possibly satisfy this deployment's configuration before
         // calling [`KeyResolver::resolve_key`], which is the only outbound
-        // network call on this path. Defends against the pre-auth JWKS
-        // amplification DoS in SECOPS-6447 — see [`Self::unverified_claims_could_match`].
+        // network call on this path. See [`Self::unverified_claims_could_match`].
         if !self.unverified_claims_could_match(jwt) {
             return None;
         }
