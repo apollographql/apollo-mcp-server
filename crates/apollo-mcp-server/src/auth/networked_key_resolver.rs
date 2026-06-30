@@ -597,31 +597,36 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// Build a real `Jwks` for pre-populating the cache. `Jwks` doesn't impl
+    /// `Deserialize`, so we spin up a throwaway mockito server and reuse
+    /// `fetch_jwks` to construct one.
+    async fn make_test_jwks(client: &reqwest::Client, jwks_json: &str) -> Jwks {
+        let mut server = mockito::Server::new_async().await;
+        let _mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(jwks_json)
+            .create_async()
+            .await;
+        fetch_jwks(
+            client,
+            &format!("{}/jwks", server.url()),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("test setup: jwks fetch failed")
+    }
+
     #[tokio::test]
     async fn warm_hit_returns_without_network() {
         let client = reqwest::Client::new();
 
-        // Jwks doesn't impl Deserialize, so use fetch_jwks against a setup server
-        // to get a real Jwks object for pre-populating the cache.
-        let mut setup_server = mockito::Server::new_async().await;
         let jwks_json = format!(
             r#"{{"keys":[{{"kty":"RSA","kid":"cached-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
             TEST_RSA_N, TEST_RSA_E
         );
-        let _setup_mock = setup_server
-            .mock("GET", "/jwks")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&jwks_json)
-            .create_async()
-            .await;
-        let jwks = fetch_jwks(
-            &client,
-            &format!("{}/jwks", setup_server.url()),
-            Duration::from_secs(5),
-        )
-        .await
-        .expect("test setup: should get jwks");
+        let jwks = make_test_jwks(&client, &jwks_json).await;
 
         // Actual test server — any request reaching here means the warm path failed.
         let mut server = mockito::Server::new_async().await;
@@ -665,25 +670,11 @@ mod tests {
         let client = reqwest::Client::new();
 
         // JWK without `alg`; algorithm comes from the discovery document.
-        let mut setup_server = mockito::Server::new_async().await;
         let jwks_json = format!(
             r#"{{"keys":[{{"kty":"RSA","kid":"no-alg-key","n":"{}","e":"{}"}}]}}"#,
             TEST_RSA_N, TEST_RSA_E
         );
-        let _setup_mock = setup_server
-            .mock("GET", "/jwks")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&jwks_json)
-            .create_async()
-            .await;
-        let jwks = fetch_jwks(
-            &client,
-            &format!("{}/jwks", setup_server.url()),
-            Duration::from_secs(5),
-        )
-        .await
-        .expect("test setup: should get jwks");
+        let jwks = make_test_jwks(&client, &jwks_json).await;
 
         let mut server = mockito::Server::new_async().await;
         let no_network = server
@@ -779,26 +770,11 @@ mod tests {
     async fn expired_entry_triggers_refetch() {
         let client = reqwest::Client::new();
 
-        // Build a stale Jwks via a setup server (Jwks doesn't impl Deserialize)
-        let mut setup_server = mockito::Server::new_async().await;
         let stale_jwks_json = format!(
             r#"{{"keys":[{{"kty":"RSA","kid":"old-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
             TEST_RSA_N, TEST_RSA_E
         );
-        let _setup_mock = setup_server
-            .mock("GET", "/jwks")
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(&stale_jwks_json)
-            .create_async()
-            .await;
-        let stale_jwks = fetch_jwks(
-            &client,
-            &format!("{}/jwks", setup_server.url()),
-            Duration::from_secs(5),
-        )
-        .await
-        .expect("test setup: should get stale jwks");
+        let stale_jwks = make_test_jwks(&client, &stale_jwks_json).await;
 
         let mut server = mockito::Server::new_async().await;
 
