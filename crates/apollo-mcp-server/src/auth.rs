@@ -1165,6 +1165,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             assert!(config.discovery_headers.is_empty());
         }
 
+        #[test]
+        fn yaml_deserialization_with_jwks_cache_ttl() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              jwks_cache_ttl: 5m
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.jwks_cache_ttl, Some(Duration::from_secs(300)));
+        }
+
+        #[test]
+        fn yaml_deserialization_without_jwks_cache_ttl_defaults_to_none() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.jwks_cache_ttl, None);
+        }
+
         #[tokio::test]
         async fn build_client_with_discovery_headers() {
             let mut mock_server = mockito::Server::new_async().await;
