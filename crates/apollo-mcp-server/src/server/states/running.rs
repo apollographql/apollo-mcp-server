@@ -193,7 +193,7 @@ impl Running {
         Self::notify_tool_list_changed(self.peers.clone()).await;
     }
 
-    /// Reload Rhai scripts from the rhai/ directory.
+    /// Reload Rhai scripts from the configured Rhai directory.
     /// On failure, logs the error and keeps the previous scripts.
     pub(super) fn reload_rhai_scripts(&self) {
         let mut engine = self.rhai_engine.lock();

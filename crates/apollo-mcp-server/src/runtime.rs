@@ -11,6 +11,7 @@ mod introspection;
 pub mod logging;
 mod operation_source;
 mod overrides;
+mod rhai;
 mod schema_source;
 mod schemas;
 pub mod telemetry;
@@ -118,6 +119,21 @@ mod test {
             let config = read_config(path)?;
 
             assert!(config.overrides.disable_type_description);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_extracts_rhai_scripts_from_nested_env() {
+        figment::Jail::expect_with(move |jail| {
+            jail.set_env("APOLLO_MCP_RHAI__SCRIPTS", "/config/rhai");
+
+            let config = super::read_config_from_env()?;
+
+            assert_eq!(
+                config.rhai.scripts_dir,
+                std::path::PathBuf::from("/config/rhai")
+            );
             Ok(())
         });
     }
@@ -274,6 +290,9 @@ mod test {
                         },
                         allowed: 100,
                     },
+                },
+                rhai: RhaiConfig {
+                    scripts_dir: "rhai",
                 },
                 introspection: Introspection {
                     execute: ExecuteConfig {

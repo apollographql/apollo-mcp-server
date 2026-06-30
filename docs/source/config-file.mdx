@@ -37,6 +37,7 @@ All fields are optional.
 | `logging`         | `Logging`             |                          | Logging configuration                                            |
 | `operations`      | `OperationSource`     |                          | Operations configuration                                         |
 | `overrides`       | `Overrides`           |                          | Overrides for server behavior                                    |
+| `rhai`            | `Rhai`                |                          | Rhai scripting configuration                                     |
 | `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
 | `server_info`     | `ServerInfo`          |                          | Server metadata configuration                                    |
 | `transport`       | `Transport`           |                          | The type of server transport to use                              |
@@ -141,6 +142,21 @@ These fields are under the top-level `health_check` key. Learn more about [healt
 Health checks are only available when using the `streamable_http` transport. The health check feature is inspired by Apollo Router's health check implementation.
 
 </Note>
+
+### Rhai
+
+These fields are under the top-level `rhai` key and configure where Apollo MCP Server loads Rhai scripts from. Learn more about [Rhai scripting](/apollo-mcp-server/rhai-getting-started).
+
+| Option    | Type       | Default | Description                                                                          |
+| :-------- | :--------- | :------ | :----------------------------------------------------------------------------------- |
+| `scripts` | `FilePath` | `rhai`  | Directory containing Rhai scripts. The server loads `main.rhai` from this directory. |
+
+```yaml title="mcp.yaml"
+rhai:
+  scripts: /config/rhai
+```
+
+The path can be absolute or relative to the process working directory. If `main.rhai` doesn't exist, the server starts normally without scripting.
 
 ### Introspection
 

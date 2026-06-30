@@ -24,7 +24,7 @@ pub enum Event {
     /// the server retains its existing tool catalog
     ManifestError(Box<dyn std::error::Error + Send + Sync + 'static>),
 
-    /// Rhai scripts in the rhai/ directory have changed
+    /// Rhai scripts in the configured Rhai directory have changed
     RhaiScriptsChanged,
 
     /// The configuration file has changed, server should restart
