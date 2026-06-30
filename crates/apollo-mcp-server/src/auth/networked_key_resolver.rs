@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
 
 use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
@@ -206,22 +205,31 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        // Try the cache first
+        // Try the cache first. If the lock is poisoned (a task panicked inside a
+        // critical section — essentially impossible given these are trivial HashMap
+        // ops), fall through and serve the request via network instead.
+        if let Ok(cache) = self.jwks_cache.read()
+            && let Some(entry) = cache.get(server)
+            && entry.is_fresh(self.ttl)
+            && let Some(jwk) = entry.keys.keys.get(key_id)
         {
-            let cache = self.jwks_cache.read().await;
+            return Some((jwk.clone(), entry.issuer.clone()));
+        }
+
+        let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
+        let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
+
+        // Re-check inside the write lock: another task may have populated this
+        // while we were doing network I/O. Avoids redundant writes on concurrent
+        // cold misses. If the lock is poisoned, skip the cache write but still
+        // return the key we fetched.
+        if let Ok(mut cache) = self.jwks_cache.write() {
             if let Some(entry) = cache.get(server)
                 && entry.is_fresh(self.ttl)
                 && let Some(jwk) = entry.keys.keys.get(key_id)
             {
                 return Some((jwk.clone(), entry.issuer.clone()));
             }
-        }
-
-        let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
-        let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
-
-        {
-            let mut cache = self.jwks_cache.write().await;
             cache.insert(
                 server.clone(),
                 CachedJwks {
@@ -623,7 +631,7 @@ mod tests {
 
         let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
         {
-            let mut guard = cache.write().await;
+            let mut guard = cache.write().unwrap();
             guard.insert(
                 issuer_url.clone(),
                 CachedJwks {
@@ -696,7 +704,7 @@ mod tests {
         jwks_mock.assert();
         let (_jwk, _issuer) = result.expect("cold miss should return Some");
 
-        let guard = cache.read().await;
+        let guard = cache.read().unwrap();
         let entry = guard.get(&issuer_url).expect("cache should have an entry");
         assert!(entry.keys.keys.contains_key("fresh-key"));
         assert!(entry.is_fresh(Duration::from_secs(300)));
@@ -760,7 +768,7 @@ mod tests {
         let issuer_url = Url::parse(&server.url()).expect("valid URL");
         let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
         {
-            let mut guard = cache.write().await;
+            let mut guard = cache.write().unwrap();
             guard.insert(
                 issuer_url.clone(),
                 CachedJwks {
@@ -784,7 +792,7 @@ mod tests {
         jwks_mock.assert();
         let (_jwk, _issuer) = result.expect("expired entry should trigger refetch");
 
-        let guard = cache.read().await;
+        let guard = cache.read().unwrap();
         let entry = guard.get(&issuer_url).expect("cache should be repopulated");
         assert!(entry.keys.keys.contains_key("new-key"));
         assert!(!entry.keys.keys.contains_key("old-key"));
