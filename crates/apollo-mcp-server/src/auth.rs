@@ -399,9 +399,7 @@ impl Config {
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Default TTL for cached JWKS entries when `transport.auth.jwks_cache_ttl`
-/// is not configured. Bounds staleness when the same `kid` is used but
-/// rotation to a new `kid` is picked up immediately via the kid-miss fall-through
-/// path.
+/// is not configured.
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 
 /// MCP discovery methods that are allowed without authentication when
