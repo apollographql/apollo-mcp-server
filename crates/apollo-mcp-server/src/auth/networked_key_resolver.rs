@@ -15,11 +15,24 @@ pub(super) struct CachedJwks {
     pub keys: Jwks,
     pub issuer: String,
     pub fetched_at: Instant,
+    /// Algorithms advertised by the discovery document, used as a fallback
+    /// when a JWK omits `alg`.
+    pub signing_algs: Vec<String>,
 }
 
 impl CachedJwks {
     pub fn is_fresh(&self, ttl: Duration) -> bool {
         self.fetched_at.elapsed() < ttl
+    }
+
+    /// Returns the JWK for `key_id`, filling in `alg` from the discovery
+    /// document if the JWK itself omits it.
+    fn lookup(&self, key_id: &str, server: &Url) -> Option<(Jwk, String)> {
+        let mut jwk = self.keys.keys.get(key_id)?.clone();
+        if jwk.alg.is_none() {
+            jwk.alg = resolve_alg(&self.signing_algs, server);
+        }
+        Some((jwk, self.issuer.clone()))
     }
 }
 
@@ -209,9 +222,9 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         if let Ok(cache) = self.jwks_cache.read()
             && let Some(entry) = cache.get(server)
             && entry.is_fresh(self.ttl)
-            && let Some(jwk) = entry.keys.keys.get(key_id)
+            && let Some(result) = entry.lookup(key_id, server)
         {
-            return Some((jwk.clone(), entry.issuer.clone()));
+            return Some(result);
         }
 
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
@@ -220,30 +233,22 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         // Re-check before inserting; another request may have populated the
         // cache during the network fetch. Recover from lock poison: inserting
         // a fresh value is safe regardless of prior state.
+        let mut cache = self.jwks_cache.write().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = cache.get(server)
+            && entry.is_fresh(self.ttl)
+            && let Some(result) = entry.lookup(key_id, server)
         {
-            let mut cache = self.jwks_cache.write().unwrap_or_else(|e| e.into_inner());
-            if let Some(entry) = cache.get(server)
-                && entry.is_fresh(self.ttl)
-                && let Some(jwk) = entry.keys.keys.get(key_id)
-            {
-                return Some((jwk.clone(), entry.issuer.clone()));
-            }
-            cache.insert(
-                server.clone(),
-                CachedJwks {
-                    keys: jwks.clone(),
-                    issuer: metadata.issuer.clone(),
-                    fetched_at: Instant::now(),
-                },
-            );
+            return Some(result);
         }
-
-        let mut jwks = jwks;
-        let mut jwk = jwks.keys.remove(key_id)?;
-        if jwk.alg.is_none() {
-            jwk.alg = resolve_alg(&metadata.id_token_signing_alg_values_supported, server);
-        }
-        Some((jwk, metadata.issuer))
+        let entry = CachedJwks {
+            keys: jwks,
+            issuer: metadata.issuer,
+            fetched_at: Instant::now(),
+            signing_algs: metadata.id_token_signing_alg_values_supported,
+        };
+        let result = entry.lookup(key_id, server);
+        cache.insert(server.clone(), entry);
+        result
     }
 }
 
@@ -636,6 +641,7 @@ mod tests {
                     keys: jwks,
                     issuer: "https://expected-issuer.example.com".to_string(),
                     fetched_at: Instant::now(),
+                    signing_algs: vec!["RS256".to_string()],
                 },
             );
         }
@@ -652,6 +658,67 @@ mod tests {
         no_network.assert();
         let (_jwk, issuer) = result.expect("warm hit should return Some");
         assert_eq!(issuer, "https://expected-issuer.example.com");
+    }
+
+    #[tokio::test]
+    async fn warm_hit_fills_alg_from_signing_algs_when_jwk_omits_it() {
+        let client = reqwest::Client::new();
+
+        // JWK without `alg`; algorithm comes from the discovery document.
+        let mut setup_server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"no-alg-key","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let _setup_mock = setup_server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .create_async()
+            .await;
+        let jwks = fetch_jwks(
+            &client,
+            &format!("{}/jwks", setup_server.url()),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("test setup: should get jwks");
+
+        let mut server = mockito::Server::new_async().await;
+        let no_network = server
+            .mock("GET", mockito::Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://issuer.example.com".to_string(),
+                    fetched_at: Instant::now(),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "no-alg-key").await;
+
+        no_network.assert();
+        let (jwk, _issuer) = result.expect("warm hit should return Some");
+        assert_eq!(jwk.alg, Some(KeyAlgorithm::RS256));
     }
 
     #[tokio::test]
@@ -773,6 +840,7 @@ mod tests {
                     keys: stale_jwks,
                     issuer: server.url(),
                     fetched_at: Instant::now(),
+                    signing_algs: vec!["RS256".to_string()],
                 },
             );
         }
