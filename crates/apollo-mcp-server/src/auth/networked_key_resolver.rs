@@ -205,9 +205,7 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        // Try the cache first. If the lock is poisoned (a task panicked inside a
-        // critical section — essentially impossible given these are trivial HashMap
-        // ops), fall through and serve the request via network instead.
+        // Return immediately if the key is cached and fresh.
         if let Ok(cache) = self.jwks_cache.read()
             && let Some(entry) = cache.get(server)
             && entry.is_fresh(self.ttl)
@@ -219,10 +217,8 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
         let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
 
-        // Re-check inside the write lock: another task may have populated this
-        // while we were doing network I/O. Avoids redundant writes on concurrent
-        // cold misses. If the lock is poisoned, skip the cache write but still
-        // return the key we fetched.
+        // Re-check before inserting; another request may have populated the
+        // cache during the network fetch.
         if let Ok(mut cache) = self.jwks_cache.write() {
             if let Some(entry) = cache.get(server)
                 && entry.is_fresh(self.ttl)
