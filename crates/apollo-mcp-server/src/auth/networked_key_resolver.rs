@@ -1,5 +1,8 @@
+use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
 
 use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
@@ -9,18 +12,39 @@ use url::Url;
 
 use super::valid_token::KeyResolver;
 
+pub(super) struct CachedJwks {
+    pub keys: Jwks,
+    pub issuer: String,
+    pub fetched_at: Instant,
+}
+
+impl CachedJwks {
+    pub fn is_fresh(&self, ttl: Duration) -> bool {
+        self.fetched_at.elapsed() < ttl
+    }
+}
+
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
 /// discovery.
 pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
+    jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
+    ttl: Duration,
 }
 
 impl<'a> NetworkedKeyResolver<'a> {
-    pub fn new(client: &'a reqwest::Client, discovery_timeout: Duration) -> Self {
+    pub fn new(
+        client: &'a reqwest::Client,
+        discovery_timeout: Duration,
+        jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
+        ttl: Duration,
+    ) -> Self {
         Self {
             client,
             discovery_timeout,
+            jwks_cache,
+            ttl,
         }
     }
 }
@@ -182,8 +206,33 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
     /// back to alternate discovery URLs on failure; real providers advertise
     /// the same `jwks_uri` from every well-known path.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
+        // Try the cache first
+        {
+            let cache = self.jwks_cache.read().await;
+            if let Some(entry) = cache.get(server)
+                && entry.is_fresh(self.ttl)
+                && let Some(jwk) = entry.keys.keys.get(key_id)
+            {
+                return Some((jwk.clone(), entry.issuer.clone()));
+            }
+        }
+
         let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
-        let mut jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
+        let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
+
+        {
+            let mut cache = self.jwks_cache.write().await;
+            cache.insert(
+                server.clone(),
+                CachedJwks {
+                    keys: jwks.clone(),
+                    issuer: metadata.issuer.clone(),
+                    fetched_at: Instant::now(),
+                },
+            );
+        }
+
+        let mut jwks = jwks;
         let mut jwk = jwks.keys.remove(key_id)?;
         if jwk.alg.is_none() {
             jwk.alg = resolve_alg(&metadata.id_token_signing_alg_values_supported, server);
@@ -228,6 +277,7 @@ fn resolve_alg(advertised: &[String], server: &Url) -> Option<KeyAlgorithm> {
 
 #[cfg(test)]
 mod tests {
+    use super::KeyResolver;
     use super::*;
     use rstest::rstest;
 
@@ -534,5 +584,209 @@ mod tests {
         let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
         let result = resolve_alg(&["BOGUS".to_string()], &server);
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn warm_hit_returns_without_network() {
+        let client = reqwest::Client::new();
+
+        // Jwks doesn't impl Deserialize, so use fetch_jwks against a setup server
+        // to get a real Jwks object for pre-populating the cache.
+        let mut setup_server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"cached-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let _setup_mock = setup_server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .create_async()
+            .await;
+        let jwks = fetch_jwks(
+            &client,
+            &format!("{}/jwks", setup_server.url()),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("test setup: should get jwks");
+
+        // Actual test server — any request reaching here means the warm path failed.
+        let mut server = mockito::Server::new_async().await;
+        let no_network = server
+            .mock("GET", mockito::Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().await;
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://expected-issuer.example.com".to_string(),
+                    fetched_at: Instant::now(),
+                },
+            );
+        }
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "cached-key").await;
+
+        no_network.assert();
+        let (_jwk, issuer) = result.expect("warm hit should return Some");
+        assert_eq!(issuer, "https://expected-issuer.example.com");
+    }
+
+    #[tokio::test]
+    async fn cold_miss_populates_cache() {
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"fresh-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "fresh-key").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        let (_jwk, _issuer) = result.expect("cold miss should return Some");
+
+        let guard = cache.read().await;
+        let entry = guard.get(&issuer_url).expect("cache should have an entry");
+        assert!(entry.keys.keys.contains_key("fresh-key"));
+        assert!(entry.is_fresh(Duration::from_secs(300)));
+    }
+
+    #[tokio::test]
+    async fn expired_entry_triggers_refetch() {
+        let client = reqwest::Client::new();
+
+        // Build a stale Jwks via a setup server (Jwks doesn't impl Deserialize)
+        let mut setup_server = mockito::Server::new_async().await;
+        let stale_jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"old-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let _setup_mock = setup_server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&stale_jwks_json)
+            .create_async()
+            .await;
+        let stale_jwks = fetch_jwks(
+            &client,
+            &format!("{}/jwks", setup_server.url()),
+            Duration::from_secs(5),
+        )
+        .await
+        .expect("test setup: should get stale jwks");
+
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let fresh_jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"new-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&fresh_jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().await;
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: stale_jwks,
+                    issuer: server.url(),
+                    fetched_at: Instant::now(),
+                },
+            );
+        }
+
+        // 1ms TTL — the entry will expire almost immediately
+        let ttl = Duration::from_millis(1);
+        let resolver = NetworkedKeyResolver::new(&client, Duration::from_secs(5), &cache, ttl);
+
+        // Let the entry expire
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let result = resolver.resolve_key(&issuer_url, "new-key").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        let (_jwk, _issuer) = result.expect("expired entry should trigger refetch");
+
+        let guard = cache.read().await;
+        let entry = guard.get(&issuer_url).expect("cache should be repopulated");
+        assert!(entry.keys.keys.contains_key("new-key"));
+        assert!(!entry.keys.keys.contains_key("old-key"));
     }
 }

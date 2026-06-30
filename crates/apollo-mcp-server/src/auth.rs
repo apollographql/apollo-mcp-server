@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::RwLock;
 
 use axum::{
     Json, Router,
@@ -16,7 +17,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_key_resolver::NetworkedKeyResolver;
+use networked_key_resolver::{CachedJwks, NetworkedKeyResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -229,6 +230,13 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_header_map")]
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
+
+    /// How long a cached JWKS entry stays fresh before a request forces
+    /// a re-fetch. Stale entries behave identically to a cache miss.
+    /// Defaults to 10 minutes.
+    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
+    #[schemars(with = "Option<String>")]
+    pub jwks_cache_ttl: Option<Duration>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -293,6 +301,7 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
 struct AuthState {
     config: Arc<Config>,
     client: reqwest::Client,
+    jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
     resource_metadata_url: Url,
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
     /// path neither re-parses nor allocates them.
@@ -366,6 +375,7 @@ impl Config {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(required_scopes),
+            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -388,6 +398,12 @@ impl Config {
 /// Default timeout for OIDC/OAuth discovery and JWKS requests when
 /// `transport.auth.discovery_timeout` is not configured.
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Default TTL for cached JWKS entries when `transport.auth.jwks_cache_ttl`
+/// is not configured. Bounds staleness when the same `kid` is used but
+/// rotation to a new `kid` is picked up immediately via the kid-miss fall-through
+/// path.
+const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 
 /// MCP discovery methods that are allowed without authentication when
 /// `allow_anonymous_mcp_discovery` is enabled.
@@ -529,12 +545,19 @@ async fn oauth_validate(
         .discovery_timeout
         .unwrap_or(DEFAULT_DISCOVERY_TIMEOUT);
 
+    let jwks_cache_ttl = auth_config.jwks_cache_ttl.unwrap_or(DEFAULT_JWKS_CACHE_TTL);
+
     let validator = TokenValidator {
         audiences: &auth_config.audiences,
         issuers: &auth_config.issuers,
         allow_any_audience: auth_config.allow_any_audience,
         servers: &auth_state.auth_servers,
-        keys: NetworkedKeyResolver::new(&auth_state.client, discovery_timeout),
+        keys: NetworkedKeyResolver::new(
+            &auth_state.client,
+            discovery_timeout,
+            &auth_state.jwks_cache,
+            jwks_cache_ttl,
+        ),
     };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -629,6 +652,7 @@ mod tests {
             allow_anonymous_mcp_discovery: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
+            jwks_cache_ttl: None,
             discovery_headers: HeaderMap::new(),
         }
     }
@@ -646,6 +670,7 @@ mod tests {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(HashMap::new()),
+            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
