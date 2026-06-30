@@ -815,18 +815,15 @@ mod tests {
                 CachedJwks {
                     keys: stale_jwks,
                     issuer: server.url(),
-                    fetched_at: Instant::now(),
+                    // Back-date so a 1ms TTL is already expired — no sleep needed.
+                    fetched_at: Instant::now() - Duration::from_millis(10),
                     signing_algs: vec!["RS256".to_string()],
                 },
             );
         }
 
-        // 1ms TTL — the entry will expire almost immediately
         let ttl = Duration::from_millis(1);
         let resolver = NetworkedKeyResolver::new(&client, Duration::from_secs(5), &cache, ttl);
-
-        // Let the entry expire
-        tokio::time::sleep(Duration::from_millis(10)).await;
 
         let result = resolver.resolve_key(&issuer_url, "new-key").await;
 
