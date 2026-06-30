@@ -218,8 +218,10 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
 
         // Re-check before inserting; another request may have populated the
-        // cache during the network fetch.
-        if let Ok(mut cache) = self.jwks_cache.write() {
+        // cache during the network fetch. Recover from lock poison: inserting
+        // a fresh value is safe regardless of prior state.
+        {
+            let mut cache = self.jwks_cache.write().unwrap_or_else(|e| e.into_inner());
             if let Some(entry) = cache.get(server)
                 && entry.is_fresh(self.ttl)
                 && let Some(jwk) = entry.keys.keys.get(key_id)
