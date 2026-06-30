@@ -224,6 +224,32 @@ transport:
 - Increase the timeout if your OAuth server is on a slow network or responds slowly.
 - Decrease the timeout in high-performance environments where fast failure is preferred.
 
+### JWKS cache
+
+Token validation requires Apollo MCP Server to fetch each authorization server's JSON Web Key Set (JWKS) — preceded by an OIDC/OAuth discovery call to locate the `jwks_uri`. Without caching, every authorized request pays the cost of both round trips.
+
+Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm path. The `jwks_cache_ttl` setting controls how long a cached entry stays fresh before the next request forces a re-fetch. The default is 10 minutes.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    jwks_cache_ttl: 10m # Tune cache freshness (default: 10m)
+```
+
+**Behavior:**
+
+- On a fresh hit where the requested `kid` is present, the cached JWKS is used and no network calls are made.
+- When there is no cached entry, the cached entry is stale, or the requested `kid` is not present in the cached entry, the next request may trigger a discovery + JWKS fetch and repopulate the cache. Newly rotated keys are picked up the next time a refresh fires for that issuer.
+- The cache is process-local. Each replica warms its own cache independently after startup.
+
+**Considerations:**
+
+- Increase the TTL for stable identity providers to further reduce auth latency and load on the authorization server's discovery and JWKS endpoints.
+- Decrease the TTL if your identity provider rotates signing keys frequently and you cannot tolerate keys that were rotated mid-TTL still being accepted until the next miss. Note that revocation of a still-cached `kid` is not picked up until the entry expires.
+
 ### OIDC Discovery compatibility
 
 Per the MCP specification, authorization servers must provide at least one of:
