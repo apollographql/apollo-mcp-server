@@ -17,6 +17,7 @@ use crate::{
     headers::ForwardHeaders,
     health::HealthCheckConfig,
     operations::{AnnotationOverrides, MutationMode},
+    scope_requirements::OperationRequiredScopes,
     server_info::ServerInfoConfig,
 };
 
@@ -62,7 +63,7 @@ struct Config {
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
     annotations: HashMap<String, AnnotationOverrides>,
-    required_scopes: HashMap<String, Vec<String>>,
+    required_scopes: HashMap<String, OperationRequiredScopes>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,

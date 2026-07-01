@@ -160,13 +160,30 @@ overrides:
       - admin
 ```
 
-When a tool call is made and the token is missing one or more required scopes, the server returns HTTP 403 with a `WWW-Authenticate` header:
+The flat list syntax requires every listed scope for the operation. In the previous example, `DeleteUser` requires both `user:write` and `admin`.
+
+You can also use nested lists to express alternative scope groups, matching Apollo Router's `@requiresScopes` semantics. Each inner list is an AND group, and the outer list is OR:
+
+```yaml title="mcp.yaml"
+overrides:
+  required_scopes:
+    GetUser:
+      - [user:read]
+      - [admin]
+    UpdateUser:
+      - [user:write, tenant:admin]
+      - [admin]
+```
+
+In the previous example, `UpdateUser` requires either (`user:write` and `tenant:admin`) or `admin`.
+
+When a token lacks the required scopes for a tool call, Apollo MCP Server returns `403 Forbidden` with a `WWW-Authenticate` header:
 
 ```
 WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
 ```
 
-The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
+The client can use this response to initiate targeted re-authorization and retry. The OAuth `scope` auth-param is a space-delimited list and cannot represent grouped OR conditions. For nested alternatives, the header includes the complete alternative that requires the fewest additional scopes for the presented token. Apollo MCP Server rejects empty inner alternatives during config parsing. When auth is not configured or Apollo MCP Server runs in stdio mode, Apollo MCP Server skips `required_scopes`.
 
 ## HTTP error responses
 
@@ -198,7 +215,7 @@ WWW-Authenticate: Bearer error="insufficient_scope",
                          resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
 ```
 
-Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. 
+Clients can use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes from `auth.scopes`. The `scope` parameter on a `403` response reflects the scopes required for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`.
 
 ## Performance considerations
 

@@ -149,7 +149,7 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
         .disable_auth_token_passthrough(false)
         .descriptions(HashMap::new())
         .annotations(HashMap::new())
-        .required_scopes(HashMap::new())
+        .required_scopes(HashMap::<String, Vec<String>>::new())
         .search_leaf_depth(5)
         .index_memory_bytes(1024 * 1024)
         .health_check(HealthCheckConfig::default())
