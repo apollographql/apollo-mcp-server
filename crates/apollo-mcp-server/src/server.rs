@@ -19,6 +19,7 @@ use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::host_validation::HostValidationConfig;
 use crate::operations::{AnnotationOverrides, MutationMode, OperationSource};
+use crate::scope_requirements::OperationRequiredScopes;
 use crate::server_info::ServerInfoConfig;
 
 pub(crate) mod states;
@@ -67,7 +68,7 @@ pub struct Server {
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
     annotations: HashMap<String, AnnotationOverrides>,
-    required_scopes: HashMap<String, Vec<String>>,
+    required_scopes: HashMap<String, OperationRequiredScopes>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
     health_check: HealthCheckConfig,
@@ -152,7 +153,7 @@ impl Server {
         disable_auth_token_passthrough: bool,
         descriptions: HashMap<String, String>,
         annotations: HashMap<String, AnnotationOverrides>,
-        required_scopes: HashMap<String, Vec<String>>,
+        required_scopes: HashMap<String, OperationRequiredScopes>,
         search_leaf_depth: usize,
         index_memory_bytes: usize,
         health_check: HealthCheckConfig,

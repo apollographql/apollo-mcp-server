@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use apollo_mcp_server::operations::{AnnotationOverrides, MutationMode};
+use apollo_mcp_server::scope_requirements::OperationRequiredScopes;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -35,11 +36,12 @@ pub struct Overrides {
     pub annotations: HashMap<String, AnnotationOverrides>,
 
     /// Per-operation OAuth scope requirements for step-up authorization.
-    /// Keys are operation names; values are lists of required scopes.
+    /// Keys are operation names; values are lists of required scopes or lists
+    /// of alternative required scope groups.
     /// When a token lacks the required scopes for an operation, the server
     /// returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
-    pub required_scopes: HashMap<String, Vec<String>>,
+    pub required_scopes: HashMap<String, OperationRequiredScopes>,
 }
 
 #[cfg(test)]
@@ -91,15 +93,57 @@ mod tests {
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert_eq!(
             overrides.required_scopes.get("GetUser").unwrap(),
-            &vec!["user:read".to_string()]
+            &OperationRequiredScopes::All(vec!["user:read".to_string()])
         );
         assert_eq!(
             overrides.required_scopes.get("UpdateUser").unwrap(),
-            &vec!["user:write".to_string()]
+            &OperationRequiredScopes::All(vec!["user:write".to_string()])
         );
         assert_eq!(
             overrides.required_scopes.get("DeleteUser").unwrap(),
-            &vec!["user:write".to_string(), "admin".to_string()]
+            &OperationRequiredScopes::All(vec!["user:write".to_string(), "admin".to_string()])
+        );
+    }
+
+    #[test]
+    fn overrides_with_alternative_required_scopes_parses() {
+        let json = serde_json::json!({
+            "required_scopes": {
+                "GetUser": [["user:read"], ["admin"]],
+                "DeleteUser": [["user:write", "tenant:admin"], ["admin"]]
+            }
+        });
+
+        let overrides: Overrides = serde_json::from_value(json).unwrap();
+        assert_eq!(
+            overrides.required_scopes.get("GetUser").unwrap(),
+            &OperationRequiredScopes::AnyOf(vec![
+                vec!["user:read".to_string()],
+                vec!["admin".to_string()],
+            ])
+        );
+        assert_eq!(
+            overrides.required_scopes.get("DeleteUser").unwrap(),
+            &OperationRequiredScopes::AnyOf(vec![
+                vec!["user:write".to_string(), "tenant:admin".to_string()],
+                vec!["admin".to_string()],
+            ])
+        );
+    }
+
+    #[test]
+    fn overrides_with_empty_required_scope_alternative_rejects() {
+        let json = serde_json::json!({
+            "required_scopes": {
+                "GetUser": [[]]
+            }
+        });
+
+        let error = serde_json::from_value::<Overrides>(json).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("required_scopes alternatives must not contain empty scope groups")
         );
     }
 

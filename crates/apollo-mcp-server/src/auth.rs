@@ -24,6 +24,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
+use crate::scope_requirements::OperationRequiredScopes;
+
 mod networked_key_resolver;
 mod protected_resource;
 mod valid_token;
@@ -298,7 +300,7 @@ struct AuthState {
     /// path neither re-parses nor allocates them.
     auth_servers: Arc<[Url]>,
     /// Per-operation required scopes, keyed by operation name.
-    required_scopes: Arc<HashMap<String, Vec<String>>>,
+    required_scopes: Arc<HashMap<String, OperationRequiredScopes>>,
 }
 
 impl Config {
@@ -308,7 +310,7 @@ impl Config {
     pub fn enable_middleware(
         &self,
         router: Router,
-        required_scopes: HashMap<String, Vec<String>>,
+        required_scopes: HashMap<String, OperationRequiredScopes>,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -438,15 +440,15 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 /// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
 fn missing_scopes_for_operation<'a>(
     peek: &JsonRpcBodyPeek,
-    required_scopes: &'a HashMap<String, Vec<String>>,
+    required_scopes: &'a HashMap<String, OperationRequiredScopes>,
     token_scopes: &[String],
-) -> Option<&'a [String]> {
+) -> Option<&'a OperationRequiredScopes> {
     if peek.method != "tools/call" {
         return None;
     }
     let op_name = peek.params.as_ref()?.name.as_deref()?;
     let required = required_scopes.get(op_name)?;
-    if required.iter().all(|s| token_scopes.contains(s)) {
+    if required.is_satisfied_by(token_scopes) {
         return None;
     }
     Some(required)
@@ -582,6 +584,7 @@ async fn oauth_validate(
     if let Some(required) = body_peek.as_ref().and_then(|peek| {
         missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
     }) {
+        let challenge_scopes = required.challenge_scopes(&valid_token.scopes);
         tracing::warn!(
             required = ?required,
             present = ?valid_token.scopes,
@@ -589,7 +592,7 @@ async fn oauth_validate(
         );
         tracing::Span::current().record("reason", "insufficient_scope");
         tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-        return Err(forbidden_error(required));
+        return Err(forbidden_error(&challenge_scopes));
     }
 
     // Insert new context to ensure that handlers only use our enforced token verification
@@ -1595,11 +1598,22 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
     mod per_operation_scope_enforcement {
         use super::*;
+        use crate::scope_requirements::OperationRequiredScopes;
 
-        fn required() -> HashMap<String, Vec<String>> {
+        fn required() -> HashMap<String, OperationRequiredScopes> {
             HashMap::from([(
                 "RestrictedOp".to_string(),
-                vec!["sensitive:read".to_string()],
+                OperationRequiredScopes::All(vec!["sensitive:read".to_string()]),
+            )])
+        }
+
+        fn alternative_required() -> HashMap<String, OperationRequiredScopes> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::AnyOf(vec![
+                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                    vec!["admin".to_string()],
+                ]),
             )])
         }
 
@@ -1618,7 +1632,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let scopes = vec!["other:scope".to_string()];
             let required = required();
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
-            assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
+            assert_eq!(
+                result,
+                Some(&OperationRequiredScopes::All(vec![
+                    "sensitive:read".to_string()
+                ]))
+            );
         }
 
         #[test]
@@ -1628,6 +1647,43 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let required = required();
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_one_scope_alternative() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["admin".to_string(), "other:scope".to_string()];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_one_scope_group() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec![
+                "sensitive:read".to_string(),
+                "tenant:admin".to_string(),
+                "other:scope".to_string(),
+            ];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_required_scopes_when_token_satisfies_no_complete_alternative() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["sensitive:read".to_string()];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert_eq!(
+                result,
+                Some(&OperationRequiredScopes::AnyOf(vec![
+                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                    vec!["admin".to_string()],
+                ]))
+            );
         }
 
         #[test]

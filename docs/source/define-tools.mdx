@@ -204,9 +204,9 @@ Config-level descriptions take priority over comment-based descriptions when bot
 
 ### Config-level scope requirements
 
-To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, the server returns HTTP 403 and the client can re-authorize with the precise scopes needed. See [Per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
+To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, the server returns HTTP 403 and the client can re-authorize with a compatible scope set. See [Per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
 
-```yaml title="Config with per-operation scope requirements" {4-9}
+```yaml title="Config with per-operation scope requirements" {4-13}
 operations:
   source: local
   paths: [./operations]
@@ -218,7 +218,12 @@ overrides:
     DeleteAlert:
       - alerts:write
       - admin
+    AcknowledgeAlert:
+      - [alerts:write]
+      - [admin]
 ```
+
+Flat lists require all listed scopes. Nested lists define alternatives: each inner list is AND, and the outer list is OR.
 
 ### Config-level annotations
 
