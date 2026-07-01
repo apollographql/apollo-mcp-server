@@ -178,12 +178,12 @@ These fields are under the top-level `logging` key.
 ### Operation source
 
 These fields are under the top-level `operations` key. The available fields depend on the value of the nested `source` key.
-The default value for `source` is `"infer"`. Learn more about [defining tools as operations](/apollo-mcp-server/define-tools).
+The default value for `source` is `"infer"`. See [defining tools as operations](/apollo-mcp-server/define-tools).
 
 | Source             | Option   | Type             | Description                                                                                                                                             |
 | :----------------- | :------- | :--------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GraphOS Collection | `source` | `"collection"`   | Load operations from a GraphOS collection                                                                                                               |
-| GraphOS Collection | `id`     | `string`         | The collection ID to use in GraphOS. Use `default` for the default collection. [Learn more](/apollo-mcp-server/define-tools#from-operation-collection). |
+| GraphOS Collection | `id`     | `string`         | The collection ID to use in GraphOS. Use `default` for the default collection. See [GraphOS operation collections](/apollo-mcp-server/define-tools#from-operation-collection). |
 | Introspection      | `source` | `"introspect"`   | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                                     |
 | Local              | `source` | `"local"`        | Load operations from local GraphQL files or directories                                                                                                 |
 | Local              | `paths`  | `List<FilePath>` | Paths to GraphQL files or directories to search. Note: These paths are relative to the location from which you are running Apollo MCP Server.           |
@@ -215,9 +215,9 @@ These fields are under the top-level `overrides` key.
 | `enable_output_schema`       | `bool`                              | `false`  | Enable output schema generation for tools. Adds token overhead but helps LLMs understand response structure                                                                                    |
 | `enable_explorer`            | `bool`                              | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: This requires a GraphOS graph reference                                                               |
 | `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Defines the mutation access level for the MCP server                                                                                                                                           |
-| `descriptions`               | `Map<String, String>`               | `{}`     | Optional map from operation name to tool description. Overrides auto-generated descriptions for any operation source. [Learn more](/apollo-mcp-server/define-tools#config-level-descriptions). |
+| `descriptions`               | `Map<String, String>`               | `{}`     | Optional map from operation name to tool description. Overrides auto-generated descriptions for any operation source. See [config-level descriptions](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
-| `required_scopes`            | `Map<String, List<String> \| List<List<String>>>` | `{}`     | Optional map from operation name to required OAuth scopes. A flat list requires all scopes. Nested lists allow alternatives: each inner list is AND, and the outer list is OR. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more](/apollo-mcp-server/auth#per-operation-scope-requirements). |
+| `required_scopes`            | `Map<String, List<String> \| List<List<String>>>` | `{}`     | Optional map from operation name to required OAuth scopes. A flat list requires all scopes. Nested lists allow alternatives: each inner list is AND, and the outer list is OR. When a token lacks the required scopes for an operation, Apollo MCP Server returns `403 Forbidden` with `WWW-Authenticate: Bearer error="insufficient_scope"`. See [per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements). |
 
 ### Schema source
 

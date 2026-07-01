@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, de};
 
@@ -25,6 +27,37 @@ pub enum OperationRequiredScopes {
     All(Vec<String>),
     /// The token must satisfy at least one listed scope group.
     AnyOf(Vec<Vec<String>>),
+}
+
+/// Per-operation OAuth scope requirements keyed by operation name.
+///
+/// Existing builder callers can continue passing `HashMap<String, Vec<String>>`,
+/// which preserves the flat "all scopes are required" behavior. Parsed config
+/// can pass `HashMap<String, OperationRequiredScopes>` to include nested
+/// alternatives.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OperationScopeRequirements(HashMap<String, OperationRequiredScopes>);
+
+impl OperationScopeRequirements {
+    pub(crate) fn into_inner(self) -> HashMap<String, OperationRequiredScopes> {
+        self.0
+    }
+}
+
+impl From<HashMap<String, Vec<String>>> for OperationScopeRequirements {
+    fn from(required_scopes: HashMap<String, Vec<String>>) -> Self {
+        required_scopes
+            .into_iter()
+            .map(|(operation, scopes)| (operation, OperationRequiredScopes::All(scopes)))
+            .collect::<HashMap<_, _>>()
+            .into()
+    }
+}
+
+impl From<HashMap<String, OperationRequiredScopes>> for OperationScopeRequirements {
+    fn from(required_scopes: HashMap<String, OperationRequiredScopes>) -> Self {
+        Self(required_scopes)
+    }
 }
 
 #[derive(Deserialize)]
@@ -106,6 +139,20 @@ mod tests {
 
         assert!(required.is_satisfied_by(&scopes(&["read", "write", "admin"])));
         assert!(!required.is_satisfied_by(&scopes(&["read"])));
+    }
+
+    #[test]
+    fn flat_scope_map_converts_to_operation_requirements() {
+        let required = OperationScopeRequirements::from(HashMap::from([(
+            "GetUser".to_string(),
+            scopes(&["read", "write"]),
+        )]))
+        .into_inner();
+
+        assert_eq!(
+            required.get("GetUser"),
+            Some(&OperationRequiredScopes::All(scopes(&["read", "write"])))
+        );
     }
 
     #[test]

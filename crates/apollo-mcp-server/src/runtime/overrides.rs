@@ -38,8 +38,8 @@ pub struct Overrides {
     /// Per-operation OAuth scope requirements for step-up authorization.
     /// Keys are operation names; values are lists of required scopes or lists
     /// of alternative required scope groups.
-    /// When a token lacks the required scopes for an operation, the server
-    /// returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`.
+    /// When a token lacks the required scopes for an operation, Apollo MCP Server
+    /// returns `403 Forbidden` with `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
     pub required_scopes: HashMap<String, OperationRequiredScopes>,
 }

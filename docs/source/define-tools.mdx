@@ -204,7 +204,7 @@ Config-level descriptions take priority over comment-based descriptions when bot
 
 ### Config-level scope requirements
 
-To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, the server returns HTTP 403 and the client can re-authorize with a compatible scope set. See [Per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
+To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, Apollo MCP Server returns `403 Forbidden`, and the client can re-authorize with a compatible scope set. See [per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
 
 ```yaml title="Config with per-operation scope requirements" {4-13}
 operations:
