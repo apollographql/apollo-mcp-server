@@ -41,14 +41,13 @@ impl CachedJwks {
 ///  A future that does one cold-cache JWKS fetch and self-evicts from the inflight map.
 pub(super) type InflightFetch = Shared<BoxFuture<'static, ()>>;
 
-/// Per-issuer fetch coordination state, guarded by one mutex so the
-/// join-or-start-or-reject decision in `acquire_inflight_slot` is atomic.
+/// Per-issuer fetch coordination state, guarded by a single mutex.
 #[derive(Default)]
 pub(super) struct IssuerFetchState {
     /// In-flight cold fetches keyed by issuer URL.
     slots: HashMap<Url, InflightFetch>,
-    /// When each issuer's most recent fetch was started. Bounded by the
-    /// configured server list; never evicted.
+    /// When each issuer's most recent fetch started. Bounded by the
+    /// configured server list.
     last_attempt: HashMap<Url, Instant>,
 }
 
@@ -98,13 +97,10 @@ impl<'a> NetworkedKeyResolver<'a> {
     /// Returns a future that completes when this issuer's fetch is done, or
     /// `None` if starting a fetch is not allowed right now.
     ///
-    /// **Invariant ownership:** this is the sole site that decides whether
-    /// this request triggers a new upstream fetch, joins an existing one, or
-    /// is refused. At most one fetch per issuer is ever in flight, and at
-    /// most one fetch per issuer starts per `min_refresh_interval`. Joining
-    /// an in-flight fetch is always allowed — it adds no upstream traffic.
-    /// The window is consumed when a fetch *starts* (even if it later fails),
-    /// so an unreachable issuer is retried at most once per window.
+    /// Sole owner of the fetch decision: at most one fetch per issuer is in
+    /// flight, and at most one starts per `min_refresh_interval`. Joining an
+    /// in-flight fetch is always allowed. The window is consumed when a
+    /// fetch starts, even if it later fails.
     fn acquire_inflight_slot(&self, server: Url) -> Option<InflightFetch> {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -335,23 +331,19 @@ async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration)
 }
 
 impl KeyResolver for NetworkedKeyResolver<'_> {
-    /// Resolves from the in-memory cache when fresh. On a cold or expired
-    /// entry, concurrent callers for the same issuer share a single upstream
-    /// fetch, and at most one fetch per issuer starts per
-    /// `min_refresh_interval` — a miss inside the window is answered from the
-    /// cache alone (no outbound request), which for an unknown `kid` means
-    /// `None` and a 401 from the middleware.
+    /// Resolves from the in-memory cache when fresh. Concurrent misses for
+    /// the same issuer share a single upstream fetch, and at most one fetch
+    /// per issuer starts per `min_refresh_interval`; a miss inside the
+    /// window is answered from the cache alone, with no outbound request.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
         if let Some(result) = self.lookup_fresh(server, key_id) {
             return Some(result);
         }
 
-        // Cold path: join or start the issuer's single fetch, unless the
-        // per-issuer refresh window is exhausted.
         let Some(fetch) = self.acquire_inflight_slot(server.clone()) else {
-            // Rate limited: no network. Re-read the cache before rejecting —
-            // a refresh that completed between our first lookup and the slot
-            // check may have just populated it with our `kid`.
+            // Rate limited: re-read the cache before rejecting, since a
+            // refresh finishing after the first lookup may have added this
+            // `kid`.
             return self.lookup_fresh(server, key_id);
         };
         fetch.await;
@@ -1051,10 +1043,9 @@ mod tests {
 
     #[tokio::test]
     async fn kid_miss_inside_refresh_window_returns_none_without_network() {
-        // One cold fetch populates the cache and consumes the refresh window.
-        // A subsequent request for an unknown kid inside the window must be
-        // rejected (None) with zero additional upstream requests — mockito's
-        // .expect(1) on each mock enforces "no second fetch."
+        // After a cold fetch consumes the refresh window, an unknown kid
+        // inside the window must be rejected with no additional upstream
+        // requests.
         let mut server = mockito::Server::new_async().await;
 
         let discovery_json = format!(
@@ -1122,9 +1113,8 @@ mod tests {
 
     #[tokio::test]
     async fn thousand_unique_kid_misses_trigger_one_upstream_fetch_pair() {
-        // The AMS-534 acceptance criterion: 1000 inbound requests with random
-        // kids inside one refresh window produce exactly one upstream
-        // discovery + JWKS fetch pair for the issuer.
+        // 1000 requests with unique bogus kids inside one refresh window
+        // must produce exactly one upstream discovery + JWKS fetch pair.
         let mut server = mockito::Server::new_async().await;
 
         let discovery_json = format!(
@@ -1181,8 +1171,9 @@ mod tests {
 
     #[tokio::test]
     async fn refresh_allowed_again_after_window_elapses() {
-        // Back-date last_attempt past the window instead of sleeping, so the
-        // test is deterministic. The second fetch must then be allowed.
+        // A fetch must be allowed again once the refresh window has elapsed.
+        // Back-dates last_attempt instead of sleeping, so the test is
+        // deterministic.
         let mut server = mockito::Server::new_async().await;
 
         let discovery_json = format!(
@@ -1300,8 +1291,8 @@ mod tests {
             Duration::from_secs(60),
         );
 
-        // Issuer A: rejected without touching the network (its host does not
-        // even resolve, so any attempted fetch would fail loudly or hang).
+        // Issuer A is inside its window: rejected without touching the
+        // network.
         let a = resolver.resolve_key(&issuer_a, "any-kid").await;
         assert!(a.is_none(), "issuer A is inside its window");
 
@@ -1314,9 +1305,9 @@ mod tests {
 
     #[tokio::test]
     async fn failed_fetch_consumes_the_refresh_window() {
-        // An unreachable issuer is retried at most once per window: the first
-        // call attempts (and fails) discovery; the second call inside the
-        // window makes zero requests. mockito .expect(...) counts enforce it.
+        // A failing issuer is retried at most once per window: the first
+        // call attempts discovery and fails; the second call inside the
+        // window makes zero requests.
         let mut server = mockito::Server::new_async().await;
 
         // Both discovery URLs fail — one hit each on the first attempt only.
