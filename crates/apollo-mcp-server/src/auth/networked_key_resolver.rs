@@ -1175,4 +1175,184 @@ mod tests {
         discovery_mock.assert();
         jwks_mock.assert();
     }
+
+    #[tokio::test]
+    async fn refresh_allowed_again_after_window_elapses() {
+        // Back-date last_attempt past the window instead of sleeping, so the
+        // test is deterministic. The second fetch must then be allowed.
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"rotated-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+
+        // Simulate a refresh that happened 120s ago with a 60s window.
+        {
+            let mut guard = inflight.lock().expect("inflight not poisoned");
+            guard
+                .last_attempt
+                .insert(issuer_url.clone(), Instant::now() - Duration::from_secs(120));
+        }
+
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "rotated-key").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(
+            result.is_some(),
+            "fetch should be allowed once the window has elapsed"
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_is_per_issuer_not_global() {
+        // Exhausting issuer A's window must not block issuer B's fetch.
+        let mut server_b = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server_b.url(),
+            server_b.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"issuer-b-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server_b
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server_b
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_a = Url::parse("https://issuer-a.example.com").expect("valid URL");
+        let issuer_b = Url::parse(&server_b.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+
+        // Issuer A's window was just consumed.
+        {
+            let mut guard = inflight.lock().expect("inflight not poisoned");
+            guard.last_attempt.insert(issuer_a.clone(), Instant::now());
+        }
+
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        // Issuer A: rejected without touching the network (its host does not
+        // even resolve, so any attempted fetch would fail loudly or hang).
+        let a = resolver.resolve_key(&issuer_a, "any-kid").await;
+        assert!(a.is_none(), "issuer A is inside its window");
+
+        // Issuer B: its own window is untouched; fetch proceeds.
+        let b = resolver.resolve_key(&issuer_b, "issuer-b-key").await;
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(b.is_some(), "issuer B has an independent refresh window");
+    }
+
+    #[tokio::test]
+    async fn failed_fetch_consumes_the_refresh_window() {
+        // An unreachable issuer is retried at most once per window: the first
+        // call attempts (and fails) discovery; the second call inside the
+        // window makes zero requests. mockito .expect(...) counts enforce it.
+        let mut server = mockito::Server::new_async().await;
+
+        // Both discovery URLs fail — one hit each on the first attempt only.
+        let rfc8414_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let oidc_mock = server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        let first = resolver.resolve_key(&issuer_url, "any-kid").await;
+        assert!(first.is_none(), "fetch against a failing issuer returns None");
+
+        let second = resolver.resolve_key(&issuer_url, "any-kid").await;
+        assert!(
+            second.is_none(),
+            "second attempt inside the window is rejected without HTTP"
+        );
+
+        // Exactly one hit per discovery URL across both calls.
+        rfc8414_mock.assert();
+        oidc_mock.assert();
+    }
 }
