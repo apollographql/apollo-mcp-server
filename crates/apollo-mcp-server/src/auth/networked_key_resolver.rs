@@ -1111,7 +1111,10 @@ mod tests {
 
         // A known kid still resolves from the warm cache.
         let third = resolver.resolve_key(&issuer_url, "known-key").await;
-        assert!(third.is_some(), "warm hits are unaffected by the rate limit");
+        assert!(
+            third.is_some(),
+            "warm hits are unaffected by the rate limit"
+        );
 
         discovery_mock.assert();
         jwks_mock.assert();
@@ -1217,9 +1220,10 @@ mod tests {
         // Simulate a refresh that happened 120s ago with a 60s window.
         {
             let mut guard = inflight.lock().expect("inflight not poisoned");
-            guard
-                .last_attempt
-                .insert(issuer_url.clone(), Instant::now() - Duration::from_secs(120));
+            guard.last_attempt.insert(
+                issuer_url.clone(),
+                Instant::now() - Duration::from_secs(120),
+            );
         }
 
         let client = reqwest::Client::new();
@@ -1343,7 +1347,10 @@ mod tests {
         );
 
         let first = resolver.resolve_key(&issuer_url, "any-kid").await;
-        assert!(first.is_none(), "fetch against a failing issuer returns None");
+        assert!(
+            first.is_none(),
+            "fetch against a failing issuer returns None"
+        );
 
         let second = resolver.resolve_key(&issuer_url, "any-kid").await;
         assert!(
