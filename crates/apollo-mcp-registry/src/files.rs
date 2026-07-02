@@ -79,20 +79,21 @@ fn watch_inner(
                             watched_path
                         );
                     } else {
-                        loop {
-                            match watch_sender.try_send(()) {
-                                Ok(_) => break,
-                                Err(err) => {
-                                    tracing::warn!(
-                                        "could not process file watch notification. {}",
-                                        err.to_string()
-                                    );
-                                    if matches!(err, TrySendError::Full(_)) {
-                                        std::thread::sleep(Duration::from_millis(50));
-                                    } else {
-                                        panic!("event channel failed: {err}");
-                                    }
-                                }
+                        // Coalesce notifications: the channel has capacity 1 and the
+                        // consumer only needs to know "something changed", not how many
+                        // times. If the channel is full a notification is already queued,
+                        // so a duplicate is safe to drop. Looping with `std::thread::sleep`
+                        // here from inside the notify watcher thread could absorb the
+                        // thread under burst (issue #743).
+                        match watch_sender.try_send(()) {
+                            Ok(_) => {}
+                            Err(TrySendError::Full(_)) => {
+                                tracing::trace!(
+                                    "file watch notification coalesced (consumer falling behind)"
+                                );
+                            }
+                            Err(err @ TrySendError::Closed(_)) => {
+                                tracing::error!("file watch channel closed: {err}");
                             }
                         }
                     }
