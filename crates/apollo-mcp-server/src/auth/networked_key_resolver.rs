@@ -41,8 +41,19 @@ impl CachedJwks {
 ///  A future that does one cold-cache JWKS fetch and self-evicts from the inflight map.
 pub(super) type InflightFetch = Shared<BoxFuture<'static, ()>>;
 
-/// Map of in-flight cold fetches keyed by issuer URL.
-pub(super) type InflightMap = Mutex<HashMap<Url, InflightFetch>>;
+/// Per-issuer fetch coordination state, guarded by one mutex so the
+/// join-or-start-or-reject decision in `acquire_inflight_slot` is atomic.
+#[derive(Default)]
+pub(super) struct IssuerFetchState {
+    /// In-flight cold fetches keyed by issuer URL.
+    slots: HashMap<Url, InflightFetch>,
+    /// When each issuer's most recent fetch was started. Bounded by the
+    /// configured server list; never evicted.
+    #[allow(dead_code)] // consumed in Step 5
+    last_attempt: HashMap<Url, Instant>,
+}
+
+pub(super) type InflightMap = Mutex<IssuerFetchState>;
 
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
 /// discovery.
@@ -88,7 +99,7 @@ impl<'a> NetworkedKeyResolver<'a> {
     fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
-        if let Some(existing) = guard.get(&server) {
+        if let Some(existing) = guard.slots.get(&server) {
             return existing.clone();
         }
 
@@ -100,7 +111,7 @@ impl<'a> NetworkedKeyResolver<'a> {
             self.discovery_timeout,
         );
 
-        guard.insert(server, fetch.clone());
+        guard.slots.insert(server, fetch.clone());
         fetch
     }
 
@@ -119,6 +130,7 @@ impl<'a> NetworkedKeyResolver<'a> {
                 inflight
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
+                    .slots
                     .remove(&server);
                 return;
             };
@@ -127,6 +139,7 @@ impl<'a> NetworkedKeyResolver<'a> {
                 inflight
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
+                    .slots
                     .remove(&server);
                 return;
             };
@@ -147,6 +160,7 @@ impl<'a> NetworkedKeyResolver<'a> {
             inflight
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
+                .slots
                 .remove(&server);
         }
         .boxed()
@@ -698,7 +712,7 @@ mod tests {
         );
         let jwks = make_test_jwks(&client, &jwks_json).await;
 
-        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
 
         // Actual test server — any request reaching here means the warm path failed.
         let mut server = mockito::Server::new_async().await;
@@ -749,7 +763,7 @@ mod tests {
         );
         let jwks = make_test_jwks(&client, &jwks_json).await;
 
-        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
 
         let mut server = mockito::Server::new_async().await;
         let no_network = server
@@ -802,7 +816,7 @@ mod tests {
             TEST_RSA_N, TEST_RSA_E
         );
 
-        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
 
         let discovery_mock = server
             .mock("GET", "/.well-known/oauth-authorization-server")
@@ -855,7 +869,7 @@ mod tests {
         );
         let stale_jwks = make_test_jwks(&client, &stale_jwks_json).await;
 
-        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
 
         let mut server = mockito::Server::new_async().await;
 
@@ -956,7 +970,7 @@ mod tests {
 
         let issuer_url = Url::parse(&server.url()).expect("valid URL");
         let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
-        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
         let client = reqwest::Client::new();
 
         // Spawn 100 tasks that all race to resolve the same key against the same
@@ -995,7 +1009,7 @@ mod tests {
         // And the inflight map self-evicted after the leader completed.
         let inflight_guard = inflight.lock().expect("inflight not poisoned");
         assert!(
-            inflight_guard.is_empty(),
+            inflight_guard.slots.is_empty(),
             "inflight slot should be removed after the leader's future resolved"
         );
     }
