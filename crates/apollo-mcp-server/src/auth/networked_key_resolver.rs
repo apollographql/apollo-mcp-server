@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use futures::FutureExt;
 use futures::future::{BoxFuture, Shared};
 use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
@@ -38,7 +39,6 @@ impl CachedJwks {
 }
 
 ///  A future that does one cold-cache JWKS fetch and self-evicts from the inflight map.
-#[allow(dead_code)]
 pub(super) type InflightFetch = Shared<BoxFuture<'static, ()>>;
 
 /// Map of in-flight cold fetches keyed by issuer URL.
@@ -49,7 +49,6 @@ pub(super) type InflightMap = Mutex<HashMap<Url, InflightFetch>>;
 pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
-    #[allow(dead_code)]
     inflight: &'a Arc<InflightMap>,
     jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
     ttl: Duration,
@@ -70,6 +69,101 @@ impl<'a> NetworkedKeyResolver<'a> {
             jwks_cache,
             ttl,
         }
+    }
+
+    /// Reads the JWKS cache under the read lock and returns the resolved
+    /// `(jwk, issuer)` if a fresh entry with `key_id` exists. Returns `None`
+    /// for any combination of: no entry, stale entry, kid not in entry, or
+    /// lock poisoned (we treat poisoning as a miss; the next writer will
+    /// recover with `unwrap_or_else(|e| e.into_inner())`).
+    fn lookup_fresh(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
+        let cache = self.jwks_cache.read().ok()?;
+        let entry = cache.get(server)?;
+        if !entry.is_fresh(self.ttl) {
+            return None;
+        }
+        entry.lookup(key_id, server)
+    }
+
+    /// Returns a future that completes when this issuer's cold fetch is done.
+    /// If a slot already exists for `server`, returns a clone of the in-flight
+    /// `Shared` future. Otherwise, builds a fresh fetch future, installs it
+    /// in the inflight map under `server`, and returns a clone.
+    ///
+    /// The fetch future is responsible for removing its own slot from the map
+    /// before resolving; we never leave a stale slot behind.
+    fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
+        let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
+
+        if let Some(existing) = guard.get(&server) {
+            return existing.clone();
+        }
+
+        let fetch = Self::build_fetch_future(
+            self.client.clone(),
+            Arc::clone(self.jwks_cache),
+            Arc::clone(self.inflight),
+            server.clone(),
+            self.discovery_timeout,
+        );
+
+        guard.insert(server, fetch.clone());
+        fetch
+    }
+
+    /// Builds the one-shot future that runs discovery + JWKS fetch, inserts
+    /// into the cache, and removes its own slot from the inflight map before
+    /// resolving. Output is `()` — concurrent callers re-read the cache for
+    /// their own `kid` lookup.
+    fn build_fetch_future(
+        client: reqwest::Client,
+        jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
+        inflight: Arc<InflightMap>,
+        server: Url,
+        discovery_timeout: Duration,
+    ) -> InflightFetch {
+        async move {
+            // Do the network work. `discover_metadata`/`fetch_jwks` log their
+            // own failures; we just decide whether to populate the cache.
+            let Some(metadata) = discover_metadata(&client, &server, discovery_timeout).await
+            else {
+                inflight
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&server);
+                return;
+            };
+            let Some(jwks) = fetch_jwks(&client, &metadata.jwks_uri, discovery_timeout).await
+            else {
+                inflight
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&server);
+                return;
+            };
+
+            let entry = CachedJwks {
+                keys: jwks,
+                issuer: metadata.issuer,
+                fetched_at: Instant::now(),
+                signing_algs: metadata.id_token_signing_alg_values_supported,
+            };
+
+            // Insert into the cache, then evict the inflight slot. Cache-then-
+            // evict ordering matters: a request arriving between these two
+            // operations sees the fresh cache entry on its warm-path read and
+            // does not become a new leader.
+            {
+                let mut cache = jwks_cache.write().unwrap_or_else(|e| e.into_inner());
+                cache.insert(server.clone(), entry);
+            }
+            inflight
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&server);
+        }
+        .boxed()
+        .shared()
     }
 }
 
@@ -224,43 +318,28 @@ async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration)
 }
 
 impl KeyResolver for NetworkedKeyResolver<'_> {
-    /// `discovery_timeout` bounds each network stage (metadata fetch and JWKS
-    /// fetch) independently, so a cold-cache lookup can take up to 2×
-    /// `discovery_timeout` on the happy path. The JWKS fetch does not fall
-    /// back to alternate discovery URLs on failure; real providers advertise
-    /// the same `jwks_uri` from every well-known path.
+    /// On the warm path, returns from the in-memory cache without any network
+    /// call. On a cold or stale-entry path, exactly one fetch per issuer runs
+    /// process-wide regardless of inbound concurrency — concurrent callers
+    /// share an inflight slot keyed by issuer URL. The slot self-evicts as
+    /// the leader's future resolves, so a failed fetch does not poison the
+    /// next caller's retry. `discovery_timeout` still bounds each network
+    /// stage independently.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        // Return immediately if the key is cached and fresh.
-        if let Ok(cache) = self.jwks_cache.read()
-            && let Some(entry) = cache.get(server)
-            && entry.is_fresh(self.ttl)
-            && let Some(result) = entry.lookup(key_id, server)
-        {
+        // Warm path: in-memory lookup, no network.
+        if let Some(result) = self.lookup_fresh(server, key_id) {
             return Some(result);
         }
 
-        let metadata = discover_metadata(self.client, server, self.discovery_timeout).await?;
-        let jwks = fetch_jwks(self.client, &metadata.jwks_uri, self.discovery_timeout).await?;
+        // Cold path: become singleflight leader, or join as follower.
+        let fetch = self.acquire_inflight_slot(server.clone());
+        fetch.await;
 
-        // Re-check before inserting; another request may have populated the
-        // cache during the network fetch. Recover from lock poison: inserting
-        // a fresh value is safe regardless of prior state.
-        let mut cache = self.jwks_cache.write().unwrap_or_else(|e| e.into_inner());
-        if let Some(entry) = cache.get(server)
-            && entry.is_fresh(self.ttl)
-            && let Some(result) = entry.lookup(key_id, server)
-        {
-            return Some(result);
-        }
-        let entry = CachedJwks {
-            keys: jwks,
-            issuer: metadata.issuer,
-            fetched_at: Instant::now(),
-            signing_algs: metadata.id_token_signing_alg_values_supported,
-        };
-        let result = entry.lookup(key_id, server);
-        cache.insert(server.clone(), entry);
-        result
+        // After the slot resolves, the leader has either populated the cache
+        // or failed. Either way, do our own per-`kid` lookup against the
+        // current cache state. Followers asking for a different `kid` than
+        // the leader get the right answer this way.
+        self.lookup_fresh(server, key_id)
     }
 }
 
