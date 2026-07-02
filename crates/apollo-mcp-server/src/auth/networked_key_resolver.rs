@@ -71,14 +71,8 @@ impl<'a> NetworkedKeyResolver<'a> {
         }
     }
 
-    /// Reads the JWKS cache under the read lock and returns the resolved
-    /// `(jwk, issuer)` if a fresh entry with `key_id` exists.
-    ///
-    /// **Invariant ownership:** this is the sole site that decides whether the
-    /// cache can serve a request without going to the network. After
-    /// `acquire_inflight_slot` resolves, callers re-invoke this method to do
-    /// their own per-`kid` lookup; we never decide "fresh-enough?" anywhere
-    /// else in this file.
+    /// Returns the resolved `(jwk, issuer)` if the cache holds a fresh entry
+    /// containing `key_id`.
     fn lookup_fresh(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
         let cache = self.jwks_cache.read().ok()?;
         let entry = cache.get(server)?;
@@ -88,19 +82,9 @@ impl<'a> NetworkedKeyResolver<'a> {
         entry.lookup(key_id, server)
     }
 
-    /// Returns a future that completes when this issuer's cold fetch is done.
-    /// If a slot already exists for `server`, returns a clone of the in-flight
-    /// `Shared` future. Otherwise, builds a fresh fetch future, installs it
-    /// in the inflight map under `server`, and returns a clone.
-    ///
-    /// The fetch future is responsible for removing its own slot from the map
-    /// before resolving; we never leave a stale slot behind.
-    ///
-    /// **Invariant ownership:** this is the sole site that decides whether
-    /// this request triggers a new upstream fetch or joins an existing one.
-    /// At most one `Shared<BoxFuture<()>>` per issuer URL is alive in the
-    /// inflight map at any time, so `build_fetch_future` never races a peer
-    /// when writing to the cache.
+    /// Returns a future that completes when this issuer's cold fetch is done,
+    /// joining the in-flight fetch if one exists or starting a new one. At
+    /// most one fetch per issuer is ever in flight.
     fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -120,10 +104,8 @@ impl<'a> NetworkedKeyResolver<'a> {
         fetch
     }
 
-    /// Builds the one-shot future that runs discovery + JWKS fetch, inserts
-    /// into the cache, and removes its own slot from the inflight map before
-    /// resolving. Output is `()` — concurrent callers re-read the cache for
-    /// their own `kid` lookup.
+    /// Builds the one-shot future that fetches the issuer's keys, populates
+    /// the cache, and removes its own inflight slot before resolving.
     fn build_fetch_future(
         client: reqwest::Client,
         jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
@@ -132,8 +114,6 @@ impl<'a> NetworkedKeyResolver<'a> {
         discovery_timeout: Duration,
     ) -> InflightFetch {
         async move {
-            // Do the network work. `discover_metadata`/`fetch_jwks` log their
-            // own failures; we just decide whether to populate the cache.
             let Some(metadata) = discover_metadata(&client, &server, discovery_timeout).await
             else {
                 inflight
@@ -158,10 +138,8 @@ impl<'a> NetworkedKeyResolver<'a> {
                 signing_algs: metadata.id_token_signing_alg_values_supported,
             };
 
-            // Insert into the cache, then evict the inflight slot. Cache-then-
-            // evict ordering matters: a request arriving between these two
-            // operations sees the fresh cache entry on its warm-path read and
-            // does not become a new leader.
+            // Populate the cache before evicting the slot, so late arrivals
+            // see the fresh entry instead of starting a new fetch.
             {
                 let mut cache = jwks_cache.write().unwrap_or_else(|e| e.into_inner());
                 cache.insert(server.clone(), entry);
@@ -327,27 +305,19 @@ async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration)
 }
 
 impl KeyResolver for NetworkedKeyResolver<'_> {
-    /// On the warm path, returns from the in-memory cache without any network
-    /// call. On a cold or stale-entry path, exactly one fetch per issuer runs
-    /// process-wide regardless of inbound concurrency — concurrent callers
-    /// share an inflight slot keyed by issuer URL. The slot self-evicts as
-    /// the leader's future resolves, so a failed fetch does not poison the
-    /// next caller's retry. `discovery_timeout` still bounds each network
-    /// stage independently.
+    /// Resolves from the in-memory cache when fresh. On a cold or expired
+    /// entry, concurrent callers for the same issuer share a single upstream
+    /// fetch; a failed fetch does not block the next caller's retry.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        // Warm path: in-memory lookup, no network.
         if let Some(result) = self.lookup_fresh(server, key_id) {
             return Some(result);
         }
 
-        // Cold path: become singleflight leader, or join as follower.
+        // Cold path: share one fetch per issuer across concurrent callers.
         let fetch = self.acquire_inflight_slot(server.clone());
         fetch.await;
 
-        // After the slot resolves, the leader has either populated the cache
-        // or failed. Either way, do our own per-`kid` lookup against the
-        // current cache state. Followers asking for a different `kid` than
-        // the leader get the right answer this way.
+        // Each caller looks up its own `kid` against the refreshed cache.
         self.lookup_fresh(server, key_id)
     }
 }
