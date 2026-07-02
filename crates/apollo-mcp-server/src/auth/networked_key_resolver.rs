@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use futures::future::{BoxFuture, Shared};
 use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
 use serde::Deserialize;
@@ -35,6 +36,13 @@ impl CachedJwks {
         Some((jwk, self.issuer.clone()))
     }
 }
+
+///  A future that does one cold-cache JWKS fetch and self-evicts from the inflight map.
+#[allow(dead_code)]
+pub(super) type InflightFetch = Shared<BoxFuture<'static, ()>>;
+
+/// Map of in-flight cold fetches keyed by issuer URL.
+pub(super) type InflightMap = Mutex<HashMap<Url, InflightFetch>>;
 
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
 /// discovery.
