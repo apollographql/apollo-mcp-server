@@ -860,4 +860,85 @@ mod tests {
         assert!(entry.keys.keys.contains_key("new-key"));
         assert!(!entry.keys.keys.contains_key("old-key"));
     }
+
+    #[tokio::test]
+    async fn concurrent_cold_misses_trigger_one_upstream_fetch_pair() {
+        // 100 concurrent resolve_key calls for the same cold issuer must produce
+        // exactly one discovery fetch and one JWKS fetch. mockito's .expect(1)
+        // assertion enforces "exactly once."
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"singleflight-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let client = reqwest::Client::new();
+
+        // Spawn 100 tasks that all race to resolve the same key against the same
+        // cold cache. Each task constructs its own resolver borrowing the shared
+        // client/cache/inflight handles.
+        let mut handles = Vec::with_capacity(100);
+        for _ in 0..100 {
+            let client = client.clone();
+            let cache = Arc::clone(&cache);
+            let inflight = Arc::clone(&inflight);
+            let issuer_url = issuer_url.clone();
+            handles.push(tokio::spawn(async move {
+                let resolver = NetworkedKeyResolver::new(
+                    &client,
+                    Duration::from_secs(5),
+                    &inflight,
+                    &cache,
+                    Duration::from_secs(300),
+                );
+                resolver.resolve_key(&issuer_url, "singleflight-key").await
+            }));
+        }
+
+        let results = futures::future::join_all(handles).await;
+
+        // Every caller should observe the same Some(result).
+        for r in results {
+            let resolved = r.expect("task did not panic");
+            let (_jwk, _issuer) = resolved.expect("resolve_key returned None under singleflight");
+        }
+
+        // The hard assertion: exactly one upstream pair.
+        discovery_mock.assert();
+        jwks_mock.assert();
+
+        // And the inflight map self-evicted after the leader completed.
+        let inflight_guard = inflight.lock().expect("inflight not poisoned");
+        assert!(
+            inflight_guard.is_empty(),
+            "inflight slot should be removed after the leader's future resolved"
+        );
+    }
 }
