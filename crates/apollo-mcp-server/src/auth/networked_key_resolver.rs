@@ -86,7 +86,7 @@ impl<'a> NetworkedKeyResolver<'a> {
     /// Returns the resolved `(jwk, issuer)` if the cache holds a fresh entry
     /// containing `key_id`.
     fn lookup_fresh(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        let cache = self.jwks_cache.read().ok()?;
+        let cache = self.jwks_cache.read().unwrap_or_else(|e| e.into_inner());
         let entry = cache.get(server)?;
         if !entry.is_fresh(self.ttl) {
             return None;
