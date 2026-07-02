@@ -1027,4 +1027,131 @@ mod tests {
             "inflight slot should be removed after the leader's future resolved"
         );
     }
+
+    #[tokio::test]
+    async fn kid_miss_inside_refresh_window_returns_none_without_network() {
+        // One cold fetch populates the cache and consumes the refresh window.
+        // A subsequent request for an unknown kid inside the window must be
+        // rejected (None) with zero additional upstream requests — mockito's
+        // .expect(1) on each mock enforces "no second fetch."
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"known-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        // Cold fetch: allowed, consumes the window.
+        let first = resolver.resolve_key(&issuer_url, "known-key").await;
+        assert!(first.is_some(), "cold fetch for a known kid should resolve");
+
+        // Unknown kid inside the window: rejected, no second fetch.
+        let second = resolver.resolve_key(&issuer_url, "bogus-kid").await;
+        assert!(
+            second.is_none(),
+            "kid miss inside the refresh window should be rejected"
+        );
+
+        // A known kid still resolves from the warm cache.
+        let third = resolver.resolve_key(&issuer_url, "known-key").await;
+        assert!(third.is_some(), "warm hits are unaffected by the rate limit");
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn thousand_unique_kid_misses_trigger_one_upstream_fetch_pair() {
+        // The AMS-534 acceptance criterion: 1000 inbound requests with random
+        // kids inside one refresh window produce exactly one upstream
+        // discovery + JWKS fetch pair for the issuer.
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"real-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        for i in 0..1000 {
+            let kid = format!("attacker-kid-{i}");
+            let result = resolver.resolve_key(&issuer_url, &kid).await;
+            assert!(result.is_none(), "bogus kid {kid} must not resolve");
+        }
+
+        // The hard assertion: exactly one upstream pair for 1000 misses.
+        discovery_mock.assert();
+        jwks_mock.assert();
+    }
 }
