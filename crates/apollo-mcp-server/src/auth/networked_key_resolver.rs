@@ -72,10 +72,13 @@ impl<'a> NetworkedKeyResolver<'a> {
     }
 
     /// Reads the JWKS cache under the read lock and returns the resolved
-    /// `(jwk, issuer)` if a fresh entry with `key_id` exists. Returns `None`
-    /// for any combination of: no entry, stale entry, kid not in entry, or
-    /// lock poisoned (we treat poisoning as a miss; the next writer will
-    /// recover with `unwrap_or_else(|e| e.into_inner())`).
+    /// `(jwk, issuer)` if a fresh entry with `key_id` exists.
+    ///
+    /// **Invariant ownership:** this is the sole site that decides whether the
+    /// cache can serve a request without going to the network. After
+    /// `acquire_inflight_slot` resolves, callers re-invoke this method to do
+    /// their own per-`kid` lookup; we never decide "fresh-enough?" anywhere
+    /// else in this file.
     fn lookup_fresh(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
         let cache = self.jwks_cache.read().ok()?;
         let entry = cache.get(server)?;
@@ -92,6 +95,12 @@ impl<'a> NetworkedKeyResolver<'a> {
     ///
     /// The fetch future is responsible for removing its own slot from the map
     /// before resolving; we never leave a stale slot behind.
+    ///
+    /// **Invariant ownership:** this is the sole site that decides whether
+    /// this request triggers a new upstream fetch or joins an existing one.
+    /// At most one `Shared<BoxFuture<()>>` per issuer URL is alive in the
+    /// inflight map at any time, so `build_fetch_future` never races a peer
+    /// when writing to the cache.
     fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
