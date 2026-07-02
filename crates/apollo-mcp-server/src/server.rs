@@ -102,7 +102,8 @@ pub enum Transport {
         #[serde(default = "Transport::default_stateful_mode")]
         stateful_mode: bool,
 
-        /// Host header validation configuration for DNS rebinding protection.
+        /// Host and Origin header validation configuration for DNS rebinding
+        /// and cross-origin protection.
         #[serde(default)]
         host_validation: HostValidationConfig,
     },

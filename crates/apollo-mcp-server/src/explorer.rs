@@ -1,6 +1,6 @@
 use crate::errors::McpError;
 use crate::schema_from_type;
-use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -81,7 +81,7 @@ impl Explorer {
         };
         let url = self.create_explorer_url(input)?;
         debug!(?url, input=?pretty, "Created URL to open operation in Apollo Explorer");
-        let mut result = CallToolResult::success(vec![Content::text(url.clone())]);
+        let mut result = CallToolResult::success(vec![ContentBlock::text(url.clone())]);
         result.structured_content = Some(Value::Array(vec![url.into()]));
         Ok(result)
     }

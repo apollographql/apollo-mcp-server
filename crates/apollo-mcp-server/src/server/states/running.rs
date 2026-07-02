@@ -8,13 +8,13 @@ use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
     ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResult, Implementation,
-    ListPromptsResult, ListResourcesResult, PromptMessage, PromptMessageRole, PromptsCapability,
-    ReadResourceResult, ResourcesCapability, ToolsCapability,
+    ListPromptsResult, ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResult,
+    ResourcesCapability, Role, ToolsCapability,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
     model::{
-        CallToolRequestParams, CallToolResult, Content, ErrorCode, InitializeRequestParams,
+        CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
         ServerCapabilities, ServerInfo,
     },
@@ -366,7 +366,7 @@ impl Running {
         {
             match serde_json::from_value(Value::from(request.arguments)) {
                 Ok(args) => introspect_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                     "Invalid input: {e}"
                 ))])),
             }
@@ -375,7 +375,7 @@ impl Running {
         {
             match serde_json::from_value(Value::from(request.arguments)) {
                 Ok(args) => search_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                     "Invalid input: {e}"
                 ))])),
             }
@@ -384,7 +384,7 @@ impl Running {
         {
             match serde_json::from_value(Value::from(request.arguments)) {
                 Ok(args) => explorer_tool.execute(args).await,
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                     "Invalid input: {e}"
                 ))])),
             }
@@ -418,7 +418,7 @@ impl Running {
         {
             match serde_json::from_value(Value::from(request.arguments)) {
                 Ok(args) => Ok(validate_tool.execute(args).await),
-                Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+                Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                     "Invalid input: {e}"
                 ))])),
             }
@@ -605,8 +605,7 @@ impl Running {
             prompt_file.template.clone()
         };
 
-        let mut result =
-            GetPromptResult::new(vec![PromptMessage::new_text(PromptMessageRole::User, text)]);
+        let mut result = GetPromptResult::new(vec![PromptMessage::new_text(Role::User, text)]);
         if let Some(desc) = &prompt_file.prompt.description {
             result = result.with_description(desc);
         }
@@ -639,9 +638,10 @@ impl ServerHandler for Running {
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
-        let mut info = self.get_info();
-        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
-        Ok(info)
+        // rmcp negotiates the protocol version during `initialize`: it echoes the
+        // client's requested version when supported and otherwise falls back to
+        // the version advertised by `get_info`.
+        Ok(self.get_info())
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -658,7 +658,7 @@ impl ServerHandler for Running {
         }
 
         let peer_info = context.peer.peer_info();
-        let protocol_version = peer_info.map(|info| &info.protocol_version);
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
 
         let result = self
             .call_tool_impl(request, &context.extensions, protocol_version)
@@ -684,8 +684,8 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.map(|info| &info.capabilities);
-        let protocol_version = peer_info.map(|info| &info.protocol_version);
+        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
 
         self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
             .await
@@ -706,7 +706,8 @@ impl ServerHandler for Running {
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResult, ErrorData> {
-        let client_capabilities = context.peer.peer_info().map(|info| &info.capabilities);
+        let peer_info = context.peer.peer_info();
+        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
 
         self.read_resource_impl(request, context.extensions, client_capabilities)
             .await
@@ -730,6 +731,10 @@ impl ServerHandler for Running {
         self.get_prompt_impl(request)
     }
 
+    // `logging` is deprecated by SEP-2577, but we still override this handler so
+    // clients that send `logging/setLevel` without checking capabilities get an
+    // empty success instead of `-32601`.
+    #[allow(deprecated)]
     #[tracing::instrument(skip_all)]
     async fn set_level(
         &self,
@@ -752,17 +757,16 @@ impl ServerHandler for Running {
             .add(1, &[]);
 
         let mut capabilities = ServerCapabilities::default();
-        capabilities.tools = Some(ToolsCapability {
-            list_changed: Some(true),
-        });
+        let mut tools = ToolsCapability::default();
+        tools.list_changed = Some(true);
+        capabilities.tools = Some(tools);
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
-        capabilities.prompts =
-            (!self.prompts.is_empty()).then_some(PromptsCapability { list_changed: None });
+        capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise our latest supported version as the default. The actual
-        // negotiated value is set per client in `initialize` via
-        // `negotiate_protocol_version`.
-        let protocol_version = LATEST_PROTOCOL_VERSION.clone();
+        // Advertise the latest supported version as the default. rmcp negotiates
+        // the per-client value during `initialize`, echoing the client's requested
+        // version when supported and otherwise falling back to this one.
+        let protocol_version = ProtocolVersion::LATEST;
 
         let mut impl_ = Implementation::new(
             self.server_info.name().to_string(),
@@ -784,29 +788,6 @@ impl ServerHandler for Running {
             result = result.with_instructions(instructions);
         }
         result
-    }
-}
-
-/// Latest MCP protocol version this server implements. Advertised when the
-/// client requests a version we do not support.
-const LATEST_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_06_18;
-
-/// MCP protocol versions this server implements.
-const SUPPORTED_PROTOCOL_VERSIONS: &[ProtocolVersion] =
-    &[LATEST_PROTOCOL_VERSION, ProtocolVersion::V_2025_03_26];
-
-/// Negotiate the protocol version for the `initialize` response.
-///
-/// Per the MCP lifecycle spec, the server echoes the client's requested version
-/// when it implements that version, otherwise it responds with its latest
-/// supported version. This keeps negotiation independent of `enable_output_schema`:
-/// the `outputSchema` / `structuredContent` fields are gated separately by
-/// [`Running::client_supports_output_schema`].
-fn negotiate_protocol_version(requested: &ProtocolVersion) -> ProtocolVersion {
-    if SUPPORTED_PROTOCOL_VERSIONS.contains(requested) {
-        requested.clone()
-    } else {
-        LATEST_PROTOCOL_VERSION.clone()
     }
 }
 
@@ -2175,29 +2156,13 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
-        }
-
-        // A supported version is echoed back; an unsupported one falls back to
-        // our latest. The `downgrade_newer` case is the AMS-525 regression: a
-        // client offering a newer version than we implement must be downgraded
-        // rather than refused.
-        #[rstest]
-        #[case::echo_2025_03_26(ProtocolVersion::V_2025_03_26, ProtocolVersion::V_2025_03_26)]
-        #[case::echo_2025_06_18(ProtocolVersion::V_2025_06_18, ProtocolVersion::V_2025_06_18)]
-        #[case::downgrade_newer(ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2025_06_18)]
-        #[case::fallback_older(ProtocolVersion::V_2024_11_05, ProtocolVersion::V_2025_06_18)]
-        fn negotiate_returns_supported_or_latest(
-            #[case] requested: ProtocolVersion,
-            #[case] expected: ProtocolVersion,
-        ) {
-            assert_eq!(negotiate_protocol_version(&requested), expected);
+            assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
         }
     }
 
     mod prompts {
         use super::*;
-        use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, PromptMessageRole};
+        use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, Role};
 
         fn running_with_prompts(prompts: Vec<crate::prompts::PromptFile>) -> Running {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -2247,11 +2212,11 @@ mod tests {
                 .get_prompt_impl(GetPromptRequestParams::new("greet").with_arguments(args))
                 .unwrap();
             assert_eq!(result.messages.len(), 1);
-            assert_eq!(result.messages[0].role, PromptMessageRole::User);
+            assert_eq!(result.messages[0].role, Role::User);
             assert!(
                 matches!(
                     &result.messages[0].content,
-                    rmcp::model::PromptMessageContent::Text { text } if text == "Hello Alice!"
+                    rmcp::model::ContentBlock::Text(text) if text.text == "Hello Alice!"
                 ),
                 "Expected Text content with 'Hello Alice!', got {:?}",
                 result.messages[0].content
@@ -2769,16 +2734,34 @@ mod integration_tests {
 
         #[tokio::test]
         async fn negotiates_down_when_client_requests_newer_version() {
-            // Regression for AMS-525: with output schema enabled, a client offering
-            // 2025-11-25 over streamable_http previously received 2025-11-25 verbatim
-            // and was refused. The server must downgrade to its latest supported
-            // version (2025-06-18) instead.
+            // Regression for AMS-525: a client offering a protocol version newer
+            // than any rmcp implements over streamable_http must be downgraded to
+            // the latest supported version (2025-11-25) rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
 
             let response = service
-                .oneshot(build_initialize_request("2025-11-25"))
+                .oneshot(build_initialize_request("2999-01-01"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+        }
+
+        #[tokio::test]
+        async fn echoes_supported_version_when_client_requests_older_version() {
+            // rmcp negotiates over streamable_http: a client offering a supported
+            // version older than our latest gets that version echoed back rather
+            // than being upgraded to the latest.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2025-06-18"))
                 .await
                 .unwrap();
 

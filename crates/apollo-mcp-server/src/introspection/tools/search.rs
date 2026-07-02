@@ -8,7 +8,7 @@ use apollo_compiler::ast::{Field, OperationType as AstOperationType, Selection};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Node, Schema};
 use apollo_schema_index::{OperationType, Options, SchemaIndex};
-use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -167,7 +167,7 @@ impl Search {
                         extended_type.serialize().to_string()
                     }
                 })
-                .map(Content::text)
+                .map(ContentBlock::text)
                 .collect(),
         ))
     }
@@ -176,9 +176,8 @@ impl Search {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rmcp::model::RawContent;
+    use rmcp::model::ContentBlock;
     use rstest::{fixture, rstest};
-    use std::ops::Deref;
 
     const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
 
@@ -186,12 +185,9 @@ mod tests {
         result
             .content
             .into_iter()
-            .filter_map(|c| {
-                let c = c.deref();
-                match c {
-                    RawContent::Text(text) => Some(text.text.clone()),
-                    _ => None,
-                }
+            .filter_map(|c| match c {
+                ContentBlock::Text(text) => Some(text.text.clone()),
+                _ => None,
             })
             .collect::<Vec<String>>()
             .join("\n")
