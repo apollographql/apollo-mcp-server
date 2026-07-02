@@ -414,7 +414,6 @@ const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 
 /// Default minimum interval between JWKS refreshes per issuer when
 /// `transport.auth.jwks_min_refresh_interval` is not configured.
-#[allow(dead_code)] // consumed in Step 3
 const DEFAULT_JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// MCP discovery methods that are allowed without authentication when
@@ -559,6 +558,10 @@ async fn oauth_validate(
 
     let jwks_cache_ttl = auth_config.jwks_cache_ttl.unwrap_or(DEFAULT_JWKS_CACHE_TTL);
 
+    let jwks_min_refresh_interval = auth_config
+        .jwks_min_refresh_interval
+        .unwrap_or(DEFAULT_JWKS_MIN_REFRESH_INTERVAL);
+
     let validator = TokenValidator {
         audiences: &auth_config.audiences,
         issuers: &auth_config.issuers,
@@ -570,6 +573,7 @@ async fn oauth_validate(
             &auth_state.inflight,
             &auth_state.jwks_cache,
             jwks_cache_ttl,
+            jwks_min_refresh_interval,
         ),
     };
     let token = token.ok_or_else(|| {

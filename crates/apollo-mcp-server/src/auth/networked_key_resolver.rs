@@ -63,6 +63,8 @@ pub(super) struct NetworkedKeyResolver<'a> {
     inflight: &'a Arc<InflightMap>,
     jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
     ttl: Duration,
+    #[allow(dead_code)] // consumed in Step 5
+    min_refresh_interval: Duration,
 }
 
 impl<'a> NetworkedKeyResolver<'a> {
@@ -72,6 +74,7 @@ impl<'a> NetworkedKeyResolver<'a> {
         inflight: &'a Arc<InflightMap>,
         jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
         ttl: Duration,
+        min_refresh_interval: Duration,
     ) -> Self {
         Self {
             client,
@@ -79,6 +82,7 @@ impl<'a> NetworkedKeyResolver<'a> {
             inflight,
             jwks_cache,
             ttl,
+            min_refresh_interval,
         }
     }
 
@@ -743,6 +747,7 @@ mod tests {
             &inflight,
             &cache,
             Duration::from_secs(300),
+            Duration::from_secs(60),
         );
 
         let result = resolver.resolve_key(&issuer_url, "cached-key").await;
@@ -793,6 +798,7 @@ mod tests {
             &inflight,
             &cache,
             Duration::from_secs(300),
+            Duration::from_secs(60),
         );
 
         let result = resolver.resolve_key(&issuer_url, "no-alg-key").await;
@@ -845,6 +851,7 @@ mod tests {
             &inflight,
             &cache,
             Duration::from_secs(300),
+            Duration::from_secs(60),
         );
 
         let result = resolver.resolve_key(&issuer_url, "fresh-key").await;
@@ -918,8 +925,14 @@ mod tests {
         }
 
         let ttl = Duration::from_millis(1);
-        let resolver =
-            NetworkedKeyResolver::new(&client, Duration::from_secs(5), &inflight, &cache, ttl);
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            ttl,
+            Duration::from_secs(60),
+        );
 
         let result = resolver.resolve_key(&issuer_url, "new-key").await;
 
@@ -989,6 +1002,7 @@ mod tests {
                     &inflight,
                     &cache,
                     Duration::from_secs(300),
+                    Duration::from_secs(60),
                 );
                 resolver.resolve_key(&issuer_url, "singleflight-key").await
             }));
