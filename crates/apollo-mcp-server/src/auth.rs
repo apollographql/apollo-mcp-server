@@ -554,6 +554,7 @@ async fn oauth_validate(
         keys: NetworkedKeyResolver::new(
             &auth_state.client,
             discovery_timeout,
+            &auth_state.inflight,
             &auth_state.jwks_cache,
             jwks_cache_ttl,
         ),

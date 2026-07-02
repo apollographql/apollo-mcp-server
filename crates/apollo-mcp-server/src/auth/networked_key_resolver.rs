@@ -49,6 +49,8 @@ pub(super) type InflightMap = Mutex<HashMap<Url, InflightFetch>>;
 pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
+    #[allow(dead_code)]
+    inflight: &'a Arc<InflightMap>,
     jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
     ttl: Duration,
 }
@@ -57,12 +59,14 @@ impl<'a> NetworkedKeyResolver<'a> {
     pub fn new(
         client: &'a reqwest::Client,
         discovery_timeout: Duration,
+        inflight: &'a Arc<InflightMap>,
         jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
         ttl: Duration,
     ) -> Self {
         Self {
             client,
             discovery_timeout,
+            inflight,
             jwks_cache,
             ttl,
         }
@@ -636,6 +640,8 @@ mod tests {
         );
         let jwks = make_test_jwks(&client, &jwks_json).await;
 
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+
         // Actual test server — any request reaching here means the warm path failed.
         let mut server = mockito::Server::new_async().await;
         let no_network = server
@@ -662,6 +668,7 @@ mod tests {
         let resolver = NetworkedKeyResolver::new(
             &client,
             Duration::from_secs(5),
+            &inflight,
             &cache,
             Duration::from_secs(300),
         );
@@ -683,6 +690,8 @@ mod tests {
             TEST_RSA_N, TEST_RSA_E
         );
         let jwks = make_test_jwks(&client, &jwks_json).await;
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
 
         let mut server = mockito::Server::new_async().await;
         let no_network = server
@@ -709,6 +718,7 @@ mod tests {
         let resolver = NetworkedKeyResolver::new(
             &client,
             Duration::from_secs(5),
+            &inflight,
             &cache,
             Duration::from_secs(300),
         );
@@ -734,6 +744,8 @@ mod tests {
             TEST_RSA_N, TEST_RSA_E
         );
 
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+
         let discovery_mock = server
             .mock("GET", "/.well-known/oauth-authorization-server")
             .with_status(200)
@@ -758,6 +770,7 @@ mod tests {
         let resolver = NetworkedKeyResolver::new(
             &client,
             Duration::from_secs(5),
+            &inflight,
             &cache,
             Duration::from_secs(300),
         );
@@ -783,6 +796,8 @@ mod tests {
             TEST_RSA_N, TEST_RSA_E
         );
         let stale_jwks = make_test_jwks(&client, &stale_jwks_json).await;
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
 
         let mut server = mockito::Server::new_async().await;
 
@@ -831,7 +846,8 @@ mod tests {
         }
 
         let ttl = Duration::from_millis(1);
-        let resolver = NetworkedKeyResolver::new(&client, Duration::from_secs(5), &cache, ttl);
+        let resolver =
+            NetworkedKeyResolver::new(&client, Duration::from_secs(5), &inflight, &cache, ttl);
 
         let result = resolver.resolve_key(&issuer_url, "new-key").await;
 
