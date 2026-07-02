@@ -4,7 +4,7 @@ use apollo_compiler::Schema;
 use apollo_compiler::parser::Parser;
 use apollo_compiler::validation::Valid;
 use rmcp::model::CallToolResult;
-use rmcp::model::Content;
+use rmcp::model::ContentBlock;
 use rmcp::model::Tool;
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -49,12 +49,14 @@ impl Validate {
         let input = match serde_json::from_value::<Input>(input) {
             Ok(i) => i,
             Err(e) => {
-                return CallToolResult::error(vec![Content::text(format!("Invalid input: {e}"))]);
+                return CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Invalid input: {e}"
+                ))]);
             }
         };
 
         if let Err(e) = operation_defs(&input.operation, true, None) {
-            return CallToolResult::error(vec![Content::text(e.to_string())]);
+            return CallToolResult::error(vec![ContentBlock::text(e.to_string())]);
         }
 
         if operation_defs(&input.operation, true, None)
@@ -62,7 +64,7 @@ impl Validate {
             .flatten()
             .is_none()
         {
-            return CallToolResult::error(vec![Content::text("Invalid operation type")]);
+            return CallToolResult::error(vec![ContentBlock::text("Invalid operation type")]);
         }
 
         let schema_guard = self.schema.read().await;
@@ -70,8 +72,8 @@ impl Validate {
             .parse_executable(&schema_guard, input.operation.as_str(), "operation.graphql")
             .and_then(|p| p.validate(&schema_guard))
         {
-            Ok(_) => CallToolResult::success(vec![Content::text("Operation is valid")]),
-            Err(e) => CallToolResult::error(vec![Content::text(e.to_string())]),
+            Ok(_) => CallToolResult::success(vec![ContentBlock::text("Operation is valid")]),
+            Err(e) => CallToolResult::error(vec![ContentBlock::text(e.to_string())]),
         }
     }
 }

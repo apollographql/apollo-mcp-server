@@ -7,7 +7,7 @@ use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
 use parking_lot::Mutex;
-use rmcp::model::{CallToolResult, Content, JsonObject, Meta, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Meta, Tool};
 use serde_json::{Map, Value, json};
 use url::Url;
 
@@ -213,7 +213,8 @@ fn nest_app_tool_result(
 
     let wrapped_restricted = Value::Object(restricted_map);
     result.content = vec![
-        Content::json(&wrapped_restricted).unwrap_or(Content::text(wrapped_restricted.to_string())),
+        ContentBlock::json(&wrapped_restricted)
+            .unwrap_or(ContentBlock::text(wrapped_restricted.to_string())),
     ];
     result.structured_content = Some(wrapped_restricted);
 
