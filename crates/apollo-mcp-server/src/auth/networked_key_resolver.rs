@@ -49,7 +49,6 @@ pub(super) struct IssuerFetchState {
     slots: HashMap<Url, InflightFetch>,
     /// When each issuer's most recent fetch was started. Bounded by the
     /// configured server list; never evicted.
-    #[allow(dead_code)] // consumed in Step 5
     last_attempt: HashMap<Url, Instant>,
 }
 
@@ -63,7 +62,6 @@ pub(super) struct NetworkedKeyResolver<'a> {
     inflight: &'a Arc<InflightMap>,
     jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
     ttl: Duration,
-    #[allow(dead_code)] // consumed in Step 5
     min_refresh_interval: Duration,
 }
 
@@ -97,14 +95,27 @@ impl<'a> NetworkedKeyResolver<'a> {
         entry.lookup(key_id, server)
     }
 
-    /// Returns a future that completes when this issuer's cold fetch is done,
-    /// joining the in-flight fetch if one exists or starting a new one. At
-    /// most one fetch per issuer is ever in flight.
-    fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
+    /// Returns a future that completes when this issuer's fetch is done, or
+    /// `None` if starting a fetch is not allowed right now.
+    ///
+    /// **Invariant ownership:** this is the sole site that decides whether
+    /// this request triggers a new upstream fetch, joins an existing one, or
+    /// is refused. At most one fetch per issuer is ever in flight, and at
+    /// most one fetch per issuer starts per `min_refresh_interval`. Joining
+    /// an in-flight fetch is always allowed — it adds no upstream traffic.
+    /// The window is consumed when a fetch *starts* (even if it later fails),
+    /// so an unreachable issuer is retried at most once per window.
+    fn acquire_inflight_slot(&self, server: Url) -> Option<InflightFetch> {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(existing) = guard.slots.get(&server) {
-            return existing.clone();
+            return Some(existing.clone());
+        }
+
+        if let Some(last) = guard.last_attempt.get(&server)
+            && last.elapsed() < self.min_refresh_interval
+        {
+            return None;
         }
 
         let fetch = Self::build_fetch_future(
@@ -115,8 +126,9 @@ impl<'a> NetworkedKeyResolver<'a> {
             self.discovery_timeout,
         );
 
+        guard.last_attempt.insert(server.clone(), Instant::now());
         guard.slots.insert(server, fetch.clone());
-        fetch
+        Some(fetch)
     }
 
     /// Builds the one-shot future that fetches the issuer's keys, populates
@@ -325,14 +337,23 @@ async fn fetch_jwks(client: &reqwest::Client, jwks_uri: &str, timeout: Duration)
 impl KeyResolver for NetworkedKeyResolver<'_> {
     /// Resolves from the in-memory cache when fresh. On a cold or expired
     /// entry, concurrent callers for the same issuer share a single upstream
-    /// fetch; a failed fetch does not block the next caller's retry.
+    /// fetch, and at most one fetch per issuer starts per
+    /// `min_refresh_interval` — a miss inside the window is answered from the
+    /// cache alone (no outbound request), which for an unknown `kid` means
+    /// `None` and a 401 from the middleware.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
         if let Some(result) = self.lookup_fresh(server, key_id) {
             return Some(result);
         }
 
-        // Cold path: share one fetch per issuer across concurrent callers.
-        let fetch = self.acquire_inflight_slot(server.clone());
+        // Cold path: join or start the issuer's single fetch, unless the
+        // per-issuer refresh window is exhausted.
+        let Some(fetch) = self.acquire_inflight_slot(server.clone()) else {
+            // Rate limited: no network. Re-read the cache before rejecting —
+            // a refresh that completed between our first lookup and the slot
+            // check may have just populated it with our `kid`.
+            return self.lookup_fresh(server, key_id);
+        };
         fetch.await;
 
         // Each caller looks up its own `kid` against the refreshed cache.
