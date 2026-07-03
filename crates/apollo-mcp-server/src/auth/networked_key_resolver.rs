@@ -8,7 +8,7 @@ use futures::future::{BoxFuture, Shared};
 use jsonwebtoken::jwk::KeyAlgorithm;
 use jwks::{Jwk, Jwks};
 use serde::Deserialize;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 use url::Url;
 
 use super::valid_token::KeyResolver;
@@ -170,6 +170,10 @@ impl<'a> NetworkedKeyResolver<'a> {
 
             // Populate the cache before evicting the slot, so late arrivals
             // see the fresh entry instead of starting a new fetch.
+            // Lock order: jwks_cache write guard must be *released* before
+            // acquiring inflight, to stay consistent with the acquire path
+            // (inflight → jwks_cache read). Nesting them in the other order
+            // would create a deadlock risk if the two sites ever overlap.
             if let Some(entry) = entry {
                 let mut cache = jwks_cache.write().unwrap_or_else(|e| e.into_inner());
                 cache.insert(server.clone(), entry);
@@ -350,7 +354,10 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
             SlotOutcome::Resolved(result) => return Some(result),
             // The slot acquisition already re-read the cache under the lock,
             // so there is nothing further to answer from.
-            SlotOutcome::RateLimited => return None,
+            SlotOutcome::RateLimited => {
+                debug!(server = %server, key_id = %key_id, "JWKS refresh rate-limited; rejecting without outbound request");
+                return None;
+            }
             SlotOutcome::Fetch(fetch) => fetch,
         };
         // Driven by its awaiting callers, not spawned: if all callers are
