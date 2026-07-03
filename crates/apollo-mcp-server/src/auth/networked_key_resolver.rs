@@ -44,6 +44,14 @@ pub(super) type InflightFetch = Shared<BoxFuture<'static, ()>>;
 /// Map of in-flight cold fetches keyed by issuer URL.
 pub(super) type InflightMap = Mutex<HashMap<Url, InflightFetch>>;
 
+/// Result of acquiring the in-flight slot for an issuer.
+enum SlotOutcome {
+    /// The cache turned fresh in the miss-to-lock window; no fetch needed.
+    Resolved((Jwk, String)),
+    /// A cold fetch to await, joined or newly started.
+    Fetch(InflightFetch),
+}
+
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
 /// discovery.
 pub(super) struct NetworkedKeyResolver<'a> {
@@ -82,14 +90,21 @@ impl<'a> NetworkedKeyResolver<'a> {
         entry.lookup(key_id, server)
     }
 
-    /// Returns a future that completes when this issuer's cold fetch is done,
-    /// joining the in-flight fetch if one exists or starting a new one. At
-    /// most one fetch per issuer is ever in flight.
-    fn acquire_inflight_slot(&self, server: Url) -> InflightFetch {
+    /// Returns the resolved key if the cache turned fresh while acquiring the
+    /// lock; otherwise a future that completes when this issuer's cold fetch
+    /// is done, joining the in-flight fetch if one exists or starting a new
+    /// one. At most one fetch per issuer is ever in flight.
+    fn acquire_inflight_slot(&self, server: Url, key_id: &str) -> SlotOutcome {
         let mut guard = self.inflight.lock().unwrap_or_else(|e| e.into_inner());
 
         if let Some(existing) = guard.get(&server) {
-            return existing.clone();
+            return SlotOutcome::Fetch(existing.clone());
+        }
+
+        // A fetch may have completed between the caller's cache miss and this
+        // lock; re-check so its fresh result isn't refetched.
+        if let Some(result) = self.lookup_fresh(&server, key_id) {
+            return SlotOutcome::Resolved(result);
         }
 
         let fetch = Self::build_fetch_future(
@@ -101,7 +116,7 @@ impl<'a> NetworkedKeyResolver<'a> {
         );
 
         guard.insert(server, fetch.clone());
-        fetch
+        SlotOutcome::Fetch(fetch)
     }
 
     /// Builds the one-shot future that fetches the issuer's keys, populates
@@ -314,7 +329,10 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         }
 
         // Cold path: share one fetch per issuer across concurrent callers.
-        let fetch = self.acquire_inflight_slot(server.clone());
+        let fetch = match self.acquire_inflight_slot(server.clone(), key_id) {
+            SlotOutcome::Resolved(result) => return Some(result),
+            SlotOutcome::Fetch(fetch) => fetch,
+        };
         fetch.await;
 
         // Each caller looks up its own `kid` against the refreshed cache.
@@ -997,6 +1015,105 @@ mod tests {
         assert!(
             inflight_guard.is_empty(),
             "inflight slot should be removed after the leader's future resolved"
+        );
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_resolves_from_cache_without_starting_fetch() {
+        // Simulates a follower that missed the cache, then lost the race to the
+        // inflight lock against a leader that already populated the cache and
+        // evicted its slot: the re-check must resolve without a new fetch.
+        let client = reqwest::Client::new();
+
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"raced-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let jwks = make_test_jwks(&client, &jwks_json).await;
+
+        let issuer_url = Url::parse("https://auth.example.com").expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://issuer.example.com".to_string(),
+                    fetched_at: Instant::now(),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let outcome = resolver.acquire_inflight_slot(issuer_url, "raced-key");
+
+        let SlotOutcome::Resolved((_jwk, issuer)) = outcome else {
+            panic!("fresh cache should resolve without a fetch");
+        };
+        assert_eq!(issuer, "https://issuer.example.com");
+        let inflight_guard = inflight.lock().expect("inflight not poisoned");
+        assert!(
+            inflight_guard.is_empty(),
+            "no fetch should be started when the re-check hits"
+        );
+    }
+
+    #[tokio::test]
+    async fn acquire_slot_starts_fetch_when_fresh_cache_lacks_kid() {
+        // A fresh cache entry that lacks the requested kid must still start a
+        // fetch; the re-check only short-circuits on an actual key hit.
+        let client = reqwest::Client::new();
+
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"other-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let jwks = make_test_jwks(&client, &jwks_json).await;
+
+        let issuer_url = Url::parse("https://auth.example.com").expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://issuer.example.com".to_string(),
+                    fetched_at: Instant::now(),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let outcome = resolver.acquire_inflight_slot(issuer_url.clone(), "missing-key");
+
+        assert!(
+            matches!(outcome, SlotOutcome::Fetch(_)),
+            "unknown kid should start a fetch even with a fresh cache entry"
+        );
+        let inflight_guard = inflight.lock().expect("inflight not poisoned");
+        assert!(
+            inflight_guard.contains_key(&issuer_url),
+            "the new fetch should occupy the inflight slot"
         );
     }
 }
