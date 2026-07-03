@@ -82,7 +82,7 @@ impl<'a> NetworkedKeyResolver<'a> {
     /// Returns the resolved `(jwk, issuer)` if the cache holds a fresh entry
     /// containing `key_id`.
     fn lookup_fresh(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
-        let cache = self.jwks_cache.read().ok()?;
+        let cache = self.jwks_cache.read().unwrap_or_else(|e| e.into_inner());
         let entry = cache.get(server)?;
         if !entry.is_fresh(self.ttl) {
             return None;
@@ -129,33 +129,21 @@ impl<'a> NetworkedKeyResolver<'a> {
         discovery_timeout: Duration,
     ) -> InflightFetch {
         async move {
-            let Some(metadata) = discover_metadata(&client, &server, discovery_timeout).await
-            else {
-                inflight
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&server);
-                return;
-            };
-            let Some(jwks) = fetch_jwks(&client, &metadata.jwks_uri, discovery_timeout).await
-            else {
-                inflight
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&server);
-                return;
-            };
-
-            let entry = CachedJwks {
-                keys: jwks,
-                issuer: metadata.issuer,
-                fetched_at: Instant::now(),
-                signing_algs: metadata.id_token_signing_alg_values_supported,
-            };
+            let entry = async {
+                let metadata = discover_metadata(&client, &server, discovery_timeout).await?;
+                let jwks = fetch_jwks(&client, &metadata.jwks_uri, discovery_timeout).await?;
+                Some(CachedJwks {
+                    keys: jwks,
+                    issuer: metadata.issuer,
+                    fetched_at: Instant::now(),
+                    signing_algs: metadata.id_token_signing_alg_values_supported,
+                })
+            }
+            .await;
 
             // Populate the cache before evicting the slot, so late arrivals
             // see the fresh entry instead of starting a new fetch.
-            {
+            if let Some(entry) = entry {
                 let mut cache = jwks_cache.write().unwrap_or_else(|e| e.into_inner());
                 cache.insert(server.clone(), entry);
             }
@@ -333,6 +321,8 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
             SlotOutcome::Resolved(result) => return Some(result),
             SlotOutcome::Fetch(fetch) => fetch,
         };
+        // Driven by its awaiting callers, not spawned: if all callers are
+        // cancelled mid-fetch, the fetch pauses and the next caller resumes it.
         fetch.await;
 
         // Each caller looks up its own `kid` against the refreshed cache.
@@ -1065,6 +1055,175 @@ mod tests {
         assert!(
             inflight_guard.is_empty(),
             "no fetch should be started when the re-check hits"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_discovery_evicts_inflight_slot_and_next_call_retries() {
+        // A leader whose discovery fetch fails must remove its inflight slot so
+        // the next caller starts a fresh fetch instead of joining a dead one.
+        let mut server = mockito::Server::new_async().await;
+
+        let fail_rfc8414 = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let fail_oidc = server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "retry-key").await;
+
+        fail_rfc8414.assert();
+        fail_oidc.assert();
+        assert!(result.is_none(), "failed fetch should resolve to None");
+        {
+            let inflight_guard = inflight.lock().expect("inflight not poisoned");
+            assert!(
+                inflight_guard.is_empty(),
+                "failed fetch should evict its inflight slot"
+            );
+        }
+
+        // Bring the server back up; the retry must reach the network.
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"retry-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let result = resolver.resolve_key(&issuer_url, "retry-key").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(
+            result.is_some(),
+            "retry after a failed fetch should succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_jwks_fetch_evicts_inflight_slot_and_next_call_retries() {
+        // Discovery succeeds but the JWKS endpoint fails: the leader must still
+        // evict its inflight slot so the next caller retries.
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+        let jwks_fail = server
+            .mock("GET", "/jwks")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "some-key").await;
+
+        discovery_mock.assert();
+        jwks_fail.assert();
+        assert!(result.is_none(), "failed JWKS fetch should resolve to None");
+        {
+            let inflight_guard = inflight.lock().expect("inflight not poisoned");
+            assert!(
+                inflight_guard.is_empty(),
+                "failed JWKS fetch should evict its inflight slot"
+            );
+            let cache_guard = cache.read().expect("cache not poisoned");
+            assert!(
+                cache_guard.is_empty(),
+                "failed fetch should not populate the cache"
+            );
+        }
+
+        // Bring the JWKS endpoint back up; the retry must reach the network.
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"some-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let discovery_retry = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let result = resolver.resolve_key(&issuer_url, "some-key").await;
+
+        discovery_retry.assert();
+        jwks_mock.assert();
+        assert!(
+            result.is_some(),
+            "retry after a failed JWKS fetch should succeed"
         );
     }
 
