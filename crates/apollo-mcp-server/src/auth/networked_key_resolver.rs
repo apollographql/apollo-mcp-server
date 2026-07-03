@@ -946,7 +946,10 @@ mod tests {
             );
         }
 
-        let ttl = Duration::from_millis(1);
+        // Use a long TTL: the stale initial entry is already guaranteed by the
+        // back-dated `fetched_at`, so a 1ms TTL only adds CI flake risk on the
+        // post-fetch lookup_fresh check.
+        let ttl = Duration::from_secs(300);
         let resolver = NetworkedKeyResolver::new(
             &client,
             Duration::from_secs(5),
