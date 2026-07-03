@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::{
@@ -16,7 +16,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_key_resolver::{CachedJwks, NetworkedKeyResolver};
+use networked_key_resolver::{CachedJwks, InflightMap, NetworkedKeyResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -301,6 +301,7 @@ struct AuthState {
     config: Arc<Config>,
     client: reqwest::Client,
     jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
+    inflight: Arc<InflightMap>,
     resource_metadata_url: Url,
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
     /// path neither re-parses nor allocates them.
@@ -374,6 +375,7 @@ impl Config {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(required_scopes),
+            inflight: Arc::new(Mutex::new(HashMap::new())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -552,6 +554,7 @@ async fn oauth_validate(
         keys: NetworkedKeyResolver::new(
             &auth_state.client,
             discovery_timeout,
+            &auth_state.inflight,
             &auth_state.jwks_cache,
             jwks_cache_ttl,
         ),
@@ -667,6 +670,7 @@ mod tests {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(HashMap::new()),
+            inflight: Arc::new(Mutex::new(HashMap::new())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
