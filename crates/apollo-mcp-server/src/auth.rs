@@ -16,7 +16,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_key_resolver::{CachedJwks, InflightMap, NetworkedKeyResolver};
+use networked_key_resolver::{CachedJwks, InflightMap, IssuerFetchState, NetworkedKeyResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -236,6 +236,14 @@ pub struct Config {
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
     #[schemars(with = "Option<String>")]
     pub jwks_cache_ttl: Option<Duration>,
+
+    /// Minimum time between JWKS refreshes for a single issuer. A token whose
+    /// `kid` is not in the cached JWKS triggers at most one refresh per issuer
+    /// per this interval; further misses inside the window are rejected with
+    /// 401 without any outbound request. Defaults to 60 seconds.
+    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
+    #[schemars(with = "Option<String>")]
+    pub jwks_min_refresh_interval: Option<Duration>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -375,7 +383,7 @@ impl Config {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(required_scopes),
-            inflight: Arc::new(Mutex::new(HashMap::new())),
+            inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
@@ -403,6 +411,10 @@ const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default TTL for cached JWKS entries when `transport.auth.jwks_cache_ttl`
 /// is not configured.
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
+
+/// Default minimum interval between JWKS refreshes per issuer when
+/// `transport.auth.jwks_min_refresh_interval` is not configured.
+const DEFAULT_JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// MCP discovery methods that are allowed without authentication when
 /// `allow_anonymous_mcp_discovery` is enabled.
@@ -546,6 +558,10 @@ async fn oauth_validate(
 
     let jwks_cache_ttl = auth_config.jwks_cache_ttl.unwrap_or(DEFAULT_JWKS_CACHE_TTL);
 
+    let jwks_min_refresh_interval = auth_config
+        .jwks_min_refresh_interval
+        .unwrap_or(DEFAULT_JWKS_MIN_REFRESH_INTERVAL);
+
     let validator = TokenValidator {
         audiences: &auth_config.audiences,
         issuers: &auth_config.issuers,
@@ -557,6 +573,7 @@ async fn oauth_validate(
             &auth_state.inflight,
             &auth_state.jwks_cache,
             jwks_cache_ttl,
+            jwks_min_refresh_interval,
         ),
     };
     let token = token.ok_or_else(|| {
@@ -653,6 +670,7 @@ mod tests {
             tls: TlsConfig::default(),
             discovery_timeout: None,
             jwks_cache_ttl: None,
+            jwks_min_refresh_interval: None,
             discovery_headers: HeaderMap::new(),
         }
     }
@@ -670,7 +688,7 @@ mod tests {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(HashMap::new()),
-            inflight: Arc::new(Mutex::new(HashMap::new())),
+            inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -1200,6 +1218,42 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert_eq!(config.jwks_cache_ttl, None);
+        }
+
+        #[test]
+        fn yaml_deserialization_with_jwks_min_refresh_interval() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+              jwks_min_refresh_interval: 30s
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(
+                config.jwks_min_refresh_interval,
+                Some(Duration::from_secs(30))
+            );
+        }
+
+        #[test]
+        fn yaml_deserialization_without_jwks_min_refresh_interval_defaults_to_none() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              audiences:
+                - test-audience
+              resource: http://localhost:4000
+              scopes:
+                - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert_eq!(config.jwks_min_refresh_interval, None);
         }
 
         #[tokio::test]

@@ -242,13 +242,37 @@ transport:
 **Behavior:**
 
 - On a fresh hit where the requested `kid` is present, the cached JWKS is used and no network calls are made.
-- When there is no cached entry, the cached entry is stale, or the requested `kid` is not present in the cached entry, the next request may trigger a discovery + JWKS fetch and repopulate the cache. Newly rotated keys are picked up the next time a refresh fires for that issuer.
+- When there is no cached entry, the cached entry is stale, or the requested `kid` is not present in the cached entry, the next request may trigger a discovery + JWKS fetch and repopulate the cache — subject to the per-issuer refresh rate limit below. Newly rotated keys are picked up the next time a refresh fires for that issuer.
 - The cache is process-local. Each replica warms its own cache independently after startup.
 
 **Considerations:**
 
 - Increase the TTL for stable identity providers to further reduce auth latency and load on the authorization server's discovery and JWKS endpoints.
 - Decrease the TTL if your identity provider rotates signing keys frequently and you cannot tolerate keys that were rotated mid-TTL still being accepted until the next miss. Note that revocation of a still-cached `kid` is not picked up until the entry expires.
+
+### JWKS refresh rate limit
+
+A token whose `kid` is not in the cached JWKS cannot be validated without refreshing the key set — but refreshing on _every_ miss would let a client presenting tokens with fabricated `kid` values drive one upstream discovery + JWKS round trip per request. Apollo MCP Server therefore allows at most one JWKS refresh per issuer per `jwks_min_refresh_interval` (default: 60 seconds). Concurrent requests during an allowed refresh share that single fetch.
+
+When a request misses the cache and the issuer's refresh window is exhausted, the request is rejected with `401 Unauthorized` immediately — no outbound request is made. The standard `WWW-Authenticate` challenge tells the client to retry.
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    jwks_min_refresh_interval: 60s # At most one JWKS refresh per issuer per interval (default: 60s)
+```
+
+**Behavior:**
+
+- The limit is per-issuer and global across all clients. It applies only to starting a new upstream refresh; cached-key lookups are never limited, and requests arriving while a refresh is already in flight simply wait for it.
+- A refresh consumes the window when it starts, whether or not it succeeds, so an unreachable authorization server is retried at most once per interval instead of once per request.
+
+**Considerations:**
+
+- **Rotation latency tradeoff.** If your identity provider rotates in a new signing key immediately after a refresh consumed the window, tokens signed with the new key are rejected with 401 until the window elapses (at most `jwks_min_refresh_interval`). Lower the interval if your provider rotates keys frequently and your clients cannot tolerate that retry delay; raise it to further cap upstream load. This knob is independent of `jwks_cache_ttl`: the TTL bounds how long _known_ keys are trusted without re-checking (higher TTL = less upstream load, slower revocation pickup), while the refresh interval bounds how fast _unknown_ keys can be discovered (lower interval = faster rotation pickup, higher upstream load ceiling).
 
 ### OIDC Discovery compatibility
 
