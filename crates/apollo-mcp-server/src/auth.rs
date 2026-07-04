@@ -236,7 +236,6 @@ pub struct Config {
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
     #[schemars(with = "Option<String>")]
     pub jwks_cache_ttl: Option<Duration>,
-
 }
 
 /// TLS configuration for OAuth server connections
