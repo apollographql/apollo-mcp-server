@@ -1,6 +1,6 @@
 query ExploreCelestialBodies($search: String, $limit: Int = 10, $offset: Int = 0) {
   celestialBodies(search: $search, limit: $limit, offset: $offset) {
-    pageInfo {
+    pagination {
       count
       next
       previous
@@ -8,25 +8,24 @@ query ExploreCelestialBodies($search: String, $limit: Int = 10, $offset: Int = 0
     results {
       id
       name
-      
+
       # Physical characteristics
       diameter  # in kilometers
       mass     # in kilograms
       gravity  # in m/s²
       lengthOfDay
       atmosphere
-      
+
       # Classification
       type {
         id
         name
       }
-      
+
       # Visual and descriptive content
       image {
-        url
-        thumbnail
-        credit
+        imageUrl
+        thumbnailUrl
       }
       description
       wikiUrl
