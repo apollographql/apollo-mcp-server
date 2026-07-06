@@ -404,9 +404,9 @@ const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 /// is not configured.
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 
-/// Default minimum interval between JWKS refreshes per issuer when
-/// `transport.auth.jwks_min_refresh_interval` is not configured.
-const DEFAULT_JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Fixed minimum interval between JWKS refreshes per issuer; not
+/// operator-configurable.
+const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// MCP discovery methods that are allowed without authentication when
 /// `allow_anonymous_mcp_discovery` is enabled.
@@ -561,7 +561,7 @@ async fn oauth_validate(
             &auth_state.inflight,
             &auth_state.jwks_cache,
             jwks_cache_ttl,
-            DEFAULT_JWKS_MIN_REFRESH_INTERVAL,
+            JWKS_MIN_REFRESH_INTERVAL,
         ),
     };
     let token = token.ok_or_else(|| {
