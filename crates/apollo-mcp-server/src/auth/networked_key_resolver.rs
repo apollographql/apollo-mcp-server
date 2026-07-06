@@ -105,6 +105,13 @@ impl<'a> NetworkedKeyResolver<'a> {
         entry.lookup(key_id, server)
     }
 
+    /// Returns the resolved `(jwk, issuer)` from the cache regardless of
+    /// freshness.
+    fn lookup_stale(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)> {
+        let cache = self.jwks_cache.read().unwrap_or_else(|e| e.into_inner());
+        cache.get(server)?.lookup(key_id, server)
+    }
+
     /// Returns the resolved key if the cache turned fresh while acquiring the
     /// lock, a future that completes when this issuer's cold fetch is done
     /// (joining the in-flight fetch if one exists), or `RateLimited` if
@@ -352,9 +359,13 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         // Cold path: share one fetch per issuer across concurrent callers.
         let fetch = match self.acquire_inflight_slot(server.clone(), key_id) {
             SlotOutcome::Resolved(result) => return Some(result),
-            // The slot acquisition already re-read the cache under the lock,
-            // so there is nothing further to answer from.
+            // TTL expiry means time-to-refresh, not keys-revoked: a stale
+            // entry still answers known kids; unknown kids are rejected.
             SlotOutcome::RateLimited => {
+                if let Some(result) = self.lookup_stale(server, key_id) {
+                    debug!(server = %server, key_id = %key_id, "JWKS refresh rate-limited; serving stale cache entry");
+                    return Some(result);
+                }
                 debug!(server = %server, key_id = %key_id, "JWKS refresh rate-limited; rejecting without outbound request");
                 return None;
             }
@@ -1595,6 +1606,76 @@ mod tests {
             result.is_some(),
             "retry after a failed JWKS fetch should succeed"
         );
+    }
+
+    #[tokio::test]
+    async fn stale_entry_serves_known_kid_when_refresh_is_rate_limited() {
+        // While the refresh is rate-limited, a kid in the stale entry is
+        // served without a network request; an unknown kid is still rejected.
+        let client = reqwest::Client::new();
+
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"stale-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let jwks = make_test_jwks(&client, &jwks_json).await;
+
+        // Any request reaching this server fails the test.
+        let mut server = mockito::Server::new_async().await;
+        let no_network = server
+            .mock("GET", mockito::Matcher::Any)
+            .expect(0)
+            .create_async()
+            .await;
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+
+        let ttl = Duration::from_secs(60);
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://issuer.example.com".to_string(),
+                    // Back-dated past the TTL so the entry is stale.
+                    fetched_at: Instant::now() - Duration::from_secs(120),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+
+        // The refresh window was just consumed.
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        {
+            let mut guard = inflight.lock().expect("inflight not poisoned");
+            guard
+                .last_attempt
+                .insert(issuer_url.clone(), Instant::now());
+        }
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            ttl,
+            Duration::from_secs(60),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "stale-key").await;
+        assert!(
+            result.is_some(),
+            "a kid present in the stale entry must be served while rate-limited"
+        );
+
+        let bogus = resolver.resolve_key(&issuer_url, "bogus-kid").await;
+        assert!(
+            bogus.is_none(),
+            "a kid absent from the stale entry must still be rejected"
+        );
+
+        no_network.assert();
     }
 
     #[tokio::test]
