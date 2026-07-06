@@ -229,7 +229,6 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_header_map")]
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
-
 }
 
 /// TLS configuration for OAuth server connections
