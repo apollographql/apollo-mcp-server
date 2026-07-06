@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
@@ -39,6 +39,7 @@ pub(super) struct StateMachine {}
 
 /// Common configuration options for the states
 struct Config {
+    rhai_dir: PathBuf,
     transport: Transport,
     endpoint: Url,
     headers: HeaderMap,
@@ -81,7 +82,7 @@ impl StateMachine {
             .boxed();
         let operation_stream = server.operation_source.into_stream().await.boxed();
         let ctrl_c_stream = Self::ctrl_c_stream().boxed();
-        let rhai_stream = Self::rhai_watch_stream().boxed();
+        let rhai_stream = Self::rhai_watch_stream(&server.rhai_dir).boxed();
         let config_stream = Self::config_watch_stream(server.config_path.as_deref()).boxed();
         let sighup_stream = Self::sighup_stream().boxed();
         let mut stream = stream::select_all(vec![
@@ -95,6 +96,7 @@ impl StateMachine {
 
         let mut state = State::Configuring(Configuring {
             config: Config {
+                rhai_dir: server.rhai_dir,
                 transport: server.transport,
                 endpoint: server.endpoint,
                 headers: server.headers,
@@ -272,7 +274,7 @@ impl StateMachine {
             .boxed()
     }
 
-    /// Watch the config file for changes, mirroring the rhai_watch_stream pattern.
+    /// Watch the config file for changes, mirroring the Rhai watch stream pattern.
     /// Skips the initial event that files::watch always emits on startup.
     fn config_watch_stream(config_path: Option<&Path>) -> impl Stream<Item = ServerEvent> {
         match config_path {
@@ -309,9 +311,7 @@ impl StateMachine {
         }
     }
 
-    fn rhai_watch_stream() -> impl Stream<Item = ServerEvent> {
-        let rhai_dir = Path::new("rhai");
-
+    fn rhai_watch_stream(rhai_dir: &Path) -> impl Stream<Item = ServerEvent> + use<> {
         // Limitation: the rhai directory must exist on startup for hot reloading to work.
         // If the user creates it after the fact, they will need to restart the server.
         if rhai_dir.is_dir() {
@@ -436,6 +436,7 @@ impl From<ServerError> for State {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use apollo_compiler::Schema;
@@ -493,6 +494,7 @@ mod tests {
 
     fn test_config() -> Config {
         Config {
+            rhai_dir: PathBuf::from("rhai"),
             transport: Transport::StreamableHttp {
                 auth: None,
                 address: "127.0.0.1".parse().unwrap(),

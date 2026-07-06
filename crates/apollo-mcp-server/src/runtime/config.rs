@@ -12,7 +12,8 @@ use apollo_mcp_server::server_info::ServerInfoConfig;
 
 use super::{
     OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides, telemetry::Telemetry,
+    introspection::Introspection, logging::Logging, overrides::Overrides, rhai::RhaiConfig,
+    telemetry::Telemetry,
 };
 
 /// Configuration for the MCP server
@@ -53,6 +54,10 @@ pub struct Config {
     /// Health check configuration
     #[serde(default)]
     pub health_check: HealthCheckConfig,
+
+    /// Rhai scripting configuration
+    #[serde(default)]
+    pub rhai: RhaiConfig,
 
     /// Introspection configuration
     pub introspection: Introspection,

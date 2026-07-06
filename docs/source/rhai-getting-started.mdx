@@ -13,7 +13,7 @@ Common use-cases include:
 
 ## Setup
 
-Create a `rhai/` directory alongside your server configuration, and add a `main.rhai` file inside it:
+Create a `rhai/` directory in the server's working directory, and add a `main.rhai` file inside it:
 
 ```
 your-project/
@@ -23,6 +23,13 @@ your-project/
 ```
 
 The `rhai/main.rhai` file is the entry point for all Rhai scripting. The server loads the file on startup. If the file doesn't exist, the server starts normally, without any scripting.
+
+To load scripts from a different directory, set `rhai.scripts` in your configuration file:
+
+```yaml title="mcp.yaml"
+rhai:
+  scripts: /config/rhai
+```
 
 ## Writing your first hook
 

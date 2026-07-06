@@ -2,6 +2,7 @@
 //! poller syncs an operation with invalid variables JSON from Explorer.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use apollo_mcp_registry::{
@@ -113,6 +114,7 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
         .await;
 
     let server = Server::builder()
+        .rhai_dir(PathBuf::from("rhai"))
         .transport(Transport::StreamableHttp {
             auth: None,
             address: "127.0.0.1".parse().unwrap(),

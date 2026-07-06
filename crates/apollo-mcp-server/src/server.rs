@@ -42,6 +42,7 @@ pub type ConfigValidator =
 /// An Apollo MCP Server
 pub struct Server {
     config_path: Option<PathBuf>,
+    rhai_dir: PathBuf,
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
@@ -127,6 +128,7 @@ impl Server {
     #[builder]
     pub fn new(
         config_path: Option<PathBuf>,
+        rhai_dir: PathBuf,
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
@@ -168,6 +170,7 @@ impl Server {
         };
         Self {
             config_path,
+            rhai_dir,
             transport,
             schema_source,
             operation_source,

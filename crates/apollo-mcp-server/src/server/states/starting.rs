@@ -147,7 +147,7 @@ impl Starting {
             _ => None, // No health checks for Stdio or when disabled.
         };
 
-        let mut engine = RhaiEngine::new("rhai");
+        let mut engine = RhaiEngine::new(&self.config.rhai_dir);
         engine.load_from_path().map_err(|err| {
             error!("Error loading Rhai scripts: {err}");
             ServerError::RhaiError
@@ -296,6 +296,7 @@ mod tests {
     async fn start_basic_server() {
         let starting = Starting {
             config: Config {
+                rhai_dir: std::path::PathBuf::from("rhai"),
                 transport: Transport::StreamableHttp {
                     auth: None,
                     address: "127.0.0.1".parse().unwrap(),
