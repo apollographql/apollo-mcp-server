@@ -230,12 +230,6 @@ pub struct Config {
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
 
-    /// How long a cached JWKS entry stays fresh before a request forces
-    /// a re-fetch. Stale entries still serve known key IDs while a refresh
-    /// is pending or failing. Defaults to 10 minutes.
-    #[serde(deserialize_with = "humantime_serde::deserialize", default)]
-    #[schemars(with = "Option<String>")]
-    pub jwks_cache_ttl: Option<Duration>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -400,8 +394,7 @@ impl Config {
 /// `transport.auth.discovery_timeout` is not configured.
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Default TTL for cached JWKS entries when `transport.auth.jwks_cache_ttl`
-/// is not configured.
+/// Fixed TTL for cached JWKS entries; not operator-configurable.
 const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
 
 /// Fixed minimum interval between JWKS refreshes per issuer; not
@@ -548,8 +541,6 @@ async fn oauth_validate(
         .discovery_timeout
         .unwrap_or(DEFAULT_DISCOVERY_TIMEOUT);
 
-    let jwks_cache_ttl = auth_config.jwks_cache_ttl.unwrap_or(DEFAULT_JWKS_CACHE_TTL);
-
     let validator = TokenValidator {
         audiences: &auth_config.audiences,
         issuers: &auth_config.issuers,
@@ -560,7 +551,7 @@ async fn oauth_validate(
             discovery_timeout,
             &auth_state.inflight,
             &auth_state.jwks_cache,
-            jwks_cache_ttl,
+            DEFAULT_JWKS_CACHE_TTL,
             JWKS_MIN_REFRESH_INTERVAL,
         ),
     };
@@ -657,7 +648,6 @@ mod tests {
             allow_anonymous_mcp_discovery: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
-            jwks_cache_ttl: None,
             discovery_headers: HeaderMap::new(),
         }
     }
@@ -1172,39 +1162,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert!(config.discovery_headers.is_empty());
-        }
-
-        #[test]
-        fn yaml_deserialization_with_jwks_cache_ttl() {
-            let y = r#"
-              servers:
-                - http://localhost:1234
-              audiences:
-                - test-audience
-              resource: http://localhost:4000
-              scopes:
-                - read
-              jwks_cache_ttl: 5m
-            "#;
-
-            let config: Config = serde_yaml::from_str(y).unwrap();
-            assert_eq!(config.jwks_cache_ttl, Some(Duration::from_secs(300)));
-        }
-
-        #[test]
-        fn yaml_deserialization_without_jwks_cache_ttl_defaults_to_none() {
-            let y = r#"
-              servers:
-                - http://localhost:1234
-              audiences:
-                - test-audience
-              resource: http://localhost:4000
-              scopes:
-                - read
-            "#;
-
-            let config: Config = serde_yaml::from_str(y).unwrap();
-            assert_eq!(config.jwks_cache_ttl, None);
         }
 
         #[tokio::test]
