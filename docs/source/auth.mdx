@@ -243,13 +243,14 @@ transport:
 
 - On a fresh hit where the requested `kid` is present, the cached JWKS is used and no network calls are made.
 - When there is no cached entry, the cached entry is stale, or the requested `kid` is not present in the cached entry, the next request may trigger a discovery + JWKS fetch and repopulate the cache — subject to the per-issuer refresh rate limit below. Newly rotated keys are picked up the next time a refresh fires for that issuer.
+- Stale entries are still served for known `kid`s. If a refresh is rate-limited or fails — for example, during an identity provider outage — a `kid` present in the cached JWKS is still accepted. Only requests presenting a `kid` that is absent from the cache are rejected. Stale entries persist until the next successful refresh, so there is no upper bound on how long a known `kid` remains accepted while refreshes keep failing.
 - The cache is process-local. Each replica warms its own cache independently after startup.
 
 **Considerations:**
 
 - Increase the TTL for stable identity providers to further reduce auth latency and load on the authorization server's discovery and JWKS endpoints.
-- Decrease the TTL if your identity provider rotates signing keys frequently and you cannot tolerate keys that were rotated mid-TTL still being accepted until the TTL expires. Note that revocation of a still-cached `kid` is not picked up until the entry expires.
-- When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch — but to prevent fabricated `kid` values from driving one upstream round-trip per request, at most one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized` and the client should retry after the `WWW-Authenticate`-indicated delay.
+- Decrease the TTL if your identity provider rotates signing keys frequently. Refreshes are internally capped at one per issuer per minute, so a TTL below one minute doesn't pick up rotations any faster. Removal of a still-cached `kid` takes effect on the first successful refresh after the entry expires.
+- When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch — but to prevent fabricated `kid` values from driving one upstream round-trip per request, at most one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized` and the client can retry.
 
 ### OIDC Discovery compatibility
 
