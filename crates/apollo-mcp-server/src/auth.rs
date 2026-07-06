@@ -231,8 +231,8 @@ pub struct Config {
     pub discovery_headers: HeaderMap,
 
     /// How long a cached JWKS entry stays fresh before a request forces
-    /// a re-fetch. Stale entries behave identically to a cache miss.
-    /// Defaults to 10 minutes.
+    /// a re-fetch. Stale entries still serve known key IDs while a refresh
+    /// is pending or failing. Defaults to 10 minutes.
     #[serde(deserialize_with = "humantime_serde::deserialize", default)]
     #[schemars(with = "Option<String>")]
     pub jwks_cache_ttl: Option<Duration>,
