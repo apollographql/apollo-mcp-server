@@ -728,6 +728,15 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// Returns an `Instant` back-dated by `age`, without the underflow panic
+    /// risk of `Instant::now() - age` on platforms with a recent monotonic
+    /// epoch.
+    fn back_dated(age: Duration) -> Instant {
+        Instant::now()
+            .checked_sub(age)
+            .expect("test clock supports back-dating")
+    }
+
     /// Build a real `Jwks` for pre-populating the cache. `Jwks` doesn't impl
     /// `Deserialize`, so we spin up a throwaway mockito server and reuse
     /// `fetch_jwks` to construct one.
@@ -911,6 +920,87 @@ mod tests {
 
     #[tokio::test]
     async fn expired_entry_triggers_refetch() {
+        // The requested kid is present in the expired entry, so TTL expiry is
+        // the only thing that can drive the fetch: a fresh entry would return
+        // from the warm path with zero network calls.
+        let client = reqwest::Client::new();
+
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"cached-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let stale_jwks = make_test_jwks(&client, &jwks_json).await;
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url(),
+            server.url()
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let ttl = Duration::from_secs(300);
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: stale_jwks,
+                    issuer: server.url(),
+                    // Back-dated past the TTL so the entry is expired.
+                    fetched_at: back_dated(Duration::from_secs(600)),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            ttl,
+            Duration::from_secs(60),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "cached-key").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        let (_jwk, _issuer) = result.expect("expired entry should trigger refetch");
+
+        let guard = cache.read().unwrap();
+        let entry = guard.get(&issuer_url).expect("cache should be repopulated");
+        assert!(entry.is_fresh(ttl));
+    }
+
+    #[tokio::test]
+    async fn successful_refresh_rejects_rotated_out_kid() {
+        // A successful refresh replaces the cached entry, so a kid rotated
+        // out upstream must be rejected — the stale fallback must not
+        // resurrect it.
         let client = reqwest::Client::new();
 
         let stale_jwks_json = format!(
@@ -960,36 +1050,30 @@ mod tests {
                 CachedJwks {
                     keys: stale_jwks,
                     issuer: server.url(),
-                    // Back-date so a 1ms TTL is already expired — no sleep needed.
-                    fetched_at: Instant::now() - Duration::from_millis(10),
+                    // Back-dated past the TTL so the entry is expired.
+                    fetched_at: back_dated(Duration::from_secs(600)),
                     signing_algs: vec!["RS256".to_string()],
                 },
             );
         }
 
-        // Use a long TTL: the stale initial entry is already guaranteed by the
-        // back-dated `fetched_at`, so a 1ms TTL only adds CI flake risk on the
-        // post-fetch lookup_fresh check.
-        let ttl = Duration::from_secs(300);
         let resolver = NetworkedKeyResolver::new(
             &client,
             Duration::from_secs(5),
             &inflight,
             &cache,
-            ttl,
+            Duration::from_secs(300),
             Duration::from_secs(60),
         );
 
-        let result = resolver.resolve_key(&issuer_url, "new-key").await;
+        let result = resolver.resolve_key(&issuer_url, "old-key").await;
 
         discovery_mock.assert();
         jwks_mock.assert();
-        let (_jwk, _issuer) = result.expect("expired entry should trigger refetch");
-
-        let guard = cache.read().unwrap();
-        let entry = guard.get(&issuer_url).expect("cache should be repopulated");
-        assert!(entry.keys.keys.contains_key("new-key"));
-        assert!(!entry.keys.keys.contains_key("old-key"));
+        assert!(
+            result.is_none(),
+            "a kid rotated out by a successful refresh must be rejected"
+        );
     }
 
     #[tokio::test]
@@ -1244,10 +1328,9 @@ mod tests {
         // Simulate a refresh that happened 120s ago with a 60s window.
         {
             let mut guard = inflight.lock().expect("inflight not poisoned");
-            guard.last_attempt.insert(
-                issuer_url.clone(),
-                Instant::now() - Duration::from_secs(120),
-            );
+            guard
+                .last_attempt
+                .insert(issuer_url.clone(), back_dated(Duration::from_secs(120)));
         }
 
         let client = reqwest::Client::new();
@@ -1642,7 +1725,7 @@ mod tests {
                     keys: jwks,
                     issuer: "https://issuer.example.com".to_string(),
                     // Back-dated past the TTL so the entry is stale.
-                    fetched_at: Instant::now() - Duration::from_secs(120),
+                    fetched_at: back_dated(Duration::from_secs(120)),
                     signing_algs: vec!["RS256".to_string()],
                 },
             );
@@ -1719,7 +1802,7 @@ mod tests {
                     keys: jwks,
                     issuer: "https://issuer.example.com".to_string(),
                     // Back-dated past the TTL so the entry is stale.
-                    fetched_at: Instant::now() - Duration::from_secs(120),
+                    fetched_at: back_dated(Duration::from_secs(120)),
                     signing_algs: vec!["RS256".to_string()],
                 },
             );
