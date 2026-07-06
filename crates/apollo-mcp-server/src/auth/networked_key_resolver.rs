@@ -376,7 +376,10 @@ impl KeyResolver for NetworkedKeyResolver<'_> {
         fetch.await;
 
         // Each caller looks up its own `kid` against the refreshed cache.
+        // If the fetch failed, fall back to a stale entry for a known kid
+        // rather than rejecting.
         self.lookup_fresh(server, key_id)
+            .or_else(|| self.lookup_stale(server, key_id))
     }
 }
 
@@ -1676,6 +1679,77 @@ mod tests {
         );
 
         no_network.assert();
+    }
+
+    #[tokio::test]
+    async fn stale_entry_serves_known_kid_when_refetch_fails() {
+        // When the refetch fails, a kid in the stale entry is still served;
+        // an unknown kid is still rejected.
+        let client = reqwest::Client::new();
+
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"stale-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+        let jwks = make_test_jwks(&client, &jwks_json).await;
+
+        // The issuer is down: both discovery URLs fail.
+        let mut server = mockito::Server::new_async().await;
+        let fail_rfc8414 = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let fail_oidc = server
+            .mock("GET", "/.well-known/openid-configuration")
+            .with_status(500)
+            .expect(1)
+            .create_async()
+            .await;
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+
+        let ttl = Duration::from_secs(60);
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        {
+            let mut guard = cache.write().unwrap();
+            guard.insert(
+                issuer_url.clone(),
+                CachedJwks {
+                    keys: jwks,
+                    issuer: "https://issuer.example.com".to_string(),
+                    // Back-dated past the TTL so the entry is stale.
+                    fetched_at: Instant::now() - Duration::from_secs(120),
+                    signing_algs: vec!["RS256".to_string()],
+                },
+            );
+        }
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            ttl,
+            Duration::from_secs(60),
+        );
+
+        // The refresh window is open, so this call attempts (and fails) a
+        // refetch, consuming the window.
+        let result = resolver.resolve_key(&issuer_url, "stale-key").await;
+        fail_rfc8414.assert();
+        fail_oidc.assert();
+        assert!(
+            result.is_some(),
+            "a kid present in the stale entry must be served when the refetch fails"
+        );
+
+        let bogus = resolver.resolve_key(&issuer_url, "bogus-kid").await;
+        assert!(
+            bogus.is_none(),
+            "a kid absent from the stale entry must still be rejected"
+        );
     }
 
     #[tokio::test]
