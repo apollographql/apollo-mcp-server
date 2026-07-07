@@ -1,0 +1,27 @@
+query ListUpcomingLaunches {
+  upcomingLaunches(limit: 10, ordering: "net") {
+    pagination {
+      count
+    }
+    results {
+      id
+      name
+      net
+      weatherConcerns
+      rocket {
+        id
+        configuration {
+          fullName
+        }
+      }
+      mission {
+        name
+        description
+      }
+      webcastLive
+      launchServiceProvider {
+        name
+      }
+    }
+  }
+}

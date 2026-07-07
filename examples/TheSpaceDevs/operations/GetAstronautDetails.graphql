@@ -1,8 +1,10 @@
-query GetAstronautDetails($astronautId: ID!) {
+query GetAstronautDetails($astronautId: Int!) {
   astronaut(id: $astronautId) {
     id
     name
-    status
+    status {
+      name
+    }
     inSpace
     age
 
@@ -15,7 +17,7 @@ query GetAstronautDetails($astronautId: ID!) {
     # Space experience metrics
     timeInSpace
     evaTime # Extravehicular Activity time
-    
+
     # Agency information
     agency {
       id
@@ -36,9 +38,8 @@ query GetAstronautDetails($astronautId: ID!) {
 
     # Media
     image {
-      url
-      thumbnail
-      credit
+      imageUrl
+      thumbnailUrl
     }
 
     # Bio and links
@@ -48,10 +49,7 @@ query GetAstronautDetails($astronautId: ID!) {
     # Social media
     socialMediaLinks {
       url
-      socialMedia {
-        name
-        url
-      }
+      socialMediaSite
     }
   }
 }

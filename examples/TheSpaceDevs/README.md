@@ -24,7 +24,7 @@ cargo run -- examples/TheSpaceDevs/config.yaml
 |------|-----------|-------------|
 | `operations/GetAstronautDetails.graphql` | `GetAstronautDetails` | Details for a single astronaut by ID |
 | `operations/GetAstronautsCurrentlyInSpace.graphql` | `GetAstronautsCurrentlyInSpace` | Astronauts currently aboard the ISS |
-| `operations/SearchUpcomingLaunches.graphql` | `SearchUpcomingLaunches` | Search upcoming rocket launches |
+| `operations/ListUpcomingLaunches.graphql` | `ListUpcomingLaunches` | List upcoming rocket launches, soonest first |
 | `operations/ExploreCelestialBodies.graphql` | `ExploreCelestialBodies` | Browse planets, moons, and other bodies |
 
 ## Available prompts
