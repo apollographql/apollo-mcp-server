@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rmcp::model::{ClientCapabilities, ErrorCode, Extensions, RawResource, Resource, Tool};
+use rmcp::model::{ClientCapabilities, ErrorCode, Extensions, Resource, Tool};
 use serde_json::Value;
 use url::Url;
 
@@ -69,20 +69,9 @@ pub(crate) struct PrefetchOperation {
 
 impl App {
     pub(crate) fn resource(&self) -> Resource {
-        Resource::new(
-            RawResource {
-                name: self.name.clone(),
-                uri: self.uri.to_string(),
-                mime_type: None,
-                // TODO: load all this from a manifest file
-                title: None,
-                description: self.description.clone(),
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        )
+        let mut resource = Resource::new(self.uri.to_string(), self.name.clone());
+        resource.description = self.description.clone();
+        resource
     }
 }
 

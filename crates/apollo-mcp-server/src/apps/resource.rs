@@ -10,7 +10,7 @@ use super::App;
 const MCP_MIME_TYPE: &str = "text/html;profile=mcp-app";
 
 pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
-    resource.raw.mime_type = Some(MCP_MIME_TYPE.to_string());
+    resource.mime_type = Some(MCP_MIME_TYPE.to_string());
     resource
 }
 
@@ -159,7 +159,7 @@ pub(crate) async fn get_app_resource(
 
 #[cfg(test)]
 mod tests {
-    use rmcp::model::{Extensions, RawResource};
+    use rmcp::model::Extensions;
 
     use crate::apps::app::TargetedAppResource;
     use crate::apps::manifest::{CSPSettings, WidgetSettings};
@@ -168,24 +168,12 @@ mod tests {
 
     #[test]
     fn attach_correct_mime_type() {
-        let resource = Resource::new(
-            RawResource {
-                name: "TestResource".to_string(),
-                uri: "ui://test".to_string(),
-                mime_type: None,
-                title: None,
-                description: None,
-                icons: None,
-                size: None,
-                meta: None,
-            },
-            None,
-        );
+        let resource = Resource::new("ui://test", "TestResource");
 
         let result = attach_resource_mime_type(resource);
 
         assert_eq!(
-            result.raw.mime_type,
+            result.mime_type,
             Some("text/html;profile=mcp-app".to_string())
         );
     }

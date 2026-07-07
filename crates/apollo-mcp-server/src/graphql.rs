@@ -10,7 +10,7 @@ use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
-use rmcp::model::{CallToolResult, Content, Meta};
+use rmcp::model::{CallToolResult, ContentBlock, Meta};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -67,7 +67,7 @@ pub trait Executable {
         let variables = match self.variables(request.input.clone()) {
             Ok(v) => v,
             Err(ValidationError(msg)) => {
-                return Ok(CallToolResult::error(vec![Content::text(msg)]));
+                return Ok(CallToolResult::error(vec![ContentBlock::text(msg)]));
             }
         };
 
@@ -80,7 +80,7 @@ pub trait Executable {
         } = match self.operation(request.input) {
             Ok(details) => details,
             Err(ValidationError(msg)) => {
-                return Ok(CallToolResult::error(vec![Content::text(msg)]));
+                return Ok(CallToolResult::error(vec![ContentBlock::text(msg)]));
             }
         };
 
@@ -107,7 +107,7 @@ pub trait Executable {
         {
             Ok(resp) => resp,
             Err(e) => {
-                return Ok(CallToolResult::error(vec![Content::text(format!(
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                     "Failed to send GraphQL request: {e}"
                 ))]));
             }
@@ -145,7 +145,7 @@ pub trait Executable {
                 };
                 Ok(result.with_meta(meta))
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
+            Err(e) => Ok(CallToolResult::error(vec![ContentBlock::text(format!(
                 "Failed to read GraphQL response body: {e}"
             ))])),
         };
@@ -186,7 +186,7 @@ mod test {
     use opentelemetry_sdk::metrics::{
         InMemoryMetricExporter, MeterProviderBuilder, PeriodicReader,
     };
-    use rmcp::model::RawContent;
+    use rmcp::model::ContentBlock;
     use serde_json::{Map, Value, json};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -311,7 +311,7 @@ mod test {
         // then
         assert_eq!(result.is_error, Some(true));
         let content = &result.content[0];
-        if let RawContent::Text(text) = &content.raw {
+        if let ContentBlock::Text(text) = content {
             assert!(text.text.starts_with("Failed to send GraphQL request"));
         } else {
             panic!("Expected text content");
@@ -345,7 +345,7 @@ mod test {
         // then
         assert_eq!(result.is_error, Some(true));
         let content = &result.content[0];
-        if let RawContent::Text(text) = &content.raw {
+        if let ContentBlock::Text(text) = content {
             assert!(
                 text.text
                     .starts_with("Failed to read GraphQL response body")

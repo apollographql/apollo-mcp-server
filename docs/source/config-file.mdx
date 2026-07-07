@@ -292,20 +292,27 @@ For Apollo MCP Server `≤v1.0.0`, the default `port` value is `5000`. In `v1.1.
 
 ### Host Validation
 
-These fields are under the `host_validation` key within the `transport` configuration. Host validation prevents DNS rebinding attacks by rejecting requests with unexpected `Host` headers.
+These fields are under the `host_validation` key within the `transport` configuration. Host validation prevents DNS rebinding attacks by rejecting requests with unexpected `Host` headers. Origin validation additionally protects browser-based clients by rejecting requests whose `Origin` header is not on the allow list.
 
-| Option          | Type           | Default | Description                                                      |
-| :-------------- | :------------- | :------ | :--------------------------------------------------------------- |
-| `enabled`       | `bool`         | `true`  | Enable Host header validation to prevent DNS rebinding attacks   |
-| `allowed_hosts` | `List<string>` | `[]`    | Additional allowed hostnames beyond localhost (can include port) |
+| Option            | Type           | Default | Description                                                                 |
+| :---------------- | :------------- | :------ | :-------------------------------------------------------------------------- |
+| `enabled`         | `bool`         | `true`  | Enable Host and Origin header validation                                    |
+| `allowed_hosts`   | `List<string>` | `[]`    | Additional allowed hostnames beyond localhost (can include port)            |
+| `allowed_origins` | `List<string>` | `[]`    | Allowed browser origins (RFC 6454); empty leaves Origin validation disabled |
 
 <Note>
 
-Host validation is only available when using the `streamable_http` transport. Loopback addresses (`localhost`, `127.0.0.1`, `::1`) are always allowed when validation is enabled.
+Host and Origin validation are only available when using the `streamable_http` transport. Loopback addresses (`localhost`, `127.0.0.1`, `::1`) are always allowed as hosts when validation is enabled. Origin validation is opt-in: it only applies when `allowed_origins` is non-empty, and requests without an `Origin` header still pass. Origin entries must include a scheme (for example `https://app.example.com`), and `null` matches the browser's `Origin: null`.
 
 </Note>
 
-For production deployments behind a reverse proxy, add your server's hostname:
+<Note>
+
+`host_validation.allowed_origins` is distinct from [CORS](/apollo-mcp-server/cors) `origins`. `allowed_origins` is a server-side guard that rejects disallowed requests with `HTTP 403` to prevent DNS rebinding, while CORS controls the `Access-Control-Allow-Origin` response header that browsers use to decide whether to expose a cross-origin response. Browser clients on other origins typically need both configured.
+
+</Note>
+
+For production deployments behind a reverse proxy, add your server's hostname and any browser origins that call it directly:
 
 ```yaml title="mcp.yaml"
 transport:
@@ -313,6 +320,8 @@ transport:
   host_validation:
     allowed_hosts:
       - mcp.example.com
+    allowed_origins:
+      - https://app.example.com
 ```
 
 ### Auth

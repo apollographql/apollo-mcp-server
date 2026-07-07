@@ -6,7 +6,7 @@ use apollo_compiler::Schema;
 use apollo_compiler::ast::OperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
-use rmcp::model::{CallToolResult, Content, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -102,7 +102,7 @@ impl Introspect {
                 })
                 .map(|(_, extended_type)| extended_type)
                 .map(|extended_type| self.serialize(extended_type))
-                .map(Content::text)
+                .map(ContentBlock::text)
                 .collect(),
         ))
     }
@@ -213,11 +213,9 @@ mod tests {
             .content
             .iter()
             .filter_map(|c| {
-                use rmcp::model::RawContent;
-                use std::ops::Deref;
-                let c = c.deref();
+                use rmcp::model::ContentBlock;
                 match c {
-                    RawContent::Text(text) => Some(text.text.clone()),
+                    ContentBlock::Text(text) => Some(text.text.clone()),
                     _ => None,
                 }
             })
@@ -252,11 +250,9 @@ mod tests {
             .content
             .iter()
             .filter_map(|c| {
-                use rmcp::model::RawContent;
-                use std::ops::Deref;
-                let c = c.deref();
+                use rmcp::model::ContentBlock;
                 match c {
-                    RawContent::Text(text) => Some(text.text.clone()),
+                    ContentBlock::Text(text) => Some(text.text.clone()),
                     _ => None,
                 }
             })
@@ -294,11 +290,9 @@ mod tests {
             .content
             .iter()
             .filter_map(|c| {
-                use rmcp::model::RawContent;
-                use std::ops::Deref;
-                let c = c.deref();
+                use rmcp::model::ContentBlock;
                 match c {
-                    RawContent::Text(text) => Some(text.text.clone()),
+                    ContentBlock::Text(text) => Some(text.text.clone()),
                     _ => None,
                 }
             })
