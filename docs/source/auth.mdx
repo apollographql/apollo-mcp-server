@@ -239,7 +239,7 @@ Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm
 
 **Considerations:**
 
-- When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch — but to prevent fabricated `kid` values from driving one upstream round-trip per request, at most one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized` and the client can retry.
+- When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch, but to prevent fabricated `kid` values from driving one upstream round-trip per request, up to one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized`, and the client can retry.
 
 ### OIDC Discovery compatibility
 
