@@ -4,7 +4,7 @@ default: minor
 
 # Per-issuer JWKS cache with singleflight fetches and refresh rate limiting
 
-Apollo MCP Server now manages JWKS as a cached, per-issuer resource instead of refetching keys for every token validation. Previously, each request triggered two network calls (OIDC discovery and JWKS fetch) regardless of whether the issuer had been seen before. The new cache reuses JWKS responses on the warm path and triggers a refresh only when the entry is missing, past its TTL, or does not contain the requested key ID.
+Apollo MCP Server now manages JSON Web Key Set (JWKS) as a cached, per-issuer resource instead of refetching keys for every token validation. Previously, each request triggered two network calls—OpenID Connect (OIDC) discovery and JWKS fetch—regardless of whether the issuer had been seen before. The new cache reuses JWKS responses on the warm path and triggers a refresh only when the entry is missing, past its TTL, or does not contain the requested key ID.
 
 The cache TTL is 10 minutes. Stale entries continue to serve known key IDs while a refresh is in progress or when a refresh fails — keys are only evicted when a successful refresh no longer includes them.
 
