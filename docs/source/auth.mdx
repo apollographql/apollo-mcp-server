@@ -228,7 +228,7 @@ transport:
 
 Token validation requires Apollo MCP Server to fetch each authorization server's JSON Web Key Set (JWKS)—preceded by an OIDC/OAuth discovery call to locate the `jwks_uri`. Without caching, every authorized request pays the cost of both round trips.
 
-Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm path. Cached entries stay fresh for 10 minutes by default before the next request triggers a re-fetch.
+Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm path. Cached entries stay fresh for 10 minutes before the next request triggers a re-fetch.
 
 **Behavior:**
 
