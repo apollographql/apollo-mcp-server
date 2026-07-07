@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use axum::{
@@ -16,7 +16,7 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_key_resolver::NetworkedKeyResolver;
+use networked_key_resolver::{CachedJwks, InflightMap, IssuerFetchState, NetworkedKeyResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -293,6 +293,8 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
 struct AuthState {
     config: Arc<Config>,
     client: reqwest::Client,
+    jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
+    inflight: Arc<InflightMap>,
     resource_metadata_url: Url,
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
     /// path neither re-parses nor allocates them.
@@ -366,6 +368,8 @@ impl Config {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(required_scopes),
+            inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
+            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -388,6 +392,13 @@ impl Config {
 /// Default timeout for OIDC/OAuth discovery and JWKS requests when
 /// `transport.auth.discovery_timeout` is not configured.
 const DEFAULT_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Fixed TTL for cached JWKS entries; not operator-configurable.
+const DEFAULT_JWKS_CACHE_TTL: Duration = Duration::from_secs(600); // 10 min
+
+/// Fixed minimum interval between JWKS refreshes per issuer; not
+/// operator-configurable.
+const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// MCP discovery methods that are allowed without authentication when
 /// `allow_anonymous_mcp_discovery` is enabled.
@@ -534,7 +545,14 @@ async fn oauth_validate(
         issuers: &auth_config.issuers,
         allow_any_audience: auth_config.allow_any_audience,
         servers: &auth_state.auth_servers,
-        keys: NetworkedKeyResolver::new(&auth_state.client, discovery_timeout),
+        keys: NetworkedKeyResolver::new(
+            &auth_state.client,
+            discovery_timeout,
+            &auth_state.inflight,
+            &auth_state.jwks_cache,
+            DEFAULT_JWKS_CACHE_TTL,
+            JWKS_MIN_REFRESH_INTERVAL,
+        ),
     };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -646,6 +664,8 @@ mod tests {
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
             required_scopes: Arc::new(HashMap::new()),
+            inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
+            jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
