@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.16.0 (2026-07-08)
+
+### Features
+
+#### Per-issuer JWKS cache with singleflight fetches and refresh rate limiting
+
+Apollo MCP Server now manages JSON Web Key Set (JWKS) as a cached, per-issuer resource instead of refetching keys for every token validation. Previously, each request triggered two network calls—OpenID Connect (OIDC) discovery and JWKS fetch—regardless of whether the issuer had been seen before. The new cache reuses JWKS responses on the warm path and triggers a refresh only when the entry is missing, past its TTL, or does not contain the requested key ID.
+
+The cache TTL is 10 minutes. Stale entries continue to serve known key IDs while a refresh is in progress or when a refresh fails—keys are only evicted when a successful refresh no longer includes them.
+
+When multiple requests arrive simultaneously for an issuer whose JWKS is not yet cached (or whose entry has just expired), Apollo MCP Server now coalesces them into a single outbound discovery + JWKS fetch instead of fanning out one fetch per request. Followers await the leader's result and then read the populated cache; one upstream round-trip serves all concurrent callers.
+
+Apollo MCP Server now allows at most one JWKS refresh per issuer per internal window (default 60 seconds). When a token arrives with a `kid` that is absent from both the fresh and stale cached JWKS and the window is exhausted, the request is rejected with 401 immediately — no outbound HTTP request is made. Concurrent misses within an allowed window still coalesce into a single upstream fetch.
+
+This closes the request-amplification vector where an attacker rotating unique bogus `kid`s could drive one upstream discovery + JWKS fetch pair per request.
+
+#### Upgrade rmcp to 2.1 and support MCP 2025-11-25
+
+Apollo MCP Server now depends on rmcp 2.1, which aligns the protocol implementation with the MCP 2025-11-25 specification. The server advertises `2025-11-25` as its latest supported protocol version and negotiates it with clients that request it. Clients on `2025-06-18` and `2025-03-26` continue to work, and clients requesting a version the server does not implement are downgraded to the latest supported version rather than refused. Output schema and structured content remain gated at `2025-06-18` and later, so they now apply to `2025-11-25` as well.
+
+You can now configure browser Origin validation for the `streamable_http` transport with a new `allowed_origins` list under `host_validation`. Origin validation follows RFC 6454 and stays disabled when the list is empty, so existing configurations are unchanged.
+
+### Fixes
+
+#### Configure the Rhai scripts directory
+
+Apollo MCP Server now supports configuring the directory used to load Rhai scripts with the top-level `rhai.scripts` option. The default remains `rhai`, preserving existing behavior, while deployments that mount scripts elsewhere can point startup loading and hot reload watching at that directory.
+
+#### Keep operation collection polling alive after poll errors
+
+Operation collection polling no longer stops permanently when a post-initial poll receives a GraphOS response error, such as an intermittent permission response or missing GraphQL data. Previously, those response errors were classified as non-transient and caused the poll loop to exit, so later edits to the Studio operation collection were not picked up until the server process restarted.
+
+Apollo MCP Server now keeps serving the last known good operation set and retries on the next poll interval after any poll-loop failure. Initial collection load failures still retain their existing behavior: non-transient errors are reported as terminal startup/configuration failures before the server has a collection to serve.
+
 ## 1.15.0 (2026-06-24)
 
 ### Features
