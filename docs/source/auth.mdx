@@ -275,6 +275,18 @@ transport:
 
 Apollo MCP Server fetches signing keys from `jwks_uri` directly, skipping the discovery request `servers` entries perform. Caching, rate limiting, and issuer binding all behave the same as for a `servers` entry: `issuer` plays the role a discovery response's `issuer` field would, and a token's `iss` claim must match it when `issuers` is configured. `servers` and `static_servers` can be used together, and both contribute to the `authorization_servers` list this server advertises in its protected-resource metadata.
 
+`servers` has no default, so it must still be present even when every authorization server is static:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers: []
+    static_servers:
+      - issuer: https://static-idp.example.com
+        jwks_uri: https://static-idp.example.com/oauth2/v1/keys
+```
+
 ## Discovery headers
 
 Some OAuth servers or web application firewalls (WAFs) require specific HTTP headers on requests. Use `discovery_headers` to attach custom headers to all OIDC discovery and JWKS requests made by the MCP Server.
