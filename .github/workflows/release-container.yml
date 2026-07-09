@@ -5,6 +5,12 @@ on:
     types: [closed]
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Full version tag to publish, including the leading v (e.g. v1.16.0)
+        required: true
+        type: string
   workflow_call:
     inputs:
       version:
@@ -18,7 +24,7 @@ env:
 
 jobs:
   get-version:
-    # Run on PR merge from release branch or workflow_call
+    # Run on PR merge from release branch, workflow_dispatch, or workflow_call
     if: (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')) || inputs.version
     runs-on: ubuntu-latest
     outputs:
@@ -94,8 +100,6 @@ jobs:
           labels: |
             org.opencontainers.image.created=${{ steps.timestamp.outputs.created }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
           build-args: |
             SOURCE_DATE_EPOCH=${{ steps.timestamp.outputs.epoch }}
 
