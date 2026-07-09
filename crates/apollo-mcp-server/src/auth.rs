@@ -16,7 +16,9 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use http::Method;
-use networked_key_resolver::{CachedJwks, InflightMap, IssuerFetchState, NetworkedKeyResolver};
+use networked_key_resolver::{
+    CachedJwks, InflightMap, IssuerFetchState, NetworkedKeyResolver, StaticServerMetadata,
+};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -85,6 +87,12 @@ pub enum TlsConfigError {
     ClientBuild(#[from] reqwest::Error),
     #[error("Auth server URL at index {index} ({url}) has no host")]
     ServerUrlMissingHost { index: usize, url: String },
+    #[error("Static auth server at index {index} has an invalid `{field}` URL (no host): {url}")]
+    StaticServerUrlMissingHost {
+        index: usize,
+        field: &'static str,
+        url: String,
+    },
     #[error("Resource URL has non-HTTP(S) scheme '{scheme}': {url}")]
     ResourceUrlInvalidScheme { url: String, scheme: String },
 }
@@ -155,6 +163,19 @@ where
     Ok(servers)
 }
 
+/// Validates that a string parses as a URL without normalizing it for
+/// storage. Like `servers`, `Url::parse` appends `/` to bare-authority
+/// inputs, which would break exact string matching (issuer identifiers) or
+/// silently mutate a fetch target (JWKS URIs).
+fn deserialize_url_string<'de, D>(d: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(d)?;
+    Url::parse(&s).map_err(|e| serde::de::Error::custom(format!("invalid URL {s:?}: {e}")))?;
+    Ok(s)
+}
+
 /// Auth configuration options
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -165,6 +186,17 @@ pub struct Config {
     #[serde(deserialize_with = "deserialize_auth_servers")]
     #[schemars(with = "Vec<Url>")]
     pub servers: Vec<String>,
+
+    /// Authorization servers configured with pre-resolved discovery metadata.
+    ///
+    /// Use this for authorization servers that don't expose an RFC 8414 or
+    /// OIDC discovery endpoint. Apollo MCP Server fetches signing keys
+    /// directly from `jwks_uri`, skipping the discovery request `servers`
+    /// entries perform. Everything else — caching, rate limiting, issuer
+    /// binding — behaves the same as a `servers` entry: `issuer` plays the
+    /// role a discovery response's `issuer` field would.
+    #[serde(default)]
+    pub static_servers: Vec<StaticServer>,
 
     /// List of accepted audiences for the OAuth tokens
     #[serde(default)]
@@ -229,6 +261,27 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_header_map")]
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
+}
+
+/// An authorization server configured with pre-resolved discovery metadata,
+/// for servers that don't expose an RFC 8414 / OIDC discovery endpoint.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StaticServer {
+    /// The authorization server's issuer identifier (the JWT `iss` claim it issues).
+    ///
+    /// Not validated with `Url::parse` for storage: like `servers` and
+    /// `issuers`, `Url::parse` appends `/` to bare-authority inputs, which
+    /// would break exact `iss` string matching. Parseability and host
+    /// presence are still validated at startup.
+    #[serde(deserialize_with = "deserialize_url_string")]
+    #[schemars(with = "Url")]
+    pub issuer: String,
+
+    /// The JSON Web Key Set (JWKS) URL to fetch signing keys from directly.
+    #[serde(deserialize_with = "deserialize_url_string")]
+    #[schemars(with = "Url")]
+    pub jwks_uri: String,
 }
 
 /// TLS configuration for OAuth server connections
@@ -297,8 +350,12 @@ struct AuthState {
     inflight: Arc<InflightMap>,
     resource_metadata_url: Url,
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
-    /// path neither re-parses nor allocates them.
+    /// path neither re-parses nor allocates them. Includes both `servers`
+    /// (discovery-based) and `static_servers` (pre-resolved) entries.
     auth_servers: Arc<[Url]>,
+    /// Pre-resolved discovery metadata for `static_servers` entries, keyed by
+    /// the same parsed `Url` identity used in `auth_servers`.
+    static_server_metadata: Arc<HashMap<Url, StaticServerMetadata>>,
     /// Per-operation required scopes, keyed by operation name.
     required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
@@ -315,7 +372,7 @@ impl Config {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
         #[allow(clippy::expect_used)] // parseability validated at deserialize
-        let auth_servers = self
+        let mut auth_servers = self
             .servers
             .iter()
             .enumerate()
@@ -330,6 +387,44 @@ impl Config {
                 Ok(parsed)
             })
             .collect::<Result<Vec<Url>, _>>()?;
+
+        // Same fail-fast treatment for `static_servers`: both `issuer` and
+        // `jwks_uri` must have a host, since `issuer` becomes this server's
+        // identity in `auth_servers` and `jwks_uri` is fetched directly.
+        #[allow(clippy::expect_used)] // parseability validated by deserialize_url_string
+        let static_server_metadata = self
+            .static_servers
+            .iter()
+            .enumerate()
+            .map(|(i, static_server)| {
+                let issuer_url =
+                    Url::parse(&static_server.issuer).expect("validated by deserialize_url_string");
+                if issuer_url.host_str().is_none() {
+                    return Err(TlsConfigError::StaticServerUrlMissingHost {
+                        index: i,
+                        field: "issuer",
+                        url: static_server.issuer.clone(),
+                    });
+                }
+                let jwks_host = Url::parse(&static_server.jwks_uri)
+                    .expect("validated by deserialize_url_string");
+                if jwks_host.host_str().is_none() {
+                    return Err(TlsConfigError::StaticServerUrlMissingHost {
+                        index: i,
+                        field: "jwks_uri",
+                        url: static_server.jwks_uri.clone(),
+                    });
+                }
+                Ok((
+                    issuer_url,
+                    StaticServerMetadata {
+                        issuer: static_server.issuer.clone(),
+                        jwks_uri: static_server.jwks_uri.clone(),
+                    },
+                ))
+            })
+            .collect::<Result<HashMap<Url, StaticServerMetadata>, _>>()?;
+        auth_servers.extend(static_server_metadata.keys().cloned());
 
         let scheme = self.resource.scheme();
         if scheme != "http" && scheme != "https" {
@@ -367,6 +462,7 @@ impl Config {
             client,
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
+            static_server_metadata: Arc::new(static_server_metadata),
             required_scopes: Arc::new(required_scopes),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -552,7 +648,8 @@ async fn oauth_validate(
             &auth_state.jwks_cache,
             DEFAULT_JWKS_CACHE_TTL,
             JWKS_MIN_REFRESH_INTERVAL,
-        ),
+        )
+        .with_static_servers(Arc::clone(&auth_state.static_server_metadata)),
     };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -636,6 +733,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             servers: vec!["http://localhost:1234".to_string()],
+            static_servers: vec![],
             audiences: vec!["test-audience".to_string()],
             issuers: vec![],
             allow_any_audience: false,
@@ -663,6 +761,7 @@ mod tests {
             client: reqwest::Client::new(),
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
+            static_server_metadata: Arc::new(HashMap::new()),
             required_scopes: Arc::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -988,6 +1087,52 @@ mod tests {
         }
 
         #[test]
+        fn rejects_static_server_issuer_without_host() {
+            let mut config = test_config();
+            config.static_servers = vec![StaticServer {
+                issuer: "file:///some/path".to_string(),
+                jwks_uri: "https://static-idp.example.com/jwks".to_string(),
+            }];
+
+            let router = Router::new();
+            let err = config
+                .enable_middleware(router, HashMap::new())
+                .unwrap_err();
+
+            assert!(matches!(
+                err,
+                TlsConfigError::StaticServerUrlMissingHost {
+                    index: 0,
+                    field: "issuer",
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn rejects_static_server_jwks_uri_without_host() {
+            let mut config = test_config();
+            config.static_servers = vec![StaticServer {
+                issuer: "https://static-idp.example.com".to_string(),
+                jwks_uri: "file:///some/path".to_string(),
+            }];
+
+            let router = Router::new();
+            let err = config
+                .enable_middleware(router, HashMap::new())
+                .unwrap_err();
+
+            assert!(matches!(
+                err,
+                TlsConfigError::StaticServerUrlMissingHost {
+                    index: 0,
+                    field: "jwks_uri",
+                    ..
+                }
+            ));
+        }
+
+        #[test]
         fn default_config_builds_client() {
             let config = TlsConfig::default();
             let client = config.build_client(HeaderMap::new());
@@ -1258,6 +1403,102 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 err.to_string().contains("invalid auth server URL"),
                 "got: {err}"
             );
+        }
+    }
+
+    mod static_servers_field {
+        use super::*;
+
+        #[test]
+        fn yaml_deserialization_with_static_servers() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                static_servers:
+                  - issuer: https://static-idp.example.com
+                    jwks_uri: https://static-idp.example.com/oauth2/v1/keys
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.static_servers.len(), 1);
+            assert_eq!(
+                config.static_servers[0].issuer,
+                "https://static-idp.example.com"
+            );
+            assert_eq!(
+                config.static_servers[0].jwks_uri,
+                "https://static-idp.example.com/oauth2/v1/keys"
+            );
+        }
+
+        #[test]
+        fn yaml_deserialization_without_static_servers_defaults_to_empty() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.static_servers.is_empty());
+        }
+
+        #[test]
+        fn rejects_unparseable_issuer_at_load() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                static_servers:
+                  - issuer: "not a url"
+                    jwks_uri: https://static-idp.example.com/jwks
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let err = serde_yaml::from_str::<Config>(yaml).unwrap_err();
+            assert!(err.to_string().contains("invalid URL"), "got: {err}");
+        }
+
+        #[test]
+        fn rejects_unparseable_jwks_uri_at_load() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                static_servers:
+                  - issuer: https://static-idp.example.com
+                    jwks_uri: "not a url"
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let err = serde_yaml::from_str::<Config>(yaml).unwrap_err();
+            assert!(err.to_string().contains("invalid URL"), "got: {err}");
+        }
+
+        #[test]
+        fn valid_static_server_enables_middleware_successfully() {
+            let mut config = test_config();
+            config.static_servers = vec![StaticServer {
+                issuer: "https://static-idp.example.com".to_string(),
+                jwks_uri: "https://static-idp.example.com/jwks".to_string(),
+            }];
+
+            let result = config.enable_middleware(Router::new(), HashMap::new());
+
+            assert!(result.is_ok());
         }
     }
 

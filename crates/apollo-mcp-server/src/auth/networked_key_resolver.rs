@@ -64,8 +64,20 @@ enum SlotOutcome {
     RateLimited,
 }
 
+/// Pre-resolved discovery metadata for an authorization server that does not
+/// expose an RFC 8414 / OIDC discovery endpoint. Supplies the same two
+/// fields — `issuer` and `jwks_uri` — that a discovery response otherwise
+/// provides, so the rest of the resolution path (JWKS fetch, caching, issuer
+/// binding) is unchanged.
+#[derive(Debug, Clone)]
+pub(super) struct StaticServerMetadata {
+    pub(super) issuer: String,
+    pub(super) jwks_uri: String,
+}
+
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
-/// discovery.
+/// discovery, or directly from `jwks_uri` for servers registered in
+/// `static_servers` (see [`with_static_servers`](Self::with_static_servers)).
 pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
@@ -73,6 +85,7 @@ pub(super) struct NetworkedKeyResolver<'a> {
     jwks_cache: &'a Arc<RwLock<HashMap<Url, CachedJwks>>>,
     ttl: Duration,
     min_refresh_interval: Duration,
+    static_servers: Arc<HashMap<Url, StaticServerMetadata>>,
 }
 
 impl<'a> NetworkedKeyResolver<'a> {
@@ -91,7 +104,20 @@ impl<'a> NetworkedKeyResolver<'a> {
             jwks_cache,
             ttl,
             min_refresh_interval,
+            static_servers: Arc::new(HashMap::new()),
         }
+    }
+
+    /// Registers authorization servers with pre-resolved discovery metadata,
+    /// so their signing keys are fetched directly from `jwks_uri` without an
+    /// RFC 8414 / OIDC discovery request. Servers not present in this map
+    /// resolve through discovery as before.
+    pub fn with_static_servers(
+        mut self,
+        static_servers: Arc<HashMap<Url, StaticServerMetadata>>,
+    ) -> Self {
+        self.static_servers = static_servers;
+        self
     }
 
     /// Returns the resolved `(jwk, issuer)` if the cache holds a fresh entry
@@ -146,6 +172,7 @@ impl<'a> NetworkedKeyResolver<'a> {
             Arc::clone(self.inflight),
             server.clone(),
             self.discovery_timeout,
+            Arc::clone(&self.static_servers),
         );
 
         guard.last_attempt.insert(server.clone(), Instant::now());
@@ -161,10 +188,21 @@ impl<'a> NetworkedKeyResolver<'a> {
         inflight: Arc<InflightMap>,
         server: Url,
         discovery_timeout: Duration,
+        static_servers: Arc<HashMap<Url, StaticServerMetadata>>,
     ) -> InflightFetch {
         async move {
             let entry = async {
-                let metadata = discover_metadata(&client, &server, discovery_timeout).await?;
+                // A statically-configured server supplies `issuer` and
+                // `jwks_uri` directly, standing in for a discovery response
+                // without the network round trip.
+                let metadata = match static_servers.get(&server) {
+                    Some(static_meta) => DiscoveryMetadata {
+                        issuer: static_meta.issuer.clone(),
+                        jwks_uri: static_meta.jwks_uri.clone(),
+                        id_token_signing_alg_values_supported: Vec::new(),
+                    },
+                    None => discover_metadata(&client, &server, discovery_timeout).await?,
+                };
                 let jwks = fetch_jwks(&client, &metadata.jwks_uri, discovery_timeout).await?;
                 Some(CachedJwks {
                     keys: jwks,
@@ -1883,5 +1921,168 @@ mod tests {
             inflight_guard.slots.contains_key(&issuer_url),
             "the new fetch should occupy the inflight slot"
         );
+    }
+
+    #[tokio::test]
+    async fn resolve_key_uses_static_metadata_without_discovery_request() {
+        let mut server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"static-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        // No discovery mock is registered at all: if the resolver attempted
+        // RFC 8414 / OIDC discovery, the unmocked request would fail and
+        // `resolve_key` would return `None`.
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse("https://static-idp.example.com").expect("valid URL");
+        let static_servers = HashMap::from([(
+            issuer_url.clone(),
+            StaticServerMetadata {
+                issuer: "https://static-idp.example.com".to_string(),
+                jwks_uri: format!("{}/jwks", server.url()),
+            },
+        )]);
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        )
+        .with_static_servers(Arc::new(static_servers));
+
+        let result = resolver.resolve_key(&issuer_url, "static-key").await;
+
+        jwks_mock.assert();
+        let (_jwk, issuer) = result.expect("static resolution should succeed");
+        assert_eq!(issuer, "https://static-idp.example.com");
+    }
+
+    #[tokio::test]
+    async fn resolve_key_static_metadata_jwks_fetch_is_cached() {
+        let mut server = mockito::Server::new_async().await;
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"static-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        // Exactly one fetch is expected across both `resolve_key` calls below.
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let issuer_url = Url::parse("https://static-idp.example.com").expect("valid URL");
+        let static_servers = Arc::new(HashMap::from([(
+            issuer_url.clone(),
+            StaticServerMetadata {
+                issuer: "https://static-idp.example.com".to_string(),
+                jwks_uri: format!("{}/jwks", server.url()),
+            },
+        )]));
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        )
+        .with_static_servers(Arc::clone(&static_servers));
+
+        let first = resolver.resolve_key(&issuer_url, "static-key").await;
+        let second = resolver.resolve_key(&issuer_url, "static-key").await;
+
+        jwks_mock.assert();
+        assert!(first.is_some());
+        assert!(second.is_some());
+    }
+
+    #[tokio::test]
+    async fn resolve_key_falls_back_to_discovery_for_servers_without_static_metadata() {
+        // A resolver with a non-empty static map still performs discovery for
+        // a *different* server that isn't registered in that map, proving
+        // the two resolution paths don't interfere with each other.
+        let mut server = mockito::Server::new_async().await;
+        let discovery_json = format!(
+            r#"{{"issuer":"{}","jwks_uri":"{}/jwks"}}"#,
+            server.url(),
+            server.url()
+        );
+        let jwks_json = format!(
+            r#"{{"keys":[{{"kty":"RSA","kid":"discovered-key","alg":"RS256","n":"{}","e":"{}"}}]}}"#,
+            TEST_RSA_N, TEST_RSA_E
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+        let jwks_mock = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&jwks_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let discovered_issuer = Url::parse(&server.url()).expect("valid URL");
+        let unrelated_static_issuer =
+            Url::parse("https://static-idp.example.com").expect("valid URL");
+        let static_servers = HashMap::from([(
+            unrelated_static_issuer,
+            StaticServerMetadata {
+                issuer: "https://static-idp.example.com".to_string(),
+                jwks_uri: "https://static-idp.example.com/jwks".to_string(),
+            },
+        )]);
+
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        )
+        .with_static_servers(Arc::new(static_servers));
+
+        let result = resolver
+            .resolve_key(&discovered_issuer, "discovered-key")
+            .await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(result.is_some());
     }
 }

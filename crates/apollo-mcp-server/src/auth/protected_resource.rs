@@ -25,9 +25,17 @@ pub(super) struct ProtectedResource {
 
 impl From<Config> for ProtectedResource {
     fn from(value: Config) -> Self {
+        // `static_servers` entries are just as much trusted authorization
+        // servers as discovery-based `servers` entries; clients discovering
+        // this resource need to see both.
+        let authorization_servers = value
+            .servers
+            .into_iter()
+            .chain(value.static_servers.into_iter().map(|s| s.issuer))
+            .collect();
         Self {
             resource: value.resource,
-            authorization_servers: value.servers,
+            authorization_servers,
             bearer_methods_supported: vec!["header".to_string()], // The spec only supports header auth
             scopes_supported: value.scopes,
             resource_documentation: value.resource_documentation,
@@ -89,6 +97,34 @@ mod tests {
                 "https://issuer-a.example.com",
                 "https://issuer-b.example.com/",
                 "https://issuer-c.example.com/realms/main",
+            ])
+        );
+    }
+
+    #[test]
+    fn static_servers_issuers_included_in_authorization_servers() {
+        let yaml = r#"
+            servers:
+              - https://issuer-a.example.com
+            static_servers:
+              - issuer: https://static-issuer.example.com
+                jwks_uri: https://static-issuer.example.com/jwks
+            audiences:
+              - test-audience
+            resource: https://mcp.example.com/mcp
+            scopes:
+              - read
+        "#;
+
+        let config: Config = serde_yaml::from_str(yaml).expect("config parses");
+        let metadata = ProtectedResource::from(config);
+        let json = serde_json::to_value(&metadata).expect("metadata serializes");
+
+        assert_eq!(
+            json["authorization_servers"],
+            serde_json::json!([
+                "https://issuer-a.example.com",
+                "https://static-issuer.example.com",
             ])
         );
     }

@@ -258,6 +258,23 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 
 The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
 
+### Authorization servers without discovery
+
+Some authorization servers don't expose an RFC 8414 or OIDC discovery endpoint. Configure these servers under `static_servers` instead of `servers`, supplying the same two values a discovery response would otherwise provide:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    static_servers:
+      - issuer: https://static-idp.example.com
+        jwks_uri: https://static-idp.example.com/oauth2/v1/keys
+```
+
+Apollo MCP Server fetches signing keys from `jwks_uri` directly, skipping the discovery request `servers` entries perform. Caching, rate limiting, and issuer binding all behave the same as for a `servers` entry: `issuer` plays the role a discovery response's `issuer` field would, and a token's `iss` claim must match it when `issuers` is configured. `servers` and `static_servers` can be used together, and both contribute to the `authorization_servers` list this server advertises in its protected-resource metadata.
+
 ## Discovery headers
 
 Some OAuth servers or web application firewalls (WAFs) require specific HTTP headers on requests. Use `discovery_headers` to attach custom headers to all OIDC discovery and JWKS requests made by the MCP Server.
