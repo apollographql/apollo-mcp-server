@@ -319,11 +319,8 @@ impl SchemaIndex {
                     .map(|a| a.ty.inner_named_type().to_string())
                     .collect();
                 let description = field.description.as_ref().map(|d| d.as_str()).unwrap_or("");
-                let nested = crate::traverse::flatten_return_type(
-                    schema,
-                    return_type.as_str(),
-                    flatten_depth,
-                );
+                let nested =
+                    traverse::flatten_return_type(schema, return_type.as_str(), flatten_depth);
 
                 let (scope, bare) = crate::scope::derive_scope(name.as_str());
 

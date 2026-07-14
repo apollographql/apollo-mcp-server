@@ -7,7 +7,7 @@ use crate::schema_tree_shake::{DepthLimit, SchemaTreeShaker};
 use apollo_compiler::ast::{Field, OperationType as AstOperationType, Selection};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Node, Schema};
-use apollo_schema_index::{OperationType, Options, SchemaIndex};
+use apollo_schema_index::{OperationType, SchemaIndex, SchemaSearch};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -16,23 +16,23 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::debug;
 
 use super::description::append_description_hint;
 
 /// The name of the tool to search a GraphQL schema.
 pub const SEARCH_TOOL_NAME: &str = "search";
 
-/// The maximum number of search results to consider.
-const MAX_SEARCH_RESULTS: usize = 5;
-
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]
 pub struct Search {
     schema: Arc<RwLock<Valid<Schema>>>,
-    index: SchemaIndex,
+    index: Arc<RwLock<SchemaIndex>>,
     allow_mutations: bool,
     leaf_depth: usize,
+    flatten_depth: usize,
+    index_memory_bytes: usize,
+    default_limit: usize,
+    max_limit: usize,
     minify: bool,
     pub tool: Tool,
 }
@@ -42,6 +42,12 @@ pub struct Search {
 pub struct Input {
     /// The search terms
     terms: Vec<String>,
+    /// Maximum number of results to return (default 10, max 50).
+    #[serde(default)]
+    limit: Option<usize>,
+    /// Optional service scope to restrict results to (e.g. "slack"). Omit to search all services.
+    #[serde(default)]
+    scope: Option<String>,
 }
 
 /// An error while indexing the GraphQL schema.
@@ -54,12 +60,21 @@ pub enum IndexingError {
     TryLockError(#[from] tokio::sync::TryLockError),
 }
 
+/// Clamp the requested result count to `[1, max_limit]`, defaulting when omitted.
+fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize) -> usize {
+    requested.unwrap_or(default_limit).clamp(1, max_limit)
+}
+
 impl Search {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         schema: Arc<RwLock<Valid<Schema>>>,
         allow_mutations: bool,
         leaf_depth: usize,
+        flatten_depth: usize,
         index_memory_bytes: usize,
+        default_limit: usize,
+        max_limit: usize,
         minify: bool,
         description_hint: Option<&str>,
     ) -> Result<Self, IndexingError> {
@@ -79,69 +94,84 @@ impl Search {
         );
         let description =
             append_description_hint(&default_description, description_hint).into_owned();
+        let index = SchemaIndex::new(locked, root_types, flatten_depth, index_memory_bytes)?;
         Ok(Self {
             schema: schema.clone(),
-            index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
+            index: Arc::new(RwLock::new(index)),
             allow_mutations,
             leaf_depth,
+            flatten_depth,
+            index_memory_bytes,
+            default_limit,
+            max_limit,
             minify,
             tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
         })
     }
 
+    /// Rebuild the search index from an updated schema, replacing the current index.
+    pub async fn rebuild(&self, schema: &Valid<Schema>) -> Result<(), IndexingError> {
+        let root_types = if self.allow_mutations {
+            OperationType::Query | OperationType::Mutation
+        } else {
+            OperationType::Query.into()
+        };
+        let new_index = SchemaIndex::new(
+            schema,
+            root_types,
+            self.flatten_depth,
+            self.index_memory_bytes,
+        )?;
+        *self.index.write().await = new_index;
+        Ok(())
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
-        let mut root_paths = self
-            .index
-            .search(input.terms.clone(), Options::default())
-            .map_err(|e| {
-                McpError::new(
-                    ErrorCode::INTERNAL_ERROR,
-                    format!("Failed to search index: {e}"),
-                    None,
-                )
-            })?;
-
-        root_paths.truncate(MAX_SEARCH_RESULTS);
-        debug!(
-            "Root paths for search terms: {}\n{}",
-            input.terms.join(", "),
-            root_paths
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>()
-                .join("\n"),
-        );
+        let k = clamp_limit(input.limit, self.default_limit, self.max_limit);
+        let query = input.terms.join(" ");
+        let results = {
+            let index = self.index.read().await;
+            index
+                .search(&query, input.scope.as_deref(), k)
+                .map_err(|e| {
+                    McpError::new(
+                        ErrorCode::INTERNAL_ERROR,
+                        format!("Failed to search index: {e}"),
+                        None,
+                    )
+                })?
+        };
 
         let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
-        for root_path in root_paths {
-            let path_len = root_path.inner.len();
-            for (i, path_node) in root_path.inner.into_iter().enumerate() {
-                if let Some(extended_type) = schema.types.get(path_node.node_type.as_str()) {
-                    let (selection_set, depth) = if i == path_len - 1 {
-                        (None, DepthLimit::Limited(self.leaf_depth))
-                    } else {
-                        (
-                            path_node.field_name.as_ref().map(|field_name| {
-                                vec![Selection::Field(Node::from(Field {
-                                    alias: Default::default(),
-                                    name: Name::new_unchecked(field_name),
-                                    arguments: Default::default(),
-                                    selection_set: Default::default(),
-                                    directives: Default::default(),
-                                }))]
-                            }),
-                            DepthLimit::Limited(1),
-                        )
-                    };
-                    tree_shaker.retain_type(extended_type, selection_set.as_ref(), depth)
-                }
-                for field_arg in path_node.field_args {
-                    if let Some(extended_type) = schema.types.get(field_arg.as_str()) {
-                        // Retain input types with unlimited depth because all input must be given
-                        tree_shaker.retain_type(extended_type, None, DepthLimit::Unlimited);
-                    }
+        for scored in results.into_iter().take(k) {
+            let op = scored.inner;
+            let root = match op.operation_type {
+                OperationType::Mutation => schema.root_operation(AstOperationType::Mutation),
+                _ => schema.root_operation(AstOperationType::Query),
+            };
+            if let Some(root_name) = root
+                && let Some(root_type) = schema.types.get(root_name)
+            {
+                let selection = vec![Selection::Field(Node::from(Field {
+                    alias: Default::default(),
+                    name: Name::new_unchecked(&op.field_name),
+                    arguments: Default::default(),
+                    selection_set: Default::default(),
+                    directives: Default::default(),
+                }))];
+                tree_shaker.retain_type(root_type, Some(&selection), DepthLimit::Limited(1));
+            }
+            if let Some(rt) = op.return_type.as_ref()
+                && let Some(rt_type) = schema.types.get(rt.as_str())
+            {
+                tree_shaker.retain_type(rt_type, None, DepthLimit::Limited(self.leaf_depth));
+            }
+            for arg in &op.arg_types {
+                if let Some(arg_type) = schema.types.get(arg.as_str()) {
+                    // Retain input types with unlimited depth because all input must be given
+                    tree_shaker.retain_type(arg_type, None, DepthLimit::Unlimited);
                 }
             }
         }
@@ -205,16 +235,26 @@ mod tests {
             .expect("Failed to validate test schema")
     }
 
+    #[test]
+    fn clamp_limit_bounds() {
+        assert_eq!(clamp_limit(None, 10, 50), 10);
+        assert_eq!(clamp_limit(Some(0), 10, 50), 1);
+        assert_eq!(clamp_limit(Some(999), 10, 50), 50);
+        assert_eq!(clamp_limit(Some(7), 10, 50), 7);
+    }
+
     #[rstest]
     #[tokio::test]
     async fn search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
+        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
             .expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
                 terms: vec!["User".to_string()],
+                limit: None,
+                scope: None,
             })
             .await
             .expect("Search execution failed");
@@ -225,15 +265,36 @@ mod tests {
 
     #[rstest]
     #[tokio::test]
+    async fn search_tool_respects_limit(schema: Valid<Schema>) {
+        let schema = Arc::new(RwLock::new(schema));
+        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
+            .expect("Failed to create search tool");
+
+        let result = search
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: Some(2),
+                scope: None,
+            })
+            .await
+            .expect("Search execution failed");
+
+        assert!(!result.is_error.unwrap_or(false));
+    }
+
+    #[rstest]
+    #[tokio::test]
     async fn referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), true, 1, 15_000_000, false, None)
+        let search = Search::new(schema.clone(), true, 1, 2, 15_000_000, 10, 50, false, None)
             .expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search
             .execute(Input {
-                terms: vec!["User".to_string()],
+                terms: vec!["createUser".to_string()],
+                limit: None,
+                scope: None,
             })
             .await
             .expect("Search execution failed");
@@ -249,7 +310,7 @@ mod tests {
     #[tokio::test]
     async fn search_tool_description_is_not_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
+        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
             .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();
@@ -268,7 +329,7 @@ mod tests {
     #[tokio::test]
     async fn tool_description_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 15_000_000, true, None)
+        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, true, None)
             .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();

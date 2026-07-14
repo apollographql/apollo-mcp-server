@@ -131,6 +131,15 @@ impl Running {
         // Update the schema itself
         *self.schema.write().await = schema;
 
+        // Rebuild the search index so it reflects the new schema instead of
+        // serving stale operation hits from the previous schema.
+        if let Some(search) = &self.search_tool {
+            let schema_guard = self.schema.read().await;
+            if let Err(error) = search.rebuild(&schema_guard).await {
+                error!("Failed to rebuild search index on schema update: {error}");
+            }
+        }
+
         *operations_lock = operations;
 
         // Drop the operations lock before notifying peers. The operations are
