@@ -694,6 +694,17 @@ mod tests {
             .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
     }
 
+    fn test_router_with_required_scopes(
+        config: Config,
+        required_scopes: HashMap<String, OperationRequiredScopes>,
+    ) -> Router {
+        let mut auth_state = test_auth_state(config);
+        auth_state.required_scopes = Arc::new(required_scopes);
+        Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(from_fn_with_state(auth_state, oauth_validate))
+    }
+
     mod oauth_validate {
         use base64::Engine as _;
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -850,6 +861,115 @@ mod tests {
             let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
 
             assert!(www_auth.contains(r#"scope="write""#), "got: {www_auth}");
+        }
+
+        /// Drives a real `tools/call` request through the middleware for an
+        /// operation with a nested (OR-of-AND) scope requirement, where the
+        /// token satisfies neither group completely but is closer to the
+        /// first: the second group is missing two scopes, the first only one.
+        async fn insufficient_nested_scope_response() -> (StatusCode, String) {
+            let mut server = mockito::Server::new_async().await;
+            let kid = "test-kid";
+            let secret = b"hs512-integration-test-signing-secret";
+
+            let discovery = format!(
+                r#"{{"issuer":"{url}","jwks_uri":"{url}/jwks","id_token_signing_alg_values_supported":["HS512"]}}"#,
+                url = server.url()
+            );
+            let _discovery = server
+                .mock("GET", "/.well-known/oauth-authorization-server")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(discovery)
+                .create_async()
+                .await;
+
+            let jwks = format!(
+                r#"{{"keys":[{{"kty":"oct","alg":"HS512","use":"sig","kid":"{kid}","k":"{k}"}}]}}"#,
+                k = URL_SAFE_NO_PAD.encode(secret)
+            );
+            let _jwks = server
+                .mock("GET", "/jwks")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(jwks)
+                .create_async()
+                .await;
+
+            // Satisfies the global `read` scope (test_config's default) and
+            // one scope of the first operation-level group, but not enough
+            // to complete either group.
+            let exp = chrono::Utc::now().timestamp() + 1000;
+            let claims = serde_json::json!({
+                "aud": "test-audience",
+                "exp": exp,
+                "sub": "test-user",
+                "scope": "read sensitive:read",
+            });
+            let header = {
+                let mut h = Header::new(Algorithm::HS512);
+                h.kid = Some(kid.to_string());
+                h
+            };
+            let token =
+                encode(&header, &claims, &EncodingKey::from_secret(secret)).expect("encode JWT");
+
+            let mut config = test_config();
+            config.servers = vec![server.url()];
+            let required_scopes = HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::new(vec![
+                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                    vec!["admin".to_string(), "superuser".to_string()],
+                ])
+                .expect("valid multi-group requirement"),
+            )]);
+            let app = test_router_with_required_scopes(config, required_scopes);
+
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "RestrictedOp"}
+            })
+            .to_string();
+
+            let req = Request::builder()
+                .method("POST")
+                .uri("/test")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            let status = res.status();
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            (status, www_auth)
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_returns_forbidden() {
+            let (status, _) = insufficient_nested_scope_response().await;
+
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_challenge_names_the_closest_alternative() {
+            let (_, www_auth) = insufficient_nested_scope_response().await;
+
+            assert!(
+                www_auth.contains(r#"scope="sensitive:read tenant:admin""#),
+                "got: {www_auth}"
+            );
         }
     }
 
@@ -1639,17 +1759,34 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         fn required() -> HashMap<String, OperationRequiredScopes> {
             HashMap::from([(
                 "RestrictedOp".to_string(),
-                OperationRequiredScopes::All(vec!["sensitive:read".to_string()]),
+                OperationRequiredScopes::new(vec![vec!["sensitive:read".to_string()]])
+                    .expect("valid single-group requirement"),
             )])
         }
 
         fn alternative_required() -> HashMap<String, OperationRequiredScopes> {
             HashMap::from([(
                 "RestrictedOp".to_string(),
-                OperationRequiredScopes::AnyOf(vec![
+                OperationRequiredScopes::new(vec![
                     vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
                     vec!["admin".to_string()],
-                ]),
+                ])
+                .expect("valid multi-group requirement"),
+            )])
+        }
+
+        /// Two groups that each require more than one scope, so a token can
+        /// touch both groups without ever completing either - unlike
+        /// `alternative_required`'s single-scope `admin` group, which any
+        /// presence of `admin` completes outright.
+        fn overlapping_multi_scope_alternatives() -> HashMap<String, OperationRequiredScopes> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::new(vec![
+                    vec!["scope:a".to_string(), "scope:b".to_string()],
+                    vec!["scope:c".to_string(), "scope:d".to_string()],
+                ])
+                .expect("valid multi-group requirement"),
             )])
         }
 
@@ -1670,9 +1807,10 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert_eq!(
                 result,
-                Some(&OperationRequiredScopes::All(vec![
-                    "sensitive:read".to_string()
-                ]))
+                Some(
+                    &OperationRequiredScopes::new(vec![vec!["sensitive:read".to_string()]])
+                        .unwrap()
+                )
             );
         }
 
@@ -1715,11 +1853,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert_eq!(
                 result,
-                Some(&OperationRequiredScopes::AnyOf(vec![
-                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
-                    vec!["admin".to_string()],
-                ]))
+                Some(
+                    &OperationRequiredScopes::new(vec![
+                        vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                        vec!["admin".to_string()],
+                    ])
+                    .unwrap()
+                )
             );
+        }
+
+        #[test]
+        fn returns_required_scopes_when_scopes_are_scattered_across_groups() {
+            // Touches both groups (`scope:a` from the first, `scope:c` from
+            // the second) without ever completing either.
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["scope:a".to_string(), "scope:c".to_string()];
+            let required = overlapping_multi_scope_alternatives();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_some());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_more_than_one_group() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec![
+                "scope:a".to_string(),
+                "scope:b".to_string(),
+                "scope:c".to_string(),
+                "scope:d".to_string(),
+            ];
+            let required = overlapping_multi_scope_alternatives();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
         }
 
         #[test]

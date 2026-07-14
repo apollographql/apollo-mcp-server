@@ -96,15 +96,19 @@ mod tests {
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert_eq!(
             overrides.required_scopes.get("GetUser").unwrap(),
-            &OperationRequiredScopes::All(vec!["user:read".to_string()])
+            &OperationRequiredScopes::new(vec![vec!["user:read".to_string()]]).unwrap()
         );
         assert_eq!(
             overrides.required_scopes.get("UpdateUser").unwrap(),
-            &OperationRequiredScopes::All(vec!["user:write".to_string()])
+            &OperationRequiredScopes::new(vec![vec!["user:write".to_string()]]).unwrap()
         );
         assert_eq!(
             overrides.required_scopes.get("DeleteUser").unwrap(),
-            &OperationRequiredScopes::All(vec!["user:write".to_string(), "admin".to_string()])
+            &OperationRequiredScopes::new(vec![vec![
+                "user:write".to_string(),
+                "admin".to_string()
+            ]])
+            .unwrap()
         );
     }
 
@@ -120,17 +124,19 @@ mod tests {
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert_eq!(
             overrides.required_scopes.get("GetUser").unwrap(),
-            &OperationRequiredScopes::AnyOf(vec![
+            &OperationRequiredScopes::new(vec![
                 vec!["user:read".to_string()],
                 vec!["admin".to_string()],
             ])
+            .unwrap()
         );
         assert_eq!(
             overrides.required_scopes.get("DeleteUser").unwrap(),
-            &OperationRequiredScopes::AnyOf(vec![
+            &OperationRequiredScopes::new(vec![
                 vec!["user:write".to_string(), "tenant:admin".to_string()],
                 vec!["admin".to_string()],
             ])
+            .unwrap()
         );
     }
 
