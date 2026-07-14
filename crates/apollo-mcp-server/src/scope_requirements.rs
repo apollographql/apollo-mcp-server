@@ -208,7 +208,7 @@ mod tests {
         .into_inner();
 
         assert!(
-            converted.get("PublicOp").is_none(),
+            !converted.contains_key("PublicOp"),
             "an empty scope list must not produce a stored, vacuously-satisfied requirement"
         );
     }
