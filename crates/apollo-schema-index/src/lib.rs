@@ -36,7 +36,6 @@ use enumset::{EnumSet, EnumSetType};
 use error::{IndexingError, SearchError};
 use heck::ToSnakeCase;
 use itertools::Itertools;
-use path::Scored;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tantivy::collector::TopDocs;
@@ -50,9 +49,13 @@ use tantivy::{
 use tracing::{Level, debug, error, info, warn};
 use traverse::SchemaExt;
 
+mod backend;
 pub mod error;
 mod path;
 mod traverse;
+
+pub use backend::{OperationRef, SchemaSearch};
+pub use path::Scored;
 
 pub const PARENT_TYPE_NAME_FIELD: &str = "parent_type_name";
 pub const FIELD_NAME_FIELD: &str = "field_name";
@@ -113,7 +116,7 @@ struct FieldRecord<'a> {
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
 /// be included in an [`EnumSet`].
-#[derive(EnumSetType, Debug)]
+#[derive(EnumSetType, Debug, Hash)]
 pub enum OperationType {
     Query,
     Mutation,
