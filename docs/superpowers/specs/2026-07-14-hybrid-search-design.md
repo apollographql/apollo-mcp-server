@@ -73,6 +73,7 @@ separate container and only bumps the image tag.
 | Result currency | `Scored<OperationRef>` (operation identity + score); no `PathNode` up-walk. |
 | Tree-shaking | Stays in the MCP `Search` tool (minimize churn). |
 | Result count | New optional `limit` tool param; default **10**, hard cap **50**. |
+| Scope filter | Optional `scope` (owning service). **Short-term source: operation-name prefix** (`slack_…` → `slack`), via an isolated `derive_scope` seam (future source: subgraph schemas). Stored as a **keyword field, excluded from BM25 scoring and the embedding** (the prefix is stripped from the scored/embedded text; full name kept for execution). Carried on `OperationRef.scope`. Optional `scope` tool param → filter only. Consequence: service is constrained via the filter, not free-text — to be noted in the tool description / skill.md. |
 | ORT linking | **`ort` `load-dynamic`** — bake `libonnxruntime.so` at a fixed path, set `ORT_DYLIB_PATH`, `dlopen` at runtime, catch failure → degrade to BM25. Static-link is the documented fallback. |
 
 ## Architecture
@@ -112,7 +113,7 @@ Three crates (one new):
 
 ```
 trait SchemaSearch {
-    fn search(&self, query: &str, limit: usize) -> Result<Vec<Scored<OperationRef>>, SearchError>;
+    fn search(&self, query: &str, scope: Option<&str>, limit: usize) -> Result<Vec<Scored<OperationRef>>, SearchError>;
 }
 
 trait Embedder {           // in apollo-schema-search
@@ -121,7 +122,7 @@ trait Embedder {           // in apollo-schema-search
 
 trait VectorStore {        // in apollo-schema-search
     fn upsert(&mut self, op: OperationRef, vector: Vec<f32>);
-    fn search(&self, query_vector: &[f32], limit: usize) -> Vec<Scored<OperationRef>>;
+    fn search(&self, query_vector: &[f32], scope: Option<&str>, limit: usize) -> Vec<Scored<OperationRef>>;
 }
 ```
 
@@ -156,7 +157,7 @@ applied by the `Search` tool **after** RRF fusion, not by the individual backend
 - **Enriched document per operation:** operation name, description, argument names
   and types, return type name, plus a **bounded downward flatten** of the return
   type's field names and descriptions. Depth is configurable
-  (`semantic.flatten_depth`, default **1**), and the walk is cycle-guarded with a
+  (`semantic.flatten_depth`, default **2**), and the walk is cycle-guarded with a
   visited set to handle recursive types.
 - The same document text feeds both the BM25 tokenizer and the embedder.
 - **Behavior change:** operation-anchoring changes recall characteristics vs. the
@@ -186,7 +187,7 @@ all overridable via `APOLLO_MCP_INTROSPECTION__SEARCH__…`:
 | --- | --- | --- |
 | `semantic.enabled` | `true` (when search enabled) | Enable semantic backend; **degradable** (see Error handling). |
 | `semantic.model` | `bge-small-en-v1.5` | Model name / local path (points at the baked-in model). |
-| `semantic.flatten_depth` | `1` | Return-type flatten depth for enriched docs. |
+| `semantic.flatten_depth` | `2` | Return-type flatten depth for enriched docs. |
 | `semantic.inference_threads` | `1` | Pins ORT `intra_op_num_threads`. |
 | `hybrid.rrf_k` | `60` | RRF constant. |
 | `search.default_limit` | `10` | Result count when `limit` omitted. |
