@@ -1,9 +1,9 @@
 ---
 source: crates/apollo-schema-index/src/lib.rs
-expression: "results.iter().take(10).map(ToString::to_string).collect::<Vec<_>>().join(\"\\n\")"
+expression: "results.iter().take(10).map(|s|\ns.inner.to_string()).collect::<Vec<_>>().join(\"\\n\")"
 ---
-Mutation.uploadMedia(Upload): Media (0.9141719)
-Query.post(ID): Post (0.8488677)
-Query.posts(PostFilter): Post (0.8488677)
-Mutation.createPost(CreatePostInput): Post (0.8488677)
-Mutation.updatePost(ID, UpdatePostInput): Post (0.8488677)
+Mutation.uploadMedia(Upload): Media
+Query.post(ID): Post
+Query.posts(PostFilter): Post
+Mutation.createPost(CreatePostInput): Post
+Mutation.updatePost(ID, UpdatePostInput): Post

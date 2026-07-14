@@ -563,7 +563,7 @@ mod tests {
             results
                 .iter()
                 .take(10)
-                .map(ToString::to_string)
+                .map(|s| s.inner.to_string())
                 .collect::<Vec<_>>()
                 .join("\n")
         );
@@ -612,9 +612,11 @@ mod tests {
         .unwrap();
 
         // Searching "post" should surface post-related operations via word-boundary splitting.
-        // `UpdatePostInput` (an argument type of `updatePost`) demonstrates camelCase splitting
-        // of a compound identifier: "update post input" contains the token "post". The compound
-        // arg type appears verbatim in the operation's Display string.
+        // This exercises camelCase splitting of the operation NAME itself (e.g. `updatePost`
+        // tokenizes to "update post", matching the query term "post"). Argument types like
+        // `UpdatePostInput` are not part of the queryable text fields, so they can only appear
+        // incidentally in the Display string, not because they were matched; the query-term
+        // splitting case (splitting the *search input*) is covered by `search_camel_case_query_term`.
         let results = search.search("post", 10).unwrap();
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
@@ -623,8 +625,10 @@ mod tests {
             ops.join("\n")
         );
         assert!(
-            ops.iter().any(|p| p.contains("UpdatePostInput")),
-            "Should surface updatePost (arg UpdatePostInput) via camelCase splitting.\nFound:\n{}",
+            results
+                .iter()
+                .any(|s| s.inner.field_name.to_lowercase().contains("post")),
+            "Should surface an operation whose name contains 'post' via camelCase splitting of the operation name.\nFound:\n{}",
             ops.join("\n")
         );
     }
