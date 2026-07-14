@@ -12,6 +12,7 @@ pub struct OperationRef {
     pub field_name: String,
     pub return_type: Option<String>,
     pub arg_types: Vec<String>,
+    pub scope: Option<String>,
 }
 
 impl std::fmt::Display for OperationRef {
@@ -34,7 +35,12 @@ impl std::fmt::Display for OperationRef {
 
 /// A search backend over a GraphQL schema's operations.
 pub trait SchemaSearch {
-    fn search(&self, query: &str, limit: usize) -> Result<Vec<Scored<OperationRef>>, SearchError>;
+    fn search(
+        &self,
+        query: &str,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Scored<OperationRef>>, SearchError>;
 }
 
 #[cfg(test)]
@@ -48,6 +54,7 @@ mod tests {
             field_name: "userByEmail".to_string(),
             return_type: Some("TargetUser".to_string()),
             arg_types: vec!["String".to_string()],
+            scope: None,
         };
         assert_eq!(op.to_string(), "Query.userByEmail(String): TargetUser");
     }
@@ -59,6 +66,7 @@ mod tests {
             field_name: "x".into(),
             return_type: None,
             arg_types: vec![],
+            scope: None,
         };
         let b = a.clone();
         assert_eq!(a, b);

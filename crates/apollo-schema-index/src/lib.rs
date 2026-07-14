@@ -40,6 +40,7 @@ use tracing::{error, info};
 mod backend;
 pub mod error;
 mod path;
+mod scope;
 mod traverse;
 
 pub use backend::{OperationRef, SchemaSearch};
@@ -54,6 +55,7 @@ pub const OPERATION_TYPE_RAW_FIELD: &str = "operation_type_raw";
 pub const OPERATION_NAME_RAW_FIELD: &str = "operation_name_raw";
 pub const RETURN_TYPE_NAME_RAW_FIELD: &str = "return_type_name_raw";
 pub const FIELD_ARGS_RAW_FIELD: &str = "field_args_raw";
+pub const SCOPE_RAW_FIELD: &str = "scope_raw";
 
 /// Tantivy field handles bundled together for ergonomic doc writing.
 struct DocFields {
@@ -66,6 +68,7 @@ struct DocFields {
     operation_name_raw: Field,
     return_type_name_raw: Field,
     field_args_raw: Field,
+    scope_raw: Field,
 }
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
@@ -182,6 +185,7 @@ pub struct SchemaIndex {
     operation_name_raw_field: Field,
     return_type_name_raw_field: Field,
     field_args_raw_field: Field,
+    scope_raw_field: Field,
 }
 
 impl SchemaIndex {
@@ -237,6 +241,7 @@ impl SchemaIndex {
         let return_type_name_raw_field =
             index_schema.add_text_field(RETURN_TYPE_NAME_RAW_FIELD, raw_indexing());
         let field_args_raw_field = index_schema.add_text_field(FIELD_ARGS_RAW_FIELD, STORED);
+        let scope_raw_field = index_schema.add_text_field(SCOPE_RAW_FIELD, raw_indexing());
 
         // Create the index
         let index_schema = index_schema.build();
@@ -255,6 +260,7 @@ impl SchemaIndex {
             operation_name_raw: operation_name_raw_field,
             return_type_name_raw: return_type_name_raw_field,
             field_args_raw: field_args_raw_field,
+            scope_raw: scope_raw_field,
         };
         let mut index_writer = index.writer(index_memory_bytes)?;
         let operation_count = Self::write_operation_docs(
@@ -281,6 +287,7 @@ impl SchemaIndex {
             operation_name_raw_field,
             return_type_name_raw_field,
             field_args_raw_field,
+            scope_raw_field,
         })
     }
 
@@ -318,8 +325,10 @@ impl SchemaIndex {
                     flatten_depth,
                 );
 
+                let (scope, bare) = crate::scope::derive_scope(name.as_str());
+
                 let mut doc = TantivyDocument::default();
-                doc.add_text(fields.operation_name, expand_identifiers(name.as_str()));
+                doc.add_text(fields.operation_name, expand_identifiers(bare));
                 if !arg_names.is_empty() {
                     doc.add_text(fields.arg_names, expand_identifiers(&arg_names.join(" ")));
                 }
@@ -332,6 +341,7 @@ impl SchemaIndex {
                 doc.add_text(fields.operation_type_raw, root_kind_str(op_type));
                 doc.add_text(fields.operation_name_raw, name.as_str());
                 doc.add_text(fields.return_type_name_raw, return_type.as_str());
+                doc.add_text(fields.scope_raw, scope.unwrap_or(""));
                 for arg_type in &arg_types {
                     doc.add_text(fields.field_args_raw, arg_type);
                 }
@@ -347,10 +357,25 @@ impl SchemaIndex {
     fn run_query(
         &self,
         query_text: &str,
+        scope: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Scored<OperationRef>>, SearchError> {
         let searcher = self.inner.reader()?.searcher();
-        let query = self.query(std::iter::once(query_text.to_string()));
+        let scoring = self.query(std::iter::once(query_text.to_string()));
+        let query: Box<dyn Query> = match scope {
+            Some(s) => {
+                let scope_term = Term::from_field_text(self.scope_raw_field, s);
+                let scope_filter: Box<dyn Query> = Box::new(BoostQuery::new(
+                    Box::new(TermQuery::new(scope_term, IndexRecordOption::Basic)),
+                    0.0,
+                ));
+                Box::new(BooleanQuery::new(vec![
+                    (Occur::Must, Box::new(scoring) as Box<dyn Query>),
+                    (Occur::Must, scope_filter),
+                ]))
+            }
+            None => Box::new(scoring),
+        };
         let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
 
         let mut results: Vec<Scored<OperationRef>> = Vec::new();
@@ -374,6 +399,11 @@ impl SchemaIndex {
                 .filter_map(|v| v.as_str())
                 .map(str::to_string)
                 .collect();
+            let scope = doc
+                .get_first(self.scope_raw_field)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
             match (op_type, field_name) {
                 (Some(operation_type), Some(field_name)) => results.push(Scored::new(
                     OperationRef {
@@ -381,6 +411,7 @@ impl SchemaIndex {
                         field_name,
                         return_type,
                         arg_types,
+                        scope,
                     },
                     score,
                 )),
@@ -436,8 +467,13 @@ impl SchemaIndex {
 }
 
 impl SchemaSearch for SchemaIndex {
-    fn search(&self, query: &str, limit: usize) -> Result<Vec<Scored<OperationRef>>, SearchError> {
-        self.run_query(query, limit)
+    fn search(
+        &self,
+        query: &str,
+        scope: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<Scored<OperationRef>>, SearchError> {
+        self.run_query(query, scope, limit)
     }
 }
 
@@ -508,6 +544,19 @@ mod tests {
         }
     "#;
 
+    const SCOPED_SCHEMA: &str = r#"
+      type Query {
+        slack_userByEmail(email: String!): SlackUser
+        github_userByLogin(login: String!): GhUser
+      }
+      type Mutation {
+        slack_sendMessage(text: String!): SlackMessage
+      }
+      type SlackUser { id: ID! }
+      type GhUser { id: ID! }
+      type SlackMessage { ok: Boolean }
+    "#;
+
     #[fixture]
     fn schema() -> Valid<Schema> {
         Schema::parse(TEST_SCHEMA, "schema.graphql")
@@ -529,7 +578,7 @@ mod tests {
             15_000_000,
         )
         .unwrap();
-        let results = index.search("userByEmail", 10).unwrap();
+        let results = index.search("userByEmail", None, 10).unwrap();
         let rank = results
             .iter()
             .position(|s| s.inner.field_name == "userByEmail")
@@ -539,6 +588,56 @@ mod tests {
             "Expected 'userByEmail' operation in top 3, got {:?}: {:?}",
             rank,
             results
+                .iter()
+                .map(|s| s.inner.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[rstest]
+    fn scope_is_derived_stripped_and_filterable() {
+        let schema = Schema::parse(SCOPED_SCHEMA, "scoped.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let index = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            2,
+            15_000_000,
+        )
+        .unwrap();
+
+        // field_name stays the FULL executable name; scope is derived.
+        let all = index.search("user", None, 10).unwrap();
+        let slack_hit = all
+            .iter()
+            .find(|s| s.inner.field_name == "slack_userByEmail")
+            .expect("slack op present");
+        assert_eq!(slack_hit.inner.scope.as_deref(), Some("slack"));
+
+        // The prefix is stripped from scored text: searching the service word by NAME matches nothing.
+        let by_prefix = index.search("github", None, 10).unwrap();
+        assert!(
+            !by_prefix
+                .iter()
+                .any(|s| s.inner.field_name.starts_with("github_")),
+            "prefix must not be searchable via scored text: {:?}",
+            by_prefix
+                .iter()
+                .map(|s| s.inner.to_string())
+                .collect::<Vec<_>>()
+        );
+
+        // Scope filter restricts results to one service.
+        let scoped = index.search("user", Some("github"), 10).unwrap();
+        assert!(!scoped.is_empty());
+        assert!(
+            scoped
+                .iter()
+                .all(|s| s.inner.scope.as_deref() == Some("github")),
+            "scoped search must only return github ops: {:?}",
+            scoped
                 .iter()
                 .map(|s| s.inner.to_string())
                 .collect::<Vec<_>>()
@@ -557,7 +656,7 @@ mod tests {
 
         // `dimensions` is a nested field on `MediaMetadata`, folded into the documents of the
         // operations that reach it (e.g. `uploadMedia`, `post`, `posts`).
-        let results = search.search("dimensions", 10).unwrap();
+        let results = search.search("dimensions", None, 10).unwrap();
 
         assert_snapshot!(
             results
@@ -580,7 +679,7 @@ mod tests {
         .unwrap();
 
         // `username` lives on `User`; an operation returning/reaching `User` should surface.
-        let results = search.search("username", 10).unwrap();
+        let results = search.search("username", None, 10).unwrap();
         assert!(!results.is_empty(), "Should find results for 'username'");
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
@@ -591,7 +690,7 @@ mod tests {
 
         // `analytics` only exists on `Post` (via `PostAnalytics`), not on the Node/Content
         // interfaces, so an operation reaching `Post` should surface.
-        let results = search.search("analytics", 10).unwrap();
+        let results = search.search("analytics", None, 10).unwrap();
         assert!(!results.is_empty(), "Should find results for 'analytics'");
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
@@ -617,7 +716,7 @@ mod tests {
         // `UpdatePostInput` are not part of the queryable text fields, so they can only appear
         // incidentally in the Display string, not because they were matched; the query-term
         // splitting case (splitting the *search input*) is covered by `search_camel_case_query_term`.
-        let results = search.search("post", 10).unwrap();
+        let results = search.search("post", None, 10).unwrap();
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
             ops.iter().any(|p| p.contains("Post")),
@@ -644,7 +743,7 @@ mod tests {
         .unwrap();
 
         // Searching "CreatePost" should also work via camelCase splitting of the query term.
-        let results = search.search("CreatePost", 10).unwrap();
+        let results = search.search("CreatePost", None, 10).unwrap();
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
             ops.iter().any(|p| p.contains("Post")),
@@ -668,7 +767,7 @@ mod tests {
         // nearest equivalent: camelCase splitting of a deeply nested field name. `ageGroups`
         // lives on `Demographics` (reached via `Post.analytics -> PostAnalytics.demographics`)
         // and is folded as "age groups", so searching "age" surfaces Post-reaching operations.
-        let results = search.search("age", 10).unwrap();
+        let results = search.search("age", None, 10).unwrap();
         let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
             ops.iter().any(|p| p.contains("Post")),
