@@ -73,6 +73,7 @@ separate container and only bumps the image tag.
 | Result currency | `Scored<OperationRef>` (operation identity + score); no `PathNode` up-walk. |
 | Tree-shaking | Stays in the MCP `Search` tool (minimize churn). |
 | Result count | New optional `limit` tool param; default **10**, hard cap **50**. |
+| ORT linking | **`ort` `load-dynamic`** — bake `libonnxruntime.so` at a fixed path, set `ORT_DYLIB_PATH`, `dlopen` at runtime, catch failure → degrade to BM25. Static-link is the documented fallback. |
 
 ## Architecture
 
@@ -216,17 +217,25 @@ all overridable via `APOLLO_MCP_INTROSPECTION__SEARCH__…`:
 All changes are in **`apollo-mcp-server`**; `constellation-runtime` only bumps the
 `ghcr.io/apollographql/apollo-mcp-server` image tag.
 
-- **Build stage** (`rust:1.92-bookworm`): add `fastembed`/`ort` deps; `ort` fetches
-  ONNX Runtime at build time.
+- **Build stage** (`rust:1.92-bookworm`): add `fastembed`/`ort` with the `ort`
+  **`load-dynamic`** feature; `ort` fetches the prebuilt ONNX Runtime `.so` at
+  build time.
 - **Runtime stage** (`gcr.io/distroless/cc-debian12`, glibc + C/C++ runtime):
   - `COPY` the **model file** and **`libonnxruntime.so`** in from the build stage
-    (distroless has no shell/apt — everything is baked at build).
-  - Set **`ORT_DYLIB_PATH`** to the baked lib (or statically link ORT — see Open
-    questions).
+    to fixed paths (distroless has no shell/apt — everything is baked at build).
+  - Use **`load-dynamic`**: set **`ORT_DYLIB_PATH`** to the baked `.so` and
+    `dlopen` at runtime. On load failure, **catch and degrade to BM25** (see Error
+    handling). This is *why* `load-dynamic` is chosen over a plain dynamic link —
+    a NEEDED dependency would let the loader kill the process before our fallback
+    code runs, and distroless has no shell to diagnose it.
   - **Disable fastembed's runtime download**; point it at the local model path.
   - Ensure paths are readable by the non-root `USER 1000`.
   - Provision the ORT native lib for **both arches** (amd64 + arm64); model files
     are arch-neutral.
+  - *Fallback:* statically linking ORT (single self-contained binary, no external
+    `.so`) is the documented alternative if a zero-external-file image is later
+    preferred; rejected for now due to from-source build cost, libstdc++
+    static-mixing, and doubled multi-arch build time.
 - **In `constellation-runtime` (separate, out of scope here, tracked):** raise pod
   memory requests/limits (~150–400 MB for model + ORT arenas; OOMKill risk) and
   relax the readiness/liveness probe timing to accommodate the startup index build.
@@ -281,8 +290,6 @@ list. The load-bearing ones:
 
 ## Open questions
 
-- **Static-link ORT vs. `COPY` the `.so` + `ORT_DYLIB_PATH`?** Decide at
-  implementation time; static-linking simplifies the runtime image.
 - **Model license** — confirm the chosen model's license (bge = MIT; ONNX
   Runtime = MIT).
 - **Persistence** — deferred; pure in-RAM for now. Revisit if startup embedding

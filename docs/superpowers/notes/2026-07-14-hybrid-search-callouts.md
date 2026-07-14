@@ -163,7 +163,10 @@ lexical search, fused into hybrid results. Constraints:
 ## Open questions / to decide
 
 - Include subscriptions / deprecated operations in the operation anchor set?
-- Static-link ORT vs. `COPY` the `.so` + `ORT_DYLIB_PATH`?
+- ~~Static-link ORT vs. `COPY` the `.so` + `ORT_DYLIB_PATH`?~~ **Resolved:** use
+  `ort` `load-dynamic` — bake `libonnxruntime.so` at a fixed path, set
+  `ORT_DYLIB_PATH`, `dlopen` at runtime, catch load failure → degrade to BM25.
+  Static-link is the documented fallback. (See design spec.)
 - Embedding model + dimensionality for the short term (bge-small 384 vs 768)?
 - Return-type flatten depth default (1 vs 2)?
 - Persist the index to disk at all, or keep purely in-RAM (rebuild at startup)?
