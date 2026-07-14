@@ -1,42 +1,31 @@
 //! Library for indexing and searching GraphQL schemas.
 //!
-//! The schema is traversed depth-first from the supplied root operation types (Query, Mutation,
-//! Subscription). The index is anchored on **fields**, not types: one Tantivy document is
-//! written for each object field, interface field, and enum value reached during traversal.
-//! Each field document carries the following searchable text:
+//! The index is **operation-anchored**: one Tantivy document is written per root
+//! Query/Mutation/Subscription field (i.e. per invocable operation). Each operation document
+//! carries the following searchable text:
 //!
-//! * `parent_type_name` — the type that owns the field
-//! * `field_name` — the field (or enum value) name; matches here get a per-token boost since
-//!   a hit on the field name is the most direct signal for the typical "find an operation"
-//!   workload
-//! * `arg_names` — the field's argument names (empty for enum values)
-//! * `return_type_name` — the field's return type (empty for enum values)
-//! * `description` — the parent type's description concatenated with the field's description
+//! * `operation_name` — the root field name; matches here get a per-token boost since a hit on
+//!   the operation name is the most direct signal for the typical "find an operation" workload
+//! * `arg_names` — the operation's argument names
+//! * `return_type_name` — the operation's return type name
+//! * `description` — the root field's description
+//! * `nested_fields` — field names and descriptions of the return type, flattened up to
+//!   `flatten_depth` levels deep (see [`crate::traverse::flatten_return_type`]). This folds the
+//!   shape of the result into the operation document so an agent searching for a nested concept
+//!   still surfaces the operation that reaches it.
 //!
-//! Scalar and union types do not produce documents on their own; they surface in search only
-//! through the fields that reference them (via `return_type_name`). Custom-scalar descriptions
-//! are not indexed.
-//!
-//! Searching for a set of terms returns root paths anchored at matching field hits. A root
-//! path starts at a root operation type and walks down to the hit, giving the agent both the
-//! match and the chain of selections needed to construct an operation. Paths are built by
-//! looking up the hit's parent type in an in-memory type-reference graph and walking upward
-//! via BFS until a root operation type is reached, so each matching field can produce up to
-//! `Options::max_paths_per_type` distinct root paths.
-//!
-//! Shorter paths are preferred by `Options::short_path_boost_factor`. The total number of
-//! field hits expanded into paths is capped by `Options::max_type_matches`.
+//! Searching returns [`OperationRef`]s ranked by Tantivy BM25 score (descending). Because each
+//! document is a single operation, a search for an operation name like `userByEmail` hits that
+//! operation directly instead of having to outscore unrelated types that happen to mention the
+//! constituent tokens.
 
-use crate::path::PathNode;
-use apollo_compiler::ast::{NamedType, OperationType as AstOperationType};
+use apollo_compiler::Schema;
+use apollo_compiler::ast::OperationType as AstOperationType;
 use apollo_compiler::schema::ExtendedType;
 use apollo_compiler::validation::Valid;
-use apollo_compiler::{Name, Schema};
 use enumset::{EnumSet, EnumSetType};
 use error::{IndexingError, SearchError};
 use heck::ToSnakeCase;
-use itertools::Itertools;
-use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::Instant;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery};
@@ -46,8 +35,7 @@ use tantivy::{
     Index, TantivyDocument, Term,
     schema::{STORED, Schema as TantivySchema},
 };
-use tracing::{Level, debug, error, info, warn};
-use traverse::SchemaExt;
+use tracing::{error, info};
 
 mod backend;
 pub mod error;
@@ -57,61 +45,27 @@ mod traverse;
 pub use backend::{OperationRef, SchemaSearch};
 pub use path::Scored;
 
-pub const PARENT_TYPE_NAME_FIELD: &str = "parent_type_name";
-pub const FIELD_NAME_FIELD: &str = "field_name";
+pub const OPERATION_NAME_FIELD: &str = "operation_name";
 pub const ARG_NAMES_FIELD: &str = "arg_names";
 pub const RETURN_TYPE_NAME_FIELD: &str = "return_type_name";
 pub const DESCRIPTION_FIELD: &str = "description";
-pub const PARENT_TYPE_NAME_RAW_FIELD: &str = "parent_type_name_raw";
-pub const FIELD_NAME_RAW_FIELD: &str = "field_name_raw";
+pub const NESTED_FIELDS_FIELD: &str = "nested_fields";
+pub const OPERATION_TYPE_RAW_FIELD: &str = "operation_type_raw";
+pub const OPERATION_NAME_RAW_FIELD: &str = "operation_name_raw";
 pub const RETURN_TYPE_NAME_RAW_FIELD: &str = "return_type_name_raw";
 pub const FIELD_ARGS_RAW_FIELD: &str = "field_args_raw";
 
-/// An edge in the type-reference graph: "type X is referenced by parent_type's field_name
-/// (with these field_args)".
-#[derive(Clone, Debug)]
-struct ReferencingEdge {
-    parent_type: String,
-    /// `None` when the type is reached without a field name (e.g., union member, interface
-    /// implementer).
-    field_name: Option<Name>,
-    field_args: Vec<NamedType>,
-}
-
 /// Tantivy field handles bundled together for ergonomic doc writing.
 struct DocFields {
-    parent_type_name: Field,
-    field_name: Field,
+    operation_name: Field,
     arg_names: Field,
     return_type_name: Field,
     description: Field,
-    parent_type_name_raw: Field,
-    field_name_raw: Field,
+    nested_fields: Field,
+    operation_type_raw: Field,
+    operation_name_raw: Field,
     return_type_name_raw: Field,
     field_args_raw: Field,
-}
-
-/// A single search hit: one field doc and its BM25 score.
-struct FieldHit {
-    parent_type: String,
-    field_name: String,
-    arg_types: Vec<NamedType>,
-    /// `None` for enum values.
-    return_type: Option<String>,
-    score: f32,
-}
-
-/// One indexable field on a type — produced by [`SchemaIndex::field_records`] and consumed
-/// by [`SchemaIndex::write_field_doc`].
-struct FieldRecord<'a> {
-    parent_type: &'a str,
-    field_name: &'a str,
-    arg_names: Vec<&'a str>,
-    arg_types: Vec<String>,
-    /// `None` for enum values (which terminate a path without a return type).
-    return_type: Option<&'a str>,
-    parent_description: &'a str,
-    field_description: &'a str,
 }
 
 /// Types of operations to be included in the schema index. Unlike the AST types, these types can
@@ -139,27 +93,6 @@ impl From<OperationType> for AstOperationType {
             OperationType::Query => AstOperationType::Query,
             OperationType::Mutation => AstOperationType::Mutation,
             OperationType::Subscription => AstOperationType::Subscription,
-        }
-    }
-}
-
-pub struct Options {
-    /// The maximum number of matching field hits to expand into root paths
-    pub max_type_matches: usize,
-
-    /// The maximum number of paths to root to include for each matching field hit
-    pub max_paths_per_type: usize,
-
-    /// The boost factor applied to shorter paths to root (0.0 for no boost, 1.0 for 100% boost)
-    pub short_path_boost_factor: f32,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            max_type_matches: 10,
-            max_paths_per_type: 3,
-            short_path_boost_factor: 0.5,
         }
     }
 }
@@ -216,21 +149,39 @@ fn push_expanded_word(out: &mut String, word: &str) {
     }
 }
 
+/// Maps an [`OperationType`] to the root type name it produces in a GraphQL schema. Mirrors the
+/// `Display` mapping in [`OperationRef`].
+fn root_kind_str(op: OperationType) -> &'static str {
+    match op {
+        OperationType::Query => "Query",
+        OperationType::Mutation => "Mutation",
+        OperationType::Subscription => "Subscription",
+    }
+}
+
+/// Parse a stored `operation_type_raw` value back into an [`OperationType`].
+fn parse_op_kind(s: &str) -> Option<OperationType> {
+    match s {
+        "Query" => Some(OperationType::Query),
+        "Mutation" => Some(OperationType::Mutation),
+        "Subscription" => Some(OperationType::Subscription),
+        _ => None,
+    }
+}
+
 #[derive(Clone)]
 pub struct SchemaIndex {
     inner: Index,
     text_analyzer: TextAnalyzer,
-    parent_type_name_field: Field,
-    field_name_field: Field,
+    operation_name_field: Field,
     arg_names_field: Field,
     return_type_name_field: Field,
     description_field: Field,
-    parent_type_name_raw_field: Field,
-    field_name_raw_field: Field,
+    nested_fields_field: Field,
+    operation_type_raw_field: Field,
+    operation_name_raw_field: Field,
     return_type_name_raw_field: Field,
     field_args_raw_field: Field,
-    /// In-memory map of type name → incoming edges, used for path-building at search time.
-    type_references: HashMap<String, Vec<ReferencingEdge>>,
 }
 
 impl SchemaIndex {
@@ -238,6 +189,7 @@ impl SchemaIndex {
     pub fn new(
         schema: &Valid<Schema>,
         root_types: EnumSet<OperationType>,
+        flatten_depth: usize,
         index_memory_bytes: usize,
     ) -> Result<Self, IndexingError> {
         let start_time = Instant::now();
@@ -251,12 +203,8 @@ impl SchemaIndex {
 
         let text_indexing = || TextFieldIndexing::default().set_tokenizer("en_stem");
         let mut index_schema = TantivySchema::builder();
-        let parent_type_name_field = index_schema.add_text_field(
-            PARENT_TYPE_NAME_FIELD,
-            TextOptions::default().set_indexing_options(text_indexing()),
-        );
-        let field_name_field = index_schema.add_text_field(
-            FIELD_NAME_FIELD,
+        let operation_name_field = index_schema.add_text_field(
+            OPERATION_NAME_FIELD,
             TextOptions::default().set_indexing_options(text_indexing()),
         );
         let arg_names_field = index_schema.add_text_field(
@@ -271,6 +219,10 @@ impl SchemaIndex {
             DESCRIPTION_FIELD,
             TextOptions::default().set_indexing_options(text_indexing()),
         );
+        let nested_fields_field = index_schema.add_text_field(
+            NESTED_FIELDS_FIELD,
+            TextOptions::default().set_indexing_options(text_indexing()),
+        );
 
         // Raw identifier fields preserve exact casing for lookup and display.
         let raw_indexing = || {
@@ -278,10 +230,10 @@ impl SchemaIndex {
                 .set_indexing_options(TextFieldIndexing::default().set_tokenizer("raw"))
                 .set_stored()
         };
-        let parent_type_name_raw_field =
-            index_schema.add_text_field(PARENT_TYPE_NAME_RAW_FIELD, raw_indexing());
-        let field_name_raw_field =
-            index_schema.add_text_field(FIELD_NAME_RAW_FIELD, raw_indexing());
+        let operation_type_raw_field =
+            index_schema.add_text_field(OPERATION_TYPE_RAW_FIELD, raw_indexing());
+        let operation_name_raw_field =
+            index_schema.add_text_field(OPERATION_NAME_RAW_FIELD, raw_indexing());
         let return_type_name_raw_field =
             index_schema.add_text_field(RETURN_TYPE_NAME_RAW_FIELD, raw_indexing());
         let field_args_raw_field = index_schema.add_text_field(FIELD_ARGS_RAW_FIELD, STORED);
@@ -293,381 +245,149 @@ impl SchemaIndex {
             .tokenizers()
             .register("en_stem", text_analyzer.clone());
 
-        // Build the type-reference graph by traversing from root operation types.
-        let mut type_references: HashMap<String, Vec<ReferencingEdge>> = HashMap::default();
-        for (extended_type, path) in schema.traverse(root_types) {
-            let entry = type_references
-                .entry(extended_type.name().to_string())
-                .or_default();
-            if let Some((ref_type, field_name, field_args)) = path.referencing_type() {
-                entry.push(ReferencingEdge {
-                    parent_type: ref_type.to_string(),
-                    field_name: field_name.cloned(),
-                    field_args: field_args.into_iter().cloned().collect(),
-                });
-            }
-        }
-
-        if tracing::enabled!(Level::DEBUG) {
-            for (type_name, references) in &type_references {
-                debug!("Type '{}' is referenced by: {:?}", type_name, references);
-            }
-        }
-
-        // Write a Tantivy doc per field (or enum value). Path-building at search time uses
-        // `type_references` to walk from each hit's parent_type up to a root operation.
         let doc_fields = DocFields {
-            parent_type_name: parent_type_name_field,
-            field_name: field_name_field,
+            operation_name: operation_name_field,
             arg_names: arg_names_field,
             return_type_name: return_type_name_field,
             description: description_field,
-            parent_type_name_raw: parent_type_name_raw_field,
-            field_name_raw: field_name_raw_field,
+            nested_fields: nested_fields_field,
+            operation_type_raw: operation_type_raw_field,
+            operation_name_raw: operation_name_raw_field,
             return_type_name_raw: return_type_name_raw_field,
             field_args_raw: field_args_raw_field,
         };
         let mut index_writer = index.writer(index_memory_bytes)?;
-        let mut field_count = 0usize;
-        for type_name in type_references.keys() {
-            let type_name = NamedType::new_unchecked(type_name.as_str());
-            let Some(extended_type) = schema.types.get(&type_name) else {
-                continue;
-            };
-            if extended_type.is_built_in() {
-                continue;
-            }
-
-            for record in Self::field_records(extended_type) {
-                Self::write_field_doc(&mut index_writer, &doc_fields, &record)?;
-                field_count += 1;
-            }
-        }
+        let operation_count = Self::write_operation_docs(
+            schema,
+            &mut index_writer,
+            &doc_fields,
+            root_types,
+            flatten_depth,
+        )?;
         index_writer.commit()?;
 
         let elapsed = start_time.elapsed();
-        info!(
-            "Indexed {} fields across {} types in {:.2?}",
-            field_count,
-            type_references.len(),
-            elapsed
-        );
+        info!("Indexed {} operations in {:.2?}", operation_count, elapsed);
 
         Ok(Self {
             inner: index,
             text_analyzer,
-            parent_type_name_field,
-            field_name_field,
+            operation_name_field,
             arg_names_field,
             return_type_name_field,
             description_field,
-            parent_type_name_raw_field,
-            field_name_raw_field,
+            nested_fields_field,
+            operation_type_raw_field,
+            operation_name_raw_field,
             return_type_name_raw_field,
             field_args_raw_field,
-            type_references,
         })
     }
 
-    /// Enumerate one record per indexable field (or enum value) on a type.
-    fn field_records(extended_type: &ExtendedType) -> Vec<FieldRecord<'_>> {
-        let parent_description = extended_type
-            .description()
-            .map(|d| d.as_str())
-            .unwrap_or("");
-        match extended_type {
-            ExtendedType::Object(obj) => obj
-                .fields
-                .iter()
-                .map(|(name, field)| FieldRecord {
-                    parent_type: obj.name.as_str(),
-                    field_name: name.as_str(),
-                    arg_names: field.arguments.iter().map(|a| a.name.as_str()).collect(),
-                    arg_types: field
-                        .arguments
-                        .iter()
-                        .map(|a| a.ty.inner_named_type().to_string())
-                        .collect(),
-                    return_type: Some(field.ty.inner_named_type().as_str()),
-                    parent_description,
-                    field_description: field.description.as_ref().map(|n| n.as_str()).unwrap_or(""),
-                })
-                .collect(),
-            ExtendedType::Interface(iface) => iface
-                .fields
-                .iter()
-                .map(|(name, field)| FieldRecord {
-                    parent_type: iface.name.as_str(),
-                    field_name: name.as_str(),
-                    arg_names: field.arguments.iter().map(|a| a.name.as_str()).collect(),
-                    arg_types: field
-                        .arguments
-                        .iter()
-                        .map(|a| a.ty.inner_named_type().to_string())
-                        .collect(),
-                    return_type: Some(field.ty.inner_named_type().as_str()),
-                    parent_description,
-                    field_description: field.description.as_ref().map(|n| n.as_str()).unwrap_or(""),
-                })
-                .collect(),
-            ExtendedType::Enum(en) => en
-                .values
-                .iter()
-                .map(|(name, value)| FieldRecord {
-                    parent_type: en.name.as_str(),
-                    field_name: name.as_str(),
-                    arg_names: Vec::new(),
-                    arg_types: Vec::new(),
-                    return_type: None,
-                    parent_description,
-                    field_description: value.description.as_ref().map(|n| n.as_str()).unwrap_or(""),
-                })
-                .collect(),
-            // Scalar and union types produce no documents. Their names remain partially
-            // recoverable via the `return_type_name` text on fields that reference them, but
-            // descriptions on custom scalars/unions are not searchable. Union member types
-            // surface in their own right as object fields/types.
-            _ => Vec::new(),
-        }
-    }
-
-    /// Write a single Tantivy document for a field record.
-    fn write_field_doc(
+    /// Write one Tantivy document per root operation field, enriched with the operation's
+    /// flattened return-type text.
+    fn write_operation_docs(
+        schema: &Valid<Schema>,
         index_writer: &mut tantivy::IndexWriter,
         fields: &DocFields,
-        record: &FieldRecord<'_>,
-    ) -> Result<(), IndexingError> {
-        let mut doc = TantivyDocument::default();
-        doc.add_text(
-            fields.parent_type_name,
-            expand_identifiers(record.parent_type),
-        );
-        doc.add_text(fields.field_name, expand_identifiers(record.field_name));
-        if !record.arg_names.is_empty() {
-            doc.add_text(
-                fields.arg_names,
-                expand_identifiers(&record.arg_names.join(" ")),
-            );
+        root_types: EnumSet<OperationType>,
+        flatten_depth: usize,
+    ) -> Result<usize, IndexingError> {
+        let mut count = 0usize;
+        for op_type in root_types.iter() {
+            let ast_type: AstOperationType = op_type.into();
+            let Some(root_name) = schema.root_operation(ast_type) else {
+                continue;
+            };
+            let Some(ExtendedType::Object(obj)) = schema.types.get(root_name) else {
+                continue;
+            };
+            for (name, field) in obj.fields.iter() {
+                let return_type = field.ty.inner_named_type();
+                let arg_names: Vec<&str> =
+                    field.arguments.iter().map(|a| a.name.as_str()).collect();
+                let arg_types: Vec<String> = field
+                    .arguments
+                    .iter()
+                    .map(|a| a.ty.inner_named_type().to_string())
+                    .collect();
+                let description = field.description.as_ref().map(|d| d.as_str()).unwrap_or("");
+                let nested = crate::traverse::flatten_return_type(
+                    schema,
+                    return_type.as_str(),
+                    flatten_depth,
+                );
+
+                let mut doc = TantivyDocument::default();
+                doc.add_text(fields.operation_name, expand_identifiers(name.as_str()));
+                if !arg_names.is_empty() {
+                    doc.add_text(fields.arg_names, expand_identifiers(&arg_names.join(" ")));
+                }
+                doc.add_text(
+                    fields.return_type_name,
+                    expand_identifiers(return_type.as_str()),
+                );
+                doc.add_text(fields.description, expand_identifiers(description));
+                doc.add_text(fields.nested_fields, expand_identifiers(&nested));
+                doc.add_text(fields.operation_type_raw, root_kind_str(op_type));
+                doc.add_text(fields.operation_name_raw, name.as_str());
+                doc.add_text(fields.return_type_name_raw, return_type.as_str());
+                for arg_type in &arg_types {
+                    doc.add_text(fields.field_args_raw, arg_type);
+                }
+                index_writer.add_document(doc)?;
+                count += 1;
+            }
         }
-        if let Some(rt) = record.return_type {
-            doc.add_text(fields.return_type_name, expand_identifiers(rt));
-            doc.add_text(fields.return_type_name_raw, rt);
-        } else {
-            // Enum values have no return type; index the empty string so the stored field
-            // exists for retrieval.
-            doc.add_text(fields.return_type_name_raw, "");
-        }
-        let description = match (record.parent_description, record.field_description) {
-            ("", f) => f.to_string(),
-            (p, "") => p.to_string(),
-            (p, f) => format!("{}\n{}", p, f),
-        };
-        doc.add_text(fields.description, expand_identifiers(&description));
-        doc.add_text(fields.parent_type_name_raw, record.parent_type);
-        doc.add_text(fields.field_name_raw, record.field_name);
-        for arg_type in &record.arg_types {
-            doc.add_text(fields.field_args_raw, arg_type);
-        }
-        index_writer.add_document(doc)?;
-        Ok(())
+        Ok(count)
     }
 
-    /// Search the schema for a set of terms.
-    ///
-    /// Returns root paths to fields (or enum values) matching the terms. The index is keyed
-    /// on individual fields, not types, so a search for an operation name like `userByEmail`
-    /// hits the field doc directly instead of having to outscore unrelated types that happen
-    /// to mention the constituent tokens.
-    pub fn search<I>(
+    /// Run the search query and materialize matching operation documents into [`OperationRef`]s.
+    /// Results come back already sorted by Tantivy BM25 score descending; that order is kept.
+    fn run_query(
         &self,
-        terms: I,
-        options: Options,
-    ) -> Result<Vec<Scored<PathNode>>, SearchError>
-    where
-        I: IntoIterator<Item = String>,
-    {
+        query_text: &str,
+        limit: usize,
+    ) -> Result<Vec<Scored<OperationRef>>, SearchError> {
         let searcher = self.inner.reader()?.searcher();
-        let mut root_paths: Vec<Scored<PathNode>> = Default::default();
+        let query = self.query(std::iter::once(query_text.to_string()));
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(limit))?;
 
-        let query = self.query(terms);
-        debug!("Index query: {:?}", query);
-
-        // Get the top GraphQL fields matching the search terms.
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(100))?;
-
-        // Extract per-hit metadata. Order is preserved from Tantivy's score-descending sort.
-        let mut hits: Vec<FieldHit> = Vec::new();
+        let mut results: Vec<Scored<OperationRef>> = Vec::new();
         for (score, doc_address) in top_docs {
             let doc: TantivyDocument = searcher.doc(doc_address)?;
-            let parent_type = doc
-                .get_first(self.parent_type_name_raw_field)
-                .and_then(|v| v.as_str())
-                .map(str::to_string);
             let field_name = doc
-                .get_first(self.field_name_raw_field)
+                .get_first(self.operation_name_raw_field)
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
+            let op_type = doc
+                .get_first(self.operation_type_raw_field)
+                .and_then(|v| v.as_str())
+                .and_then(parse_op_kind);
             let return_type = doc
                 .get_first(self.return_type_name_raw_field)
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
-            let arg_types: Vec<NamedType> = doc
+            let arg_types: Vec<String> = doc
                 .get_all(self.field_args_raw_field)
                 .filter_map(|v| v.as_str())
-                .map(NamedType::new_unchecked)
+                .map(str::to_string)
                 .collect();
-            match (parent_type, field_name) {
-                (Some(parent_type), Some(field_name)) => {
-                    debug!(
-                        "Explanation for {parent_type}.{field_name}: {:?}",
-                        query.explain(&searcher, doc_address)?
-                    );
-                    hits.push(FieldHit {
-                        parent_type,
+            match (op_type, field_name) {
+                (Some(operation_type), Some(field_name)) => results.push(Scored::new(
+                    OperationRef {
+                        operation_type,
                         field_name,
-                        arg_types,
                         return_type,
-                        score,
-                    });
-                }
-                _ => {
-                    error!("Doc address {doc_address:?} missing parent or field name");
-                }
+                        arg_types,
+                    },
+                    score,
+                )),
+                _ => error!("Doc {doc_address:?} missing operation type or name"),
             }
         }
-
-        // For each top hit, anchor a path at the hit field and walk up to root operation
-        // types. Tantivy's BM25 score for the hit is the path's score; path-shape preferences
-        // (shorter paths preferred) are applied below.
-        for hit in hits.iter().take(options.max_type_matches) {
-            let leaf_path = self.build_leaf_path(hit);
-            for path in
-                self.walk_up_to_roots(&hit.parent_type, leaf_path, options.max_paths_per_type)
-            {
-                root_paths.push(Scored::new(path, hit.score));
-            }
-        }
-
-        Ok(self
-            .boost_shorter_paths(root_paths, options.short_path_boost_factor)
-            .into_iter()
-            .sorted_by(|a, b| {
-                b.score()
-                    .partial_cmp(&a.score())
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-            .collect::<Vec<_>>())
-    }
-
-    /// Build the leaf path segment for a field hit. For regular fields, the segment is
-    /// `parent_type --field_name--> return_type`. For enum values, the segment is
-    /// `parent_type -> value_name` with no field-name arrow.
-    fn build_leaf_path(&self, hit: &FieldHit) -> PathNode {
-        if let Some(return_type) = &hit.return_type {
-            PathNode::new(NamedType::new_unchecked(return_type)).add_parent(
-                Some(Name::new_unchecked(&hit.field_name)),
-                hit.arg_types.clone(),
-                NamedType::new_unchecked(&hit.parent_type),
-            )
-        } else {
-            PathNode::new(NamedType::new_unchecked(&hit.field_name)).add_parent(
-                None,
-                Vec::new(),
-                NamedType::new_unchecked(&hit.parent_type),
-            )
-        }
-    }
-
-    /// BFS upward through the type-reference graph from `start_type` to root operation types,
-    /// yielding at most `max_paths` complete root paths. Each yielded path has `leaf_path`
-    /// as its rightmost segment.
-    fn walk_up_to_roots(
-        &self,
-        start_type: &str,
-        leaf_path: PathNode,
-        max_paths: usize,
-    ) -> Vec<PathNode> {
-        let mut out = Vec::new();
-        let mut visited: HashSet<String> = HashSet::new();
-        let mut queue: VecDeque<(String, PathNode)> = VecDeque::new();
-        queue.push_back((start_type.to_string(), leaf_path));
-
-        while let Some((current_type, current_path)) = queue.pop_front() {
-            if out.len() >= max_paths {
-                break;
-            }
-            let edges = self
-                .type_references
-                .get(&current_type)
-                .cloned()
-                .unwrap_or_default();
-            if edges.is_empty() {
-                // Reached a root operation type — emit the path. Don't dedupe on the root
-                // itself: each (root, distinct_path) pair represents a different way for an
-                // agent to reach the leaf, so they should all be returned (subject to
-                // `max_paths`).
-                out.push(current_path);
-                continue;
-            }
-            // Mark this intermediate type visited so we don't re-expand its edges in cycles
-            // through the type graph (e.g., `User.friend: User`). Roots are already handled
-            // above, so they never participate in cycle prevention.
-            if !visited.insert(current_type.clone()) {
-                continue;
-            }
-            for edge in edges {
-                if visited.contains(&edge.parent_type) {
-                    continue;
-                }
-                let next_path = current_path.clone().add_parent(
-                    edge.field_name.clone(),
-                    edge.field_args.clone(),
-                    NamedType::new_unchecked(&edge.parent_type),
-                );
-                queue.push_back((edge.parent_type.clone(), next_path));
-            }
-        }
-        out
-    }
-
-    /// Apply a boost factor to shorter paths
-    fn boost_shorter_paths(
-        &self,
-        scored_paths: Vec<Scored<PathNode>>,
-        boost_factor: f32,
-    ) -> Vec<Scored<PathNode>> {
-        if scored_paths.is_empty() || boost_factor == 0f32 {
-            return scored_paths;
-        }
-
-        // Calculate the range of path lengths
-        let path_lengths: Vec<usize> = scored_paths
-            .iter()
-            .map(|scored| scored.inner.len())
-            .collect();
-        let min_length = *path_lengths.iter().min().unwrap_or(&1);
-        let max_length = *path_lengths.iter().max().unwrap_or(&1);
-
-        // Only apply boost if there's a range in path lengths
-        if max_length <= min_length {
-            return scored_paths;
-        }
-
-        let length_range = (max_length - min_length) as f32;
-
-        // Apply normalized boost to each path
-        scored_paths
-            .into_iter()
-            .map(|scored_path| {
-                let path_length = scored_path.inner.len();
-                let normalized_length = (path_length - min_length) as f32 / length_range;
-                // Boost shorter paths: 1.0 for shortest, 0.0 for longest
-                let length_boost = 1.0 - normalized_length;
-                let boosted_score = scored_path.score() * (1.0 + boost_factor * length_boost);
-                Scored::new(scored_path.inner, boosted_score)
-            })
-            .collect()
+        Ok(results)
     }
 
     /// Create the query used to search for a given set of terms.
@@ -675,19 +395,19 @@ impl SchemaIndex {
     where
         I: IntoIterator<Item = String>,
     {
-        // A hit on the field name is the most direct signal that the field is what the user
-        // is looking for, so field-name term matches get a per-token boost. Other fields
-        // (parent type, args, return type, description) contribute at their unweighted BM25
+        // A hit on the operation name is the most direct signal that the operation is what the
+        // user is looking for, so operation-name term matches get a per-token boost. Other fields
+        // (args, return type, description, nested fields) contribute at their unweighted BM25
         // score.
-        const FIELD_NAME_BOOST: f32 = 3.0;
+        const OPERATION_NAME_BOOST: f32 = 3.0;
 
         let mut text_analyzer = self.text_analyzer.clone();
         let text_fields = [
-            (self.parent_type_name_field, 1.0_f32),
-            (self.field_name_field, FIELD_NAME_BOOST),
-            (self.arg_names_field, 1.0),
+            (self.operation_name_field, OPERATION_NAME_BOOST),
+            (self.arg_names_field, 1.0_f32),
             (self.return_type_name_field, 1.0),
             (self.description_field, 1.0),
+            (self.nested_fields_field, 1.0),
         ];
 
         let mut clauses: Vec<(Occur, Box<dyn Query>)> = Vec::new();
@@ -715,6 +435,12 @@ impl SchemaIndex {
     }
 }
 
+impl SchemaSearch for SchemaIndex {
+    fn search(&self, query: &str, limit: usize) -> Result<Vec<Scored<OperationRef>>, SearchError> {
+        self.run_query(query, limit)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,11 +449,16 @@ mod tests {
 
     const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
 
-    /// Target field reaches `TargetUser`, which has minimal text matching the search tokens.
-    /// Noise types are separate, are NOT reachable through the target, and saturate their
-    /// own fields with `user`/`email`/`by` tokens — so a type-anchored index ranks them above
-    /// `TargetUser` and the path containing `userByEmail` falls out of the top results.
-    /// Verified to reproduce the production failure against the pre-fix `main` lib.rs.
+    /// Depth used when folding return-type text into operation documents for the schema-based
+    /// tests. The test schema nests searchable concepts several levels deep (e.g. `dimensions`
+    /// lives on `MediaMetadata`, reached via `Post.media -> Media.metadata`), so a depth of 3
+    /// is needed to surface them through their operations.
+    const FLATTEN_DEPTH: usize = 3;
+
+    /// Every root operation is its own index document. Searching for a specific operation name
+    /// must surface that operation, even when many unrelated operations contain the constituent
+    /// tokens in their (folded) return-type text. Mirrors the production failure on Slack's
+    /// `userByEmail`.
     const NOISE_SCHEMA: &str = r#"
         type Query {
             userByEmail(email: String!): TargetUser
@@ -785,37 +516,32 @@ mod tests {
             .expect("Failed to validate test schema")
     }
 
-    /// Regression test for field-anchored recall: searching for a specific operation name
-    /// must surface that operation, even when many unrelated fields/types contain the
-    /// constituent tokens. Mirrors the production failure on Slack's `userByEmail`.
     #[rstest]
-    fn search_buries_target_under_token_noise() {
+    fn search_surfaces_target_operation() {
         let schema = Schema::parse(NOISE_SCHEMA, "noise.graphql")
-            .expect("Failed to parse noise schema")
+            .unwrap()
             .validate()
-            .expect("Failed to validate noise schema");
-
+            .unwrap();
         let index = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            1,
             15_000_000,
         )
         .unwrap();
-
-        let results = index
-            .search(vec!["userByEmail".to_string()], Options::default())
-            .unwrap();
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
-        let rank = paths
+        let results = index.search("userByEmail", 10).unwrap();
+        let rank = results
             .iter()
-            .position(|p| p.contains("userByEmail"))
+            .position(|s| s.inner.field_name == "userByEmail")
             .map(|p| p + 1);
-
         assert!(
             matches!(rank, Some(r) if r <= 3),
-            "Expected a path containing 'userByEmail' in the top 3 results, got rank {:?}.\nAll paths:\n{}",
+            "Expected 'userByEmail' operation in top 3, got {:?}: {:?}",
             rank,
-            paths.join("\n")
+            results
+                .iter()
+                .map(|s| s.inner.to_string())
+                .collect::<Vec<_>>()
         );
     }
 
@@ -824,13 +550,14 @@ mod tests {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            FLATTEN_DEPTH,
             15_000_000,
         )
         .unwrap();
 
-        let results = search
-            .search(vec!["dimensions".to_string()], Options::default())
-            .unwrap();
+        // `dimensions` is a nested field on `MediaMetadata`, folded into the documents of the
+        // operations that reach it (e.g. `uploadMedia`, `post`, `posts`).
+        let results = search.search("dimensions", 10).unwrap();
 
         assert_snapshot!(
             results
@@ -847,44 +574,30 @@ mod tests {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            FLATTEN_DEPTH,
             15_000_000,
         )
         .unwrap();
 
-        let results = search
-            .search(vec!["username".to_string()], Options::default())
-            .unwrap();
-
+        // `username` lives on `User`; an operation returning/reaching `User` should surface.
+        let results = search.search("username", 10).unwrap();
+        assert!(!results.is_empty(), "Should find results for 'username'");
+        let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
-            !results.is_empty(),
-            "Should find results for 'username' field"
+            ops.iter().any(|p| p.contains("User")),
+            "Should surface a User-returning operation when searching 'username'.\nFound:\n{}",
+            ops.join("\n")
         );
 
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
-        let found_user = paths.iter().any(|p| p.contains("User"));
-
+        // `analytics` only exists on `Post` (via `PostAnalytics`), not on the Node/Content
+        // interfaces, so an operation reaching `Post` should surface.
+        let results = search.search("analytics", 10).unwrap();
+        assert!(!results.is_empty(), "Should find results for 'analytics'");
+        let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
-            found_user,
-            "Should find User type when searching for username field (User implements Node).\nFound paths:\n{}",
-            paths.join("\n")
-        );
-
-        let results = search
-            .search(vec!["analytics".to_string()], Options::default())
-            .unwrap();
-
-        assert!(
-            !results.is_empty(),
-            "Should find results for 'analytics' field"
-        );
-
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
-        let found_post = paths.iter().any(|p| p.contains("Post"));
-
-        assert!(
-            found_post,
-            "Should find Post type when searching for 'analytics' field (which only exists on Post, not on Node/Content interfaces).\nFound paths:\n{}",
-            paths.join("\n")
+            ops.iter().any(|p| p.contains("Post")),
+            "Should surface a Post-reaching operation when searching 'analytics'.\nFound:\n{}",
+            ops.join("\n")
         );
     }
 
@@ -893,29 +606,26 @@ mod tests {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            FLATTEN_DEPTH,
             15_000_000,
         )
         .unwrap();
 
-        // Searching "post" should match camelCase identifiers like PostAnalytics and UpdatePostInput
-        // via word-boundary splitting (e.g. PostAnalytics -> "post analytics")
-        let results = search
-            .search(vec!["post".to_string()], Options::default())
-            .unwrap();
-
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
-        let has_post_analytics = paths.iter().any(|p| p.contains("PostAnalytics"));
-        let has_update_post_input = paths.iter().any(|p| p.contains("UpdatePostInput"));
-
+        // Searching "post" should surface post-related operations via word-boundary splitting.
+        // `UpdatePostInput` (an argument type of `updatePost`) demonstrates camelCase splitting
+        // of a compound identifier: "update post input" contains the token "post". The compound
+        // arg type appears verbatim in the operation's Display string.
+        let results = search.search("post", 10).unwrap();
+        let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
-            has_post_analytics,
-            "Should find PostAnalytics when searching for 'post' (camelCase split).\nFound paths:\n{}",
-            paths.join("\n")
+            ops.iter().any(|p| p.contains("Post")),
+            "Should surface Post-related operations when searching 'post'.\nFound:\n{}",
+            ops.join("\n")
         );
         assert!(
-            has_update_post_input,
-            "Should find UpdatePostInput when searching for 'post' (camelCase split).\nFound paths:\n{}",
-            paths.join("\n")
+            ops.iter().any(|p| p.contains("UpdatePostInput")),
+            "Should surface updatePost (arg UpdatePostInput) via camelCase splitting.\nFound:\n{}",
+            ops.join("\n")
         );
     }
 
@@ -924,45 +634,42 @@ mod tests {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            FLATTEN_DEPTH,
             15_000_000,
         )
         .unwrap();
 
-        // Searching "CreatePost" should also work via camelCase splitting of the query term
-        let results = search
-            .search(vec!["CreatePost".to_string()], Options::default())
-            .unwrap();
-
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
-        let has_post = paths.iter().any(|p| p.contains("Post"));
-
+        // Searching "CreatePost" should also work via camelCase splitting of the query term.
+        let results = search.search("CreatePost", 10).unwrap();
+        let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
-            has_post,
-            "Should find Post-related types when searching for 'CreatePost' (query term camelCase split).\nFound paths:\n{}",
-            paths.join("\n")
+            ops.iter().any(|p| p.contains("Post")),
+            "Should surface Post-related operations when searching 'CreatePost'.\nFound:\n{}",
+            ops.join("\n")
         );
     }
 
     #[rstest]
-    fn search_camel_case_in_description(schema: Valid<Schema>) {
+    fn search_camel_case_in_nested_field(schema: Valid<Schema>) {
         let search = SchemaIndex::new(
             &schema,
             OperationType::Query | OperationType::Mutation,
+            FLATTEN_DEPTH,
             15_000_000,
         )
         .unwrap();
 
-        // Tag's description contains "createPost", so searching "post" should match via
-        // camelCase splitting of the description at index time.
-        let results = search
-            .search(vec!["post".to_string()], Options::default())
-            .unwrap();
-
-        let paths: Vec<String> = results.iter().map(ToString::to_string).collect();
+        // Operation documents have no descriptions in this schema (and type-level descriptions
+        // are not folded), so the original "camelCase in description" intent is exercised at the
+        // nearest equivalent: camelCase splitting of a deeply nested field name. `ageGroups`
+        // lives on `Demographics` (reached via `Post.analytics -> PostAnalytics.demographics`)
+        // and is folded as "age groups", so searching "age" surfaces Post-reaching operations.
+        let results = search.search("age", 10).unwrap();
+        let ops: Vec<String> = results.iter().map(|s| s.inner.to_string()).collect();
         assert!(
-            paths.iter().any(|p| p.contains("Tag")),
-            "Should find Tag when searching for 'post' (camelCase in description).\nFound paths:\n{}",
-            paths.join("\n")
+            ops.iter().any(|p| p.contains("Post")),
+            "Should surface a Post-reaching operation when searching 'age' (camelCase split of nested 'ageGroups').\nFound:\n{}",
+            ops.join("\n")
         );
     }
 
