@@ -291,6 +291,9 @@ mod test {
                         leaf_depth: 1,
                         minify: false,
                         hint: None,
+                        default_limit: 10,
+                        max_limit: 50,
+                        flatten_depth: 2,
                     },
                     validate: ValidateConfig {
                         enabled: false,

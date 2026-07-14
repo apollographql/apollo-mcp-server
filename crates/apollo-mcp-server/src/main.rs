@@ -194,6 +194,9 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
                 .transpose()?,
         )
         .search_leaf_depth(config.introspection.search.leaf_depth)
+        .search_default_limit(config.introspection.search.default_limit)
+        .search_max_limit(config.introspection.search.max_limit)
+        .search_flatten_depth(config.introspection.search.flatten_depth)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
         .cors(config.cors)

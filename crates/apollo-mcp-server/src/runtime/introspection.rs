@@ -78,7 +78,7 @@ impl Default for SearchConfig {
             hint: None,
             default_limit: 10,
             max_limit: 50,
-            flatten_depth: 1,
+            flatten_depth: 2,
         }
     }
 }
@@ -109,6 +109,6 @@ mod tests {
         let c = SearchConfig::default();
         assert_eq!(c.default_limit, 10);
         assert_eq!(c.max_limit, 50);
-        assert_eq!(c.flatten_depth, 1);
+        assert_eq!(c.flatten_depth, 2);
     }
 }

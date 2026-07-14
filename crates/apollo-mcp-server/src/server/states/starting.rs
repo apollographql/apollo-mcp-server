@@ -127,7 +127,10 @@ impl Starting {
                 schema.clone(),
                 matches!(self.config.mutation_mode, MutationMode::All),
                 self.config.search_leaf_depth,
+                self.config.search_flatten_depth,
                 self.config.index_memory_bytes,
+                self.config.search_default_limit,
+                self.config.search_max_limit,
                 self.config.search_minify,
                 self.config.search_tool_hint.as_deref(),
             )?)
@@ -327,6 +330,9 @@ mod tests {
                 annotations: std::collections::HashMap::new(),
                 required_scopes: std::collections::HashMap::new(),
                 search_leaf_depth: 5,
+                search_default_limit: 10,
+                search_max_limit: 50,
+                search_flatten_depth: 2,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {
                     enabled: true,
