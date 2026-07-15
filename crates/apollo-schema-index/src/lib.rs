@@ -357,6 +357,11 @@ impl SchemaIndex {
         scope: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Scored<OperationRef>>, SearchError> {
+        // `TopDocs::with_limit` panics on 0; guard the public `SchemaSearch` seam
+        // (the tool clamps to >=1, but the trait is called directly elsewhere too).
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
         let searcher = self.inner.reader()?.searcher();
         let scoring = self.query(std::iter::once(query_text.to_string()));
         let query: Box<dyn Query> = match scope {
@@ -589,6 +594,24 @@ mod tests {
                 .map(|s| s.inner.to_string())
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[rstest]
+    fn search_with_zero_limit_returns_empty() {
+        let schema = Schema::parse(NOISE_SCHEMA, "noise.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let index = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            1,
+            15_000_000,
+        )
+        .unwrap();
+        // limit 0 must not panic (tantivy's TopDocs asserts limit >= 1) and returns nothing.
+        let results = index.search("userByEmail", None, 0).unwrap();
+        assert!(results.is_empty());
     }
 
     #[rstest]

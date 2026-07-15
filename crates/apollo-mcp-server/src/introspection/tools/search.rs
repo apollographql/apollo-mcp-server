@@ -145,7 +145,7 @@ impl Search {
 
         let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
-        for scored in results.into_iter().take(k) {
+        for scored in results {
             let op = scored.inner;
             let root = match op.operation_type {
                 OperationType::Mutation => schema.root_operation(AstOperationType::Mutation),
