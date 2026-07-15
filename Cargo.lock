@@ -305,6 +305,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "apollo-schema-search"
+version = "1.14.0"
+dependencies = [
+ "apollo-schema-index",
+ "insta",
+ "rstest",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "arc-swap"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

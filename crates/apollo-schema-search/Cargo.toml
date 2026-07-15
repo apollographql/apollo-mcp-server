@@ -1,0 +1,21 @@
+[package]
+name = "apollo-schema-search"
+authors.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+description = "Hybrid (lexical + semantic) search over GraphQL schema operations"
+
+[dependencies]
+apollo-schema-index = { path = "../apollo-schema-index" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+rstest.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true
