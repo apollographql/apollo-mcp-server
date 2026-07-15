@@ -57,6 +57,114 @@ pub const RETURN_TYPE_NAME_RAW_FIELD: &str = "return_type_name_raw";
 pub const FIELD_ARGS_RAW_FIELD: &str = "field_args_raw";
 pub const SCOPE_RAW_FIELD: &str = "scope_raw";
 
+/// The per-operation components shared by BM25 indexing and embedding-document enumeration.
+/// Both [`SchemaIndex::write_operation_docs`] (BM25) and [`enumerate_operation_documents`]
+/// (the shared corpus for the vector backend) are built from the single [`operation_records`]
+/// enumeration so they can never diverge on what an "operation document" contains.
+struct OperationRecord {
+    op: OperationRef,
+    /// Prefix-stripped operation name (see [`crate::scope::derive_scope`]).
+    bare_name: String,
+    arg_names: Vec<String>,
+    return_type_name: String,
+    description: String,
+    /// Bounded flatten of the return type's fields/descriptions; see
+    /// [`crate::traverse::flatten_return_type`].
+    nested: String,
+}
+
+/// Compute the shared per-operation records for every root Query/Mutation/Subscription field in
+/// `root_types`.
+fn operation_records(
+    schema: &Valid<Schema>,
+    root_types: EnumSet<OperationType>,
+    flatten_depth: usize,
+) -> Vec<OperationRecord> {
+    let mut records = Vec::new();
+    for op_type in root_types.iter() {
+        let ast_type: AstOperationType = op_type.into();
+        let Some(root_name) = schema.root_operation(ast_type) else {
+            continue;
+        };
+        let Some(ExtendedType::Object(obj)) = schema.types.get(root_name) else {
+            continue;
+        };
+        for (name, field) in obj.fields.iter() {
+            let return_type = field.ty.inner_named_type();
+            let arg_names: Vec<String> =
+                field.arguments.iter().map(|a| a.name.to_string()).collect();
+            let arg_types: Vec<String> = field
+                .arguments
+                .iter()
+                .map(|a| a.ty.inner_named_type().to_string())
+                .collect();
+            let description = field
+                .description
+                .as_ref()
+                .map(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let nested = traverse::flatten_return_type(schema, return_type.as_str(), flatten_depth);
+
+            let (scope, bare) = crate::scope::derive_scope(name.as_str());
+
+            records.push(OperationRecord {
+                op: OperationRef {
+                    operation_type: op_type,
+                    field_name: name.to_string(),
+                    return_type: Some(return_type.to_string()).filter(|s| !s.is_empty()),
+                    arg_types,
+                    scope: scope.map(str::to_string).filter(|s| !s.is_empty()),
+                },
+                bare_name: bare.to_string(),
+                arg_names,
+                return_type_name: return_type.to_string(),
+                description,
+                nested,
+            });
+        }
+    }
+    records
+}
+
+/// One operation's document, ready for embedding by a vector-search backend. `text` is a joined,
+/// [`expand_identifiers`]-analyzed view over the same components [`SchemaIndex::write_operation_docs`]
+/// writes into Tantivy's separate per-field structure, so BM25 and embedding search rank over
+/// exactly the same underlying corpus.
+pub struct OperationDocument {
+    pub op: OperationRef,
+    pub text: String,
+}
+
+/// Enumerate every root Query/Mutation/Subscription operation in `root_types` as an
+/// [`OperationDocument`] whose `text` is the analyzed, space-joined concatenation of the
+/// operation's (prefix-stripped) name, argument names, return type name, description, and
+/// bounded return-type flatten — the same components BM25 tokenizes, built from the same
+/// [`operation_records`] enumeration [`SchemaIndex::write_operation_docs`] uses.
+pub fn enumerate_operation_documents(
+    schema: &Valid<Schema>,
+    root_types: EnumSet<OperationType>,
+    flatten_depth: usize,
+) -> Vec<OperationDocument> {
+    operation_records(schema, root_types, flatten_depth)
+        .into_iter()
+        .map(|record| {
+            let text = [
+                expand_identifiers(&record.bare_name),
+                expand_identifiers(&record.arg_names.join(" ")),
+                expand_identifiers(&record.return_type_name),
+                expand_identifiers(&record.description),
+                expand_identifiers(&record.nested),
+            ]
+            .join(" ");
+            OperationDocument {
+                op: record.op,
+                text,
+            }
+        })
+        .collect()
+}
+
 /// Tantivy field handles bundled together for ergonomic doc writing.
 struct DocFields {
     operation_name: Field,
@@ -301,50 +409,33 @@ impl SchemaIndex {
         flatten_depth: usize,
     ) -> Result<usize, IndexingError> {
         let mut count = 0usize;
-        for op_type in root_types.iter() {
-            let ast_type: AstOperationType = op_type.into();
-            let Some(root_name) = schema.root_operation(ast_type) else {
-                continue;
-            };
-            let Some(ExtendedType::Object(obj)) = schema.types.get(root_name) else {
-                continue;
-            };
-            for (name, field) in obj.fields.iter() {
-                let return_type = field.ty.inner_named_type();
-                let arg_names: Vec<&str> =
-                    field.arguments.iter().map(|a| a.name.as_str()).collect();
-                let arg_types: Vec<String> = field
-                    .arguments
-                    .iter()
-                    .map(|a| a.ty.inner_named_type().to_string())
-                    .collect();
-                let description = field.description.as_ref().map(|d| d.as_str()).unwrap_or("");
-                let nested =
-                    traverse::flatten_return_type(schema, return_type.as_str(), flatten_depth);
-
-                let (scope, bare) = crate::scope::derive_scope(name.as_str());
-
-                let mut doc = TantivyDocument::default();
-                doc.add_text(fields.operation_name, expand_identifiers(bare));
-                if !arg_names.is_empty() {
-                    doc.add_text(fields.arg_names, expand_identifiers(&arg_names.join(" ")));
-                }
+        for record in operation_records(schema, root_types, flatten_depth) {
+            let mut doc = TantivyDocument::default();
+            doc.add_text(fields.operation_name, expand_identifiers(&record.bare_name));
+            if !record.arg_names.is_empty() {
                 doc.add_text(
-                    fields.return_type_name,
-                    expand_identifiers(return_type.as_str()),
+                    fields.arg_names,
+                    expand_identifiers(&record.arg_names.join(" ")),
                 );
-                doc.add_text(fields.description, expand_identifiers(description));
-                doc.add_text(fields.nested_fields, expand_identifiers(&nested));
-                doc.add_text(fields.operation_type_raw, root_kind_str(op_type));
-                doc.add_text(fields.operation_name_raw, name.as_str());
-                doc.add_text(fields.return_type_name_raw, return_type.as_str());
-                doc.add_text(fields.scope_raw, scope.unwrap_or(""));
-                for arg_type in &arg_types {
-                    doc.add_text(fields.field_args_raw, arg_type);
-                }
-                index_writer.add_document(doc)?;
-                count += 1;
             }
+            doc.add_text(
+                fields.return_type_name,
+                expand_identifiers(&record.return_type_name),
+            );
+            doc.add_text(fields.description, expand_identifiers(&record.description));
+            doc.add_text(fields.nested_fields, expand_identifiers(&record.nested));
+            doc.add_text(
+                fields.operation_type_raw,
+                root_kind_str(record.op.operation_type),
+            );
+            doc.add_text(fields.operation_name_raw, &record.op.field_name);
+            doc.add_text(fields.return_type_name_raw, &record.return_type_name);
+            doc.add_text(fields.scope_raw, record.op.scope.as_deref().unwrap_or(""));
+            for arg_type in &record.op.arg_types {
+                doc.add_text(fields.field_args_raw, arg_type);
+            }
+            index_writer.add_document(doc)?;
+            count += 1;
         }
         Ok(count)
     }
@@ -794,6 +885,30 @@ mod tests {
             "Should surface a Post-reaching operation when searching 'age' (camelCase split of nested 'ageGroups').\nFound:\n{}",
             ops.join("\n")
         );
+    }
+
+    #[rstest]
+    fn enumerate_operation_documents_yields_operations_with_text() {
+        let schema = Schema::parse(NOISE_SCHEMA, "noise.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let docs = enumerate_operation_documents(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            2,
+        );
+        let target = docs
+            .iter()
+            .find(|d| d.op.field_name == "userByEmail")
+            .expect("userByEmail operation present");
+        assert!(
+            target.text.contains("user") && target.text.contains("email"),
+            "expected enriched text to contain the operation's tokens, got: {:?}",
+            target.text
+        );
+        // every root operation should produce exactly one document
+        assert!(!docs.is_empty());
     }
 
     #[rstest]
