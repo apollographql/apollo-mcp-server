@@ -308,7 +308,9 @@ dependencies = [
 name = "apollo-schema-search"
 version = "1.14.0"
 dependencies = [
+ "apollo-compiler",
  "apollo-schema-index",
+ "enumset",
  "insta",
  "rstest",
  "thiserror 2.0.18",
