@@ -25,3 +25,5 @@ target/
 
 # Generated e2e test configs
 e2e/**/config.generated.yaml
+.fastembed_cache/
+.superpowers/
