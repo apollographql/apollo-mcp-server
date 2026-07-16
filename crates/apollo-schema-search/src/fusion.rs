@@ -16,6 +16,7 @@ pub fn rrf_fuse(lists: &[Vec<Scored<OperationRef>>], k: f32) -> Vec<Scored<Opera
         b.score()
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.inner.to_string().cmp(&b.inner.to_string()))
     });
     out
 }
@@ -51,5 +52,22 @@ mod tests {
         let fused = rrf_fuse(&[l1], 60.0);
         assert_eq!(fused[0].inner.field_name, "x");
         assert_eq!(fused[1].inner.field_name, "y");
+    }
+
+    #[test]
+    fn ties_break_deterministically_by_display_order() {
+        // Both `b` and `a` rank #1 in their respective single-item lists, so they
+        // end up with an identical fused score. Without a tiebreaker, the order
+        // would depend on HashMap iteration order (non-deterministic).
+        for _ in 0..10 {
+            let l1 = vec![Scored::new(op("b"), 1.0)];
+            let l2 = vec![Scored::new(op("a"), 1.0)];
+            let fused = rrf_fuse(&[l1, l2], 60.0);
+            assert_eq!(fused.len(), 2);
+            assert_eq!(fused[0].score(), fused[1].score(), "scores should be tied");
+            // Alphabetical-by-Display order: "Query.a" < "Query.b".
+            assert_eq!(fused[0].inner.field_name, "a");
+            assert_eq!(fused[1].inner.field_name, "b");
+        }
     }
 }
