@@ -17,6 +17,9 @@ pub fn rrf_fuse(lists: &[Vec<Scored<OperationRef>>], k: f32) -> Vec<Scored<Opera
             .partial_cmp(&a.score())
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.inner.to_string().cmp(&b.inner.to_string()))
+            // `Display` omits `scope`, but `scope` is part of `OperationRef`'s identity,
+            // so include it to fully order operations that differ only by service scope.
+            .then_with(|| a.inner.scope.cmp(&b.inner.scope))
     });
     out
 }
@@ -68,6 +71,31 @@ mod tests {
             // Alphabetical-by-Display order: "Query.a" < "Query.b".
             assert_eq!(fused[0].inner.field_name, "a");
             assert_eq!(fused[1].inner.field_name, "b");
+        }
+    }
+
+    #[test]
+    fn ties_break_deterministically_when_only_scope_differs() {
+        // Same name/args/return type, different scope → identical `Display`, so
+        // `scope` must be the deciding tiebreaker for a deterministic order.
+        fn scoped(name: &str, scope: &str) -> OperationRef {
+            OperationRef {
+                operation_type: OperationType::Query,
+                field_name: name.into(),
+                return_type: None,
+                arg_types: vec![],
+                scope: Some(scope.into()),
+            }
+        }
+        for _ in 0..10 {
+            let l1 = vec![Scored::new(scoped("userByEmail", "slack"), 1.0)];
+            let l2 = vec![Scored::new(scoped("userByEmail", "github"), 1.0)];
+            let fused = rrf_fuse(&[l1, l2], 60.0);
+            assert_eq!(fused.len(), 2);
+            assert_eq!(fused[0].score(), fused[1].score(), "scores should be tied");
+            // "github" < "slack" → github first, deterministically.
+            assert_eq!(fused[0].inner.scope.as_deref(), Some("github"));
+            assert_eq!(fused[1].inner.scope.as_deref(), Some("slack"));
         }
     }
 }
