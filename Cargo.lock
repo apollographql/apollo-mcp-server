@@ -238,6 +238,7 @@ dependencies = [
  "apollo-mcp-registry",
  "apollo-mcp-rhai",
  "apollo-schema-index",
+ "apollo-schema-search",
  "assert_fs",
  "axum",
  "axum-extra",

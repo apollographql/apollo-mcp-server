@@ -133,6 +133,10 @@ impl Starting {
                 self.config.search_max_limit,
                 self.config.search_minify,
                 self.config.search_tool_hint.as_deref(),
+                self.config.semantic_enabled,
+                &self.config.semantic_model,
+                self.config.semantic_inference_threads,
+                self.config.hybrid_rrf_k,
             )?)
         } else {
             None
@@ -333,6 +337,10 @@ mod tests {
                 search_default_limit: 10,
                 search_max_limit: 50,
                 search_flatten_depth: 2,
+                semantic_enabled: false,
+                semantic_model: "bge-small-en-v1.5".to_string(),
+                semantic_inference_threads: 1,
+                hybrid_rrf_k: 60.0,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {
                     enabled: true,

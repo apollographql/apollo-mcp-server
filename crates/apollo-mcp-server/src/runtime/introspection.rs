@@ -66,6 +66,10 @@ pub struct SearchConfig {
     pub max_limit: usize,
     /// Return-type flatten depth used to enrich each operation's index document.
     pub flatten_depth: usize,
+    /// Semantic (vector) search settings.
+    pub semantic: SemanticConfig,
+    /// Hybrid fusion settings.
+    pub hybrid: HybridConfig,
 }
 
 impl Default for SearchConfig {
@@ -79,7 +83,47 @@ impl Default for SearchConfig {
             default_limit: 10,
             max_limit: 50,
             flatten_depth: 2,
+            semantic: SemanticConfig::default(),
+            hybrid: HybridConfig::default(),
         }
+    }
+}
+
+/// Semantic (vector) search configuration, nested under `search`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct SemanticConfig {
+    /// Enable semantic (vector) search fused with lexical BM25. Only takes
+    /// effect when the search tool itself is enabled. If the embedder fails
+    /// to initialize, the tool degrades to lexical-only.
+    pub enabled: bool,
+    /// Embedding model name (e.g. "bge-small-en-v1.5").
+    pub model: String,
+    /// ONNX intra-op thread count for inference (keep small to respect CPU limits).
+    pub inference_threads: usize,
+}
+
+impl Default for SemanticConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            model: "bge-small-en-v1.5".to_string(),
+            inference_threads: 1,
+        }
+    }
+}
+
+/// Hybrid fusion configuration, nested under `search`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct HybridConfig {
+    /// Reciprocal Rank Fusion constant `k`. Larger = flatter rank weighting.
+    pub rrf_k: f32,
+}
+
+impl Default for HybridConfig {
+    fn default() -> Self {
+        Self { rrf_k: 60.0 }
     }
 }
 
@@ -110,5 +154,9 @@ mod tests {
         assert_eq!(c.default_limit, 10);
         assert_eq!(c.max_limit, 50);
         assert_eq!(c.flatten_depth, 2);
+        assert!(c.semantic.enabled);
+        assert_eq!(c.semantic.model, "bge-small-en-v1.5");
+        assert_eq!(c.semantic.inference_threads, 1);
+        assert_eq!(c.hybrid.rrf_k, 60.0);
     }
 }

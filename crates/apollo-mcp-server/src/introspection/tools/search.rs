@@ -8,6 +8,7 @@ use apollo_compiler::ast::{Field, OperationType as AstOperationType, Selection};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Node, Schema};
 use apollo_schema_index::{OperationType, SchemaIndex, SchemaSearch};
+use apollo_schema_search::{Embedder, FastembedEmbedder, HybridSearch, VectorSearch};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
@@ -16,6 +17,7 @@ use serde::Deserialize;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use tracing::warn;
 
 use super::description::append_description_hint;
 
@@ -26,7 +28,9 @@ pub const SEARCH_TOOL_NAME: &str = "search";
 #[derive(Clone)]
 pub struct Search {
     schema: Arc<RwLock<Valid<Schema>>>,
-    index: Arc<RwLock<SchemaIndex>>,
+    /// Composed backend: `HybridSearch[lexical, semantic]` when an embedder is
+    /// present, otherwise the bare lexical `SchemaIndex`. Both impl `SchemaSearch`.
+    search: Arc<RwLock<Box<dyn SchemaSearch + Send + Sync>>>,
     allow_mutations: bool,
     leaf_depth: usize,
     flatten_depth: usize,
@@ -34,6 +38,10 @@ pub struct Search {
     default_limit: usize,
     max_limit: usize,
     minify: bool,
+    /// Retained so `rebuild` can reconstruct the vector index WITHOUT re-loading
+    /// the model. `None` = lexical-only (semantic disabled or embedder init failed).
+    embedder: Option<Arc<dyn Embedder>>,
+    rrf_k: f32,
     pub tool: Tool,
 }
 
@@ -65,6 +73,39 @@ fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize)
     requested.unwrap_or(default_limit).clamp(1, max_limit)
 }
 
+/// Build the search backend from a schema. With an embedder, composes
+/// `HybridSearch[lexical, semantic]`; if the semantic index fails to build,
+/// logs a warning and degrades to lexical-only. Without an embedder, returns
+/// the bare lexical index. Both branches yield a `SchemaSearch`.
+fn build_backend(
+    schema: &Valid<Schema>,
+    allow_mutations: bool,
+    flatten_depth: usize,
+    index_memory_bytes: usize,
+    embedder: Option<Arc<dyn Embedder>>,
+    rrf_k: f32,
+) -> Result<Box<dyn SchemaSearch + Send + Sync>, IndexingError> {
+    let root_types = if allow_mutations {
+        OperationType::Query | OperationType::Mutation
+    } else {
+        OperationType::Query.into()
+    };
+    let index = SchemaIndex::new(schema, root_types, flatten_depth, index_memory_bytes)?;
+    match embedder {
+        Some(emb) => match VectorSearch::build(schema, root_types, flatten_depth, emb) {
+            Ok(vector) => Ok(Box::new(HybridSearch::new(
+                vec![Box::new(index), Box::new(vector)],
+                rrf_k,
+            ))),
+            Err(e) => {
+                warn!("semantic index build failed; degrading to lexical-only: {e}");
+                Ok(Box::new(index))
+            }
+        },
+        None => Ok(Box::new(index)),
+    }
+}
+
 impl Search {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -77,12 +118,54 @@ impl Search {
         max_limit: usize,
         minify: bool,
         description_hint: Option<&str>,
+        semantic_enabled: bool,
+        semantic_model: &str,
+        semantic_inference_threads: usize,
+        rrf_k: f32,
     ) -> Result<Self, IndexingError> {
-        let root_types = if allow_mutations {
-            OperationType::Query | OperationType::Mutation
+        let embedder: Option<Arc<dyn Embedder>> = if semantic_enabled {
+            match FastembedEmbedder::new(semantic_model, semantic_inference_threads) {
+                Ok(e) => Some(Arc::new(e)),
+                Err(e) => {
+                    warn!("embedder init failed; semantic search disabled (lexical-only): {e}");
+                    None
+                }
+            }
         } else {
-            OperationType::Query.into()
+            None
         };
+        Self::new_with_embedder(
+            schema,
+            allow_mutations,
+            leaf_depth,
+            flatten_depth,
+            index_memory_bytes,
+            default_limit,
+            max_limit,
+            minify,
+            description_hint,
+            embedder,
+            rrf_k,
+        )
+    }
+
+    /// Core constructor. Takes an already-resolved embedder (or `None`), so tests
+    /// can inject a `FakeEmbedder`/failing stub and exercise hybrid + degradation
+    /// paths offline. Production goes through `new`.
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_embedder(
+        schema: Arc<RwLock<Valid<Schema>>>,
+        allow_mutations: bool,
+        leaf_depth: usize,
+        flatten_depth: usize,
+        index_memory_bytes: usize,
+        default_limit: usize,
+        max_limit: usize,
+        minify: bool,
+        description_hint: Option<&str>,
+        embedder: Option<Arc<dyn Embedder>>,
+        rrf_k: f32,
+    ) -> Result<Self, IndexingError> {
         let locked = &schema.try_read()?;
         let default_description = format!(
             "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
@@ -94,10 +177,17 @@ impl Search {
         );
         let description =
             append_description_hint(&default_description, description_hint).into_owned();
-        let index = SchemaIndex::new(locked, root_types, flatten_depth, index_memory_bytes)?;
+        let backend = build_backend(
+            locked,
+            allow_mutations,
+            flatten_depth,
+            index_memory_bytes,
+            embedder.clone(),
+            rrf_k,
+        )?;
         Ok(Self {
             schema: schema.clone(),
-            index: Arc::new(RwLock::new(index)),
+            search: Arc::new(RwLock::new(backend)),
             allow_mutations,
             leaf_depth,
             flatten_depth,
@@ -105,24 +195,23 @@ impl Search {
             default_limit,
             max_limit,
             minify,
+            embedder,
+            rrf_k,
             tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
         })
     }
 
     /// Rebuild the search index from an updated schema, replacing the current index.
     pub async fn rebuild(&self, schema: &Valid<Schema>) -> Result<(), IndexingError> {
-        let root_types = if self.allow_mutations {
-            OperationType::Query | OperationType::Mutation
-        } else {
-            OperationType::Query.into()
-        };
-        let new_index = SchemaIndex::new(
+        let backend = build_backend(
             schema,
-            root_types,
+            self.allow_mutations,
             self.flatten_depth,
             self.index_memory_bytes,
+            self.embedder.clone(),
+            self.rrf_k,
         )?;
-        *self.index.write().await = new_index;
+        *self.search.write().await = backend;
         Ok(())
     }
 
@@ -130,18 +219,27 @@ impl Search {
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
         let k = clamp_limit(input.limit, self.default_limit, self.max_limit);
         let query = input.terms.join(" ");
-        let results = {
-            let index = self.index.read().await;
-            index
-                .search(&query, input.scope.as_deref(), k)
-                .map_err(|e| {
-                    McpError::new(
-                        ErrorCode::INTERNAL_ERROR,
-                        format!("Failed to search index: {e}"),
-                        None,
-                    )
-                })?
-        };
+        let scope = input.scope.clone();
+        let search = self.search.clone();
+        let results = tokio::task::spawn_blocking(move || {
+            let guard = search.blocking_read();
+            guard.search(&query, scope.as_deref(), k)
+        })
+        .await
+        .map_err(|e| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Search task join failed: {e}"),
+                None,
+            )
+        })?
+        .map_err(|e| {
+            McpError::new(
+                ErrorCode::INTERNAL_ERROR,
+                format!("Failed to search index: {e}"),
+                None,
+            )
+        })?;
 
         let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
@@ -212,6 +310,19 @@ mod tests {
 
     const TEST_SCHEMA: &str = include_str!("testdata/schema.graphql");
 
+    struct FailingEmbedder;
+    impl apollo_schema_search::Embedder for FailingEmbedder {
+        fn embed(
+            &self,
+            _texts: &[String],
+        ) -> Result<Vec<Vec<f32>>, apollo_schema_search::EmbedError> {
+            Err(apollo_schema_search::EmbedError::Inference("boom".into()))
+        }
+        fn dimensions(&self) -> usize {
+            384
+        }
+    }
+
     fn content_to_snapshot(result: CallToolResult) -> String {
         result
             .content
@@ -247,8 +358,20 @@ mod tests {
     #[tokio::test]
     async fn search_tool(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
-            .expect("Failed to create search tool");
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            None,
+            60.0,
+        )
+        .expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
@@ -267,8 +390,20 @@ mod tests {
     #[tokio::test]
     async fn search_tool_respects_limit(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
-            .expect("Failed to create search tool");
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            None,
+            60.0,
+        )
+        .expect("Failed to create search tool");
 
         let result = search
             .execute(Input {
@@ -286,8 +421,20 @@ mod tests {
     #[tokio::test]
     async fn referencing_types_are_collected(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), true, 1, 2, 15_000_000, 10, 50, false, None)
-            .expect("Failed to create search tool");
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            true,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            None,
+            60.0,
+        )
+        .expect("Failed to create search tool");
 
         // Search for a type that should have references
         let result = search
@@ -310,8 +457,20 @@ mod tests {
     #[tokio::test]
     async fn search_tool_description_is_not_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, false, None)
-            .expect("Failed to create search tool");
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            None,
+            60.0,
+        )
+        .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();
 
@@ -329,13 +488,89 @@ mod tests {
     #[tokio::test]
     async fn tool_description_minified(schema: Valid<Schema>) {
         let schema = Arc::new(RwLock::new(schema));
-        let search = Search::new(schema.clone(), false, 1, 2, 15_000_000, 10, 50, true, None)
-            .expect("Failed to create search tool");
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            true,
+            None,
+            None,
+            60.0,
+        )
+        .expect("Failed to create search tool");
 
         let description = search.tool.description.unwrap();
 
         // Should contain minification legend
         assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
         assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn degrades_to_lexical_when_embedder_fails(schema: Valid<Schema>) {
+        let schema = Arc::new(RwLock::new(schema));
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            Some(Arc::new(FailingEmbedder)),
+            60.0,
+        )
+        .expect("tool must still build when the embedder fails");
+        let result = search
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: None,
+                scope: None,
+            })
+            .await
+            .expect("search must still execute (lexical-only)");
+        assert!(!result.is_error.unwrap_or(false));
+        assert!(
+            !content_to_snapshot(result).is_empty(),
+            "lexical fallback should return results"
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn hybrid_with_fake_embedder_returns_results(schema: Valid<Schema>) {
+        use apollo_schema_search::FakeEmbedder;
+        let schema = Arc::new(RwLock::new(schema));
+        let search = Search::new_with_embedder(
+            schema.clone(),
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            Some(Arc::new(FakeEmbedder::new(384))),
+            60.0,
+        )
+        .expect("hybrid tool must build");
+        let result = search
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: None,
+                scope: None,
+            })
+            .await
+            .expect("hybrid search must execute");
+        assert!(!result.is_error.unwrap_or(false));
+        assert!(!content_to_snapshot(result).is_empty());
     }
 }
