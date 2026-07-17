@@ -137,7 +137,19 @@ impl EmbeddingCache {
     }
 
     /// Insert/replace `(key, vector)` pairs in a single transaction.
+    ///
+    /// Validates every entry's vector length against `dim` up front, before opening
+    /// the transaction, so a bad entry is rejected without writing anything partial.
     pub fn put_batch(&mut self, entries: &[(String, Vec<f32>)]) -> Result<(), CacheError> {
+        for (key, vector) in entries {
+            if vector.len() != self.dim {
+                return Err(CacheError::BadVectorLen {
+                    key: key.clone(),
+                    expected: self.dim * 4,
+                    got: vector.len() * 4,
+                });
+            }
+        }
         let tx = self.conn.transaction()?;
         {
             let mut stmt =
@@ -210,16 +222,13 @@ mod tests {
     }
 
     #[test]
-    fn wrong_length_blob_is_error() {
-        // A 2-float vector stored, then read back as if dim=3 -> length error.
+    fn put_batch_rejects_wrong_length() {
+        // A 2-float vector under a dim=3 cache must be rejected up front by put_batch,
+        // not silently stored and only caught later on get().
         let path = temp_db("badlen");
-        {
-            let mut c = EmbeddingCache::open(&path, "m", 2, 1).unwrap();
-            c.put_batch(&[("k".to_string(), vec![1.0, 2.0])]).unwrap();
-        }
-        let c = EmbeddingCache::open(&path, "m", 3, 1).unwrap(); // dim mismatch also wipes...
-        // meta guard wiped it (dim changed), so it's simply a miss:
-        assert_eq!(c.get("k").unwrap(), None);
+        let mut c = EmbeddingCache::open(&path, "m", 3, 1).unwrap();
+        let result = c.put_batch(&[("k".to_string(), vec![1.0f32, 2.0])]);
+        assert!(matches!(result, Err(CacheError::BadVectorLen { .. })));
         let _ = std::fs::remove_file(&path);
     }
 
