@@ -138,23 +138,22 @@ impl EmbeddingCache {
 
     /// Insert/replace `(key, vector)` pairs in a single transaction.
     ///
-    /// Validates every entry's vector length against `dim` up front, before opening
-    /// the transaction, so a bad entry is rejected without writing anything partial.
+    /// Each entry's vector length is validated against `dim` inside the transaction.
+    /// A mismatch returns an error and drops the transaction uncommitted, so SQLite
+    /// rolls back and nothing is persisted (no partial write).
     pub fn put_batch(&mut self, entries: &[(String, Vec<f32>)]) -> Result<(), CacheError> {
-        for (key, vector) in entries {
-            if vector.len() != self.dim {
-                return Err(CacheError::BadVectorLen {
-                    key: key.clone(),
-                    expected: self.dim * 4,
-                    got: vector.len() * 4,
-                });
-            }
-        }
         let tx = self.conn.transaction()?;
         {
             let mut stmt =
                 tx.prepare("INSERT OR REPLACE INTO embeddings (op_key, vector) VALUES (?1, ?2)")?;
             for (key, vector) in entries {
+                if vector.len() != self.dim {
+                    return Err(CacheError::BadVectorLen {
+                        key: key.clone(),
+                        expected: self.dim * 4,
+                        got: vector.len() * 4,
+                    });
+                }
                 stmt.execute(params![key, vec_to_blob(vector)])?;
             }
         }
