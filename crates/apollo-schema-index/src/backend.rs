@@ -3,6 +3,7 @@
 use crate::OperationType;
 use crate::error::SearchError;
 use crate::path::Scored;
+use std::collections::BTreeSet;
 
 /// A retrievable operation: a root Query/Mutation field the agent can invoke.
 /// Identity for fusion/dedupe is `(operation_type, field_name)`.
@@ -41,6 +42,15 @@ pub trait SchemaSearch {
         scope: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Scored<OperationRef>>, SearchError>;
+
+    /// The set of service scopes present in the indexed corpus (derived from
+    /// operation-name prefixes). Callers use it to tell a *valid-but-empty* scope
+    /// from an *unknown* one, so an unknown scope can fall back to a global search
+    /// instead of silently returning nothing. Defaults to empty for backends that
+    /// don't track scopes (they simply never veto a scope).
+    fn scopes(&self) -> BTreeSet<String> {
+        BTreeSet::new()
+    }
 }
 
 #[cfg(test)]

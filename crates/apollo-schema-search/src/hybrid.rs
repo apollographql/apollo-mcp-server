@@ -4,6 +4,7 @@
 use crate::rrf_fuse;
 use apollo_schema_index::error::SearchError;
 use apollo_schema_index::{OperationRef, SchemaSearch, Scored};
+use std::collections::BTreeSet;
 use tracing::warn;
 
 /// Candidate pool pulled from each backend before fusion. Large enough that a
@@ -45,6 +46,12 @@ impl SchemaSearch for HybridSearch {
         let mut fused = rrf_fuse(&lists, self.rrf_k);
         fused.truncate(limit);
         Ok(fused)
+    }
+
+    /// Union of the fused backends' scopes (in practice the lexical index supplies
+    /// them; the vector backend returns an empty set).
+    fn scopes(&self) -> BTreeSet<String> {
+        self.backends.iter().flat_map(|b| b.scopes()).collect()
     }
 }
 

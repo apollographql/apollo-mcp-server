@@ -26,6 +26,7 @@ use apollo_compiler::validation::Valid;
 use enumset::{EnumSet, EnumSetType};
 use error::{IndexingError, SearchError};
 use heck::ToSnakeCase;
+use std::collections::BTreeSet;
 use std::time::Instant;
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, BoostQuery, Occur, Query, TermQuery};
@@ -294,6 +295,9 @@ pub struct SchemaIndex {
     return_type_name_raw_field: Field,
     field_args_raw_field: Field,
     scope_raw_field: Field,
+    /// Distinct service scopes present in the corpus (derived from operation-name
+    /// prefixes). Lets a caller distinguish an unknown scope from a valid-but-empty one.
+    scopes: BTreeSet<String>,
 }
 
 impl SchemaIndex {
@@ -371,7 +375,7 @@ impl SchemaIndex {
             scope_raw: scope_raw_field,
         };
         let mut index_writer = index.writer(index_memory_bytes)?;
-        let operation_count = Self::write_operation_docs(
+        let (operation_count, scopes) = Self::write_operation_docs(
             schema,
             &mut index_writer,
             &doc_fields,
@@ -396,20 +400,30 @@ impl SchemaIndex {
             return_type_name_raw_field,
             field_args_raw_field,
             scope_raw_field,
+            scopes,
         })
     }
 
+    /// The distinct service scopes present in the indexed corpus.
+    pub fn scopes(&self) -> &BTreeSet<String> {
+        &self.scopes
+    }
+
     /// Write one Tantivy document per root operation field, enriched with the operation's
-    /// flattened return-type text.
+    /// flattened return-type text. Returns the document count and the distinct scopes seen.
     fn write_operation_docs(
         schema: &Valid<Schema>,
         index_writer: &mut tantivy::IndexWriter,
         fields: &DocFields,
         root_types: EnumSet<OperationType>,
         flatten_depth: usize,
-    ) -> Result<usize, IndexingError> {
+    ) -> Result<(usize, BTreeSet<String>), IndexingError> {
         let mut count = 0usize;
+        let mut scopes = BTreeSet::new();
         for record in operation_records(schema, root_types, flatten_depth) {
+            if let Some(s) = &record.op.scope {
+                scopes.insert(s.clone());
+            }
             let mut doc = TantivyDocument::default();
             doc.add_text(fields.operation_name, expand_identifiers(&record.bare_name));
             if !record.arg_names.is_empty() {
@@ -437,7 +451,7 @@ impl SchemaIndex {
             index_writer.add_document(doc)?;
             count += 1;
         }
-        Ok(count)
+        Ok((count, scopes))
     }
 
     /// Run the search query and materialize matching operation documents into [`OperationRef`]s.
@@ -567,6 +581,10 @@ impl SchemaSearch for SchemaIndex {
         limit: usize,
     ) -> Result<Vec<Scored<OperationRef>>, SearchError> {
         self.run_query(query, scope, limit)
+    }
+
+    fn scopes(&self) -> BTreeSet<String> {
+        self.scopes.clone()
     }
 }
 
@@ -752,6 +770,29 @@ mod tests {
                 .iter()
                 .map(|s| s.inner.to_string())
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[rstest]
+    fn scopes_reflect_the_corpus() {
+        let schema = Schema::parse(SCOPED_SCHEMA, "scoped.graphql")
+            .unwrap()
+            .validate()
+            .unwrap();
+        let index = SchemaIndex::new(
+            &schema,
+            OperationType::Query | OperationType::Mutation,
+            2,
+            15_000_000,
+        )
+        .unwrap();
+        let scopes = index.scopes();
+        // Known services are present; an unknown scope the agent might guess is not.
+        assert!(scopes.contains("slack"), "expected slack in {scopes:?}");
+        assert!(scopes.contains("github"), "expected github in {scopes:?}");
+        assert!(
+            !scopes.contains("ats"),
+            "unknown scope must be absent so callers can fall back: {scopes:?}"
         );
     }
 

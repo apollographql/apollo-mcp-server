@@ -223,7 +223,24 @@ impl Search {
         let search = self.search.clone();
         let results = tokio::task::spawn_blocking(move || {
             let guard = search.blocking_read();
-            guard.search(&query, scope.as_deref(), k)
+            // Validate the requested scope against the corpus. Scope is derived from
+            // operation-name prefixes (e.g. "slack", "ashby"). If the agent guesses a
+            // scope that isn't a real service (e.g. "ats" when it's "ashby"), the
+            // scoped query would filter out everything and return nothing — wasting a
+            // round-trip while the agent re-searches unscoped. So an *unknown* scope is
+            // dropped and we search globally. A *known* scope is honored even when it
+            // yields no matches for this particular query.
+            let effective = match scope.as_deref() {
+                Some(s) if !guard.scopes().contains(s) => {
+                    warn!(
+                        scope = s,
+                        "unknown scope (not a service in the schema); searching all services"
+                    );
+                    None
+                }
+                other => other,
+            };
+            guard.search(&query, effective, k)
         })
         .await
         .map_err(|e| {
@@ -415,6 +432,56 @@ mod tests {
             .expect("Search execution failed");
 
         assert!(!result.is_error.unwrap_or(false));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn unknown_scope_falls_back_to_global(schema: Valid<Schema>) {
+        let schema = Arc::new(RwLock::new(schema));
+        let make = || {
+            Search::new_with_embedder(
+                schema.clone(),
+                false,
+                1,
+                2,
+                15_000_000,
+                10,
+                50,
+                false,
+                None,
+                None,
+                60.0,
+            )
+            .expect("Failed to create search tool")
+        };
+
+        let global = make()
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: None,
+                scope: None,
+            })
+            .await
+            .expect("global search failed");
+        let bogus = make()
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: None,
+                scope: Some("no-such-service".to_string()),
+            })
+            .await
+            .expect("scoped search failed");
+
+        let global = content_to_snapshot(global);
+        let bogus = content_to_snapshot(bogus);
+        assert!(
+            !global.trim().is_empty(),
+            "fixture should return results for the global search"
+        );
+        assert_eq!(
+            bogus, global,
+            "an unknown scope must fall back to the global result, not return empty"
+        );
     }
 
     #[rstest]
