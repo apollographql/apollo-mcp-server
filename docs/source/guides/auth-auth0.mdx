@@ -77,10 +77,10 @@ Your Auth0 setup is now complete. You have an API with an audience and a connect
 Configure the MCP server to use the Auth0 instance for authentication.
 
 1. Open the example repo you cloned earlier.
-1. In the `graphql/TheSpaceDevs` directory, open the `config.yaml` file.
+1. In the `examples/TheSpaceDevs` directory, open the `config.yaml` file.
 1. Add the following `auth` configuration under the `transport` key:
 
-   ```yaml title="graphql/TheSpaceDevs/config.yaml"
+   ```yaml title="examples/TheSpaceDevs/config.yaml"
    transport:
      type: streamable_http
 
@@ -106,10 +106,10 @@ Configure your GraphOS Router to validate JWTs issued by Auth0. This involves se
 
 #### Define authorization and authentication rules in the router
 
-1. In the `graphql/TheSpaceDevs` directory, create a new file called `router.yaml`.
+1. In the `examples/TheSpaceDevs` directory, create a new file called `router.yaml`.
 1. Paste the following configuration, replacing `<AUTH0 DOMAIN>` with your Auth0 domain:
 
-   ```yaml title="graphql/TheSpaceDevs/router.yaml"
+   ```yaml title="examples/TheSpaceDevs/router.yaml"
    authorization:
      require_authentication: true # Enforces authentication on all requests
    authentication:
@@ -154,9 +154,9 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
    ```sh
    APOLLO_GRAPH_REF=<YOUR_APOLLO_GRAPH_REF> APOLLO_KEY=<YOUR_APOLLO_KEY> \
-   rover dev --supergraph-config ./graphql/TheSpaceDevs/supergraph.yaml \
-   --router-config ./graphql/TheSpaceDevs/router.yaml \
-   --mcp ./graphql/TheSpaceDevs/config.yaml
+   rover dev --supergraph-config ./examples/TheSpaceDevs/supergraph.yaml \
+   --router-config ./examples/TheSpaceDevs/router.yaml \
+   --mcp ./examples/TheSpaceDevs/config.yaml
    ```
 
 1. Test the router by navigating to `http://localhost:4000` in your browser. You should see the Explorer, where you can run GraphQL queries against the router.

@@ -17,10 +17,10 @@ You can inspect a local Apollo MCP Server by running it with MCP Inspector.
 operations:
   source: local
   paths:
-    - <absolute path to this git repo>/graphql/weather/operations/
+    - <absolute path to this git repo>/examples/weather/operations/
 schema:
   source: local
-  path: <absolute path to this git repo>/graphql/weather/api.graphql
+  path: <absolute path to this git repo>/examples/weather/api.graphql
 transport:
   type: stdio
 ```
@@ -58,10 +58,10 @@ You can also deploy the server as a container using the instructions in [Deployi
 operations:
   source: local
   paths:
-    - <absolute path to this git repo>/graphql/weather/operations/
+    - <absolute path to this git repo>/examples/weather/operations/
 schema:
   source: local
-  path: <absolute path to this git repo>/graphql/weather/api.graphql
+  path: <absolute path to this git repo>/examples/weather/api.graphql
 transport:
   type: streamable_http
   address: 127.0.0.1
