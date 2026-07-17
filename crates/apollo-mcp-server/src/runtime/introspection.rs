@@ -101,6 +101,10 @@ pub struct SemanticConfig {
     pub model: String,
     /// ONNX intra-op thread count for inference (keep small to respect CPU limits).
     pub inference_threads: usize,
+    /// Path to a SQLite file used to cache operation embeddings across restarts.
+    /// Unset = disabled (embed on every start). Relative paths resolve against CWD.
+    #[serde(default)]
+    pub cache_path: Option<std::path::PathBuf>,
 }
 
 impl Default for SemanticConfig {
@@ -109,6 +113,7 @@ impl Default for SemanticConfig {
             enabled: true,
             model: "bge-small-en-v1.5".to_string(),
             inference_threads: 1,
+            cache_path: None,
         }
     }
 }
@@ -158,5 +163,14 @@ mod tests {
         assert_eq!(c.semantic.model, "bge-small-en-v1.5");
         assert_eq!(c.semantic.inference_threads, 1);
         assert_eq!(c.hybrid.rrf_k, 60.0);
+    }
+
+    #[test]
+    fn semantic_cache_path_parses() {
+        let c: SemanticConfig = serde_yaml::from_str(
+            "enabled: true\nmodel: bge-small-en-v1.5\ninference_threads: 2\ncache_path: /data/emb.db\n",
+        )
+        .unwrap();
+        assert_eq!(c.cache_path, Some(std::path::PathBuf::from("/data/emb.db")));
     }
 }

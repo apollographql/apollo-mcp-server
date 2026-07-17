@@ -137,7 +137,7 @@ impl Starting {
                 &self.config.semantic_model,
                 self.config.semantic_inference_threads,
                 self.config.hybrid_rrf_k,
-                None,
+                self.config.semantic_cache_path.clone(),
             )?)
         } else {
             None
@@ -341,6 +341,7 @@ mod tests {
                 semantic_enabled: false,
                 semantic_model: "bge-small-en-v1.5".to_string(),
                 semantic_inference_threads: 1,
+                semantic_cache_path: None,
                 hybrid_rrf_k: 60.0,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {
