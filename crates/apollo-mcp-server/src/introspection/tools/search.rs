@@ -8,13 +8,16 @@ use apollo_compiler::ast::{Field, OperationType as AstOperationType, Selection};
 use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Node, Schema};
 use apollo_schema_index::{OperationType, SchemaIndex, SchemaSearch};
-use apollo_schema_search::{Embedder, FastembedEmbedder, HybridSearch, VectorSearch};
+use apollo_schema_search::{
+    DOC_BUILDER_VERSION, Embedder, EmbeddingCache, FastembedEmbedder, HybridSearch, VectorSearch,
+};
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
@@ -42,6 +45,10 @@ pub struct Search {
     /// the model. `None` = lexical-only (semantic disabled or embedder init failed).
     embedder: Option<Arc<dyn Embedder>>,
     rrf_k: f32,
+    /// Optional path to the on-disk SQLite embedding cache, retained so `rebuild`
+    /// can reopen it (fail-open) across rebuilds without re-embedding unchanged docs.
+    cache_path: Option<PathBuf>,
+    model_id: String,
     pub tool: Tool,
 }
 
@@ -77,6 +84,7 @@ fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize)
 /// `HybridSearch[lexical, semantic]`; if the semantic index fails to build,
 /// logs a warning and degrades to lexical-only. Without an embedder, returns
 /// the bare lexical index. Both branches yield a `SchemaSearch`.
+#[allow(clippy::too_many_arguments)]
 fn build_backend(
     schema: &Valid<Schema>,
     allow_mutations: bool,
@@ -84,6 +92,8 @@ fn build_backend(
     index_memory_bytes: usize,
     embedder: Option<Arc<dyn Embedder>>,
     rrf_k: f32,
+    cache_path: Option<&Path>,
+    model_id: &str,
 ) -> Result<Box<dyn SchemaSearch + Send + Sync>, IndexingError> {
     let root_types = if allow_mutations {
         OperationType::Query | OperationType::Mutation
@@ -92,16 +102,28 @@ fn build_backend(
     };
     let index = SchemaIndex::new(schema, root_types, flatten_depth, index_memory_bytes)?;
     match embedder {
-        Some(emb) => match VectorSearch::build(schema, root_types, flatten_depth, emb) {
-            Ok(vector) => Ok(Box::new(HybridSearch::new(
-                vec![Box::new(index), Box::new(vector)],
-                rrf_k,
-            ))),
-            Err(e) => {
-                warn!("semantic index build failed; degrading to lexical-only: {e}");
-                Ok(Box::new(index))
+        Some(emb) => {
+            // Open the cache if configured; a failure is non-fatal (embed from scratch).
+            let mut cache = cache_path.and_then(|p| {
+                match EmbeddingCache::open(p, model_id, emb.dimensions(), DOC_BUILDER_VERSION) {
+                    Ok(c) => Some(c),
+                    Err(e) => {
+                        warn!("embedding cache disabled (open failed at {p:?}): {e}");
+                        None
+                    }
+                }
+            });
+            match VectorSearch::build(schema, root_types, flatten_depth, emb, cache.as_mut()) {
+                Ok(vector) => Ok(Box::new(HybridSearch::new(
+                    vec![Box::new(index), Box::new(vector)],
+                    rrf_k,
+                ))),
+                Err(e) => {
+                    warn!("semantic index build failed; degrading to lexical-only: {e}");
+                    Ok(Box::new(index))
+                }
             }
-        },
+        }
         None => Ok(Box::new(index)),
     }
 }
@@ -122,6 +144,7 @@ impl Search {
         semantic_model: &str,
         semantic_inference_threads: usize,
         rrf_k: f32,
+        semantic_cache_path: Option<PathBuf>,
     ) -> Result<Self, IndexingError> {
         let embedder: Option<Arc<dyn Embedder>> = if semantic_enabled {
             match FastembedEmbedder::new(semantic_model, semantic_inference_threads) {
@@ -146,6 +169,8 @@ impl Search {
             description_hint,
             embedder,
             rrf_k,
+            semantic_model,
+            semantic_cache_path,
         )
     }
 
@@ -165,6 +190,8 @@ impl Search {
         description_hint: Option<&str>,
         embedder: Option<Arc<dyn Embedder>>,
         rrf_k: f32,
+        model_id: &str,
+        cache_path: Option<PathBuf>,
     ) -> Result<Self, IndexingError> {
         let locked = &schema.try_read()?;
         let default_description = format!(
@@ -184,6 +211,8 @@ impl Search {
             index_memory_bytes,
             embedder.clone(),
             rrf_k,
+            cache_path.as_deref(),
+            model_id,
         )?;
         Ok(Self {
             schema: schema.clone(),
@@ -197,6 +226,8 @@ impl Search {
             minify,
             embedder,
             rrf_k,
+            cache_path,
+            model_id: model_id.to_string(),
             tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
         })
     }
@@ -210,6 +241,8 @@ impl Search {
             self.index_memory_bytes,
             self.embedder.clone(),
             self.rrf_k,
+            self.cache_path.as_deref(),
+            &self.model_id,
         )?;
         *self.search.write().await = backend;
         Ok(())
@@ -387,6 +420,8 @@ mod tests {
             None,
             None,
             60.0,
+            "fake",
+            None,
         )
         .expect("Failed to create search tool");
 
@@ -419,6 +454,8 @@ mod tests {
             None,
             None,
             60.0,
+            "fake",
+            None,
         )
         .expect("Failed to create search tool");
 
@@ -451,6 +488,8 @@ mod tests {
                 None,
                 None,
                 60.0,
+                "fake",
+                None,
             )
             .expect("Failed to create search tool")
         };
@@ -500,6 +539,8 @@ mod tests {
             None,
             None,
             60.0,
+            "fake",
+            None,
         )
         .expect("Failed to create search tool");
 
@@ -536,6 +577,8 @@ mod tests {
             None,
             None,
             60.0,
+            "fake",
+            None,
         )
         .expect("Failed to create search tool");
 
@@ -567,6 +610,8 @@ mod tests {
             None,
             None,
             60.0,
+            "fake",
+            None,
         )
         .expect("Failed to create search tool");
 
@@ -593,6 +638,8 @@ mod tests {
             None,
             Some(Arc::new(FailingEmbedder)),
             60.0,
+            "fake",
+            None,
         )
         .expect("tool must still build when the embedder fails");
         let result = search
@@ -627,6 +674,8 @@ mod tests {
             None,
             Some(Arc::new(FakeEmbedder::new(384))),
             60.0,
+            "fake",
+            None,
         )
         .expect("hybrid tool must build");
         let result = search
@@ -639,5 +688,48 @@ mod tests {
             .expect("hybrid search must execute");
         assert!(!result.is_error.unwrap_or(false));
         assert!(!content_to_snapshot(result).is_empty());
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn build_with_cache_path_reuses_on_rebuild(schema: Valid<Schema>) {
+        let dir = std::env::temp_dir().join(format!("search_cache_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db = dir.join("emb.db");
+        let _ = std::fs::remove_file(&db);
+        let schema = Arc::new(RwLock::new(schema));
+
+        // A fake embedder is fine; we only assert the tool builds and searches with a cache path set.
+        let make = || {
+            Search::new_with_embedder(
+                schema.clone(),
+                false,
+                1,
+                2,
+                15_000_000,
+                10,
+                50,
+                false,
+                None,
+                Some(Arc::new(apollo_schema_search::FakeEmbedder::new(64))),
+                60.0,
+                "fake",
+                Some(db.clone()),
+            )
+            .expect("build with cache")
+        };
+        let _first = make(); // populates the cache file
+        assert!(db.exists(), "cache file should be created");
+        let second = make(); // reads it back
+        let result = second
+            .execute(Input {
+                terms: vec!["User".to_string()],
+                limit: None,
+                scope: None,
+            })
+            .await
+            .expect("search");
+        assert!(!result.is_error.unwrap_or(false));
+        let _ = std::fs::remove_file(&db);
     }
 }

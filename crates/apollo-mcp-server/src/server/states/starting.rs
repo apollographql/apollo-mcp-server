@@ -137,6 +137,7 @@ impl Starting {
                 &self.config.semantic_model,
                 self.config.semantic_inference_threads,
                 self.config.hybrid_rrf_k,
+                None,
             )?)
         } else {
             None
