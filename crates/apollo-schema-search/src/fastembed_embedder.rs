@@ -2,6 +2,13 @@ use crate::embedder::{EmbedError, Embedder};
 use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 use std::sync::Mutex;
 
+/// Cap the per-inference batch. fastembed's large default batch (256) embeds the
+/// whole corpus in a few huge forward passes, ballooning transformer-activation
+/// memory to multiple GB (OOM-kills a memory-limited container). Peak RSS scales
+/// with this batch, so a small value bounds it; the cost is more (slower) passes,
+/// which is fine for a one-time build-time embed.
+const EMBED_BATCH_SIZE: usize = 32;
+
 /// Production [`Embedder`] backed by `fastembed`/ONNX Runtime.
 ///
 /// `TextEmbedding::embed` takes `&mut self`, so the model is guarded by a
@@ -36,7 +43,7 @@ impl Embedder for FastembedEmbedder {
             .lock()
             .map_err(|e| EmbedError::Inference(format!("embedder mutex poisoned: {e}")))?;
         guard
-            .embed(texts, None)
+            .embed(texts, Some(EMBED_BATCH_SIZE))
             .map_err(|e| EmbedError::Inference(e.to_string()))
     }
     fn dimensions(&self) -> usize {

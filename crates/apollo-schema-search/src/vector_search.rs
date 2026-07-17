@@ -21,6 +21,7 @@ pub struct VectorSearch {
 impl VectorSearch {
     /// Build the vector index: enumerate operation documents (the SAME corpus BM25 uses),
     /// embed each document's text in one batch, and insert one vector per operation.
+    #[tracing::instrument(skip_all, name = "embedding")]
     pub fn build(
         schema: &Valid<Schema>,
         root_types: EnumSet<OperationType>,
@@ -29,7 +30,13 @@ impl VectorSearch {
     ) -> Result<Self, crate::EmbedError> {
         let docs = enumerate_operation_documents(schema, root_types, flatten_depth);
         let texts: Vec<String> = docs.iter().map(|d| d.text.clone()).collect();
+        let start = std::time::Instant::now();
         let vectors = embedder.embed(&texts)?;
+        tracing::info!(
+            operations = texts.len(),
+            "Embedded corpus in {:.2?}",
+            start.elapsed()
+        );
         let mut store = InMemoryVectorStore::new();
         // `enumerate_operation_documents` yields each operation exactly once, and this loop
         // consumes that iterator into a freshly-created store, so each operation is inserted
