@@ -258,6 +258,8 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 
 The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
 
+The metadata `issuer` must match the authorization server the discovery URL was built from, as required by [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3). A document that advertises a different issuer is rejected, and discovery continues with the next URL pattern.
+
 ## Discovery headers
 
 Some OAuth servers or web application firewalls (WAFs) require specific HTTP headers on requests. Use `discovery_headers` to attach custom headers to all OIDC discovery and JWKS requests made by the MCP Server.

@@ -165,6 +165,14 @@ impl<'a> NetworkedKeyResolver<'a> {
         async move {
             let entry = async {
                 let metadata = discover_metadata(&client, &server, discovery_timeout).await?;
+                if !issuer_matches(&server, &metadata.issuer) {
+                    warn!(
+                        server = %server,
+                        advertised_issuer = %metadata.issuer,
+                        "Authorization server metadata advertises an issuer that does not match the requested server; rejecting metadata"
+                    );
+                    return None;
+                }
                 let jwks = fetch_jwks(&client, &metadata.jwks_uri, discovery_timeout).await?;
                 Some(CachedJwks {
                     keys: jwks,
@@ -288,6 +296,34 @@ struct DiscoveryMetadata {
     jwks_uri: String,
     #[serde(default)]
     id_token_signing_alg_values_supported: Vec<String>,
+}
+
+/// Validates that the issuer advertised in the discovery document matches the
+/// authorization server identifier the discovery URL was built from.
+///
+/// [RFC 8414 §3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3)
+/// requires the metadata `issuer` to be identical to the issuer identifier used
+/// to build the well-known request URL. Without this check a
+/// server could advertise metadata claiming a different issuer, letting a token
+/// signed by one configured server be bound to another configured server's
+/// issuer identity during token validation.
+///
+/// Query strings and fragments are ignored, and both sides are compared as
+/// parsed URLs so equivalent forms like `https://issuer.example.com` and
+/// `https://issuer.example.com/` match. A `metadata.issuer` that fails to parse
+/// as a URL is rejected.
+fn issuer_matches(server: &Url, advertised_issuer: &str) -> bool {
+    let Ok(mut advertised) = Url::parse(advertised_issuer) else {
+        return false;
+    };
+    advertised.set_query(None);
+    advertised.set_fragment(None);
+
+    let mut expected = server.clone();
+    expected.set_query(None);
+    expected.set_fragment(None);
+
+    expected == advertised
 }
 
 /// Fetches the discovery document, trying each well-known URL in priority order.
@@ -726,6 +762,89 @@ mod tests {
         let server = Url::parse("https://auth.example.com").expect("test URL should be valid");
         let result = resolve_alg(&["BOGUS".to_string()], &server);
         assert!(result.is_none());
+    }
+
+    #[rstest]
+    // Exact match
+    #[case("https://auth.example.com", "https://auth.example.com", true)]
+    // Bare authority vs explicit root slash normalize equal
+    #[case("https://auth.example.com", "https://auth.example.com/", true)]
+    #[case("https://auth.example.com/", "https://auth.example.com", true)]
+    // Matching path (Keycloak style)
+    #[case(
+        "https://sso.company.com/auth/realms/main",
+        "https://sso.company.com/auth/realms/main",
+        true
+    )]
+    // Query/fragment on the requested server are ignored, mirroring discovery
+    #[case("https://auth.example.com/t1?v=2", "https://auth.example.com/t1", true)]
+    // Different host is rejected
+    #[case("https://auth.example.com", "https://evil.example.com", false)]
+    // Different path is rejected
+    #[case(
+        "https://sso.company.com/auth/realms/main",
+        "https://sso.company.com/auth/realms/other",
+        false
+    )]
+    // Different scheme is rejected
+    #[case("https://auth.example.com", "http://auth.example.com", false)]
+    // Unparseable advertised issuer is rejected
+    #[case("https://auth.example.com", "not a url", false)]
+    fn issuer_matches_expected(
+        #[case] server: &str,
+        #[case] advertised: &str,
+        #[case] expected: bool,
+    ) {
+        let server = Url::parse(server).expect("test server URL should be valid");
+        assert_eq!(issuer_matches(&server, advertised), expected);
+    }
+
+    #[tokio::test]
+    async fn cold_miss_rejects_mismatched_issuer() {
+        let mut server = mockito::Server::new_async().await;
+
+        let discovery_json = format!(
+            r#"{{"issuer":"https://evil.example.com","jwks_uri":"{}/jwks","id_token_signing_alg_values_supported":["RS256"]}}"#,
+            server.url()
+        );
+
+        let discovery_mock = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(&discovery_json)
+            .expect(1)
+            .create_async()
+            .await;
+
+        // The JWKS endpoint must never be hit once the issuer check fails.
+        let jwks_mock = server.mock("GET", "/jwks").expect(0).create_async().await;
+
+        let issuer_url = Url::parse(&server.url()).expect("valid URL");
+        let cache: Arc<RwLock<HashMap<Url, CachedJwks>>> = Arc::new(RwLock::new(HashMap::new()));
+        let inflight: Arc<InflightMap> = Arc::new(Mutex::new(IssuerFetchState::default()));
+        let client = reqwest::Client::new();
+        let resolver = NetworkedKeyResolver::new(
+            &client,
+            Duration::from_secs(5),
+            &inflight,
+            &cache,
+            Duration::from_secs(300),
+            Duration::from_secs(60),
+        );
+
+        let result = resolver.resolve_key(&issuer_url, "any-kid").await;
+
+        discovery_mock.assert();
+        jwks_mock.assert();
+        assert!(
+            result.is_none(),
+            "metadata with a mismatched issuer must be rejected"
+        );
+        assert!(
+            cache.read().unwrap().get(&issuer_url).is_none(),
+            "rejected metadata must not populate the cache"
+        );
     }
 
     /// Returns an `Instant` back-dated by `age`, without the underflow panic
