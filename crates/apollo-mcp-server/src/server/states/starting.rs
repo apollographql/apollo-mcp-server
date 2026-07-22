@@ -123,22 +123,25 @@ impl Starting {
             .validate_introspection
             .then(|| Validate::new(schema.clone(), self.config.validate_tool_hint.as_deref()));
         let search_tool = if self.config.search_introspection {
-            Some(Search::new(
-                schema.clone(),
-                matches!(self.config.mutation_mode, MutationMode::All),
-                self.config.search_leaf_depth,
-                self.config.search_flatten_depth,
-                self.config.index_memory_bytes,
-                self.config.search_default_limit,
-                self.config.search_max_limit,
-                self.config.search_minify,
-                self.config.search_tool_hint.as_deref(),
-                self.config.semantic_enabled,
-                &self.config.semantic_model,
-                self.config.semantic_inference_threads,
-                self.config.hybrid_rrf_k,
-                self.config.semantic_cache_path.clone(),
-            )?)
+            Some(
+                Search::new(
+                    schema.clone(),
+                    matches!(self.config.mutation_mode, MutationMode::All),
+                    self.config.search_leaf_depth,
+                    self.config.search_flatten_depth,
+                    self.config.index_memory_bytes,
+                    self.config.search_default_limit,
+                    self.config.search_max_limit,
+                    self.config.search_minify,
+                    self.config.search_tool_hint.as_deref(),
+                    self.config.semantic_enabled,
+                    &self.config.semantic_model,
+                    self.config.semantic_inference_threads,
+                    self.config.hybrid_rrf_k,
+                    self.config.semantic_cache_url.clone(),
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -341,7 +344,7 @@ mod tests {
                 semantic_enabled: false,
                 semantic_model: "bge-small-en-v1.5".to_string(),
                 semantic_inference_threads: 1,
-                semantic_cache_path: None,
+                semantic_cache_url: None,
                 hybrid_rrf_k: 60.0,
                 index_memory_bytes: 1024 * 1024 * 1024,
                 health_check: HealthCheckConfig {

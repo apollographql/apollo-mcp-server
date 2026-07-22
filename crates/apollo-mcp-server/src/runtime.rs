@@ -298,7 +298,7 @@ mod test {
                             enabled: true,
                             model: "bge-small-en-v1.5",
                             inference_threads: 1,
-                            cache_path: None,
+                            cache_url: None,
                         },
                         hybrid: HybridConfig {
                             rrf_k: 60.0,

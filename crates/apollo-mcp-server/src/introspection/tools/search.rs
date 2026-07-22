@@ -9,7 +9,8 @@ use apollo_compiler::validation::Valid;
 use apollo_compiler::{Name, Node, Schema};
 use apollo_schema_index::{OperationType, SchemaIndex, SchemaSearch};
 use apollo_schema_search::{
-    DOC_BUILDER_VERSION, Embedder, EmbeddingCache, FastembedEmbedder, HybridSearch, VectorSearch,
+    DOC_BUILDER_VERSION, Embedder, EmbeddingStore, FastembedEmbedder, HybridSearch, PostgresCache,
+    VectorSearch,
 };
 use rmcp::model::{CallToolResult, Content, ErrorCode, Tool};
 use rmcp::schemars::JsonSchema;
@@ -17,7 +18,6 @@ use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
 use serde::Deserialize;
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
@@ -45,9 +45,9 @@ pub struct Search {
     /// the model. `None` = lexical-only (semantic disabled or embedder init failed).
     embedder: Option<Arc<dyn Embedder>>,
     rrf_k: f32,
-    /// Optional path to the on-disk SQLite embedding cache, retained so `rebuild`
+    /// Optional Postgres URL for the shared embedding cache, retained so `rebuild`
     /// can reopen it (fail-open) across rebuilds without re-embedding unchanged docs.
-    cache_path: Option<PathBuf>,
+    cache_url: Option<String>,
     model_id: String,
     pub tool: Tool,
 }
@@ -73,11 +73,27 @@ pub enum IndexingError {
 
     #[error("Unable to lock schema: {0}")]
     TryLockError(#[from] tokio::sync::TryLockError),
+
+    #[error("Search index build task failed: {0}")]
+    BuildJoin(#[from] tokio::task::JoinError),
 }
 
 /// Clamp the requested result count to `[1, max_limit]`, defaulting when omitted.
 fn clamp_limit(requested: Option<usize>, default_limit: usize, max_limit: usize) -> usize {
     requested.unwrap_or(default_limit).clamp(1, max_limit)
+}
+
+/// Open the Postgres embedding cache, or `None` when no URL is configured or the
+/// connection fails (fail-open: the caller embeds from scratch).
+fn open_store(cache_url: Option<&str>, model_id: &str, dim: usize) -> Option<PostgresCache> {
+    let url = cache_url?;
+    match PostgresCache::open(url, model_id, dim, DOC_BUILDER_VERSION) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            warn!("embedding cache disabled (postgres connect failed): {e}");
+            None
+        }
+    }
 }
 
 /// Build the search backend from a schema. With an embedder, composes
@@ -92,7 +108,7 @@ fn build_backend(
     index_memory_bytes: usize,
     embedder: Option<Arc<dyn Embedder>>,
     rrf_k: f32,
-    cache_path: Option<&Path>,
+    cache_url: Option<&str>,
     model_id: &str,
 ) -> Result<Box<dyn SchemaSearch + Send + Sync>, IndexingError> {
     let root_types = if allow_mutations {
@@ -104,16 +120,14 @@ fn build_backend(
     match embedder {
         Some(emb) => {
             // Open the cache if configured; a failure is non-fatal (embed from scratch).
-            let mut cache = cache_path.and_then(|p| {
-                match EmbeddingCache::open(p, model_id, emb.dimensions(), DOC_BUILDER_VERSION) {
-                    Ok(c) => Some(c),
-                    Err(e) => {
-                        warn!("embedding cache disabled (open failed at {p:?}): {e}");
-                        None
-                    }
-                }
-            });
-            match VectorSearch::build(schema, root_types, flatten_depth, emb, cache.as_mut()) {
+            let mut cache = open_store(cache_url, model_id, emb.dimensions());
+            match VectorSearch::build(
+                schema,
+                root_types,
+                flatten_depth,
+                emb,
+                cache.as_mut().map(|c| c as &mut dyn EmbeddingStore),
+            ) {
                 Ok(vector) => Ok(Box::new(HybridSearch::new(
                     vec![Box::new(index), Box::new(vector)],
                     rrf_k,
@@ -130,7 +144,7 @@ fn build_backend(
 
 impl Search {
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub async fn new(
         schema: Arc<RwLock<Valid<Schema>>>,
         allow_mutations: bool,
         leaf_depth: usize,
@@ -144,34 +158,42 @@ impl Search {
         semantic_model: &str,
         semantic_inference_threads: usize,
         rrf_k: f32,
-        semantic_cache_path: Option<PathBuf>,
+        semantic_cache_url: Option<String>,
     ) -> Result<Self, IndexingError> {
-        let embedder: Option<Arc<dyn Embedder>> = if semantic_enabled {
-            match FastembedEmbedder::new(semantic_model, semantic_inference_threads) {
-                Ok(e) => Some(Arc::new(e)),
-                Err(e) => {
-                    warn!("embedder init failed; semantic search disabled (lexical-only): {e}");
-                    None
+        // Model load, embedding, and Postgres I/O are all blocking — and the sync
+        // Postgres client cannot even be created on a runtime thread — so run the
+        // whole construction off the async runtime.
+        let description_hint = description_hint.map(str::to_string);
+        let semantic_model = semantic_model.to_string();
+        tokio::task::spawn_blocking(move || {
+            let embedder: Option<Arc<dyn Embedder>> = if semantic_enabled {
+                match FastembedEmbedder::new(&semantic_model, semantic_inference_threads) {
+                    Ok(e) => Some(Arc::new(e)),
+                    Err(e) => {
+                        warn!("embedder init failed; semantic search disabled (lexical-only): {e}");
+                        None
+                    }
                 }
-            }
-        } else {
-            None
-        };
-        Self::new_with_embedder(
-            schema,
-            allow_mutations,
-            leaf_depth,
-            flatten_depth,
-            index_memory_bytes,
-            default_limit,
-            max_limit,
-            minify,
-            description_hint,
-            embedder,
-            rrf_k,
-            semantic_model,
-            semantic_cache_path,
-        )
+            } else {
+                None
+            };
+            Self::new_with_embedder(
+                schema,
+                allow_mutations,
+                leaf_depth,
+                flatten_depth,
+                index_memory_bytes,
+                default_limit,
+                max_limit,
+                minify,
+                description_hint.as_deref(),
+                embedder,
+                rrf_k,
+                &semantic_model,
+                semantic_cache_url,
+            )
+        })
+        .await?
     }
 
     /// Core constructor. Takes an already-resolved embedder (or `None`), so tests
@@ -191,7 +213,7 @@ impl Search {
         embedder: Option<Arc<dyn Embedder>>,
         rrf_k: f32,
         model_id: &str,
-        cache_path: Option<PathBuf>,
+        cache_url: Option<String>,
     ) -> Result<Self, IndexingError> {
         let locked = &schema.try_read()?;
         let default_description = format!(
@@ -211,7 +233,7 @@ impl Search {
             index_memory_bytes,
             embedder.clone(),
             rrf_k,
-            cache_path.as_deref(),
+            cache_url.as_deref(),
             model_id,
         )?;
         Ok(Self {
@@ -226,7 +248,7 @@ impl Search {
             minify,
             embedder,
             rrf_k,
-            cache_path,
+            cache_url,
             model_id: model_id.to_string(),
             tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
         })
@@ -234,16 +256,28 @@ impl Search {
 
     /// Rebuild the search index from an updated schema, replacing the current index.
     pub async fn rebuild(&self, schema: &Valid<Schema>) -> Result<(), IndexingError> {
-        let backend = build_backend(
-            schema,
-            self.allow_mutations,
-            self.flatten_depth,
-            self.index_memory_bytes,
-            self.embedder.clone(),
-            self.rrf_k,
-            self.cache_path.as_deref(),
-            &self.model_id,
-        )?;
+        // Embedding + Postgres I/O are blocking; run off the async runtime.
+        let schema = schema.clone();
+        let allow_mutations = self.allow_mutations;
+        let flatten_depth = self.flatten_depth;
+        let index_memory_bytes = self.index_memory_bytes;
+        let embedder = self.embedder.clone();
+        let rrf_k = self.rrf_k;
+        let cache_url = self.cache_url.clone();
+        let model_id = self.model_id.clone();
+        let backend = tokio::task::spawn_blocking(move || {
+            build_backend(
+                &schema,
+                allow_mutations,
+                flatten_depth,
+                index_memory_bytes,
+                embedder,
+                rrf_k,
+                cache_url.as_deref(),
+                &model_id,
+            )
+        })
+        .await??;
         *self.search.write().await = backend;
         Ok(())
     }
@@ -690,46 +724,43 @@ mod tests {
         assert!(!content_to_snapshot(result).is_empty());
     }
 
-    #[rstest]
-    #[tokio::test]
-    async fn build_with_cache_path_reuses_on_rebuild(schema: Valid<Schema>) {
-        let dir = std::env::temp_dir().join(format!("search_cache_{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let db = dir.join("emb.db");
-        let _ = std::fs::remove_file(&db);
-        let schema = Arc::new(RwLock::new(schema));
+    #[test]
+    fn open_store_none_when_no_url() {
+        assert!(open_store(None, "m", 8).is_none());
+    }
 
-        // A fake embedder is fine; we only assert the tool builds and searches with a cache path set.
-        let make = || {
-            Search::new_with_embedder(
-                schema.clone(),
-                false,
-                1,
-                2,
-                15_000_000,
-                10,
-                50,
-                false,
-                None,
-                Some(Arc::new(apollo_schema_search::FakeEmbedder::new(64))),
-                60.0,
-                "fake",
-                Some(db.clone()),
-            )
-            .expect("build with cache")
-        };
-        let _first = make(); // populates the cache file
-        assert!(db.exists(), "cache file should be created");
-        let second = make(); // reads it back
-        let result = second
-            .execute(Input {
-                terms: vec!["User".to_string()],
-                limit: None,
-                scope: None,
-            })
-            .await
-            .expect("search");
-        assert!(!result.is_error.unwrap_or(false));
-        let _ = std::fs::remove_file(&db);
+    #[test]
+    fn open_store_bad_url_is_fail_open_none() {
+        // Unreachable/garbage URL must fail open to None, never panic.
+        let url = "host=127.0.0.1 port=1 user=nope dbname=nope connect_timeout=1";
+        assert!(open_store(Some(url), "m", 4).is_none());
+    }
+
+    #[rstest]
+    fn build_is_fail_open_when_cache_unreachable(schema: Valid<Schema>) {
+        // Sync test: with no ambient tokio runtime the blocking Postgres client can
+        // be constructed directly (in production this path runs via spawn_blocking).
+        // An unreachable URL must fail open — the tool still builds, degrading to
+        // no-cache, never erroring or panicking.
+        let schema = Arc::new(RwLock::new(schema));
+        let result = Search::new_with_embedder(
+            schema,
+            false,
+            1,
+            2,
+            15_000_000,
+            10,
+            50,
+            false,
+            None,
+            Some(Arc::new(apollo_schema_search::FakeEmbedder::new(64))),
+            60.0,
+            "fake",
+            Some("host=127.0.0.1 port=1 user=nope dbname=nope connect_timeout=1".to_string()),
+        );
+        assert!(
+            result.is_ok(),
+            "tool must build even when the cache is unreachable"
+        );
     }
 }

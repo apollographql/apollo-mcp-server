@@ -101,10 +101,11 @@ pub struct SemanticConfig {
     pub model: String,
     /// ONNX intra-op thread count for inference (keep small to respect CPU limits).
     pub inference_threads: usize,
-    /// Path to a SQLite file used to cache operation embeddings across restarts.
-    /// Unset = disabled (embed on every start). Relative paths resolve against CWD.
+    /// Postgres connection URL for the shared embedding cache (libpq/URL form;
+    /// source the password from an env var, e.g. `${env.EMBEDDING_CACHE_DATABASE_URL}`).
+    /// Unset = disabled (embed on every start).
     #[serde(default)]
-    pub cache_path: Option<std::path::PathBuf>,
+    pub cache_url: Option<String>,
 }
 
 impl Default for SemanticConfig {
@@ -113,7 +114,7 @@ impl Default for SemanticConfig {
             enabled: true,
             model: "bge-small-en-v1.5".to_string(),
             inference_threads: 1,
-            cache_path: None,
+            cache_url: None,
         }
     }
 }
@@ -166,11 +167,17 @@ mod tests {
     }
 
     #[test]
-    fn semantic_cache_path_parses() {
+    fn semantic_cache_url_parses() {
         let c: SemanticConfig = serde_yaml::from_str(
-            "enabled: true\nmodel: bge-small-en-v1.5\ninference_threads: 2\ncache_path: /data/emb.db\n",
+            "enabled: true\nmodel: bge-small-en-v1.5\ninference_threads: 2\ncache_url: postgres://u:p@db/emb\n",
         )
         .unwrap();
-        assert_eq!(c.cache_path, Some(std::path::PathBuf::from("/data/emb.db")));
+        assert_eq!(c.cache_url.as_deref(), Some("postgres://u:p@db/emb"));
+    }
+
+    #[test]
+    fn semantic_cache_defaults_to_none() {
+        let c = SemanticConfig::default();
+        assert!(c.cache_url.is_none());
     }
 }

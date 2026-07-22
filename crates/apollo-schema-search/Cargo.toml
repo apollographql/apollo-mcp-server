@@ -14,7 +14,7 @@ apollo-schema-index = { path = "../apollo-schema-index" }
 enumset = "1.1.6"
 fastembed = "5"
 hex = "0.4.3"
-rusqlite = { version = "0.32", features = ["bundled"] }
+postgres = "0.19"
 sha2 = "0.10.9"
 thiserror.workspace = true
 tracing.workspace = true

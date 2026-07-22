@@ -200,7 +200,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .semantic_enabled(config.introspection.search.semantic.enabled)
         .semantic_model(config.introspection.search.semantic.model.clone())
         .semantic_inference_threads(config.introspection.search.semantic.inference_threads)
-        .semantic_cache_path(config.introspection.search.semantic.cache_path.clone())
+        .semantic_cache_url(config.introspection.search.semantic.cache_url.clone())
         .hybrid_rrf_k(config.introspection.search.hybrid.rrf_k)
         .index_memory_bytes(config.introspection.search.index_memory_bytes)
         .health_check(config.health_check)
