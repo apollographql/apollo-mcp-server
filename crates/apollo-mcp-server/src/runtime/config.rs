@@ -180,6 +180,30 @@ mod test {
     }
 
     #[test]
+    fn it_rejects_auth_under_stdio_transport() {
+        let yaml = r#"
+            transport:
+              type: stdio
+              auth:
+                servers:
+                  - https://auth-server.com
+        "#;
+        let result = serde_yaml::from_str::<Config>(yaml);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown field"), "unexpected error: {err}");
+        assert!(err.contains("auth"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn it_accepts_stdio_transport_without_extra_fields() {
+        let yaml = r#"
+            transport:
+              type: stdio
+        "#;
+        serde_yaml::from_str::<Config>(yaml).unwrap();
+    }
+
+    #[test]
     fn it_rejects_auth_at_top_level() {
         // This is the exact scenario from the issue: auth placed at top level
         // instead of nested under transport
