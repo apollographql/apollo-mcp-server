@@ -2,6 +2,14 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (2026-07-21, during implementation):** SQLite support was removed.
+> `PostgresCache` is the only backend — `SqliteCache`, the `rusqlite` dependency,
+> and the tagged `CacheConfig` enum are gone. Config is a single field
+> `semantic.cache_url: Option<String>`, threaded as `Option<String>` (not
+> `Option<CacheConfig>`) through the plumbing; `open_store` is Postgres-only. The
+> `EmbeddingStore` trait is kept for the in-memory test double. Task/step details
+> below that mention SQLite, `rusqlite`, or the enum are superseded accordingly.
+
 **Goal:** Externalize the semantic-search embedding cache behind an `EmbeddingStore` trait and add a Postgres backend (alongside the existing SQLite one), selectable via config, so all MCP replicas share one durable cache.
 
 **Architecture:** Extract today's concrete `EmbeddingCache` into an `EmbeddingStore` trait with two implementations — `SqliteCache` (renamed, unchanged behavior) and `PostgresCache` (new, generation-keyed for safe multi-writer sharing). `VectorSearch::build` consumes `Option<&mut dyn EmbeddingStore>`. A tagged-enum `cache` config selects the backend and threads through the existing server plumbing. Fail-open behavior is preserved end to end. In-memory brute-force search is unchanged.
@@ -1053,7 +1061,10 @@ Expected: `roundtrip_put_then_get`, `generations_are_isolated_without_deletion`,
 
 Not in scope here; tracked for the deploy plan:
 1. `embedding-db.yaml` — single-replica Postgres `StatefulSet` mirroring `keycloak-db.yaml` (own RWO PVC + headless Service), gated on `embeddingCache.enabled`.
-2. `deployment.yaml` — add `EMBEDDING_CACHE_DATABASE_URL` (password from Secret) to the `mcp` container and set `introspection.search.semantic.cache: { type: postgres, url: ${env.EMBEDDING_CACHE_DATABASE_URL} }` in its `/config`.
+2. `deployment.yaml` — add `EMBEDDING_CACHE_DATABASE_URL` (password from Secret) to the `mcp` container and set `introspection.search.semantic.cache_url: ${env.EMBEDDING_CACHE_DATABASE_URL}` in its `/config`.
 3. Keep the `startupProbe` tolerating the first cold embed (~140 s).
-4. `helm lint` + `helm template` + kind smoke; offline fail-open smoke (`docker run --network=none` → server still comes up lexical + in-memory semantic).
-5. Decide in-cluster StatefulSet vs managed Postgres (connection-string-only; no code impact).
+4. **Cold-start coordination (chosen: scenario 1 only):** set the runtime Deployment rollout to one-at-a-time (`maxSurge: 1`) so a single cold-embedder warms the shared cache before the next pod starts. (A *runtime* schema-change rebuild across live replicas is not serialized by this — accepted for now.)
+5. `helm lint` + `helm template` + kind smoke; offline fail-open smoke (`docker run --network=none` → server still comes up lexical + in-memory semantic).
+6. Decide in-cluster StatefulSet vs managed Postgres (connection-string-only; no code impact).
+
+**Future (see spec "Future work"):** option B — a session-scoped Postgres advisory lock keyed by the generation tuple so exactly one replica embeds in *both* startup and runtime-rebuild scenarios. Revisit if the concurrent cold-embed resource spike (N × ~2.5 GB) hurts as replicas scale.

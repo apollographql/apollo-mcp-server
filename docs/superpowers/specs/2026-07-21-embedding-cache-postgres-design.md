@@ -3,6 +3,17 @@
 **Date:** 2026-07-21 · **Branch (base):** `air-311-hybrid-search` · **Status:** design approved, pending spec review
 **Relates to:** [SQLite embedding-cache plan](../plans/2026-07-17-embedding-cache-sqlite.md), [ONNX/semantic CI-CD runbook](../notes/2026-07-17-onnx-semantic-search-cicd-deployment.md), [session handoff](../notes/2026-07-21-session-handoff-hybrid-search.md)
 
+> **Amendment (2026-07-21, during implementation):** SQLite support was dropped
+> entirely — **Postgres is the only backend**. This collapses the config from a
+> tagged `CacheConfig` enum to a single optional field
+> `introspection.search.semantic.cache_url: Option<String>` (a Postgres
+> connection URL; unset = caching disabled). The `EmbeddingStore` trait is
+> retained — its in-memory test double keeps the incremental-reuse logic covered
+> in the offline test suite. Every other decision below — generation-keyed
+> exact-tuple schema, fail-open, multi-writer idempotency, the `embedding-db`
+> StatefulSet — stands as written, substituting `cache_url` for the SQLite/enum
+> config surface.
+
 ## Summary
 
 The semantic-search embedding cache is currently a **content-addressed SQLite file** (`apollo-schema-search/src/embedding_cache.rs`). It works, but persisting the file across pod restarts is the unsolved deploy problem ("C5" in the CI/CD runbook): the runtime workload is a **2-replica `Deployment`**, which cannot use per-replica `volumeClaimTemplates` (a StatefulSet feature) and cannot share a single `ReadWriteOnce` PVC across pods.
@@ -129,7 +140,9 @@ Writes are idempotent (`ON CONFLICT DO NOTHING`), so concurrent writers are alwa
 
 - **Rolling update (the common case):** pods restart one at a time. The first new pod embeds + writes; later pods read the now-warm shared cache. This matches the "only one instance pays cold-start" expectation.
 - **Full-fleet cold start** (brand-new schema generation, or all pods down): several replicas may embed concurrently — correct, bounded, self-healing (next restart is warm).
-- **No advisory locks now.** A Postgres advisory lock could make exactly one replica embed while others poll, but it adds a lock-holder-dies liveness failure mode. Deferred; revisit only if fleet cold-starts prove painful.
+- **Decision (for now): rely on rolling-update serialization only.** Set the runtime Deployment's rollout to one-at-a-time (`maxSurge: 1`) so scenario 1 (startup/rollout) has a single cold-embedder that warms the shared cache before the next pod starts. This is a deploy-side (Helm) setting — no application code — and is tracked in the follow-up deploy plan.
+- **Not handled by the above:** a *runtime* schema change (uplink pushes a new supergraph to already-running replicas) makes all live replicas `rebuild` concurrently; k8s ordering cannot serialize that. Accepted for now (idempotent writes keep it correct, just redundant).
+- **Advisory locks deferred.** A session-scoped Postgres advisory lock keyed by the generation tuple would make exactly one replica embed in *both* scenarios (session scope auto-releases on a crashed holder, avoiding a permanent stall). Revisit only if the concurrent embed's CPU/memory spike (N × ~2.5 GB) proves painful.
 
 ### 7. Deployment (Helm — `constellation-runtime` chart)
 
@@ -160,6 +173,19 @@ Mirror the existing `keycloak-db.yaml` precedent:
 - No data migration: the cache is a derived artifact. On first deploy with `type: postgres`, the cache is cold and populated by the first replica's embed.
 - Switching a deployment from SQLite to Postgres (or vice versa) just repopulates from embedding; no export/import.
 - Config change is breaking at the YAML level (`cache_path` → `cache` block), acceptable because Phase 2 is unshipped.
+
+## Future work
+
+- **Option B — session-scoped advisory-lock coordination (revisit).** The current
+  approach (§6) only serializes the *startup/rollout* cold-embed via `maxSurge: 1`.
+  A future enhancement is a Postgres **session advisory lock** keyed by the
+  generation tuple, acquired in the build path before embedding the misses (then
+  re-checking the cache after acquiring): exactly one replica embeds in *both*
+  startup and runtime-rebuild scenarios, while every other replica waits briefly
+  and then reads the now-warm cache. Use a **session** lock so a crashed holder
+  auto-releases (no permanent stall). Prioritize this if the concurrent cold
+  embed's resource spike (N × ~2.5 GB memory, N × ~140 s CPU) becomes a problem
+  as replica count grows (e.g. under HPA).
 
 ## Open questions
 
