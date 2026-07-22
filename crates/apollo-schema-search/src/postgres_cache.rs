@@ -1,8 +1,8 @@
 //! Postgres-backed [`EmbeddingStore`]: a shared, multi-writer cache. Rows are
 //! generation-keyed by the exact `(model_id, dim, dtype, doc_builder_ver)` tuple
 //! plus the content hash, so different embedding generations coexist without
-//! deletion or contention — the invalidation model that a single shared database
-//! needs, unlike the single-writer SQLite file.
+//! deletion or contention — the invalidation model a shared, multi-writer
+//! database needs.
 
 use crate::embedding_store::{CacheError, EmbeddingStore, VECTOR_DTYPE, blob_to_vec, vec_to_blob};
 use postgres::{Client, NoTls};

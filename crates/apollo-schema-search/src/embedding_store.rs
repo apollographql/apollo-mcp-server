@@ -26,7 +26,7 @@ pub enum CacheError {
 /// A backend that persists operation embeddings keyed by content hash.
 ///
 /// `get` returns `Ok(None)` on a miss. Both methods take `&mut self` because the
-/// synchronous Postgres client requires it; SQLite tolerates it.
+/// synchronous Postgres client requires it.
 pub trait EmbeddingStore: Send {
     fn get(&mut self, key: &str) -> Result<Option<Vec<f32>>, CacheError>;
     fn put_batch(&mut self, entries: &[(String, Vec<f32>)]) -> Result<(), CacheError>;

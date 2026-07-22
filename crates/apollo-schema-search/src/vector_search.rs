@@ -170,7 +170,7 @@ mod tests {
     }
 
     /// Minimal in-memory `EmbeddingStore` double: exercises the trait-object
-    /// build path without SQLite or Postgres.
+    /// build path without a live database.
     struct MemoryStore {
         map: std::collections::HashMap<String, Vec<f32>>,
     }

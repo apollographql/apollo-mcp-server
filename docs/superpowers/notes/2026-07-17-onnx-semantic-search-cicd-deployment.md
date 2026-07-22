@@ -14,7 +14,7 @@ The stock image does not build or run semantic search as-is. Getting it working 
 1. A newer base image (the ONNX Runtime prebuilt won't link against the current bookworm/glibc-2.36 base).
 2. Baking the embedding model into the image (the runtime HuggingFace download fails / can't be relied on).
 3. Enough container memory (ONNX model + arenas + embedding activations exceed the current 512 Mi limit).
-4. Tolerating a slow first boot (~140 s to embed the corpus) — mitigated by an on-disk embedding cache on a persistent volume.
+4. Tolerating a slow first boot (~140 s to embed the corpus) — mitigated by a shared Postgres embedding cache reused across restarts and replicas.
 
 Each maps to concrete changes below.
 
@@ -93,19 +93,15 @@ The runtime pod is a **`Deployment`** (`templates/deployment.yaml`, `replicas: {
     enabled: true
     model: bge-small-en-v1.5
     inference_threads: 2            # pin small; do NOT default to host core count in a CPU-limited pod
-    cache_path: /cache/embeddings.db   # only if a persistent volume is mounted (see C5)
+    cache_url: ${env.EMBEDDING_CACHE_DATABASE_URL}   # Postgres connection string (see C5)
   ```
-  (Config is delivered via the chart's ConfigMap → the mcp container's config file. `cache_path` unset = no cache = embed every start, fail-open.)
-- [ ] **C5. DECIDE the embedding-cache persistence strategy (this is the real k8s decision, not a trivial add).** The cache only helps *across restarts*, and it must live on storage that outlives the pod. But the workload is a **multi-replica `Deployment`**, which **cannot** use per-replica `volumeClaimTemplates` (a StatefulSet feature), and a single `ReadWriteOnce` PVC can't attach to 2 pods. Options, pick one:
-  - **(a) No persistent cache (simplest):** leave `cache_path` unset; every pod cold-embeds (~140 s) on start, covered by the C3 startup probe. Ship this first if restarts are infrequent.
-  - **(b) Convert the runtime workload to a `StatefulSet`** with `volumeClaimTemplates` mounting a per-replica PVC at `/cache`. Gives each replica a durable, private cache (cold once, warm forever). Non-trivial: the router/mcp-proxy are co-located in the same pod, so this changes the whole workload's controller — evaluate impact (HPA, rollout semantics, the existing `hpa.yaml` targets `Deployment`).
-  - **(c) `ReadWriteMany` shared volume — NOT recommended:** SQLite over a network filesystem has unreliable locking; concurrent-writer contention. Avoid.
+  (Config is delivered via the chart's ConfigMap → the mcp container's config file. `cache_url` unset = no cache = embed every start, fail-open. The URL's password comes from a Secret via `${env.…}` expansion — never inlined.)
+- [ ] **C5. Deploy the shared embedding cache as Postgres (`embedding-db`).** The cache only helps *across restarts* and must outlive the pod. Because the runtime is a multi-replica `Deployment` (can't own a per-replica `volumeClaimTemplates` PVC, and a single `ReadWriteOnce` PVC can't attach to 2 pods), store the cache in **Postgres** rather than a node-local file: add a dedicated single-replica `embedding-db` `StatefulSet` (its own PVC + headless Service, mirroring `keycloak-db`) and point every mcp replica at it via `cache_url` (C4). All replicas share one durable cache — the first to boot on a new schema embeds and writes, the rest read. A managed Postgres (e.g. CloudSQL) is a drop-in alternative; the mcp server only needs a connection URL. Embeddings are content+generation-keyed and idempotently written (`ON CONFLICT DO NOTHING`), so concurrent writers are safe.
   - **Why not just bake the embeddings into the image, the way A2 bakes the model?** Because they're two different artifacts, and only one is knowable at build time:
     - The **model** (`.fastembed_cache`, the bge-small weights) is *identical for every deployment* and fixed at build → baked into the image (A2). ✅
-    - The **embeddings cache** (`embeddings.db`) is the *output of running that model over a specific supergraph's operations*. The supergraph is fetched from **uplink at runtime** (managed federation) and differs per environment/graph/customer — so at build time there is **no schema to embed**, hence nothing to bake. ❌
-    - The vectors only become computable once a pod starts and pulls its schema, and they're re-derived whenever a new supergraph launches (the content-addressed cache re-embeds just the changed ops). A baked snapshot would be both wrong-for-this-deployment and stale after the next schema change.
-    - Consequence: unlike the model, there is **no build-time shortcut** for the vectors — persistence has to be a *runtime* volume (option b) or you accept the cold embed (option a). (The lone exception would be a deployment pinned to a *static, build-time-known* local supergraph instead of uplink — not the model used here.)
-- [ ] **C6. If (b) chosen:** add the `volumeMounts: [{ name: embedding-cache, mountPath: /cache }]` on the mcp container and the `volumeClaimTemplates` entry (~1 Gi; on-disk cache ≈ N×dim×4 + overhead, ~137 MB worst case at 20× corpus / 1024-dim). Use a **network-backed StorageClass** (survives node moves), not `hostPath`/local.
+    - The **embeddings** are the *output of running that model over a specific supergraph's operations*. The supergraph is fetched from **uplink at runtime** (managed federation) and differs per environment/graph/customer — so at build time there is **no schema to embed**, hence nothing to bake. ❌
+    - They're re-derived whenever a new supergraph launches (the content-addressed cache re-embeds just the changed ops). A baked snapshot would be both wrong-for-this-deployment and stale after the next schema change — hence a *runtime* shared store (Postgres), not a build-time artifact.
+- [ ] **C6. Add the `embedding-db` resources.** `embedding-db.yaml`: single-replica Postgres `StatefulSet` (own `volumeClaimTemplates` RWO PVC at `/var/lib/postgresql/data`, ~1 Gi) + headless Service + password Secret, gated on `embeddingCache.enabled`. On the mcp container add `EMBEDDING_CACHE_DATABASE_URL` (password from the Secret) and the `cache_url` config (C4). The runtime `Deployment` itself needs **no** volume or PVC.
 - [ ] **C7. Helm lint / template / kind smoke** per the repo's CONTRIBUTING (the `helm lint` + `helm template` + kind loop) before the ArgoCD sync.
 - [ ] **C8. ArgoCD:** the promotion of `mcp.image.tag` (and the values above) flows through apollo-argo's `application-values.yaml` as usual; no ArgoCD-specific change beyond the values.
 
@@ -117,14 +113,14 @@ The runtime pod is a **`Deployment`** (`templates/deployment.yaml`, `replicas: {
 - [ ] `docker run --network=none <image>` starts, logs the corpus-embed (or cache-load) line, and does **not** log `semantic search disabled (lexical-only)` (proves the baked model works offline).
 - [ ] In-cluster: the mcp pod reaches Ready (startup probe tolerated the cold embed); memory stays under the new limit (no OOMKill).
 - [ ] `search` returns results and the tool is `mcp__apollo__search` (semantic active).
-- [ ] If (b): after a pod restart/redeploy, the second boot is fast (cache reused) — confirm via the `reused=<N>` log line.
+- [ ] After a pod restart/redeploy, the second boot is fast (Postgres cache reused) — confirm via the `reused=<N>` / "Loaded all embeddings from cache" log line.
 
 ---
 
 ## Open decisions / residual risks
 
 - **Base bump vs `load-dynamic`** (A1 vs A4): base bump ships fastest; `load-dynamic` is the robust long-term fix (decouples ORT from the base, graceful degrade). Recommend ship on base bump, harden with `load-dynamic` later.
-- **Cache persistence** (C5): the multi-replica `Deployment` makes per-replica PVCs non-trivial. **Recommend shipping option (a) (no persistent cache) first** — it's zero-infra and fail-open; revisit (b) StatefulSet if cold-start time on rollouts proves painful.
+- **Cache persistence** (C5): resolved — store the cache in a Postgres `embedding-db` StatefulSet (or managed Postgres) shared by all replicas; the runtime `Deployment` needs no PVC. Cross-replica cold-start serialization (a session advisory lock, or `maxSurge: 1`) is a later refinement — concurrent cold embeds are correct today, just redundant.
 - **Native crash mode:** an ONNX Runtime segfault bypasses Rust panic safety (graceful-degrade covers init failure, not a mid-inference crash). Low probability with a fixed small model; note for monitoring.
 - **Bigger-picture alternative:** if the ONNX native dependency is judged too heavy for on-prem customers, a pure-Rust embedder (`tract` reusing the same `.onnx`, or Candle, or Model2Vec) behind the existing `Embedder` trait would remove Parts A2/A4 and the base-bump entirely. Separate spike; see the hybrid-search design notes.
 
