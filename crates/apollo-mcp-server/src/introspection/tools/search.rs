@@ -628,10 +628,12 @@ mod tests {
 
         assert!(
             description
-                .contains("Search a GraphQL schema for types matching the provided search terms")
+                .contains("Search the federated GraphQL schema for operations and types relevant")
         );
-        assert!(description.contains("Instructions: If the introspect tool is also available"));
-        assert!(description.contains("Avoid reusing previously searched terms"));
+        assert!(
+            description.contains("Instructions: This is the tool for finding operations and types")
+        );
+        assert!(description.contains("Avoid repeating queries you've already run"));
         // Should not contain minification legend
         assert!(!description.contains("T=type,I=input"));
     }
