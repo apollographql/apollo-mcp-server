@@ -1,7 +1,5 @@
 use futures::Stream;
 use graphql_client::GraphQLQuery;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use secrecy::ExposeSecret;
 use std::collections::HashMap;
 use std::pin::Pin;
 use tokio::sync::mpsc::channel;
@@ -9,7 +7,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use super::error::CollectionError;
 use super::event::CollectionEvent;
-use crate::platform_api::PlatformApiConfig;
+use crate::platform_api::{PlatformApiConfig, graphql_request};
 use operation_collection_default_polling_query::{
     OperationCollectionDefaultPollingQueryVariant as PollingDefaultGraphVariant,
     OperationCollectionDefaultPollingQueryVariantOnGraphVariantMcpDefaultCollection as PollingDefaultCollection,
@@ -336,7 +334,10 @@ impl CollectionSource {
                         tracing::error!(
                             "Failed to fetch operation collection with permanent error: {err}"
                         );
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(err.into()))
+                            .await
+                        {
                             tracing::debug!(
                                 "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                             );
@@ -467,7 +468,10 @@ impl CollectionSource {
                         tracing::error!(
                             "Failed to fetch operation collection with permanent error: {err}"
                         );
-                        if let Err(e) = sender.send(CollectionEvent::CollectionError(err)).await {
+                        if let Err(e) = sender
+                            .send(CollectionEvent::CollectionError(err.into()))
+                            .await
+                        {
                             tracing::debug!(
                                 "failed to send error to collection stream. This is likely to be because the server is shutting down: {e}"
                             );
@@ -594,45 +598,6 @@ async fn poll_operation_collection_default(
             "Default collection not found".to_string(),
         )),
     }
-}
-
-async fn graphql_request<Query>(
-    request_body: &graphql_client::QueryBody<Query::Variables>,
-    platform_api_config: &PlatformApiConfig,
-) -> Result<Query::ResponseData, CollectionError>
-where
-    Query: graphql_client::GraphQLQuery,
-    <Query as graphql_client::GraphQLQuery>::ResponseData: std::fmt::Debug,
-{
-    let res = reqwest::Client::new()
-        .post(platform_api_config.registry_url.clone())
-        .headers(HeaderMap::from_iter(vec![
-            (
-                HeaderName::from_static("apollographql-client-name"),
-                HeaderValue::from_static("apollo-mcp-server"),
-            ),
-            (
-                HeaderName::from_static("apollographql-client-version"),
-                HeaderValue::from_static(env!("CARGO_PKG_VERSION")),
-            ),
-            (
-                HeaderName::from_static("x-api-key"),
-                HeaderValue::from_str(platform_api_config.apollo_key.expose_secret())
-                    .map_err(CollectionError::HeaderValue)?,
-            ),
-        ]))
-        .timeout(platform_api_config.timeout)
-        .json(request_body)
-        .send()
-        .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(CollectionError::Request)?;
-
-    let response_body: graphql_client::Response<Query::ResponseData> =
-        res.json().await.map_err(CollectionError::Request)?;
-    response_body
-        .data
-        .ok_or(CollectionError::Response("missing data".to_string()))
 }
 
 #[cfg(test)]
