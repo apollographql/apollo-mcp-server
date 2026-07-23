@@ -53,3 +53,51 @@ impl<T: Eq + Hash + Display> Display for Scored<T> {
         write!(f, "{} ({})", self.inner, self.score)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn new_exposes_inner_and_score() {
+        let s = Scored::new("op", 1.5);
+        assert_eq!(s.inner, "op");
+        assert_eq!(s.score(), 1.5);
+    }
+
+    #[test]
+    fn eq_requires_same_inner_and_score() {
+        // Scored has no Debug impl, so use ==/!= directly rather than assert_eq!.
+        assert!(Scored::new("a", 1.0) == Scored::new("a", 1.0));
+        assert!(Scored::new("a", 1.0) != Scored::new("b", 1.0)); // different inner
+        assert!(Scored::new("a", 1.0) != Scored::new("a", 2.0)); // different score
+    }
+
+    #[test]
+    fn ord_and_partial_ord_rank_by_score() {
+        // partial_cmp / cmp are used by comparison operators and sort.
+        assert!(Scored::new("a", 0.1) < Scored::new("b", 0.2));
+        let mut v = [
+            Scored::new("low", 0.1),
+            Scored::new("high", 0.9),
+            Scored::new("mid", 0.5),
+        ];
+        v.sort();
+        let order: Vec<_> = v.iter().map(|s| s.inner).collect();
+        assert_eq!(order, ["low", "mid", "high"]);
+    }
+
+    #[test]
+    fn hash_dedups_equal_items() {
+        let mut set = HashSet::new();
+        assert!(set.insert(Scored::new("x", 1.0)));
+        // Same inner + score hashes and compares equal -> not re-inserted.
+        assert!(!set.insert(Scored::new("x", 1.0)));
+    }
+
+    #[test]
+    fn display_shows_inner_and_score() {
+        assert_eq!(format!("{}", Scored::new(42, 1.5)), "42 (1.5)");
+    }
+}
