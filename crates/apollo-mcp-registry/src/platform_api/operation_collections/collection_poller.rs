@@ -625,6 +625,7 @@ where
         .json(request_body)
         .send()
         .await
+        .and_then(reqwest::Response::error_for_status)
         .map_err(CollectionError::Request)?;
 
     let response_body: graphql_client::Response<Query::ResponseData> =
@@ -899,6 +900,55 @@ mod tests {
         assert_update_body(
             next_event(&mut stream, &mock_server).await,
             "query GetUser { user { id name } }",
+        );
+    }
+
+    #[tokio::test]
+    async fn collection_id_initial_load_retries_after_server_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionQuery""#,
+            ))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionPollingQuery""#,
+            ))
+            .respond_with(json_response(collection_poll_response(
+                "2024-01-01T00:00:00Z",
+            )))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(
+                r#""operationName":"OperationCollectionEntriesQuery""#,
+            ))
+            .respond_with(json_response(entries_response(
+                "2024-01-01T00:00:00Z",
+                "query GetUser { user { name } }",
+            )))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream = CollectionSource::Id(
+            "collection-id".to_string(),
+            platform_api_config(&mock_server),
+        )
+        .into_stream();
+
+        // A 500 on the initial fetch is transient: the stream must recover via
+        // polling instead of emitting a permanent CollectionError.
+        assert_update_body(
+            next_event(&mut stream, &mock_server).await,
+            "query GetUser { user { name } }",
         );
     }
 
