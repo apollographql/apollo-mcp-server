@@ -78,12 +78,13 @@ pub struct Server {
     instructions: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Transport {
     /// Use standard IO for server <> client communication
-    #[default]
-    Stdio,
+    // Struct variant, not unit: `deny_unknown_fields` only rejects misplaced keys
+    // (e.g. a stdio `auth` block) on struct variants, not unit ones.
+    Stdio {},
 
     /// Host the MCP server on the configuration, using streamable HTTP messages.
     StreamableHttp {
@@ -108,6 +109,12 @@ pub enum Transport {
         #[serde(default)]
         host_validation: HostValidationConfig,
     },
+}
+
+impl Default for Transport {
+    fn default() -> Self {
+        Transport::Stdio {}
+    }
 }
 
 impl Transport {

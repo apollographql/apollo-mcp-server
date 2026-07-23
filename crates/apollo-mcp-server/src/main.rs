@@ -51,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     // For stdio transport, spawn a background config watcher that exits the process
     // when the config file changes, since the stdio event loop blocks and never
     // polls the config watch stream in the state machine.
-    if matches!(config.transport, Transport::Stdio) {
+    if matches!(config.transport, Transport::Stdio {}) {
         if let Some(ref path) = config_path {
             spawn_stdio_config_watcher(path.clone());
         }

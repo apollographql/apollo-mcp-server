@@ -253,7 +253,7 @@ impl Starting {
                     }
                 });
             }
-            Transport::Stdio => {
+            Transport::Stdio {} => {
                 info!("Starting MCP server in stdio mode");
                 let service = running
                     .clone()
