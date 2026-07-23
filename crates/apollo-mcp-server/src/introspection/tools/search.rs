@@ -55,12 +55,20 @@ pub struct Search {
 /// Input for the search tool.
 #[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
-    /// The search terms
+    /// The search terms as a short natural-language phrase expressing ONE intent,
+    /// including the high-signal domain nouns you expect in the target operation
+    /// or type name (e.g. "incident severity status", "send a direct message to a
+    /// Slack user"). Group concepts from the same domain into one query; put
+    /// concepts from different domains in separate search calls. The semantic arm
+    /// reads intent; the lexical arm reads the nouns — so both a phrase and its key
+    /// terms help. (Passed as one or more strings, joined into a single query.)
     terms: Vec<String>,
     /// Maximum number of results to return (default 10, max 50).
     #[serde(default)]
     limit: Option<usize>,
-    /// Optional service scope to restrict results to (e.g. "slack"). Omit to search all services.
+    /// Restrict the search to a single subgraph/service. Use only to disambiguate a
+    /// broad term that spans domains; leave unset otherwise so ranking spans all
+    /// services.
     #[serde(default)]
     scope: Option<String>,
 }
@@ -217,7 +225,7 @@ impl Search {
     ) -> Result<Self, IndexingError> {
         let locked = &schema.try_read()?;
         let default_description = format!(
-            "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
+            "Search the federated GraphQL schema for operations and types relevant to a query. Returns complete type definitions, including all related types needed to construct GraphQL operations. Hybrid retriever: a lexical (keyword/BM25) arm and a semantic (dense-embedding) arm combined with Reciprocal Rank Fusion — provide a short natural-language query that expresses one intent and contains the domain nouns you expect in the target operation or type name; because either arm can surface a result, exact-match identifiers still rank even when phrasing is imperfect. Prefer one query per domain. Instructions: This is the tool for finding operations and types — use it, not introspect, for discovery. Reach for introspect only to confirm the exact fields and argument shapes of an operation you've already found here. Avoid repeating queries you've already run, for more efficient exploration.{}",
             if minify {
                 " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements"
             } else {
