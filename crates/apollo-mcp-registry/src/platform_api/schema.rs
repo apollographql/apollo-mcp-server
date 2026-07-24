@@ -437,6 +437,58 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn polling_continues_after_permanent_error() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(FULL_QUERY))
+            .respond_with(json_response(schema_response(
+                "hash-1",
+                "type Query { hello: String }",
+            )))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        // A permanent error mid-polling (here, the publication disappearing)
+        // must keep the last-known-good schema and keep polling, unlike the
+        // same error at startup which ends the stream.
+        Mock::given(method("POST"))
+            .and(body_string_contains(HASH_QUERY))
+            .respond_with(json_response(no_publication_response()))
+            .up_to_n_times(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(HASH_QUERY))
+            .respond_with(json_response(hash_response("hash-2")))
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(FULL_QUERY))
+            .respond_with(json_response(schema_response(
+                "hash-2",
+                "type Query { hello: String, world: String }",
+            )))
+            .mount(&mock_server)
+            .await;
+
+        let mut stream =
+            stream_published_schema("graph@main".to_string(), platform_api_config(&mock_server));
+
+        assert_update_sdl(
+            next_event(&mut stream).await,
+            "type Query { hello: String }",
+        );
+        assert_update_sdl(
+            next_event(&mut stream).await,
+            "type Query { hello: String, world: String }",
+        );
+    }
+
+    #[tokio::test]
     async fn transient_error_at_startup_retries() {
         let mock_server = MockServer::start().await;
 

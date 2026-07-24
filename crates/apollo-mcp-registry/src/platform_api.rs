@@ -78,7 +78,16 @@ where
     let response_body: graphql_client::Response<Query::ResponseData> =
         res.json().await.map_err(RequestError::Request)?;
     match response_body.data {
-        Some(data) => Ok(data),
+        Some(data) => {
+            // A GraphQL response can carry errors alongside partial data: a field
+            // error nulls its field and reports the reason in `errors` while data
+            // is still present. Log them so the cause isn't lost when a caller
+            // later trips over the nulled field.
+            if let Some(errors) = response_body.errors.filter(|errors| !errors.is_empty()) {
+                tracing::warn!("GraphQL response returned errors: {}", join_errors(errors));
+            }
+            Ok(data)
+        }
         None => Err(RequestError::Response(graphql_errors_message(
             response_body.errors,
         ))),
@@ -89,16 +98,19 @@ where
 /// failures such as invalid keys as HTTP 200 with only `errors`, so these
 /// messages are often the only diagnostic available.
 fn graphql_errors_message(errors: Option<Vec<graphql_client::Error>>) -> String {
-    let messages = errors
-        .unwrap_or_default()
+    match errors.filter(|errors| !errors.is_empty()) {
+        Some(errors) => join_errors(errors),
+        None => "missing data".to_string(),
+    }
+}
+
+/// Join GraphQL error messages into a single comma-separated string.
+fn join_errors(errors: Vec<graphql_client::Error>) -> String {
+    errors
         .into_iter()
         .map(|error| error.message)
-        .collect::<Vec<_>>();
-    if messages.is_empty() {
-        "missing data".to_string()
-    } else {
-        messages.join(", ")
-    }
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Configuration for polling Apollo Uplink.
