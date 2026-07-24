@@ -77,9 +77,28 @@ where
 
     let response_body: graphql_client::Response<Query::ResponseData> =
         res.json().await.map_err(RequestError::Request)?;
-    response_body
-        .data
-        .ok_or(RequestError::Response("missing data".to_string()))
+    match response_body.data {
+        Some(data) => Ok(data),
+        None => Err(RequestError::Response(graphql_errors_message(
+            response_body.errors,
+        ))),
+    }
+}
+
+/// Summarize the `errors` of a GraphQL response with no `data`. GraphOS reports
+/// failures such as invalid keys as HTTP 200 with only `errors`, so these
+/// messages are often the only diagnostic available.
+fn graphql_errors_message(errors: Option<Vec<graphql_client::Error>>) -> String {
+    let messages = errors
+        .unwrap_or_default()
+        .into_iter()
+        .map(|error| error.message)
+        .collect::<Vec<_>>();
+    if messages.is_empty() {
+        "missing data".to_string()
+    } else {
+        messages.join(", ")
+    }
 }
 
 /// Configuration for polling Apollo Uplink.
@@ -216,6 +235,33 @@ mod test {
 
         let error = RequestError::Request(reqwest_error);
         assert!(error.is_transient());
+    }
+
+    #[test]
+    fn graphql_errors_message_joins_error_messages() {
+        let errors = vec![
+            graphql_client::Error {
+                message: "Unauthorized".to_string(),
+                locations: None,
+                path: None,
+                extensions: None,
+            },
+            graphql_client::Error {
+                message: "Invalid key".to_string(),
+                locations: None,
+                path: None,
+                extensions: None,
+            },
+        ];
+        assert_eq!(
+            graphql_errors_message(Some(errors)),
+            "Unauthorized, Invalid key"
+        );
+    }
+
+    #[test]
+    fn graphql_errors_message_falls_back_when_no_errors() {
+        assert_eq!(graphql_errors_message(None), "missing data");
     }
 
     #[test]

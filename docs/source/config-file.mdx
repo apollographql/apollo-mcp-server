@@ -245,11 +245,11 @@ The default value for `source` is `"uplink"`.
 | Local   | `source` | `"local"`   | Load schema from local file                                                                                                                            |
 | Local   | `path`   | `FilePath`  | Path to the GraphQL schema                                                                                                                             |
 | Uplink  | `source` | `"uplink"`  | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference                                                                    |
-| GraphOS | `source` | `"graphos"` | Fetch the latest published schema from the GraphOS Platform API. Unlike `uplink`, this works for non-federated graphs. Note: This requires an Apollo key and graph reference |
+| GraphOS | `source` | `"graphos"` | Fetch the latest published schema from the GraphOS Platform API. Use this source for non-federated graphs, which uplink can't serve. Note: This requires an Apollo key and graph reference |
 
 <Note>
 
-When using `source: graphos`, MCP Server polls GraphOS for schema changes periodically, so a new schema publication is picked up without a restart.
+When you use `source: graphos`, MCP Server polls GraphOS for schema changes periodically and applies a new schema publication without a restart.
 
 </Note>
 

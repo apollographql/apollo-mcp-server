@@ -90,12 +90,26 @@ pub fn stream_published_schema(
                             break;
                         }
                     }
+                    Err(err) if err.is_transient() => {
+                        tracing::warn!(
+                            "Failed to fetch published schema with transient error, will retry: {err}"
+                        );
+                    }
                     Err(err) => {
-                        tracing::warn!("Failed to fetch published schema, will retry: {err}");
+                        tracing::error!(
+                            "Failed to fetch published schema with permanent error, keeping current schema and retrying: {err}"
+                        );
                     }
                 },
+                Err(err) if err.is_transient() => {
+                    tracing::warn!(
+                        "Failed to poll published schema with transient error, will retry: {err}"
+                    );
+                }
                 Err(err) => {
-                    tracing::warn!("Failed to poll published schema, will retry: {err}");
+                    tracing::error!(
+                        "Failed to poll published schema with permanent error, keeping current schema and retrying: {err}"
+                    );
                 }
             }
         }
@@ -464,6 +478,32 @@ mod tests {
 
         let mut stream =
             stream_published_schema("bad ref".to_string(), platform_api_config(&mock_server));
+
+        let event = timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("expected stream to end before timeout");
+        assert!(event.is_none());
+    }
+
+    #[tokio::test]
+    async fn graphql_errors_at_startup_end_stream() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(body_string_contains(FULL_QUERY))
+            .respond_with(json_response(
+                serde_json::json!({
+                    "data": null,
+                    "errors": [{ "message": "Unauthorized" }]
+                })
+                .to_string(),
+            ))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let mut stream =
+            stream_published_schema("graph@main".to_string(), platform_api_config(&mock_server));
 
         let event = timeout(Duration::from_secs(2), stream.next())
             .await

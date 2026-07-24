@@ -46,4 +46,24 @@ mod tests {
         let error = CollectionError::from(RequestError::HeaderValue(invalid_value));
         assert!(matches!(error, CollectionError::HeaderValue(_)));
     }
+
+    #[tokio::test]
+    async fn from_request_error_maps_request() {
+        use wiremock::matchers::any;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&mock_server)
+            .await;
+        let reqwest_error = reqwest::get(mock_server.uri())
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap_err();
+
+        let error = CollectionError::from(RequestError::Request(reqwest_error));
+        assert!(matches!(error, CollectionError::Request(_)));
+    }
 }
