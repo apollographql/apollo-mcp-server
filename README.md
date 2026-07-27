@@ -1,3 +1,5 @@
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.apollographql%2Fgraphos-mcp-tools.svg)](https://mcptoplist.com/server/io.github.apollographql%2Fgraphos-mcp-tools)
+
 <div align="center">
 <a href="https://www.apollographql.com/"><img src="https://raw.githubusercontent.com/apollographql/apollo-client-devtools/main/assets/apollo-wordmark.svg" height="100" alt="Apollo Client"></a>
 </div>
