@@ -208,7 +208,7 @@ impl Search {
     /// can inject a `FakeEmbedder`/failing stub and exercise hybrid + degradation
     /// paths offline. Production goes through `new`.
     #[allow(clippy::too_many_arguments)]
-    fn new_with_embedder(
+    pub(crate) fn new_with_embedder(
         schema: Arc<RwLock<Valid<Schema>>>,
         allow_mutations: bool,
         leaf_depth: usize,
