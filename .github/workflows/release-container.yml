@@ -5,6 +5,12 @@ on:
     types: [closed]
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version tag to publish (e.g., 1.15.0-gfa.1)
+        required: true
+        type: string
   workflow_call:
     inputs:
       version:
