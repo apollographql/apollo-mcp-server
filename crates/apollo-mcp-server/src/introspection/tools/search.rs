@@ -61,7 +61,8 @@ pub struct Input {
     /// Slack user"). Group concepts from the same domain into one query; put
     /// concepts from different domains in separate search calls. The semantic arm
     /// reads intent; the lexical arm reads the nouns — so both a phrase and its key
-    /// terms help. (Passed as one or more strings, joined into a single query.)
+    /// terms help. Always pass as an array of strings — e.g. ["incident severity", "status"] — and
+    /// wrap even a single phrase as a one-element array: ["send a direct message to a Slack user"].
     terms: Vec<String>,
     /// Maximum number of results to return (default 10, max 50).
     #[serde(default)]
