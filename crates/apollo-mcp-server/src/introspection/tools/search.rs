@@ -56,9 +56,8 @@ pub struct Search {
 #[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
     /// The search terms, as an array of strings — wrap even a single phrase as a
-    /// one-element array, e.g. ["send a direct message to a Slack user"]. Prefer a
-    /// short natural-language phrase carrying the domain nouns you expect in the
-    /// target operation or type name.
+    /// one-element array, e.g. ["send a direct message to a Slack user"]. Include the
+    /// domain nouns you expect in the target operation or type name.
     terms: Vec<String>,
     /// Maximum number of results to return (default 10, max 50).
     #[serde(default)]
