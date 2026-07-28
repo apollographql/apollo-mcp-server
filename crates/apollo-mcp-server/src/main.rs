@@ -100,6 +100,10 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
     let schema_source = match config.schema {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
         runtime::SchemaSource::Uplink => SchemaSource::Registry(config.graphos.uplink_config()?),
+        runtime::SchemaSource::Graphos => SchemaSource::PlatformApi {
+            graph_ref: config.graphos.graph_ref()?,
+            platform_api_config: config.graphos.platform_api_config()?,
+        },
     };
 
     let operation_source = match config.operations {

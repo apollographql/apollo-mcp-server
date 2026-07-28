@@ -240,11 +240,18 @@ These fields are under the top-level `overrides` key.
 These fields are under the top-level `schema` key. The available fields depend on the value of the nested `source` key.
 The default value for `source` is `"uplink"`.
 
-| Source | Option   | Type       | Description                                                                         |
-| :----- | :------- | :--------- | :---------------------------------------------------------------------------------- |
-| Local  | `source` | `"local"`  | Load schema from local file                                                         |
-| Local  | `path`   | `FilePath` | Path to the GraphQL schema                                                          |
-| Uplink | `source` | `"uplink"` | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference |
+| Source  | Option   | Type        | Description                                                                                                                                            |
+| :------ | :------- | :---------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Local   | `source` | `"local"`   | Load schema from local file                                                                                                                            |
+| Local   | `path`   | `FilePath`  | Path to the GraphQL schema                                                                                                                             |
+| Uplink  | `source` | `"uplink"`  | Fetch the schema from uplink. Note: This requires an Apollo key and graph reference                                                                    |
+| GraphOS | `source` | `"graphos"` | Fetch the latest published schema from the GraphOS Platform API. Use this source for non-federated graphs, which uplink can't serve. Note: This requires an Apollo key and graph reference |
+
+<Note>
+
+When you use `source: graphos`, MCP Server polls GraphOS for schema changes periodically and applies a new schema publication without a restart.
+
+</Note>
 
 ### Transport
 

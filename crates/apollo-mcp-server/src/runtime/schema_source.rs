@@ -13,4 +13,19 @@ pub enum SchemaSource {
     /// Fetch the schema from uplink
     #[default]
     Uplink,
+
+    /// Fetch the latest published schema from the GraphOS Platform API.
+    /// Unlike uplink, this works for non-federated graphs.
+    Graphos,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_graphos_source() {
+        let source: SchemaSource = serde_yaml::from_str("source: graphos").unwrap();
+        assert!(matches!(source, SchemaSource::Graphos));
+    }
 }

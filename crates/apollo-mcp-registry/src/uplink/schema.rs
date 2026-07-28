@@ -8,6 +8,8 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::platform_api::PlatformApiConfig;
+use crate::platform_api::schema::stream_published_schema;
 use crate::uplink::UplinkConfig;
 use crate::uplink::stream_from_uplink;
 use derive_more::Display;
@@ -65,6 +67,14 @@ pub enum SchemaSource {
     /// Apollo managed federation.
     #[display("Registry")]
     Registry(UplinkConfig),
+
+    /// The latest published schema of a graph variant, fetched from the GraphOS
+    /// Platform API. Unlike Uplink, this supports non-federated graphs.
+    #[display("PlatformApi")]
+    PlatformApi {
+        graph_ref: String,
+        platform_api_config: PlatformApiConfig,
+    },
 
     /// A list of URLs to fetch the schema from.
     #[display("URLs")]
@@ -168,6 +178,10 @@ impl SchemaSource {
                     })
                     .boxed()
             }
+            SchemaSource::PlatformApi {
+                graph_ref,
+                platform_api_config,
+            } => stream_published_schema(graph_ref, platform_api_config),
             SchemaSource::URLs { urls } => {
                 futures::stream::once(async move {
                     fetch_supergraph_from_first_viable_url(&urls).await
@@ -283,6 +297,49 @@ mod tests {
 
         // First update fails because the file is invalid.
         assert!(matches!(stream.next().await.unwrap(), NoMoreSchema));
+    }
+
+    #[test(tokio::test)]
+    async fn schema_by_platform_api() {
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "application/json")
+                    .set_body_string(
+                        serde_json::json!({
+                            "data": {
+                                "variant": {
+                                    "__typename": "GraphVariant",
+                                    "latestPublication": {
+                                        "schema": {
+                                            "hash": "hash-1",
+                                            "document": "type Query { hello: String }"
+                                        }
+                                    }
+                                }
+                            }
+                        })
+                        .to_string(),
+                    ),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut stream = SchemaSource::PlatformApi {
+            graph_ref: "graph@main".to_string(),
+            platform_api_config: PlatformApiConfig::new(
+                secrecy::SecretString::from("test-key"),
+                Duration::from_secs(10),
+                Duration::from_secs(5),
+                Some(Url::parse(&mock_server.uri()).unwrap()),
+            ),
+        }
+        .into_stream();
+
+        assert!(
+            matches!(stream.next().await.unwrap(), UpdateSchema(schema) if schema.sdl == "type Query { hello: String }")
+        );
     }
 
     const SCHEMA_1: &str = "schema1";
