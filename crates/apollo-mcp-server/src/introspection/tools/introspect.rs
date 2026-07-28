@@ -125,7 +125,7 @@ fn tool_description(
         "Get GraphQL type information - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements;".to_string()
     } else {
         format!(
-            "Get information about a specific GraphQL type by name — its exact fields and argument shapes. Use search to discover operations and types; use this tool to confirm an operation you've already found before executing it. Not for browsing the schema from the root {}/{} types.",
+            "Get information about a given GraphQL type defined in the schema. Instructions: Use this tool to explore the schema by providing specific type names. Start with the root query ({}) or mutation ({}) types to discover available fields. If the search tool is also available, use this tool first to get the fields, then use the search tool with relevant field return types and argument input types (ignore default GraphQL scalars) as search terms.",
             root_query_type.unwrap_or("Query"),
             root_mutation_type.unwrap_or("Mutation")
         )
@@ -165,12 +165,15 @@ mod tests {
 
         let description = introspect.tool.description.unwrap();
 
-        assert!(description.contains("Get information about a specific GraphQL type by name"));
-        assert!(description.contains("use this tool to confirm an operation you've already found"));
+        assert!(
+            description
+                .contains("Get information about a given GraphQL type defined in the schema")
+        );
+        assert!(description.contains("Instructions: Use this tool to explore the schema"));
         // Should not contain minification legend
         assert!(!description.contains("T=type,I=input"));
-        // Should steer discovery to the search tool
-        assert!(description.contains("Use search to discover operations and types"));
+        // Should mention conditional search tool usage
+        assert!(description.contains("If the search tool is also available"));
     }
 
     #[rstest]

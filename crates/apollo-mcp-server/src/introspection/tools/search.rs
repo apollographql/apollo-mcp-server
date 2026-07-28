@@ -225,7 +225,7 @@ impl Search {
     ) -> Result<Self, IndexingError> {
         let locked = &schema.try_read()?;
         let default_description = format!(
-            "Search the federated GraphQL schema for operations and types relevant to a query. Returns complete type definitions, including all related types needed to construct GraphQL operations. Hybrid retriever: a lexical (keyword/BM25) arm and a semantic (dense-embedding) arm combined with Reciprocal Rank Fusion — provide a short natural-language query that expresses one intent and contains the domain nouns you expect in the target operation or type name; because either arm can surface a result, exact-match identifiers still rank even when phrasing is imperfect. Prefer one query per domain. Instructions: This is the tool for finding operations and types — use it, not introspect, for discovery. Reach for introspect only to confirm the exact fields and argument shapes of an operation you've already found here. Avoid repeating queries you've already run, for more efficient exploration.{}",
+            "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
             if minify {
                 " - T=type,I=input,E=enum,U=union,F=interface;s=String,i=Int,f=Float,b=Boolean,d=ID;@D=deprecated;!=required,[]=list,<>=implements"
             } else {
@@ -628,12 +628,10 @@ mod tests {
 
         assert!(
             description
-                .contains("Search the federated GraphQL schema for operations and types relevant")
+                .contains("Search a GraphQL schema for types matching the provided search terms")
         );
-        assert!(
-            description.contains("Instructions: This is the tool for finding operations and types")
-        );
-        assert!(description.contains("Avoid repeating queries you've already run"));
+        assert!(description.contains("Instructions: If the introspect tool is also available"));
+        assert!(description.contains("Avoid reusing previously searched terms"));
         // Should not contain minification legend
         assert!(!description.contains("T=type,I=input"));
     }
