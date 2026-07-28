@@ -55,14 +55,10 @@ pub struct Search {
 /// Input for the search tool.
 #[derive(JsonSchema, Deserialize, Debug)]
 pub struct Input {
-    /// The search terms as a short natural-language phrase expressing ONE intent,
-    /// including the high-signal domain nouns you expect in the target operation
-    /// or type name (e.g. "incident severity status", "send a direct message to a
-    /// Slack user"). Group concepts from the same domain into one query; put
-    /// concepts from different domains in separate search calls. The semantic arm
-    /// reads intent; the lexical arm reads the nouns — so both a phrase and its key
-    /// terms help. Always pass as an array of strings — e.g. ["incident severity", "status"] — and
-    /// wrap even a single phrase as a one-element array: ["send a direct message to a Slack user"].
+    /// The search terms, as an array of strings — wrap even a single phrase as a
+    /// one-element array, e.g. ["send a direct message to a Slack user"]. Prefer a
+    /// short natural-language phrase carrying the domain nouns you expect in the
+    /// target operation or type name.
     terms: Vec<String>,
     /// Maximum number of results to return (default 10, max 50).
     #[serde(default)]
