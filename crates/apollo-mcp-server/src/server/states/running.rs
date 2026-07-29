@@ -128,20 +128,32 @@ impl Running {
             operations.len(),
             serde_json::to_string_pretty(&operations).unwrap_or_default()
         );
+        // Keep a clone for the lock-free rebuild below: the original is moved
+        // into `self.schema` on the next line.
+        let schema_for_rebuild = schema.clone();
         // Update the schema itself
         *self.schema.write().await = schema;
 
+        // Publish the new operations and RELEASE the operations lock BEFORE the
+        // search-index rebuild. The rebuild re-embeds the corpus (up to ~140s on
+        // a cold cache); holding this write lock across it would starve every
+        // list_tools / call_tool / initialize request, which take
+        // `operations.read()`. Nothing below needs the lock.
         *operations_lock = operations;
-
-        // Drop the operations lock before notifying peers. The operations are
-        // already written, so clients will see the updated list when they
-        // re-fetch. Holding the lock during notification can starve all
-        // list_tools / call_tool / initialize requests if any peer notification
-        // is slow or hangs.
         drop(operations_lock);
 
-        // Notify MCP clients that tools have changed
+        // The tool list is derived from the (now-published) operations, so
+        // notify clients immediately rather than making them wait out the rebuild.
         Self::notify_tool_list_changed(self.peers.clone()).await;
+
+        // Rebuild the search index off the operations lock so it reflects the
+        // new schema instead of serving stale operation hits. The old index
+        // keeps serving `search` until rebuild swaps the new one in atomically.
+        if let Some(search) = &self.search_tool
+            && let Err(error) = search.rebuild(&schema_for_rebuild).await
+        {
+            error!("Failed to rebuild search index on schema update: {error}");
+        }
     }
 
     /// Update a running server with new operations.
@@ -802,6 +814,88 @@ mod tests {
     };
 
     use super::*;
+
+    /// Regression test: `update_schema` must not hold the `operations` write
+    /// lock across `search.rebuild()`. In the worst case a rebuild re-embeds the
+    /// whole corpus (~140s on a cold cache); holding the lock across it would
+    /// starve every list_tools / call_tool / initialize request (they take
+    /// `operations.read()`).
+    mod rebuild_locking {
+        use std::time::Duration;
+
+        use apollo_schema_search::{EmbedError, Embedder};
+
+        use super::*;
+
+        /// Embedder that blocks in `embed()`, making a rebuild observably long.
+        struct SlowEmbedder {
+            dim: usize,
+            delay: Duration,
+        }
+        impl Embedder for SlowEmbedder {
+            fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, EmbedError> {
+                // Runs on a spawn_blocking thread, so a blocking sleep is fine.
+                std::thread::sleep(self.delay);
+                Ok(texts.iter().map(|_| vec![0.0f32; self.dim]).collect())
+            }
+            fn dimensions(&self) -> usize {
+                self.dim
+            }
+        }
+
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn rebuild_does_not_hold_operations_lock() {
+            // One query field → the rebuild enumerates 1 op and invokes the slow
+            // embedder, so the rebuild is observably long.
+            let schema =
+                Schema::parse_and_validate("type Query { hi: String }", "s.graphql").unwrap();
+            let schema_arc = Arc::new(RwLock::new(schema.clone()));
+
+            let delay = Duration::from_millis(700);
+            let search = Search::new_with_embedder(
+                schema_arc.clone(),
+                false, // allow_mutations
+                1,     // leaf_depth
+                1,     // flatten_depth
+                15_000_000,
+                10, // default_limit
+                50, // max_limit
+                false,
+                None,
+                Some(Arc::new(SlowEmbedder { dim: 8, delay }) as Arc<dyn Embedder>),
+                60.0,
+                "slow-model",
+                None, // cache_url None → always embeds, so the rebuild runs the SlowEmbedder
+            )
+            .expect("build search tool");
+
+            let operations = Arc::new(RwLock::new(vec![]));
+            let running = Arc::new(Running {
+                operations: operations.clone(),
+                search_tool: Some(search),
+                ..test_running(schema_arc.clone())
+            });
+
+            // Kick off a schema update; its rebuild embeds (~700ms) off the async
+            // runtime via spawn_blocking.
+            let r = running.clone();
+            let update = tokio::spawn(async move { r.update_schema(schema).await });
+
+            // Let update_schema publish operations, drop the lock, and enter rebuild.
+            tokio::time::sleep(Duration::from_millis(100)).await;
+
+            // The operations lock must be free during the rebuild. If it were held
+            // across rebuild(), this read would block ~600ms and the 300ms timeout
+            // would fail.
+            let got = tokio::time::timeout(Duration::from_millis(300), operations.read()).await;
+            assert!(
+                got.is_ok(),
+                "operations.read() blocked during rebuild — the operations lock is held across search.rebuild()"
+            );
+
+            update.await.expect("update_schema task panicked");
+        }
+    }
 
     fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
         Running {

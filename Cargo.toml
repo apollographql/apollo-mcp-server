@@ -5,6 +5,7 @@ members = [
   "crates/apollo-mcp-registry",
   "crates/apollo-mcp-rhai",
   "crates/apollo-schema-index",
+  "crates/apollo-schema-search",
 ]
 
 [workspace.package]

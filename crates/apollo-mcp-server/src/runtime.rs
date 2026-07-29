@@ -291,6 +291,18 @@ mod test {
                         leaf_depth: 1,
                         minify: false,
                         hint: None,
+                        default_limit: 10,
+                        max_limit: 50,
+                        flatten_depth: 2,
+                        semantic: SemanticConfig {
+                            enabled: true,
+                            model: "bge-small-en-v1.5",
+                            inference_threads: 1,
+                            cache_url: None,
+                        },
+                        hybrid: HybridConfig {
+                            rrf_k: 60.0,
+                        },
                     },
                     validate: ValidateConfig {
                         enabled: false,

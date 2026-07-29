@@ -12,4 +12,6 @@ pub enum IndexingError {
 pub enum SearchError {
     #[error("Search error: {0}")]
     TantivyError(#[from] TantivyError),
+    #[error("embedding failed: {0}")]
+    Embedding(String),
 }
