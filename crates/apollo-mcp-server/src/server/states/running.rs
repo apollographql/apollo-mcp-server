@@ -23,7 +23,7 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -613,6 +613,27 @@ impl Running {
     }
 }
 
+/// Echoes the client-requested protocol version when rmcp supports it,
+/// otherwise falls back to `server_fallback`.
+///
+/// Mirrors rmcp's `negotiate_protocol_version`, which is `pub(crate)` and so
+/// can't be called directly.
+fn negotiate_protocol_version(
+    client_requested: &ProtocolVersion,
+    server_fallback: ProtocolVersion,
+) -> ProtocolVersion {
+    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested) {
+        client_requested.clone()
+    } else {
+        warn!(
+            client_requested = %client_requested,
+            server_fallback = %server_fallback,
+            "client requested unsupported protocol version; falling back to server default"
+        );
+        server_fallback
+    }
+}
+
 impl ServerHandler for Running {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
@@ -638,10 +659,15 @@ impl ServerHandler for Running {
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
-        // rmcp negotiates the protocol version during `initialize`: it echoes the
-        // client's requested version when supported and otherwise falls back to
-        // the version advertised by `get_info`.
-        Ok(self.get_info())
+        // Negotiate the protocol version here rather than relying on rmcp's
+        // service layer: stateless streamable HTTP dispatches requests without
+        // the initialize handshake, so this is the only place negotiation can
+        // happen on that path (issue #794). On stdio and stateful HTTP, rmcp
+        // re-runs the same logic and arrives at the same answer.
+        let mut info = self.get_info();
+        info.protocol_version =
+            negotiate_protocol_version(&request.protocol_version, info.protocol_version);
+        Ok(info)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -763,8 +789,8 @@ impl ServerHandler for Running {
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
         capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise the latest supported version as the default. rmcp negotiates
-        // the per-client value during `initialize`, echoing the client's requested
+        // Advertise the latest supported version as the default. Our `initialize`
+        // handler negotiates the per-client value, echoing the client's requested
         // version when supported and otherwise falling back to this one.
         let protocol_version = ProtocolVersion::LATEST;
 
@@ -2822,6 +2848,79 @@ mod integration_tests {
             drop(reader);
             drop(client_w);
             let _ = server.await;
+        }
+
+        fn create_stateless_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig::default().with_stateful_mode(false),
+            )
+        }
+
+        #[tokio::test]
+        async fn stateless_echoes_supported_version_when_client_requests_older_version() {
+            // Regression for #794: stateless mode skips rmcp's service-layer
+            // negotiation, so `initialize` must negotiate the protocol version
+            // itself rather than always answering with the latest.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_stateless_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2025-06-18"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+        }
+
+        #[tokio::test]
+        async fn stateless_negotiates_down_when_client_requests_unknown_version() {
+            // A client offering a version rmcp doesn't know must fall back to
+            // our latest supported version rather than having it echoed back.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_stateless_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2999-01-01"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+        }
+
+        #[tokio::test]
+        async fn stateless_echoes_known_version_newer_than_latest() {
+            // Pins intentional rmcp parity: rmcp's KNOWN_VERSIONS includes
+            // 2026-07-28 even though its LATEST (our advertised default) is
+            // 2025-11-25, so a client requesting it gets it echoed rather than
+            // negotiated down. We can't clamp this locally: on stdio and
+            // stateful HTTP, rmcp's service layer re-negotiates after our
+            // handler and would echo the known version anyway, so clamping
+            // would make the paths disagree. If this test breaks after an
+            // rmcp upgrade, rmcp changed its negotiation semantics; re-check
+            // all three paths still agree before updating the assertion.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_stateless_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2026-07-28"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2026-07-28");
         }
     }
 
