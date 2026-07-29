@@ -659,11 +659,9 @@ impl ServerHandler for Running {
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
-        // Negotiate the protocol version here rather than relying on rmcp's
-        // service layer: stateless streamable HTTP dispatches requests without
-        // the initialize handshake, so this is the only place negotiation can
-        // happen on that path (issue #794). On stdio and stateful HTTP, rmcp
-        // re-runs the same logic and arrives at the same answer.
+        // Echo the client's requested protocol version when supported,
+        // falling back to our latest otherwise. Negotiating here ensures
+        // consistent behavior across all transports (#794).
         let mut info = self.get_info();
         info.protocol_version =
             negotiate_protocol_version(&request.protocol_version, info.protocol_version);
@@ -2863,9 +2861,8 @@ mod integration_tests {
 
         #[tokio::test]
         async fn stateless_echoes_supported_version_when_client_requests_older_version() {
-            // Regression for #794: stateless mode skips rmcp's service-layer
-            // negotiation, so `initialize` must negotiate the protocol version
-            // itself rather than always answering with the latest.
+            // Regression for #794: a stateless client requesting a supported
+            // older version must get that version echoed back, not the latest.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_stateless_service(running, Arc::clone(&session_manager));
@@ -2900,15 +2897,11 @@ mod integration_tests {
 
         #[tokio::test]
         async fn stateless_echoes_known_version_newer_than_latest() {
-            // Pins intentional rmcp parity: rmcp's KNOWN_VERSIONS includes
-            // 2026-07-28 even though its LATEST (our advertised default) is
-            // 2025-11-25, so a client requesting it gets it echoed rather than
-            // negotiated down. We can't clamp this locally: on stdio and
-            // stateful HTTP, rmcp's service layer re-negotiates after our
-            // handler and would echo the known version anyway, so clamping
-            // would make the paths disagree. If this test breaks after an
-            // rmcp upgrade, rmcp changed its negotiation semantics; re-check
-            // all three paths still agree before updating the assertion.
+            // A client may request a supported version newer than the server's
+            // advertised default; it is echoed back rather than negotiated
+            // down, matching negotiation behavior on all other transports.
+            // If this test breaks after an rmcp upgrade, verify all transports
+            // still negotiate consistently before updating the assertion.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_stateless_service(running, Arc::clone(&session_manager));
