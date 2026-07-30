@@ -51,10 +51,26 @@ const QUERIES: &[(&str, &str, &[&str])] = &[
     ("unscoped-customer-email", "unscoped", &["customer email"]),
     // Scoped
     ("scoped-billing-invoice", "scoped", &["billing invoice"]),
-    ("scoped-inventory-product-exact", "scoped", &["Inventory_Product"]),
-    ("scoped-support-ticket-status", "scoped", &["support ticket status"]),
-    ("scoped-accounts-reset-password-field", "scoped", &["accounts_resetPassword"]),
-    ("scoped-shipping-carrier-multi-term", "scoped", &["shipping", "carrier"]),
+    (
+        "scoped-inventory-product-exact",
+        "scoped",
+        &["Inventory_Product"],
+    ),
+    (
+        "scoped-support-ticket-status",
+        "scoped",
+        &["support ticket status"],
+    ),
+    (
+        "scoped-accounts-reset-password-field",
+        "scoped",
+        &["accounts_resetPassword"],
+    ),
+    (
+        "scoped-shipping-carrier-multi-term",
+        "scoped",
+        &["shipping", "carrier"],
+    ),
     // Known-hard: short natural language vs. prefixed names
     ("hard-track-my-package", "hard", &["track my package"]),
     ("hard-refund-a-payment", "hard", &["refund a payment"]),
@@ -169,7 +185,10 @@ async fn capture_baseline() -> Baseline {
         // The end-to-end MCP tool result: the set of type definitions returned.
         let input: Input = serde_json::from_value(serde_json::json!({ "terms": terms }))
             .expect("Failed to build search input");
-        let result = search.execute(input).await.expect("Search execution failed");
+        let result = search
+            .execute(input)
+            .await
+            .expect("Search execution failed");
         let mut result_types: Vec<String> = result
             .content
             .into_iter()
@@ -235,8 +254,7 @@ async fn baseline_reproduces_todays_search() {
     let committed = read_committed_baseline();
 
     assert_eq!(
-        committed.captured_with,
-        current.captured_with,
+        committed.captured_with, current.captured_with,
         "Search capture parameters changed; re-capture the baseline if this is intentional"
     );
     assert_eq!(committed.k, current.k, "top-k changed (MAX_SEARCH_RESULTS)");
@@ -250,7 +268,8 @@ async fn baseline_reproduces_todays_search() {
 
     for (committed_query, current_query) in committed.queries.iter().zip(current.queries.iter()) {
         assert_eq!(
-            committed_query, current_query,
+            committed_query,
+            current_query,
             "Search results for baseline query '{}' (terms {:?}) no longer match the \
              checked-in AIR-399 baseline.\n\
              expected top-{} paths: {:#?}\n\
