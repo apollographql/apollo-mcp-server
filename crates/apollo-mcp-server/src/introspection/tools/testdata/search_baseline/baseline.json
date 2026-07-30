@@ -1,0 +1,317 @@
+{
+  "description": "AIR-399 search-quality baseline: expected top-k results of today's apollo-mcp-server search over the offline catalog fixture. Parity gate for the Discovery search migration (S2.5). Captured, not hand-authored; re-capture with: cargo test -p apollo-mcp-server capture_search_baseline -- --ignored",
+  "captured_with": {
+    "allow_mutations": true,
+    "leaf_depth": 1,
+    "index_memory_bytes": 50000000,
+    "minify": false,
+    "max_type_matches": 10,
+    "max_paths_per_type": 3,
+    "short_path_boost_factor": 0.5,
+    "parent_match_boost_factor": 0.2
+  },
+  "k": 5,
+  "queries": [
+    {
+      "id": "unscoped-invoice",
+      "coverage": "unscoped",
+      "terms": [
+        "invoice"
+      ],
+      "top_paths": [
+        "Query -> billing_invoice(ID) -> Billing_Invoice -> status -> Billing_InvoiceStatus",
+        "Query -> billing_invoices(Billing_InvoiceFilter,Int) -> Billing_Invoice -> status -> Billing_InvoiceStatus",
+        "Query -> order(ID) -> Order -> invoice -> Billing_Invoice -> status -> Billing_InvoiceStatus",
+        "Query -> billing_invoice(ID) -> Billing_Invoice",
+        "Query -> billing_invoices(Billing_InvoiceFilter,Int) -> Billing_Invoice"
+      ],
+      "result_types": [
+        "Billing_Invoice",
+        "Billing_InvoiceFilter",
+        "Billing_InvoiceStatus",
+        "Order",
+        "Query"
+      ]
+    },
+    {
+      "id": "unscoped-product",
+      "coverage": "unscoped",
+      "terms": [
+        "product"
+      ],
+      "top_paths": [
+        "Query -> inventory_product(String) -> Inventory_Product",
+        "Query -> inventory_products(Int,String) -> Inventory_Product",
+        "Query -> order(ID) -> Order -> lines -> OrderLine -> product -> Inventory_Product",
+        "Query -> order(ID) -> Order -> lines -> OrderLine",
+        "Mutation -> placeOrder(PlaceOrderInput) -> Order -> lines -> OrderLine"
+      ],
+      "result_types": [
+        "Inventory_Product",
+        "Mutation",
+        "Order",
+        "OrderLine",
+        "PlaceOrderInput",
+        "PlaceOrderLineInput",
+        "Query"
+      ]
+    },
+    {
+      "id": "unscoped-order",
+      "coverage": "unscoped",
+      "terms": [
+        "order"
+      ],
+      "top_paths": [
+        "Mutation -> placeOrder(PlaceOrderInput) -> Order -> status -> OrderStatus",
+        "Query -> order(ID) -> Order -> status -> OrderStatus",
+        "Mutation -> placeOrder(PlaceOrderInput) -> Order",
+        "Query -> customer(ID) -> Customer -> orders(Int) -> Order -> status -> OrderStatus",
+        "Query -> order(ID) -> Order"
+      ],
+      "result_types": [
+        "Customer",
+        "Mutation",
+        "Order",
+        "OrderStatus",
+        "PlaceOrderInput",
+        "PlaceOrderLineInput",
+        "Query"
+      ]
+    },
+    {
+      "id": "unscoped-customer-email",
+      "coverage": "unscoped",
+      "terms": [
+        "customer email"
+      ],
+      "top_paths": [
+        "Query -> customer(ID) -> Customer",
+        "Query -> support_ticket(ID) -> Support_Ticket -> customer -> Customer",
+        "Query -> support_tickets(Support_TicketStatus,Int) -> Support_Ticket -> customer -> Customer",
+        "Query -> customers(Int,String) -> CustomerConnection",
+        "Query -> customer(ID) -> Customer -> orders(Int) -> Order"
+      ],
+      "result_types": [
+        "Customer",
+        "CustomerConnection",
+        "Order",
+        "Query",
+        "Support_Ticket",
+        "Support_TicketStatus"
+      ]
+    },
+    {
+      "id": "scoped-billing-invoice",
+      "coverage": "scoped",
+      "terms": [
+        "billing invoice"
+      ],
+      "top_paths": [
+        "Query -> billing_invoice(ID) -> Billing_Invoice",
+        "Query -> billing_invoices(Billing_InvoiceFilter,Int) -> Billing_Invoice",
+        "Query -> billing_invoice(ID) -> Billing_Invoice -> status -> Billing_InvoiceStatus",
+        "Query -> billing_invoices(Billing_InvoiceFilter,Int) -> Billing_Invoice -> status -> Billing_InvoiceStatus",
+        "Query -> order(ID) -> Order -> invoice -> Billing_Invoice"
+      ],
+      "result_types": [
+        "Billing_Invoice",
+        "Billing_InvoiceFilter",
+        "Billing_InvoiceStatus",
+        "Order",
+        "Query"
+      ]
+    },
+    {
+      "id": "scoped-inventory-product-exact",
+      "coverage": "scoped",
+      "terms": [
+        "Inventory_Product"
+      ],
+      "top_paths": [
+        "Query -> inventory_product(String) -> Inventory_Product",
+        "Query -> inventory_products(Int,String) -> Inventory_Product",
+        "Query -> order(ID) -> Order -> lines -> OrderLine -> product -> Inventory_Product",
+        "Query -> inventory_products(Int,String) -> Inventory_Product -> stock -> Inventory_StockLevel",
+        "Mutation -> inventory_receiveStock(String,ID,Int) -> Inventory_StockLevel"
+      ],
+      "result_types": [
+        "Inventory_Product",
+        "Inventory_StockLevel",
+        "Mutation",
+        "Order",
+        "OrderLine",
+        "Query"
+      ]
+    },
+    {
+      "id": "scoped-support-ticket-status",
+      "coverage": "scoped",
+      "terms": [
+        "support ticket status"
+      ],
+      "top_paths": [
+        "Mutation -> support_openTicket(Support_OpenTicketInput) -> Support_Ticket -> status -> Support_TicketStatus",
+        "Query -> support_ticket(ID) -> Support_Ticket -> status -> Support_TicketStatus",
+        "Query -> support_tickets(Support_TicketStatus,Int) -> Support_Ticket -> status -> Support_TicketStatus",
+        "Mutation -> support_openTicket(Support_OpenTicketInput) -> Support_Ticket",
+        "Query -> support_ticket(ID) -> Support_Ticket"
+      ],
+      "result_types": [
+        "Mutation",
+        "Query",
+        "Support_OpenTicketInput",
+        "Support_Ticket",
+        "Support_TicketStatus"
+      ]
+    },
+    {
+      "id": "scoped-accounts-reset-password-field",
+      "coverage": "scoped",
+      "terms": [
+        "accounts_resetPassword"
+      ],
+      "top_paths": [
+        "Mutation -> accounts_resetPassword(String) -> Accounts_ResetPasswordResult",
+        "Mutation",
+        "Mutation -> accounts_updateProfile(Accounts_ProfileInput) -> Accounts_User",
+        "Query -> accounts_me -> Accounts_User",
+        "Mutation -> accounts_updateProfile(Accounts_ProfileInput) -> Accounts_User -> sessions -> Accounts_Session"
+      ],
+      "result_types": [
+        "Accounts_ProfileInput",
+        "Accounts_ResetPasswordResult",
+        "Accounts_Session",
+        "Accounts_User",
+        "Mutation",
+        "Query"
+      ]
+    },
+    {
+      "id": "scoped-shipping-carrier-multi-term",
+      "coverage": "scoped",
+      "terms": [
+        "shipping",
+        "carrier"
+      ],
+      "top_paths": [
+        "Query -> shipping_carriers -> Shipping_Carrier",
+        "Query -> shipping_trackParcel(String) -> Shipping_Parcel -> carrier -> Shipping_Carrier",
+        "Query -> order(ID) -> Order -> parcel -> Shipping_Parcel -> carrier -> Shipping_Carrier",
+        "Query -> shipping_trackParcel(String) -> Shipping_Parcel",
+        "Query -> order(ID) -> Order -> parcel -> Shipping_Parcel"
+      ],
+      "result_types": [
+        "Order",
+        "Query",
+        "Shipping_Carrier",
+        "Shipping_Parcel"
+      ]
+    },
+    {
+      "id": "hard-track-my-package",
+      "coverage": "hard",
+      "terms": [
+        "track my package"
+      ],
+      "top_paths": [
+        "Query -> shipping_trackParcel(String) -> Shipping_Parcel",
+        "Query -> order(ID) -> Order -> parcel -> Shipping_Parcel",
+        "Mutation -> placeOrder(PlaceOrderInput) -> Order -> parcel -> Shipping_Parcel",
+        "Query -> shipping_trackParcel(String) -> Shipping_Parcel -> events -> Shipping_TrackingEvent",
+        "Query -> order(ID) -> Order -> parcel -> Shipping_Parcel -> events -> Shipping_TrackingEvent"
+      ],
+      "result_types": [
+        "Mutation",
+        "Order",
+        "PlaceOrderInput",
+        "PlaceOrderLineInput",
+        "Query",
+        "Shipping_Parcel",
+        "Shipping_TrackingEvent"
+      ]
+    },
+    {
+      "id": "hard-refund-a-payment",
+      "coverage": "hard",
+      "terms": [
+        "refund a payment"
+      ],
+      "top_paths": [
+        "Mutation -> billing_issueRefund(Billing_RefundInput) -> Billing_Refund",
+        "Mutation -> billing_issueRefund(Billing_RefundInput) -> Billing_Refund -> payment -> Billing_Payment",
+        "Query -> billing_payments(Int) -> Billing_Payment",
+        "Query -> support_tickets(Support_TicketStatus,Int) -> Support_Ticket -> customer -> Customer -> defaultPaymentMethod -> Billing_PaymentMethod",
+        "Query -> billing_payments(Int) -> Billing_Payment -> method -> Billing_PaymentMethod"
+      ],
+      "result_types": [
+        "Billing_Payment",
+        "Billing_PaymentMethod",
+        "Billing_Refund",
+        "Billing_RefundInput",
+        "Customer",
+        "Mutation",
+        "Query",
+        "Support_Ticket",
+        "Support_TicketStatus"
+      ]
+    },
+    {
+      "id": "hard-reset-password",
+      "coverage": "hard",
+      "terms": [
+        "reset password"
+      ],
+      "top_paths": [
+        "Mutation -> accounts_resetPassword(String) -> Accounts_ResetPasswordResult",
+        "Mutation"
+      ],
+      "result_types": [
+        "Accounts_ResetPasswordResult",
+        "Mutation"
+      ]
+    },
+    {
+      "id": "hard-out-of-stock",
+      "coverage": "hard",
+      "terms": [
+        "out of stock"
+      ],
+      "top_paths": [
+        "Mutation -> inventory_receiveStock(String,ID,Int) -> Inventory_StockLevel",
+        "Query -> inventory_products(Int,String) -> Inventory_Product -> stock -> Inventory_StockLevel",
+        "Query -> inventory_stockLevels(String) -> Inventory_StockLevel",
+        "Query -> inventory_product(String) -> Inventory_Product",
+        "Mutation"
+      ],
+      "result_types": [
+        "Inventory_Product",
+        "Inventory_StockLevel",
+        "Mutation",
+        "Query"
+      ]
+    },
+    {
+      "id": "hard-open-ticket-multi-term",
+      "coverage": "hard",
+      "terms": [
+        "open",
+        "ticket"
+      ],
+      "top_paths": [
+        "Mutation -> support_openTicket(Support_OpenTicketInput) -> Support_Ticket",
+        "Query -> support_ticket(ID) -> Support_Ticket",
+        "Query -> support_tickets(Support_TicketStatus,Int) -> Support_Ticket",
+        "Mutation -> support_openTicket(Support_OpenTicketInput) -> Support_Ticket -> status -> Support_TicketStatus",
+        "Query -> support_ticket(ID) -> Support_Ticket -> status -> Support_TicketStatus"
+      ],
+      "result_types": [
+        "Mutation",
+        "Query",
+        "Support_OpenTicketInput",
+        "Support_Ticket",
+        "Support_TicketStatus"
+      ]
+    }
+  ]
+}

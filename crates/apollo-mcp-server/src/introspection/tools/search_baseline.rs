@@ -195,7 +195,8 @@ async fn capture_baseline() -> Baseline {
         description: "AIR-399 search-quality baseline: expected top-k results of today's \
                       apollo-mcp-server search over the offline catalog fixture. Parity gate \
                       for the Discovery search migration (S2.5). Captured, not hand-authored; \
-                      re-capture with AIR399_UPDATE_SEARCH_BASELINE=1."
+                      re-capture with: cargo test -p apollo-mcp-server capture_search_baseline \
+                      -- --ignored"
             .to_string(),
         captured_with: params,
         k: MAX_SEARCH_RESULTS,
