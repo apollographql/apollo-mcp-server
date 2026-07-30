@@ -24,7 +24,7 @@ use super::description::append_description_hint;
 pub const SEARCH_TOOL_NAME: &str = "search";
 
 /// The maximum number of search results to consider.
-const MAX_SEARCH_RESULTS: usize = 5;
+pub(crate) const MAX_SEARCH_RESULTS: usize = 5;
 
 /// A tool to search a GraphQL schema.
 #[derive(Clone)]

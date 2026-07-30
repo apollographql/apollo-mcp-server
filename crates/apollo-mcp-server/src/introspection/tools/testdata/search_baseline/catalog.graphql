@@ -1,0 +1,386 @@
+# AIR-399: offline catalog fixture for the search-quality baseline.
+#
+# A snapshot-style API schema representative of the catalog served by apollo-mcp-server:
+# several service-prefixed domains (Billing_, Inventory_, Shipping_, Support_, Accounts_)
+# plus unprefixed core commerce types. The prefixed names are deliberate — they are the
+# known-hard case for short natural-language queries (see baseline.json).
+#
+# Do not edit without re-capturing the baseline:
+#   cargo test -p apollo-mcp-server capture_search_baseline -- --ignored
+
+schema {
+  query: Query
+  mutation: Mutation
+}
+
+type Query {
+  "Look up a single customer by id."
+  customer(id: ID!): Customer
+
+  "List customers with cursor pagination."
+  customers(first: Int, after: String): CustomerConnection!
+
+  "Look up an order by id."
+  order(id: ID!): Order
+
+  "List recent orders across all customers."
+  orders(first: Int, after: String): OrderConnection!
+
+  "Look up a single invoice by id."
+  billing_invoice(id: ID!): Billing_Invoice
+
+  "List invoices, optionally filtered by status or customer."
+  billing_invoices(filter: Billing_InvoiceFilter, first: Int): [Billing_Invoice!]!
+
+  "List payments received."
+  billing_payments(first: Int): [Billing_Payment!]!
+
+  "Look up a product by SKU."
+  inventory_product(sku: String!): Inventory_Product
+
+  "List products in the catalog."
+  inventory_products(first: Int, after: String): [Inventory_Product!]!
+
+  "Stock levels of a product across warehouses."
+  inventory_stockLevels(sku: String!): [Inventory_StockLevel!]!
+
+  "Track a parcel by its tracking number."
+  shipping_trackParcel(trackingNumber: String!): Shipping_Parcel
+
+  "List supported carriers."
+  shipping_carriers: [Shipping_Carrier!]!
+
+  "Look up a support ticket by id."
+  support_ticket(id: ID!): Support_Ticket
+
+  "List support tickets, optionally filtered by status."
+  support_tickets(status: Support_TicketStatus, first: Int): [Support_Ticket!]!
+
+  "The currently authenticated user account."
+  accounts_me: Accounts_User
+}
+
+type Mutation {
+  "Issue a refund for a captured payment."
+  billing_issueRefund(input: Billing_RefundInput!): Billing_Refund
+
+  "Record an incoming stock delivery at a warehouse."
+  inventory_receiveStock(sku: String!, warehouseId: ID!, quantity: Int!): Inventory_StockLevel
+
+  "Open a new support ticket on behalf of a customer."
+  support_openTicket(input: Support_OpenTicketInput!): Support_Ticket
+
+  "Send a password reset email to the given address."
+  accounts_resetPassword(email: String!): Accounts_ResetPasswordResult!
+
+  "Update profile details of the current user account."
+  accounts_updateProfile(input: Accounts_ProfileInput!): Accounts_User
+
+  "Place a new order for a customer."
+  placeOrder(input: PlaceOrderInput!): Order
+}
+
+# --- Core (unprefixed) -------------------------------------------------------
+
+"A person or organization that buys through the platform."
+type Customer {
+  id: ID!
+  "Primary contact email address."
+  email: String!
+  "Display name of the customer."
+  name: String!
+  "Orders placed by this customer."
+  orders(first: Int): [Order!]!
+  "Preferred way to pay for new invoices."
+  defaultPaymentMethod: Billing_PaymentMethod
+}
+
+"A page of customers."
+type CustomerConnection {
+  nodes: [Customer!]!
+  pageInfo: PageInfo!
+}
+
+"A purchase made by a customer."
+type Order {
+  id: ID!
+  "Current fulfillment state of the order."
+  status: OrderStatus!
+  "Line items in the order."
+  lines: [OrderLine!]!
+  "Grand total, including tax."
+  total: Money!
+  "The customer who placed the order."
+  customer: Customer!
+  "Shipment carrying this order, once dispatched."
+  parcel: Shipping_Parcel
+  "Invoice issued for this order."
+  invoice: Billing_Invoice
+}
+
+"A single product line within an order."
+type OrderLine {
+  product: Inventory_Product!
+  quantity: Int!
+  unitPrice: Money!
+}
+
+"A page of orders."
+type OrderConnection {
+  nodes: [Order!]!
+  pageInfo: PageInfo!
+}
+
+"Fulfillment states an order moves through."
+enum OrderStatus {
+  PENDING
+  PAID
+  DISPATCHED
+  DELIVERED
+  CANCELLED
+}
+
+"Cursor pagination metadata."
+type PageInfo {
+  hasNextPage: Boolean!
+  endCursor: String
+}
+
+"An amount of money in a specific currency."
+type Money {
+  "Amount in minor units, e.g. cents."
+  amount: Int!
+  currency: CurrencyCode!
+}
+
+"ISO 4217 currency codes supported by the platform."
+enum CurrencyCode {
+  USD
+  EUR
+  GBP
+}
+
+"Input to place a new order."
+input PlaceOrderInput {
+  customerId: ID!
+  lines: [PlaceOrderLineInput!]!
+}
+
+"One product line of a new order."
+input PlaceOrderLineInput {
+  sku: String!
+  quantity: Int!
+}
+
+# --- Billing service (Billing_ prefix) ---------------------------------------
+
+"A bill issued to a customer for one or more orders."
+type Billing_Invoice {
+  id: ID!
+  "Human-readable invoice number."
+  number: String!
+  "ISO-8601 timestamp the invoice was issued."
+  issuedAt: String!
+  "ISO-8601 timestamp payment is due."
+  dueAt: String!
+  status: Billing_InvoiceStatus!
+  "Individual charges making up the invoice."
+  lineItems: [Billing_LineItem!]!
+  "Remaining balance to be paid."
+  amountDue: Money!
+  customer: Customer!
+}
+
+"One charge on an invoice."
+type Billing_LineItem {
+  description: String!
+  amount: Money!
+}
+
+"Lifecycle states of an invoice."
+enum Billing_InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  OVERDUE
+  VOID
+}
+
+"Money received against an invoice."
+type Billing_Payment {
+  id: ID!
+  invoice: Billing_Invoice!
+  amount: Money!
+  method: Billing_PaymentMethod!
+  "ISO-8601 timestamp the payment was captured."
+  capturedAt: String!
+}
+
+"Ways a customer can pay."
+enum Billing_PaymentMethod {
+  CARD
+  BANK_TRANSFER
+  WALLET
+}
+
+"Money returned to a customer against an earlier payment."
+type Billing_Refund {
+  id: ID!
+  payment: Billing_Payment!
+  amount: Money!
+  "Free-text reason the refund was granted."
+  reason: String
+  "ISO-8601 timestamp the refund was processed."
+  processedAt: String!
+}
+
+"Input to issue a refund."
+input Billing_RefundInput {
+  paymentId: ID!
+  "Amount to refund in minor units; defaults to the full payment."
+  amount: Int
+  reason: String
+}
+
+"Criteria to narrow an invoice listing."
+input Billing_InvoiceFilter {
+  status: Billing_InvoiceStatus
+  customerId: ID
+}
+
+# --- Inventory service (Inventory_ prefix) -----------------------------------
+
+"A sellable item in the catalog."
+type Inventory_Product {
+  sku: String!
+  name: String!
+  description: String
+  price: Money!
+  "Availability of this product per warehouse."
+  stock: [Inventory_StockLevel!]!
+}
+
+"Quantity of a product held at a single warehouse."
+type Inventory_StockLevel {
+  warehouse: Inventory_Warehouse!
+  "Units on hand and sellable right now."
+  quantityAvailable: Int!
+  "Units reserved for unshipped orders."
+  quantityReserved: Int!
+  "ISO-8601 date the next restock is expected, if any."
+  restockExpectedAt: String
+}
+
+"A fulfillment location holding physical goods."
+type Inventory_Warehouse {
+  id: ID!
+  name: String!
+  "Geographic region served by this warehouse."
+  region: String!
+}
+
+# --- Shipping service (Shipping_ prefix) -------------------------------------
+
+"A physical shipment moving through a carrier network."
+type Shipping_Parcel {
+  "Carrier-issued tracking number."
+  trackingNumber: String!
+  carrier: Shipping_Carrier!
+  "Scan events recorded so far, oldest first."
+  events: [Shipping_TrackingEvent!]!
+  "ISO-8601 date delivery is currently estimated."
+  estimatedDelivery: String
+  order: Order!
+}
+
+"A carrier scan of a parcel."
+type Shipping_TrackingEvent {
+  "ISO-8601 timestamp of the scan."
+  occurredAt: String!
+  "City or facility where the scan happened."
+  location: String!
+  "Carrier-provided status text."
+  statusText: String!
+}
+
+"Carriers the platform can hand parcels to."
+enum Shipping_Carrier {
+  UPS
+  FEDEX
+  DHL
+  USPS
+}
+
+# --- Support service (Support_ prefix) ---------------------------------------
+
+"A customer service case."
+type Support_Ticket {
+  id: ID!
+  subject: String!
+  body: String!
+  status: Support_TicketStatus!
+  "Agent currently handling the ticket, if assigned."
+  assignee: Support_Agent
+  customer: Customer!
+  "ISO-8601 timestamp the ticket was opened."
+  openedAt: String!
+}
+
+"Workflow states of a support ticket."
+enum Support_TicketStatus {
+  OPEN
+  PENDING
+  SOLVED
+  CLOSED
+}
+
+"A member of the customer service team."
+type Support_Agent {
+  id: ID!
+  displayName: String!
+  email: String!
+}
+
+"Input to open a support ticket."
+input Support_OpenTicketInput {
+  customerId: ID!
+  subject: String!
+  body: String!
+}
+
+# --- Accounts service (Accounts_ prefix) -------------------------------------
+
+"A login account on the platform."
+type Accounts_User {
+  id: ID!
+  email: String!
+  displayName: String!
+  "ISO-8601 timestamp the account was created."
+  createdAt: String!
+  "Active login sessions for this account."
+  sessions: [Accounts_Session!]!
+}
+
+"A single authenticated session."
+type Accounts_Session {
+  id: ID!
+  "ISO-8601 timestamp the session started."
+  createdAt: String!
+  "ISO-8601 timestamp of the most recent request."
+  lastSeenAt: String!
+  "User agent string of the client."
+  userAgent: String
+}
+
+"Outcome of requesting a password reset."
+type Accounts_ResetPasswordResult {
+  ok: Boolean!
+  "Human-readable explanation of the outcome."
+  message: String!
+}
+
+"Editable profile fields."
+input Accounts_ProfileInput {
+  displayName: String
+  email: String
+}
