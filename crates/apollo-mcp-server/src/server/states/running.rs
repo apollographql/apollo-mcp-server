@@ -2873,8 +2873,7 @@ mod integration_tests {
             // Regression for #794: a stateless client requesting a supported
             // older version must get that version echoed back, not the latest.
             let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let service = create_stateless_service(running, Arc::clone(&session_manager));
+            let service = create_stateless_service(running, LocalSessionManager::default().into());
 
             let response = service
                 .oneshot(build_initialize_request("2025-06-18"))
