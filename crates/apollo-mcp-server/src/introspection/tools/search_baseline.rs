@@ -174,7 +174,7 @@ async fn capture_baseline() -> Baseline {
             .content
             .into_iter()
             .filter_map(|block| match block {
-                ContentBlock::Text(text) => Some(text.text),
+                ContentBlock::Text(text) => Some(text.text.clone()),
                 _ => None,
             })
             .flat_map(|text| type_names_in_block(&text))

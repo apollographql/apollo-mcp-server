@@ -16,8 +16,8 @@ air399_port="${AIR399_SMOKE_PORT:-4599}"
 air399_fixtures="$air399_repo/crates/apollo-mcp-server/src/introspection/tools/testdata/search_baseline"
 
 smoke_build() {
-  # debug=false keeps the target dir small enough for constrained containers
-  (cd "$air399_repo" && cargo build --config profile.dev.debug=false -p apollo-mcp-server --bin apollo-mcp-server)
+  # debug=false + no incremental keeps the target dir small enough for constrained containers
+  (cd "$air399_repo" && cargo build --config profile.dev.debug=false --config build.incremental=false -j 2 -p apollo-mcp-server --bin apollo-mcp-server)
 }
 
 smoke_start() {
