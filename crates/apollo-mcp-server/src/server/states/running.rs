@@ -2766,7 +2766,7 @@ mod integration_tests {
         async fn negotiates_down_when_client_requests_newer_version() {
             // Regression for AMS-525: a client offering a protocol version newer
             // than any rmcp implements over streamable_http must be downgraded to
-            // the latest supported version (2025-11-25) rather than refused.
+            // the max supported version rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
@@ -2778,7 +2778,10 @@ mod integration_tests {
 
             assert_eq!(response.status(), StatusCode::OK);
             let body = extract_json_body(response).await;
-            assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
         }
 
         #[tokio::test]
@@ -2886,7 +2889,7 @@ mod integration_tests {
         #[tokio::test]
         async fn stateless_negotiates_down_when_client_requests_unknown_version() {
             // A client offering a version rmcp doesn't know must fall back to
-            // our latest supported version rather than having it echoed back.
+            // our max supported version rather than having it echoed back.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_stateless_service(running, Arc::clone(&session_manager));
@@ -2898,7 +2901,10 @@ mod integration_tests {
 
             assert_eq!(response.status(), StatusCode::OK);
             let body = extract_json_body(response).await;
-            assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
         }
 
         #[tokio::test]
