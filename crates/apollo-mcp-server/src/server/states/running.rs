@@ -613,24 +613,31 @@ impl Running {
     }
 }
 
-/// Echoes the client-requested protocol version when rmcp supports it,
-/// otherwise falls back to `server_fallback`.
+/// The newest MCP protocol version this server implements. Bumped
+/// deliberately when the server adopts a new spec revision — not derived
+/// from rmcp, whose `KNOWN_VERSIONS`/`LATEST` track SDK constants rather
+/// than this server's capabilities.
+pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+
+/// Echoes the client-requested protocol version when this server supports
+/// it, otherwise falls back to [`MAX_SUPPORTED_PROTOCOL_VERSION`].
 ///
-/// Mirrors rmcp's `negotiate_protocol_version`, which is `pub(crate)` and so
-/// can't be called directly.
-fn negotiate_protocol_version(
-    client_requested: &ProtocolVersion,
-    server_fallback: ProtocolVersion,
-) -> ProtocolVersion {
-    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested) {
+/// Unlike rmcp's `negotiate_protocol_version`, this caps at the version the
+/// server implements: rmcp's `KNOWN_VERSIONS` includes versions the SDK has
+/// constants for but that this server doesn't yet handle (e.g. `2026-07-28`
+/// SEP-2243 headers and discovery).
+fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
+    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested)
+        && *client_requested <= MAX_SUPPORTED_PROTOCOL_VERSION
+    {
         client_requested.clone()
     } else {
         warn!(
             client_requested = %client_requested,
-            server_fallback = %server_fallback,
+            server_fallback = %MAX_SUPPORTED_PROTOCOL_VERSION,
             "client requested unsupported protocol version; falling back to server default"
         );
-        server_fallback
+        MAX_SUPPORTED_PROTOCOL_VERSION
     }
 }
 
@@ -660,11 +667,10 @@ impl ServerHandler for Running {
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
         // Echo the client's requested protocol version when supported,
-        // falling back to our latest otherwise. Negotiating here ensures
-        // consistent behavior across all transports (#794).
+        // falling back to our max supported version otherwise. Negotiating
+        // here ensures consistent behavior across all transports (#794).
         let mut info = self.get_info();
-        info.protocol_version =
-            negotiate_protocol_version(&request.protocol_version, info.protocol_version);
+        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
         Ok(info)
     }
 
@@ -787,10 +793,10 @@ impl ServerHandler for Running {
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
         capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise the latest supported version as the default. Our `initialize`
+        // Advertise the max supported version as the default. Our `initialize`
         // handler negotiates the per-client value, echoing the client's requested
         // version when supported and otherwise falling back to this one.
-        let protocol_version = ProtocolVersion::LATEST;
+        let protocol_version = MAX_SUPPORTED_PROTOCOL_VERSION;
 
         let mut impl_ = Implementation::new(
             self.server_info.name().to_string(),
@@ -2161,7 +2167,7 @@ mod tests {
         #[rstest]
         #[case::output_schema_disabled(false)]
         #[case::output_schema_enabled(true)]
-        fn advertises_latest_supported_version_regardless_of_output_schema(
+        fn advertises_max_supported_version_regardless_of_output_schema(
             #[case] enable_output_schema: bool,
         ) {
             let schema = Arc::new(RwLock::new(
@@ -2180,7 +2186,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+            assert_eq!(info.protocol_version, MAX_SUPPORTED_PROTOCOL_VERSION);
         }
     }
 
@@ -2896,12 +2902,12 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn stateless_echoes_known_version_newer_than_latest() {
-            // A client may request a supported version newer than the server's
-            // advertised default; it is echoed back rather than negotiated
-            // down, matching negotiation behavior on all other transports.
-            // If this test breaks after an rmcp upgrade, verify all transports
-            // still negotiate consistently before updating the assertion.
+        async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
+            // rmcp has a constant for 2026-07-28, but this server doesn't
+            // implement that revision (SEP-2243 headers, discovery). The
+            // stateless path must cap at the max supported version rather
+            // than advertise a version whose follow-up requests we can't
+            // handle.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_stateless_service(running, Arc::clone(&session_manager));
@@ -2913,7 +2919,54 @@ mod integration_tests {
 
             assert_eq!(response.status(), StatusCode::OK);
             let body = extract_json_body(response).await;
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
+        }
+
+        #[tokio::test]
+        async fn stateful_echoes_newer_known_version_due_to_rmcp_override() {
+            // Known upstream divergence: on stateful paths rmcp's handshake
+            // re-negotiates after our `initialize` handler and echoes any
+            // version in its KNOWN_VERSIONS, overriding our cap at
+            // MAX_SUPPORTED_PROTOCOL_VERSION. This test pins that behavior
+            // so an rmcp upgrade that changes it is caught; if it starts
+            // failing, re-check whether the cap now holds on all transports.
+            let running = create_running_with_output_schema();
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let service = create_service(running, Arc::clone(&session_manager));
+
+            let response = service
+                .oneshot(build_initialize_request("2026-07-28"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
             assert_eq!(body["result"]["protocolVersion"], "2026-07-28");
+        }
+
+        #[test]
+        fn rmcp_known_versions_audit() {
+            // Canary: fails when an rmcp upgrade changes KNOWN_VERSIONS.
+            // When it does, audit the new protocol version(s):
+            // - If this server implements the new revision, bump
+            //   MAX_SUPPORTED_PROTOCOL_VERSION.
+            // - Otherwise, update this list to acknowledge the version
+            //   remains capped, and confirm stateful transports (where rmcp
+            //   negotiates over our heads) still behave acceptably.
+            assert_eq!(
+                ProtocolVersion::KNOWN_VERSIONS,
+                &[
+                    ProtocolVersion::V_2024_11_05,
+                    ProtocolVersion::V_2025_03_26,
+                    ProtocolVersion::V_2025_06_18,
+                    ProtocolVersion::V_2025_11_25,
+                    ProtocolVersion::V_2026_07_28,
+                ],
+                "rmcp's KNOWN_VERSIONS changed; audit whether MAX_SUPPORTED_PROTOCOL_VERSION should move"
+            );
         }
     }
 
