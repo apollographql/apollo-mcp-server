@@ -23,7 +23,7 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -632,7 +632,9 @@ fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVer
     {
         client_requested.clone()
     } else {
-        warn!(
+        // debug rather than warn: falling back is expected, handled behavior,
+        // and a pinned client would emit this on every stateless initialize.
+        debug!(
             client_requested = %client_requested,
             server_fallback = %MAX_SUPPORTED_PROTOCOL_VERSION,
             "client requested unsupported protocol version; falling back to server default"
@@ -667,8 +669,9 @@ impl ServerHandler for Running {
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
         // Echo the client's requested protocol version when supported,
-        // falling back to our max supported version otherwise. Negotiating
-        // here ensures consistent behavior across all transports (#794).
+        // falling back to our max supported version otherwise (#794). This
+        // result stands on stateless HTTP and stdio; on stateful sessions
+        // rmcp's handshake re-negotiates and can override it (#803).
         let mut info = self.get_info();
         info.protocol_version = negotiate_protocol_version(&request.protocol_version);
         Ok(info)
@@ -928,6 +931,47 @@ mod tests {
         Running {
             apps: vec![app],
             ..test_running(Arc::new(RwLock::new(schema)))
+        }
+    }
+
+    mod protocol_version_negotiation {
+        use rstest::rstest;
+
+        use super::*;
+
+        /// Builds a version rmcp has no constant for; unknown versions are
+        /// only constructible through deserialization.
+        fn unknown_version(version: &str) -> ProtocolVersion {
+            serde_json::from_value(serde_json::json!(version)).unwrap()
+        }
+
+        #[rstest]
+        #[case::oldest_known(ProtocolVersion::V_2024_11_05)]
+        #[case::intermediate_known(ProtocolVersion::V_2025_06_18)]
+        #[case::max_supported(MAX_SUPPORTED_PROTOCOL_VERSION)]
+        fn echoes_known_version_at_or_below_cap(#[case] requested: ProtocolVersion) {
+            assert_eq!(negotiate_protocol_version(&requested), requested);
+        }
+
+        #[test]
+        fn caps_known_version_above_max_supported() {
+            // rmcp has a constant for 2026-07-28, but this server doesn't
+            // implement that revision.
+            assert_eq!(
+                negotiate_protocol_version(&ProtocolVersion::V_2026_07_28),
+                MAX_SUPPORTED_PROTOCOL_VERSION
+            );
+        }
+
+        #[rstest]
+        #[case::future_date("2999-01-01")]
+        #[case::past_date("2020-01-01")]
+        #[case::not_a_date("not-a-version")]
+        fn falls_back_when_version_is_unknown(#[case] requested: &str) {
+            assert_eq!(
+                negotiate_protocol_version(&unknown_version(requested)),
+                MAX_SUPPORTED_PROTOCOL_VERSION
+            );
         }
     }
 
@@ -2932,12 +2976,13 @@ mod integration_tests {
 
         #[tokio::test]
         async fn stateful_echoes_newer_known_version_due_to_rmcp_override() {
-            // Known upstream divergence: on stateful paths rmcp's handshake
-            // re-negotiates after our `initialize` handler and echoes any
-            // version in its KNOWN_VERSIONS, overriding our cap at
-            // MAX_SUPPORTED_PROTOCOL_VERSION. This test pins that behavior
-            // so an rmcp upgrade that changes it is caught; if it starts
-            // failing, re-check whether the cap now holds on all transports.
+            // Known upstream divergence, tracked in #803: on stateful paths
+            // rmcp's handshake re-negotiates after our `initialize` handler
+            // and echoes any version in its KNOWN_VERSIONS, overriding our
+            // cap at MAX_SUPPORTED_PROTOCOL_VERSION. This test pins that
+            // behavior so an rmcp upgrade that changes it is caught; if it
+            // starts failing, re-check whether the cap now holds on all
+            // transports and close #803 accordingly.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
