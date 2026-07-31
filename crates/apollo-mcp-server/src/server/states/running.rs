@@ -613,6 +613,36 @@ impl Running {
     }
 }
 
+/// The newest MCP protocol version this server implements. Bumped
+/// deliberately when the server adopts a new spec revision — not derived
+/// from rmcp, whose `KNOWN_VERSIONS`/`LATEST` track SDK constants rather
+/// than this server's capabilities.
+pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+
+/// Echoes the client-requested protocol version when this server supports
+/// it, otherwise falls back to [`MAX_SUPPORTED_PROTOCOL_VERSION`].
+///
+/// Unlike rmcp's `negotiate_protocol_version`, this caps at the version the
+/// server implements: rmcp's `KNOWN_VERSIONS` includes versions the SDK has
+/// constants for but that this server doesn't yet handle (e.g. `2026-07-28`
+/// SEP-2243 headers and discovery).
+fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
+    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested)
+        && *client_requested <= MAX_SUPPORTED_PROTOCOL_VERSION
+    {
+        client_requested.clone()
+    } else {
+        // debug rather than warn: falling back is expected, handled behavior,
+        // and a pinned client would emit this on every stateless initialize.
+        debug!(
+            client_requested = %client_requested,
+            server_fallback = %MAX_SUPPORTED_PROTOCOL_VERSION,
+            "client requested unsupported protocol version; falling back to server default"
+        );
+        MAX_SUPPORTED_PROTOCOL_VERSION
+    }
+}
+
 impl ServerHandler for Running {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
@@ -638,10 +668,13 @@ impl ServerHandler for Running {
         // TODO: how to remove these?
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
-        // rmcp negotiates the protocol version during `initialize`: it echoes the
-        // client's requested version when supported and otherwise falls back to
-        // the version advertised by `get_info`.
-        Ok(self.get_info())
+        // Echo the client's requested protocol version when supported,
+        // falling back to our max supported version otherwise (#794). This
+        // result stands only on stateless HTTP; on stateful sessions
+        // rmcp's handshake re-negotiates and can override it (#803).
+        let mut info = self.get_info();
+        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
+        Ok(info)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -763,10 +796,10 @@ impl ServerHandler for Running {
         capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
         capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise the latest supported version as the default. rmcp negotiates
-        // the per-client value during `initialize`, echoing the client's requested
+        // Advertise the max supported version as the default. Our `initialize`
+        // handler negotiates the per-client value, echoing the client's requested
         // version when supported and otherwise falling back to this one.
-        let protocol_version = ProtocolVersion::LATEST;
+        let protocol_version = MAX_SUPPORTED_PROTOCOL_VERSION;
 
         let mut impl_ = Implementation::new(
             self.server_info.name().to_string(),
@@ -898,6 +931,47 @@ mod tests {
         Running {
             apps: vec![app],
             ..test_running(Arc::new(RwLock::new(schema)))
+        }
+    }
+
+    mod protocol_version_negotiation {
+        use rstest::rstest;
+
+        use super::*;
+
+        /// Builds a version rmcp has no constant for; unknown versions are
+        /// only constructible through deserialization.
+        fn unknown_version(version: &str) -> ProtocolVersion {
+            serde_json::from_value(serde_json::json!(version)).unwrap()
+        }
+
+        #[rstest]
+        #[case::oldest_known(ProtocolVersion::V_2024_11_05)]
+        #[case::intermediate_known(ProtocolVersion::V_2025_06_18)]
+        #[case::max_supported(MAX_SUPPORTED_PROTOCOL_VERSION)]
+        fn echoes_known_version_at_or_below_cap(#[case] requested: ProtocolVersion) {
+            assert_eq!(negotiate_protocol_version(&requested), requested);
+        }
+
+        #[test]
+        fn caps_known_version_above_max_supported() {
+            // rmcp has a constant for 2026-07-28, but this server doesn't
+            // implement that revision.
+            assert_eq!(
+                negotiate_protocol_version(&ProtocolVersion::V_2026_07_28),
+                MAX_SUPPORTED_PROTOCOL_VERSION
+            );
+        }
+
+        #[rstest]
+        #[case::future_date("2999-01-01")]
+        #[case::past_date("2020-01-01")]
+        #[case::not_a_date("not-a-version")]
+        fn falls_back_when_version_is_unknown(#[case] requested: &str) {
+            assert_eq!(
+                negotiate_protocol_version(&unknown_version(requested)),
+                MAX_SUPPORTED_PROTOCOL_VERSION
+            );
         }
     }
 
@@ -2137,7 +2211,7 @@ mod tests {
         #[rstest]
         #[case::output_schema_disabled(false)]
         #[case::output_schema_enabled(true)]
-        fn advertises_latest_supported_version_regardless_of_output_schema(
+        fn advertises_max_supported_version_regardless_of_output_schema(
             #[case] enable_output_schema: bool,
         ) {
             let schema = Arc::new(RwLock::new(
@@ -2156,7 +2230,7 @@ mod tests {
 
             let info = running.get_info();
 
-            assert_eq!(info.protocol_version, ProtocolVersion::LATEST);
+            assert_eq!(info.protocol_version, MAX_SUPPORTED_PROTOCOL_VERSION);
         }
     }
 
@@ -2736,7 +2810,7 @@ mod integration_tests {
         async fn negotiates_down_when_client_requests_newer_version() {
             // Regression for AMS-525: a client offering a protocol version newer
             // than any rmcp implements over streamable_http must be downgraded to
-            // the latest supported version (2025-11-25) rather than refused.
+            // the max supported version rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
@@ -2748,7 +2822,10 @@ mod integration_tests {
 
             assert_eq!(response.status(), StatusCode::OK);
             let body = extract_json_body(response).await;
-            assert_eq!(body["result"]["protocolVersion"], "2025-11-25");
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
         }
 
         #[tokio::test]
@@ -2822,6 +2899,121 @@ mod integration_tests {
             drop(reader);
             drop(client_w);
             let _ = server.await;
+        }
+
+        fn create_stateless_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig::default().with_stateful_mode(false),
+            )
+        }
+
+        #[tokio::test]
+        async fn stateless_echoes_supported_version_when_client_requests_older_version() {
+            // Regression for #794: a stateless client requesting a supported
+            // older version must get that version echoed back, not the latest.
+            let running = create_running_with_output_schema();
+            let service = create_stateless_service(running, LocalSessionManager::default().into());
+
+            let response = service
+                .oneshot(build_initialize_request("2025-06-18"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2025-06-18");
+        }
+
+        #[tokio::test]
+        async fn stateless_negotiates_down_when_client_requests_unknown_version() {
+            // A client offering a version rmcp doesn't know must fall back to
+            // our max supported version rather than having it echoed back.
+            let running = create_running_with_output_schema();
+            let service = create_stateless_service(running, LocalSessionManager::default().into());
+
+            let response = service
+                .oneshot(build_initialize_request("2999-01-01"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
+        }
+
+        #[tokio::test]
+        async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
+            // rmcp has a constant for 2026-07-28, but this server doesn't
+            // implement that revision (SEP-2243 headers, discovery). The
+            // stateless path must cap at the max supported version rather
+            // than advertise a version whose follow-up requests we can't
+            // handle.
+            let running = create_running_with_output_schema();
+            let service = create_stateless_service(running, LocalSessionManager::default().into());
+
+            let response = service
+                .oneshot(build_initialize_request("2026-07-28"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
+        }
+
+        #[tokio::test]
+        async fn stateful_echoes_newer_known_version_due_to_rmcp_override() {
+            // Known upstream divergence, tracked in #803: on stateful paths
+            // rmcp's handshake re-negotiates after our `initialize` handler
+            // and echoes any version in its KNOWN_VERSIONS, overriding our
+            // cap at MAX_SUPPORTED_PROTOCOL_VERSION. This test pins that
+            // behavior so an rmcp upgrade that changes it is caught; if it
+            // starts failing, re-check whether the cap now holds on all
+            // transports and close #803 accordingly.
+            let running = create_running_with_output_schema();
+            let service = create_service(running, LocalSessionManager::default().into());
+
+            let response = service
+                .oneshot(build_initialize_request("2026-07-28"))
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            assert_eq!(body["result"]["protocolVersion"], "2026-07-28");
+        }
+
+        #[test]
+        fn rmcp_known_versions_audit() {
+            // Canary: fails when an rmcp upgrade changes KNOWN_VERSIONS.
+            // When it does, audit the new protocol version(s):
+            // - If this server implements the new revision, bump
+            //   MAX_SUPPORTED_PROTOCOL_VERSION.
+            // - Otherwise, update this list to acknowledge the version
+            //   remains capped, and confirm stateful transports (where rmcp
+            //   negotiates over our heads) still behave acceptably.
+            assert_eq!(
+                ProtocolVersion::KNOWN_VERSIONS,
+                &[
+                    ProtocolVersion::V_2024_11_05,
+                    ProtocolVersion::V_2025_03_26,
+                    ProtocolVersion::V_2025_06_18,
+                    ProtocolVersion::V_2025_11_25,
+                    ProtocolVersion::V_2026_07_28,
+                ],
+                "rmcp's KNOWN_VERSIONS changed; audit whether MAX_SUPPORTED_PROTOCOL_VERSION should move"
+            );
         }
     }
 
