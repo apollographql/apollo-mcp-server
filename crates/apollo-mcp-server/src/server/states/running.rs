@@ -670,7 +670,7 @@ impl ServerHandler for Running {
         peers.push(context.peer);
         // Echo the client's requested protocol version when supported,
         // falling back to our max supported version otherwise (#794). This
-        // result stands on stateless HTTP and stdio; on stateful sessions
+        // result stands only on stateless HTTP; on stateful sessions
         // rmcp's handshake re-negotiates and can override it (#803).
         let mut info = self.get_info();
         info.protocol_version = negotiate_protocol_version(&request.protocol_version);
