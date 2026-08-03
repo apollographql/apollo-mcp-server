@@ -215,6 +215,7 @@ mod test {
                     title: None,
                     website_url: None,
                     description: None,
+                    icons: [],
                 },
                 instructions: None,
                 custom_scalars: None,
