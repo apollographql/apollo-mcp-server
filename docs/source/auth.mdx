@@ -241,6 +241,44 @@ Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm
 
 - When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch, but to prevent fabricated `kid` values from driving one upstream round-trip per request, up to one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized`, and the client can retry.
 
+### Per-IP rate limiting
+
+You can rate limit requests per client IP before any token validation work runs. This bounds the CPU and network cost that unauthenticated clients can impose on the server, and limits the blast radius of token-flooding attacks.
+
+Rate limiting is disabled by default. Enable it by adding a `rate_limit` block:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    audiences: ["mcp.example.api"]
+    resource: https://mcp.example.api
+    scopes: ["read", "mcp:use"]
+    rate_limit: {}
+```
+
+Each client IP may make 10 requests per second sustained, with bursts of up to 50 requests. These limits are fixed and generous for interactive MCP clients; like the JWKS cache TTL, they aren't configurable. Keep in mind that clients sharing one egress IP—for example, behind the same NAT gateway—share one rate limit bucket.
+
+Requests over the limit receive `429 Too Many Requests` with a `Retry-After` header, before the server does any token parsing or JWKS fetching. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
+
+#### Trusted proxies
+
+By default the client IP is the connection's peer address. This is correct—and safe—when clients connect directly to the MCP server. If the server sits behind a reverse proxy or load balancer, all connections appear to come from the proxy's IP, so all clients would share one rate limit bucket.
+
+In that case, list your proxies (IPs or CIDR ranges) as trusted:
+
+```yaml title="mcp.yaml"
+    rate_limit:
+      trusted_proxies:
+        - 10.0.0.0/8
+```
+
+When a connection comes from a trusted proxy, the server reads the client IP from the `X-Forwarded-For` header, using the right-most entry that isn't itself a trusted proxy. `X-Forwarded-For` from untrusted addresses is always ignored, so clients can't spoof their way to a fresh rate limit. If the header is missing or malformed, the server falls back to the proxy's address.
+
+Only list proxies you control, and keep the ranges as narrow as possible. A trusted proxy must overwrite or append to `X-Forwarded-For`; passing it through unmodified from clients would let clients choose their own rate-limit identity.
+
 ### OIDC Discovery compatibility
 
 Per the MCP specification, authorization servers must provide at least one of:
