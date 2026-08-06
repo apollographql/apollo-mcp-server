@@ -1,102 +1,97 @@
-//! Per-client-IP rate limiting applied before OAuth token validation.
+//! Credential and peer rate limiting applied before OAuth token validation.
 //!
-//! This is the outermost layer of the auth stack: excess requests are
-//! rejected with `429 Too Many Requests` before any JWT parsing or JWKS
-//! work happens, bounding the CPU and network cost an unauthenticated
-//! client can impose.
+//! A low per-credential limit isolates clients that reuse one bearer token,
+//! including clients sharing a reverse proxy. A higher per-peer safety fuse
+//! bounds clients that rotate fabricated credentials. Both layers run before
+//! JWT parsing or JWKS work.
 
-use http::HeaderMap;
-use ipnet::IpNet;
-use parking_lot::Mutex;
-use schemars::JsonSchema;
-use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::RandomState};
+use std::hash::{BuildHasher, Hash};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::StatusCode,
+    http::{StatusCode, header::AUTHORIZATION},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use opentelemetry::KeyValue;
+use parking_lot::Mutex;
 
-/// Sustained requests per second allowed per client IP; not
-/// operator-configurable (like the JWKS cache TTL, a knob can be added
-/// later without a breaking change if real deployments need it).
-pub(crate) const RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 10;
+use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
+use crate::meter;
 
-/// Extra requests a client may send in a short spike before being
-/// limited (the token bucket capacity); not operator-configurable.
-pub(crate) const RATE_LIMIT_BURST: u32 = 50;
+use super::log_throttle::LogThrottle;
 
-/// Per-client-IP rate limit configuration.
-///
-/// When this block is present, requests are counted per client IP using
-/// a token bucket ([`RATE_LIMIT_BURST`] tokens, refilling at
-/// [`RATE_LIMIT_REQUESTS_PER_SECOND`]). Requests that find the bucket
-/// empty receive `429 Too Many Requests` before token validation runs.
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RateLimitConfig {
-    /// CIDR ranges of trusted reverse proxies (use `/32` or `/128` for a
-    /// single host, e.g. `10.0.0.1/32`).
-    ///
-    /// When the connecting peer is in this list, the client IP is taken
-    /// from the right-most `X-Forwarded-For` entry that is not itself a
-    /// trusted proxy. When empty (default), the socket peer address is
-    /// always used, which is the safe choice when no proxy sits in front
-    /// of the server.
-    #[serde(default)]
-    #[schemars(with = "Vec<String>")]
-    pub trusted_proxies: Vec<IpNet>,
+const CREDENTIAL_REQUESTS_PER_SECOND: u32 = 10;
+const CREDENTIAL_BURST: u32 = 50;
+const PEER_REQUESTS_PER_SECOND: u32 = 500;
+const PEER_BURST: u32 = 1_000;
+
+/// Hard cap on keys tracked by each limiter. When a map is full and a new
+/// key arrives, fully-refilled buckets are evicted. If the map remains full,
+/// the new key is allowed untracked so the limiter cannot become the denial
+/// of service. The other limiter still applies independently.
+const MAX_TRACKED_KEYS: usize = 50_000;
+
+/// Minimum time between eviction sweeps for each map. This prevents key churn
+/// from forcing an O(n) scan on every request.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+
+#[derive(Clone, Copy)]
+struct Limits {
+    requests_per_second: u32,
+    burst: u32,
 }
 
-/// Hard cap on distinct client IPs tracked at once (~100 bytes per entry
-/// including HashMap overhead bounds memory to ~5 MB). When the map is
-/// full and a new IP arrives, a sweep evicts fully-refilled (idle) buckets
-/// — but only if the last sweep was more than [`SWEEP_INTERVAL`] ago.
-/// If after the (possibly skipped) sweep the map is still full, the new IP
-/// is allowed untracked (fail-open): a full map means an active flood, and
-/// refusing every brand-new legitimate IP would turn the limiter into the
-/// DoS. A brand-new IP's first request would be allowed anyway (fresh
-/// bucket = full burst).
-const MAX_TRACKED_IPS: usize = 50_000;
-
-/// Minimum time between eviction sweeps. Prevents an attacker from forcing
-/// an O(n) retain on every request while the map is full.
-const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
+impl Limits {
+    const fn new(requests_per_second: u32, burst: u32) -> Self {
+        Self {
+            requests_per_second,
+            burst,
+        }
+    }
+}
 
 struct Bucket {
     tokens: f64,
     last_refill: Instant,
 }
 
-/// Locked state: the bucket map plus a throttle timestamp for the eviction
-/// sweep.
-struct Buckets {
-    map: HashMap<IpAddr, Bucket>,
+struct Buckets<K> {
+    map: HashMap<K, Bucket>,
     last_sweep: Option<Instant>,
 }
 
-/// In-memory token bucket rate limiter keyed by client IP.
-pub(crate) struct IpRateLimiter {
+/// In-memory token bucket rate limiter with a hard bound on tracked keys.
+struct KeyedRateLimiter<K> {
     rate: f64,
     burst: f64,
     max_tracked: usize,
-    buckets: Mutex<Buckets>,
+    buckets: Mutex<Buckets<K>>,
 }
 
-impl IpRateLimiter {
-    pub(crate) fn new(requests_per_second: u32, burst: u32) -> Self {
-        Self::with_max_tracked(requests_per_second, burst, MAX_TRACKED_IPS)
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LimitOutcome {
+    Allowed,
+    Rejected,
+    AllowedUntracked,
+}
+
+impl<K> KeyedRateLimiter<K>
+where
+    K: Copy + Eq + Hash,
+{
+    fn new(limits: Limits) -> Self {
+        Self::with_max_tracked(limits, MAX_TRACKED_KEYS)
     }
 
-    fn with_max_tracked(requests_per_second: u32, burst: u32, max_tracked: usize) -> Self {
+    fn with_max_tracked(limits: Limits, max_tracked: usize) -> Self {
         Self {
-            rate: f64::from(requests_per_second),
-            burst: f64::from(burst),
+            rate: f64::from(limits.requests_per_second),
+            burst: f64::from(limits.burst),
             max_tracked,
             buckets: Mutex::new(Buckets {
                 map: HashMap::new(),
@@ -105,21 +100,15 @@ impl IpRateLimiter {
         }
     }
 
-    /// Whether a request from `ip` at time `now` is allowed. Consumes one
-    /// token when allowed.
-    pub(crate) fn check(&self, ip: IpAddr, now: Instant) -> bool {
+    /// Consumes one token when the key is tracked and allowed. A new key is
+    /// allowed without insertion when the bounded map has no space.
+    fn check(&self, key: K, now: Instant) -> LimitOutcome {
         let mut state = self.buckets.lock();
 
-        // Hard memory bound: when the map is full and this is a new IP,
-        // attempt to evict idle buckets — but throttle the sweep to at most
-        // once per SWEEP_INTERVAL so an attacker cannot force O(n) work on
-        // every request. If after the (possibly skipped) sweep the map is
-        // still full, allow the request untracked (fail-open). See the
-        // MAX_TRACKED_IPS doc comment for the rationale.
-        if state.map.len() >= self.max_tracked && !state.map.contains_key(&ip) {
+        if state.map.len() >= self.max_tracked && !state.map.contains_key(&key) {
             let sweep_due = state
                 .last_sweep
-                .is_none_or(|t| now.saturating_duration_since(t) >= SWEEP_INTERVAL);
+                .is_none_or(|last| now.saturating_duration_since(last) >= SWEEP_INTERVAL);
 
             if sweep_due {
                 let (rate, burst) = (self.rate, self.burst);
@@ -130,14 +119,12 @@ impl IpRateLimiter {
                 state.last_sweep = Some(now);
             }
 
-            // Hard bound: if still full after the sweep (or sweep was
-            // skipped), do not insert — allow untracked.
             if state.map.len() >= self.max_tracked {
-                return true;
+                return LimitOutcome::AllowedUntracked;
             }
         }
 
-        let bucket = state.map.entry(ip).or_insert(Bucket {
+        let bucket = state.map.entry(key).or_insert(Bucket {
             tokens: self.burst,
             last_refill: now,
         });
@@ -145,14 +132,22 @@ impl IpRateLimiter {
 
         if bucket.tokens >= 1.0 {
             bucket.tokens -= 1.0;
-            true
+            LimitOutcome::Allowed
         } else {
-            false
+            LimitOutcome::Rejected
+        }
+    }
+
+    fn refund(&self, key: K, now: Instant) {
+        let mut state = self.buckets.lock();
+        if let Some(bucket) = state.map.get_mut(&key) {
+            refill(bucket, self.rate, self.burst, now);
+            bucket.tokens = (bucket.tokens + 1.0).min(self.burst);
         }
     }
 
     #[cfg(test)]
-    fn tracked_ips(&self) -> usize {
+    fn tracked_keys(&self) -> usize {
         self.buckets.lock().map.len()
     }
 }
@@ -165,483 +160,342 @@ fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
     bucket.last_refill = now;
 }
 
-/// Shared state for the rate-limit middleware.
-#[derive(Clone)]
-pub(crate) struct RateLimitState {
-    limiter: Arc<IpRateLimiter>,
-    trusted_proxies: Arc<[IpNet]>,
+#[derive(Clone, Copy)]
+enum RejectionKind {
+    Credential,
+    Peer,
 }
 
-impl RateLimitState {
-    pub(crate) fn new(config: &RateLimitConfig) -> Self {
-        Self::with_limits(
-            RATE_LIMIT_REQUESTS_PER_SECOND,
-            RATE_LIMIT_BURST,
-            config.trusted_proxies.clone(),
-        )
-    }
-
-    /// Private constructor, doubling as the test seam: tests pass small
-    /// limits, while production always goes through `new`, which applies
-    /// the fixed constants.
-    fn with_limits(requests_per_second: u32, burst: u32, trusted_proxies: Vec<IpNet>) -> Self {
-        Self {
-            limiter: Arc::new(IpRateLimiter::new(requests_per_second, burst)),
-            trusted_proxies: Arc::from(trusted_proxies),
+impl RejectionKind {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Credential => "credential",
+            Self::Peer => "peer",
         }
     }
 }
 
-/// Axum middleware enforcing the per-IP rate limit. Runs before
-/// `oauth_validate`, so limited requests never reach JWT parsing.
+#[derive(Default)]
+struct RateLimitReporter {
+    credential: LogThrottle,
+    peer: LogThrottle,
+    credential_capacity: LogThrottle,
+    peer_capacity: LogThrottle,
+    missing_peer: LogThrottle,
+}
+
+impl RateLimitReporter {
+    fn record_rejection(&self, kind: RejectionKind, now: Instant) {
+        meter::METER
+            .u64_counter(TelemetryMetric::AuthRateLimitCount.as_str())
+            .build()
+            .add(
+                1,
+                &[KeyValue::new(
+                    TelemetryAttribute::RateLimitKind.to_key(),
+                    kind.as_str(),
+                )],
+            );
+
+        let window = match kind {
+            RejectionKind::Credential => &self.credential,
+            RejectionKind::Peer => &self.peer,
+        };
+        if let Some(suppressed) = window.record(now) {
+            tracing::warn!(
+                rate_limit_kind = kind.as_str(),
+                suppressed,
+                "request rate limited"
+            );
+        }
+    }
+
+    fn record_missing_peer(&self, now: Instant) {
+        if let Some(suppressed) = self.missing_peer.record(now) {
+            tracing::error!(
+                suppressed,
+                "rate limiter could not determine peer address; peer safety fuse skipped"
+            );
+        }
+    }
+
+    fn record_capacity_exhausted(&self, kind: RejectionKind, now: Instant) {
+        meter::METER
+            .u64_counter(TelemetryMetric::AuthRateLimitOverflowCount.as_str())
+            .build()
+            .add(
+                1,
+                &[KeyValue::new(
+                    TelemetryAttribute::RateLimitKind.to_key(),
+                    kind.as_str(),
+                )],
+            );
+
+        let window = match kind {
+            RejectionKind::Credential => &self.credential_capacity,
+            RejectionKind::Peer => &self.peer_capacity,
+        };
+        if let Some(suppressed) = window.record(now) {
+            tracing::error!(
+                rate_limit_kind = kind.as_str(),
+                capacity = MAX_TRACKED_KEYS,
+                suppressed,
+                "rate limiter capacity exhausted; request allowed untracked"
+            );
+        }
+    }
+}
+
+/// Shared state for both rate-limit layers.
+#[derive(Clone)]
+pub(crate) struct RateLimitState {
+    credential_limiter: Arc<KeyedRateLimiter<u64>>,
+    peer_limiter: Arc<KeyedRateLimiter<IpAddr>>,
+    credential_hasher: RandomState,
+    reporter: Arc<RateLimitReporter>,
+}
+
+impl RateLimitState {
+    pub(crate) fn new() -> Self {
+        Self::with_limits(
+            Limits::new(CREDENTIAL_REQUESTS_PER_SECOND, CREDENTIAL_BURST),
+            Limits::new(PEER_REQUESTS_PER_SECOND, PEER_BURST),
+        )
+    }
+
+    fn with_limits(credential: Limits, peer: Limits) -> Self {
+        Self {
+            credential_limiter: Arc::new(KeyedRateLimiter::new(credential)),
+            peer_limiter: Arc::new(KeyedRateLimiter::new(peer)),
+            credential_hasher: RandomState::new(),
+            reporter: Arc::new(RateLimitReporter::default()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn for_test(
+        credential_requests_per_second: u32,
+        credential_burst: u32,
+        peer_requests_per_second: u32,
+        peer_burst: u32,
+    ) -> Self {
+        Self::with_limits(
+            Limits::new(credential_requests_per_second, credential_burst),
+            Limits::new(peer_requests_per_second, peer_burst),
+        )
+    }
+}
+
+fn credential_fingerprint(request: &Request, hasher: &RandomState) -> Option<u64> {
+    let value = request.headers().get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, credential) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+
+    Some(hasher.hash_one(credential.trim_start()))
+}
+
+fn too_many_requests() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(http::header::RETRY_AFTER, "1")],
+    )
+        .into_response()
+}
+
+/// Enforces the bearer-credential limit followed by the aggregate peer fuse.
+/// Credential-rejected requests do not consume the proxy's shared peer budget.
+/// Requests without a bearer credential are subject only to the peer fuse
+/// because rejecting them in OAuth middleware is inexpensive.
 pub(crate) async fn rate_limit(
     State(state): State<RateLimitState>,
     request: Request,
     next: Next,
 ) -> Response {
+    let now = Instant::now();
+    let fingerprint = credential_fingerprint(&request, &state.credential_hasher);
+
+    if let Some(fingerprint) = fingerprint {
+        match state.credential_limiter.check(fingerprint, now) {
+            LimitOutcome::Allowed => {}
+            LimitOutcome::Rejected => {
+                state
+                    .reporter
+                    .record_rejection(RejectionKind::Credential, now);
+                return too_many_requests();
+            }
+            LimitOutcome::AllowedUntracked => state
+                .reporter
+                .record_capacity_exhausted(RejectionKind::Credential, now),
+        }
+    }
+
     let peer = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|connect_info| connect_info.0.ip());
+        .map(|connect_info| connect_info.0.ip().to_canonical());
 
-    let Some(peer) = peer else {
-        // Missing socket info means a server wiring regression. Rate
-        // limiting is defence in depth, so fail open loudly rather than
-        // rejecting all traffic.
-        tracing::error!("rate limiter could not determine peer address; allowing request");
-        return next.run(request).await;
-    };
-
-    let ip = client_ip(peer, request.headers(), &state.trusted_proxies);
-    if state.limiter.check(ip, Instant::now()) {
-        next.run(request).await
-    } else {
-        tracing::warn!(client_ip = %ip, "request rate limited");
-        (
-            StatusCode::TOO_MANY_REQUESTS,
-            [(http::header::RETRY_AFTER, "1")],
-        )
-            .into_response()
-    }
-}
-
-const X_FORWARDED_FOR: &str = "x-forwarded-for";
-
-fn is_trusted(ip: IpAddr, trusted_proxies: &[IpNet]) -> bool {
-    trusted_proxies.iter().any(|net| net.contains(&ip))
-}
-
-/// The IP a request should be rate-limited under.
-///
-/// The socket peer address is authoritative unless it belongs to a
-/// configured trusted proxy, in which case the right-most
-/// `X-Forwarded-For` entry that is not itself a trusted proxy is the
-/// client. A malformed entry or an all-trusted chain falls back to the
-/// peer address, which shares one bucket across that proxy — conservative,
-/// but never lets an attacker choose their own key.
-///
-/// IPv4-mapped IPv6 addresses (e.g. `::ffff:10.0.0.1`) are canonicalized
-/// to their IPv4 form so that V4 CIDRs match dual-stack peers correctly.
-fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> IpAddr {
-    let peer = peer.to_canonical();
-
-    if trusted_proxies.is_empty() || !is_trusted(peer, trusted_proxies) {
-        return peer;
-    }
-
-    // If any XFF header value is non-UTF8, fall back to peer — consistent
-    // with how malformed IP entries are handled.
-    let raw_values: Vec<&str> = match headers
-        .get_all(X_FORWARDED_FOR)
-        .iter()
-        .map(|v| v.to_str())
-        .collect::<Result<Vec<_>, _>>()
-    {
-        Ok(values) => values,
-        Err(_) => return peer,
-    };
-
-    let entries: Vec<&str> = raw_values
-        .iter()
-        .flat_map(|value| value.split(','))
-        .map(str::trim)
-        .filter(|entry| !entry.is_empty())
-        .collect();
-
-    for entry in entries.iter().rev() {
-        match entry.parse::<IpAddr>() {
-            Ok(ip) => {
-                let ip = ip.to_canonical();
-                if is_trusted(ip, trusted_proxies) {
-                    continue;
+    if let Some(peer) = peer {
+        match state.peer_limiter.check(peer, now) {
+            LimitOutcome::Allowed => {}
+            LimitOutcome::Rejected => {
+                if let Some(fingerprint) = fingerprint {
+                    state.credential_limiter.refund(fingerprint, now);
                 }
-                return ip;
+                state.reporter.record_rejection(RejectionKind::Peer, now);
+                return too_many_requests();
             }
-            Err(_) => break,
+            LimitOutcome::AllowedUntracked => state
+                .reporter
+                .record_capacity_exhausted(RejectionKind::Peer, now),
         }
+    } else {
+        state.reporter.record_missing_peer(now);
     }
-    peer
+
+    next.run(request).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    mod config {
-        use super::*;
-
-        #[test]
-        fn yaml_empty_block_enables_with_no_trusted_proxies() {
-            let config: RateLimitConfig = serde_yaml::from_str("{}").unwrap();
-            assert!(config.trusted_proxies.is_empty());
-        }
-
-        #[test]
-        fn yaml_with_trusted_proxies() {
-            let yaml = r#"
-                trusted_proxies:
-                  - 10.0.0.0/8
-                  - 192.168.1.1/32
-            "#;
-            let config: RateLimitConfig = serde_yaml::from_str(yaml).unwrap();
-            assert_eq!(config.trusted_proxies.len(), 2);
-        }
-
-        #[test]
-        fn yaml_rejects_unknown_fields() {
-            let err = serde_yaml::from_str::<RateLimitConfig>("bogus_field: 1").unwrap_err();
-            assert!(err.to_string().contains("bogus_field"), "got: {err}");
-        }
-
-        #[test]
-        fn yaml_rejects_rate_knobs_that_are_not_exposed() {
-            // Rate and burst are deliberately constants, not config. If a
-            // future change exposes them, it must be a conscious decision —
-            // this test forces that conversation.
-            let err =
-                serde_yaml::from_str::<RateLimitConfig>("requests_per_second: 5").unwrap_err();
-            assert!(
-                err.to_string().contains("requests_per_second"),
-                "got: {err}"
-            );
-        }
-
-        #[test]
-        fn yaml_rejects_invalid_cidr() {
-            let err = serde_yaml::from_str::<RateLimitConfig>("trusted_proxies: [\"not-a-cidr\"]")
-                .unwrap_err();
-            assert!(
-                err.to_string().contains("invalid IP address syntax"),
-                "got: {err}"
-            );
-        }
-
-        #[test]
-        fn yaml_rejects_bare_ip_without_prefix() {
-            // Entries must be CIDR ranges; a bare IP needs /32 (or /128).
-            let err = serde_yaml::from_str::<RateLimitConfig>("trusted_proxies: [\"10.0.0.1\"]")
-                .unwrap_err();
-            assert!(
-                err.to_string().contains("invalid IP address syntax"),
-                "got: {err}"
-            );
-        }
-    }
-
     mod limiter {
-        use super::IpRateLimiter;
-        use std::net::{IpAddr, Ipv4Addr};
+        use super::{
+            CREDENTIAL_BURST, CREDENTIAL_REQUESTS_PER_SECOND, KeyedRateLimiter, LimitOutcome,
+            Limits,
+        };
         use std::time::{Duration, Instant};
 
-        fn ip(last: u8) -> IpAddr {
-            IpAddr::V4(Ipv4Addr::new(1, 2, 3, last))
+        fn allowed<K>(limiter: &KeyedRateLimiter<K>, key: K, now: Instant) -> bool
+        where
+            K: Copy + Eq + std::hash::Hash,
+        {
+            limiter.check(key, now) != LimitOutcome::Rejected
         }
 
         #[test]
         fn allows_burst_then_blocks() {
-            let limiter = IpRateLimiter::new(1, 3);
+            let limiter = KeyedRateLimiter::new(Limits::new(1, 3));
             let now = Instant::now();
-            for i in 0..3 {
-                assert!(limiter.check(ip(1), now), "request {i} within burst");
+            for request in 0..3 {
+                assert!(allowed(&limiter, 1, now), "request {request} within burst");
             }
-            assert!(!limiter.check(ip(1), now), "request beyond burst");
+            assert!(!allowed(&limiter, 1, now), "request beyond burst");
         }
 
         #[test]
         fn refills_over_time() {
-            let limiter = IpRateLimiter::new(2, 2); // 2 tokens/sec, burst 2
+            let limiter = KeyedRateLimiter::new(Limits::new(2, 2));
             let start = Instant::now();
-            assert!(limiter.check(ip(1), start));
-            assert!(limiter.check(ip(1), start));
-            assert!(!limiter.check(ip(1), start));
-            // 1 second later: 2 tokens refilled
+            assert!(allowed(&limiter, 1, start));
+            assert!(allowed(&limiter, 1, start));
+            assert!(!allowed(&limiter, 1, start));
+
             let later = start + Duration::from_secs(1);
-            assert!(limiter.check(ip(1), later));
-            assert!(limiter.check(ip(1), later));
-            assert!(!limiter.check(ip(1), later));
+            assert!(allowed(&limiter, 1, later));
+            assert!(allowed(&limiter, 1, later));
+            assert!(!allowed(&limiter, 1, later));
         }
 
         #[test]
         fn refill_caps_at_burst() {
-            let limiter = IpRateLimiter::new(100, 2);
+            let limiter = KeyedRateLimiter::new(Limits::new(100, 2));
             let start = Instant::now();
-            assert!(limiter.check(ip(1), start)); // create the bucket
-            // A long idle period must not accumulate more than `burst` tokens.
-            let later = start + Duration::from_secs(3600);
-            assert!(limiter.check(ip(1), later));
-            assert!(limiter.check(ip(1), later));
-            assert!(!limiter.check(ip(1), later));
+            assert!(allowed(&limiter, 1, start));
+
+            let later = start + Duration::from_secs(3_600);
+            assert!(allowed(&limiter, 1, later));
+            assert!(allowed(&limiter, 1, later));
+            assert!(!allowed(&limiter, 1, later));
         }
 
         #[test]
-        fn ips_are_limited_independently() {
-            let limiter = IpRateLimiter::new(1, 1);
+        fn keys_are_limited_independently() {
+            let limiter = KeyedRateLimiter::new(Limits::new(1, 1));
             let now = Instant::now();
-            assert!(limiter.check(ip(1), now));
-            assert!(!limiter.check(ip(1), now));
-            assert!(limiter.check(ip(2), now), "other IP must be unaffected");
+            assert!(allowed(&limiter, 1, now));
+            assert!(!allowed(&limiter, 1, now));
+            assert!(allowed(&limiter, 2, now));
         }
 
         #[test]
         fn evicts_idle_buckets_when_full() {
-            // with_max_tracked: rate=1 token/s, burst=1, max=2
-            let limiter = IpRateLimiter::with_max_tracked(1, 1, 2);
+            let limiter = KeyedRateLimiter::with_max_tracked(Limits::new(1, 1), 2);
             let start = Instant::now();
-            // Fill the map with two IPs, both spend their token (not idle).
-            assert!(limiter.check(ip(1), start));
-            assert!(limiter.check(ip(2), start));
-            assert_eq!(limiter.tracked_ips(), 2);
-            // Much later, both buckets are full again (idle) and a new IP
-            // arrives: first sweep (last_sweep is None) evicts both idle
-            // buckets; ip3 is inserted.
+            assert!(allowed(&limiter, 1, start));
+            assert!(allowed(&limiter, 2, start));
+            assert_eq!(limiter.tracked_keys(), 2);
+
             let later = start + Duration::from_secs(60);
-            assert!(limiter.check(ip(3), later));
-            assert_eq!(
-                limiter.tracked_ips(),
-                1,
-                "both idle buckets evicted, ip3 inserted"
-            );
+            assert!(allowed(&limiter, 3, later));
+            assert_eq!(limiter.tracked_keys(), 1);
         }
 
         #[test]
-        fn active_attacker_bucket_survives_eviction() {
-            let limiter = IpRateLimiter::with_max_tracked(1, 1, 2);
+        fn credential_at_10x_is_clamped_and_other_credentials_are_unaffected() {
+            let limiter = KeyedRateLimiter::new(Limits::new(
+                CREDENTIAL_REQUESTS_PER_SECOND,
+                CREDENTIAL_BURST,
+            ));
             let start = Instant::now();
-            assert!(limiter.check(ip(1), start)); // attacker spends its token
-            assert!(limiter.check(ip(2), start));
-            // Immediately after (no refill yet), a third IP triggers eviction.
-            // The attacker's empty bucket must NOT be evicted, so the
-            // attacker stays blocked.
-            let now = start + Duration::from_millis(10);
-            assert!(limiter.check(ip(3), now));
-            assert!(!limiter.check(ip(1), now), "attacker still limited");
-        }
+            let attacker = 66;
 
-        #[test]
-        fn attacker_at_10x_is_clamped_and_legit_traffic_unaffected() {
-            // The shipped constants: 10 req/s sustained, burst 50.
-            let limiter = IpRateLimiter::new(
-                crate::auth::rate_limit::RATE_LIMIT_REQUESTS_PER_SECOND,
-                crate::auth::rate_limit::RATE_LIMIT_BURST,
+            let attacker_allowed = (0..1_000u32)
+                .filter(|request| {
+                    let now = start + Duration::from_millis(u64::from(*request) * 10);
+                    allowed(&limiter, attacker, now)
+                })
+                .count();
+            assert!(
+                attacker_allowed <= 150,
+                "attacker got {attacker_allowed} through"
             );
-            let start = Instant::now();
-            let attacker = ip(66);
 
-            // Attacker sends 100 req/s for 10 seconds (10x the limit),
-            // spread evenly (one request every 10ms).
-            let mut allowed = 0u32;
-            for i in 0..1000u32 {
-                let now = start + Duration::from_millis(u64::from(i) * 10);
-                if limiter.check(attacker, now) {
-                    allowed += 1;
-                }
-            }
-            // At most: initial burst (50) + 10/s refill over 10s (100).
-            assert!(allowed <= 150, "attacker got {allowed} through");
-
-            // Meanwhile 20 legitimate IPs each send 1 req/s: all allowed.
-            for client in 0..20u8 {
-                for second in 0..10u64 {
+            for credential in 0..20 {
+                for second in 0..10 {
                     let now = start + Duration::from_secs(second);
-                    assert!(
-                        limiter.check(ip(client), now),
-                        "legit client {client} blocked at second {second}"
-                    );
+                    assert!(allowed(&limiter, credential, now));
                 }
             }
         }
 
         #[test]
-        fn full_map_of_active_buckets_does_not_grow() {
-            // rate=1 token/s, burst=2, max_tracked=2: fill the map with two
-            // active (fully spent) IPs so the sweep has nothing to evict.
-            let limiter = IpRateLimiter::with_max_tracked(1, 2, 2);
+        fn full_map_keeps_active_buckets_and_does_not_grow() {
+            let limiter = KeyedRateLimiter::with_max_tracked(Limits::new(1, 1), 2);
             let start = Instant::now();
-            // Both IPs spend all tokens (active, not idle).
-            assert!(limiter.check(ip(1), start));
-            assert!(limiter.check(ip(1), start));
-            assert!(limiter.check(ip(2), start));
-            assert!(limiter.check(ip(2), start));
-            assert_eq!(limiter.tracked_ips(), 2);
-            // At start + 10ms buckets have not fully refilled (burst=2, rate=1,
-            // so need 2s to refill). Sweep runs (first sweep, last_sweep None),
-            // but no idle buckets exist → ip3 is allowed untracked (fail-open)
-            // and the map stays at 2.
-            let t1 = start + Duration::from_millis(10);
-            assert!(limiter.check(ip(3), t1), "fail-open when map full");
-            assert_eq!(limiter.tracked_ips(), 2, "map must not grow beyond max");
+            assert!(allowed(&limiter, 1, start));
+            assert!(allowed(&limiter, 2, start));
+
+            let now = start + Duration::from_millis(10);
+            assert_eq!(
+                limiter.check(3, now),
+                LimitOutcome::AllowedUntracked,
+                "new key should fail open"
+            );
+            assert_eq!(limiter.tracked_keys(), 2);
+            assert!(!allowed(&limiter, 1, now), "active bucket was evicted");
         }
 
         #[test]
         fn sweep_is_throttled() {
-            // rate=100 tokens/s, burst=1 → refills fully in 10ms; max=100
-            // so we track ip1 and ip2 normally.
-            let limiter = IpRateLimiter::with_max_tracked(100, 1, 2);
+            let limiter = KeyedRateLimiter::with_max_tracked(Limits::new(100, 1), 2);
             let start = Instant::now();
-            // ip1 and ip2 spend their tokens at start.
-            assert!(limiter.check(ip(1), start));
-            assert!(limiter.check(ip(2), start));
-            assert_eq!(limiter.tracked_ips(), 2);
+            assert!(allowed(&limiter, 1, start));
+            assert!(allowed(&limiter, 2, start));
 
-            // At start + 5ms: ip3 arrives → first sweep (last_sweep None) runs.
-            // Buckets have not yet fully refilled (10ms needed at 100/s for
-            // burst=1 means 0.5 tokens after 5ms — below burst), so nothing is
-            // evicted. ip3 is allowed untracked (fail-open). Map stays at 2.
-            let t1 = start + Duration::from_millis(5);
-            assert!(limiter.check(ip(3), t1), "ip3 allowed fail-open");
-            assert_eq!(limiter.tracked_ips(), 2, "nothing evicted at 5ms");
+            let first_sweep = start + Duration::from_millis(5);
+            assert!(allowed(&limiter, 3, first_sweep));
+            assert_eq!(limiter.tracked_keys(), 2);
 
-            // At start + 20ms: buckets HAVE fully refilled (20ms × 100/s = 2 >
-            // burst=1). But the sweep was last run at t1 (5ms ago → 15ms ago
-            // from t2 perspective) — 15ms < 1s SWEEP_INTERVAL → sweep is
-            // throttled. ip4 allowed untracked; map still 2.
-            let t2 = start + Duration::from_millis(20);
-            assert!(limiter.check(ip(4), t2), "ip4 allowed fail-open");
-            assert_eq!(limiter.tracked_ips(), 2, "sweep throttled, map unchanged");
+            let throttled = start + Duration::from_millis(20);
+            assert!(allowed(&limiter, 4, throttled));
+            assert_eq!(limiter.tracked_keys(), 2);
 
-            // At start + 2s: SWEEP_INTERVAL has elapsed since last sweep.
-            // Buckets have fully refilled (idle). Sweep runs, both evicted.
-            // ip5 is inserted normally.
-            let t3 = start + Duration::from_secs(2);
-            assert!(limiter.check(ip(5), t3), "ip5 allowed after sweep");
-            assert_eq!(
-                limiter.tracked_ips(),
-                1,
-                "idle buckets evicted, ip5 inserted"
-            );
-        }
-    }
-
-    mod client_ip {
-        use super::*;
-        use http::HeaderMap;
-        use rstest::rstest;
-        use std::net::IpAddr;
-
-        fn trusted(nets: &[&str]) -> Vec<IpNet> {
-            nets.iter().map(|n| n.parse().unwrap()).collect()
-        }
-
-        fn xff(value: &str) -> HeaderMap {
-            let mut headers = HeaderMap::new();
-            headers.insert("x-forwarded-for", value.parse().unwrap());
-            headers
-        }
-
-        #[rstest]
-        // No trusted proxies: always the peer, XFF is attacker-controlled noise.
-        #[case::no_proxies_ignores_xff(&[], "203.0.113.7", "9.9.9.9", "203.0.113.7")]
-        // Peer is not a trusted proxy: XFF ignored.
-        #[case::untrusted_peer_ignores_xff(&["10.0.0.0/8"], "203.0.113.7", "9.9.9.9", "203.0.113.7")]
-        // Peer is trusted: right-most XFF entry is the client.
-        #[case::trusted_peer_uses_xff(&["10.0.0.0/8"], "10.0.0.1", "198.51.100.4", "198.51.100.4")]
-        // Right-most entry is another trusted proxy: skip to the real client.
-        #[case::skips_trusted_hops(&["10.0.0.0/8"], "10.0.0.1", "198.51.100.4, 10.0.0.2", "198.51.100.4")]
-        // Client-spoofed prefix is ignored; only the right-most untrusted entry counts.
-        #[case::spoofed_prefix_ignored(&["10.0.0.0/8"], "10.0.0.1", "1.1.1.1, 198.51.100.4", "198.51.100.4")]
-        fn resolves_client_ip(
-            #[case] trusted_nets: &[&str],
-            #[case] peer: &str,
-            #[case] xff_value: &str,
-            #[case] expected: &str,
-        ) {
-            let peer: IpAddr = peer.parse().unwrap();
-            let expected: IpAddr = expected.parse().unwrap();
-            let result = client_ip(peer, &xff(xff_value), &trusted(trusted_nets));
-            assert_eq!(result, expected);
-        }
-
-        #[test]
-        fn trusted_peer_without_xff_falls_back_to_peer() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &HeaderMap::new(), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, peer);
-        }
-
-        #[test]
-        fn malformed_xff_entry_falls_back_to_peer() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("not-an-ip"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, peer);
-        }
-
-        #[test]
-        fn all_trusted_chain_falls_back_to_peer() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("10.0.0.2, 10.0.0.3"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, peer);
-        }
-
-        #[test]
-        fn multiple_xff_headers_treated_as_one_chain() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let mut headers = HeaderMap::new();
-            headers.append("x-forwarded-for", "198.51.100.4".parse().unwrap());
-            headers.append("x-forwarded-for", "10.0.0.2".parse().unwrap());
-            let result = client_ip(peer, &headers, &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
-        }
-
-        #[test]
-        fn ipv6_client_behind_trusted_proxy() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("2001:db8::1"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, "2001:db8::1".parse::<IpAddr>().unwrap());
-        }
-
-        #[test]
-        fn ipv4_mapped_peer_matches_v4_trusted_cidr() {
-            // A dual-stack listener delivers an IPv4 client as ::ffff:10.0.0.1.
-            // The V4 CIDR 10.0.0.0/8 must still recognize it as trusted so the
-            // XFF chain is consulted.
-            let peer: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("198.51.100.4"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
-        }
-
-        #[test]
-        fn ipv4_mapped_xff_entry_is_canonicalized() {
-            // An XFF entry written as ::ffff:198.51.100.4 should resolve to the
-            // canonical V4 form 198.51.100.4 so it keys the same bucket.
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("::ffff:198.51.100.4"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
-        }
-
-        #[test]
-        fn empty_xff_value_falls_back_to_peer() {
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff(""), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, peer);
-        }
-
-        #[test]
-        fn xff_entry_with_port_falls_back_to_peer() {
-            // Port-stripping is a deliberate non-feature until a real deployment
-            // needs it; entries like "1.2.3.4:5678" are treated as malformed.
-            let peer: IpAddr = "10.0.0.1".parse().unwrap();
-            let result = client_ip(peer, &xff("1.2.3.4:5678"), &trusted(&["10.0.0.0/8"]));
-            assert_eq!(result, peer);
+            let sweep_due = start + Duration::from_secs(2);
+            assert!(allowed(&limiter, 5, sweep_due));
+            assert_eq!(limiter.tracked_keys(), 1);
         }
     }
 
@@ -651,56 +505,50 @@ mod tests {
             Router,
             body::Body,
             extract::ConnectInfo,
-            http::{Request, StatusCode},
+            http::{Request, StatusCode, header::AUTHORIZATION},
             middleware::from_fn_with_state,
             routing::get,
         };
         use std::net::SocketAddr;
         use tower::ServiceExt;
 
-        fn app(rps: u32, burst: u32) -> Router {
-            // Tests use small limits via the internal constructor; production
-            // always uses the RATE_LIMIT_* constants through `new`.
-            let state = RateLimitState::with_limits(rps, burst, vec![]);
+        fn app(credential: (u32, u32), peer: (u32, u32)) -> Router {
+            let state = RateLimitState::for_test(credential.0, credential.1, peer.0, peer.1);
             Router::new()
                 .route("/test", get(|| async { "ok" }))
                 .layer(from_fn_with_state(state, rate_limit))
         }
 
-        fn request_from(ip: &str) -> Request<Body> {
-            let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
-            req.extensions_mut().insert(ConnectInfo(addr));
-            req
-        }
-
-        #[tokio::test]
-        async fn allows_within_burst() {
-            let app = app(1, 2);
-            for _ in 0..2 {
-                let res = app
-                    .clone()
-                    .oneshot(request_from("203.0.113.7"))
-                    .await
-                    .unwrap();
-                assert_eq!(res.status(), StatusCode::OK);
+        fn request(peer: Option<&str>, credential: Option<&str>) -> Request<Body> {
+            let mut request = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            if let Some(peer) = peer {
+                let address = SocketAddr::new(peer.parse().unwrap(), 12_345);
+                request.extensions_mut().insert(ConnectInfo(address));
             }
+            if let Some(credential) = credential {
+                request.headers_mut().insert(
+                    AUTHORIZATION,
+                    format!("Bearer {credential}").parse().unwrap(),
+                );
+            }
+            request
         }
 
         #[tokio::test]
-        async fn returns_429_with_retry_after_when_over_limit() {
-            let app = app(1, 1);
-            let ok = app
+        async fn credential_limit_returns_429_with_retry_after() {
+            let app = app((0, 1), (0, 10));
+            let first = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
                 .await
                 .unwrap();
-            assert_eq!(ok.status(), StatusCode::OK);
             let limited = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
                 .await
                 .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
             assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
             assert_eq!(
                 limited.headers().get(http::header::RETRY_AFTER).unwrap(),
@@ -709,36 +557,144 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn other_ips_unaffected() {
-            let app = app(1, 1);
-            let _ = app
+        async fn credentials_behind_one_peer_are_limited_independently() {
+            let app = app((0, 1), (0, 10));
+            let first = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .await
+                .unwrap();
+            let second = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
+                .await
+                .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
+            assert_eq!(second.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn credential_rejections_do_not_consume_shared_peer_budget() {
+            let app = app((0, 1), (0, 2));
+            let first = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .await
+                .unwrap();
+            let credential_limited = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .await
+                .unwrap();
+            let other_credential = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
+                .await
+                .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
+            assert_eq!(credential_limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(other_credential.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn peer_rejections_do_not_consume_credential_budget() {
+            let app = app((0, 1), (0, 1));
+            let first = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .await
+                .unwrap();
+            let peer_limited = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
+                .await
+                .unwrap();
+            let same_credential_from_other_peer = app
+                .clone()
+                .oneshot(request(Some("10.0.0.2"), Some("token-b")))
+                .await
+                .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
+            assert_eq!(peer_limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(same_credential_from_other_peer.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn rotating_credentials_hit_peer_fuse() {
+            let app = app((0, 10), (0, 2));
+            for credential in ["token-a", "token-b"] {
+                let response = app
+                    .clone()
+                    .oneshot(request(Some("10.0.0.1"), Some(credential)))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+            }
+
+            let limited = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), Some("token-c")))
+                .await
+                .unwrap();
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        #[tokio::test]
+        async fn forwarded_for_does_not_split_peer_fuse() {
+            let app = app((0, 10), (0, 1));
+            let mut first = request(Some("10.0.0.1"), Some("token-a"));
+            first
+                .headers_mut()
+                .insert("x-forwarded-for", "198.51.100.4".parse().unwrap());
+            let mut second = request(Some("10.0.0.1"), Some("token-b"));
+            second
+                .headers_mut()
+                .insert("x-forwarded-for", "198.51.100.5".parse().unwrap());
+
+            let first = app.clone().oneshot(first).await.unwrap();
+            let limited = app.clone().oneshot(second).await.unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        #[tokio::test]
+        async fn missing_peer_still_uses_credential_limit() {
+            let app = app((0, 1), (0, 1));
+            let first = app
+                .clone()
+                .oneshot(request(None, Some("token-a")))
                 .await
                 .unwrap();
             let limited = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request(None, Some("token-a")))
                 .await
                 .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
             assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-            let other = app
-                .clone()
-                .oneshot(request_from("203.0.113.8"))
-                .await
-                .unwrap();
-            assert_eq!(other.status(), StatusCode::OK);
         }
 
         #[tokio::test]
-        async fn missing_connect_info_fails_open() {
-            let app = app(1, 1);
-            // No ConnectInfo extension: wiring regression. Requests pass.
-            for _ in 0..3 {
-                let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-                let res = app.clone().oneshot(req).await.unwrap();
-                assert_eq!(res.status(), StatusCode::OK);
-            }
+        async fn requests_without_bearer_credentials_use_peer_fuse() {
+            let app = app((0, 1), (0, 1));
+            let first = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), None))
+                .await
+                .unwrap();
+            let limited = app
+                .clone()
+                .oneshot(request(Some("10.0.0.1"), None))
+                .await
+                .unwrap();
+
+            assert_eq!(first.status(), StatusCode::OK);
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
         }
     }
 }

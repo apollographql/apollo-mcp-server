@@ -1,5 +1,4 @@
-use std::path::Path;
-use std::{net::SocketAddr, sync::Arc};
+use std::{future::Future, net::SocketAddr, path::Path, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
 use axum_otel_metrics::HttpMetricsLayerBuilder;
@@ -245,14 +244,8 @@ impl Starting {
                     };
                     // Health check is already active from creation
                     // Expose the peer socket address so middleware (e.g. the
-                    // per-IP rate limiter) can key on the client address.
-                    if let Err(e) = axum::serve(
-                        tcp_listener,
-                        router.into_make_service_with_connect_info::<SocketAddr>(),
-                    )
-                    .with_graceful_shutdown(graceful_shutdown)
-                    .await
-                    {
+                    // peer-IP rate limiter) can key on the connection address.
+                    if let Err(e) = serve_http(tcp_listener, router, graceful_shutdown).await {
                         // This can never really happen
                         error!("Failed to start MCP server: {e:?}");
                     }
@@ -276,6 +269,19 @@ impl Starting {
     }
 }
 
+async fn serve_http(
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+    graceful_shutdown: impl Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(graceful_shutdown)
+    .await
+}
+
 fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
     if config.enabled {
         let cors_layer = config.build_cors_layer().inspect_err(|e| {
@@ -289,64 +295,38 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
 
 #[cfg(test)]
 mod tests {
-    use http::HeaderMap;
-    use url::Url;
+    use std::net::Ipv4Addr;
 
-    use crate::health::HealthCheckConfig;
-    use crate::host_validation::HostValidationConfig;
+    use axum::{extract::ConnectInfo, routing::get};
 
     use super::*;
 
     #[tokio::test]
-    async fn start_basic_server() {
-        let starting = Starting {
-            config: Config {
-                rhai_dir: std::path::PathBuf::from("rhai"),
-                transport: Transport::StreamableHttp {
-                    auth: None,
-                    address: "127.0.0.1".parse().unwrap(),
-                    port: 7799,
-                    stateful_mode: false,
-                    host_validation: HostValidationConfig::default(),
-                },
-                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
-                mutation_mode: MutationMode::All,
-                execute_introspection: true,
-                headers: HeaderMap::new(),
-                forward_headers: vec![],
-                validate_introspection: true,
-                introspect_introspection: true,
-                search_introspection: true,
-                introspect_minify: false,
-                search_minify: false,
-                execute_tool_hint: None,
-                introspect_tool_hint: None,
-                search_tool_hint: None,
-                validate_tool_hint: None,
-                explorer_graph_ref: None,
-                custom_scalar_map: None,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: false,
-                disable_auth_token_passthrough: false,
-                descriptions: std::collections::HashMap::new(),
-                annotations: std::collections::HashMap::new(),
-                required_scopes: std::collections::HashMap::new(),
-                search_leaf_depth: 5,
-                index_memory_bytes: 1024 * 1024 * 1024,
-                health_check: HealthCheckConfig {
-                    enabled: true,
-                    ..Default::default()
-                },
-                cors: Default::default(),
-                server_info: Default::default(),
-                instructions: None,
-            },
-            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
-                .expect("Valid schema"),
-            operations: vec![],
-        };
-        let running = starting.start();
-        assert!(running.await.is_ok());
+    async fn streamable_http_supplies_connect_info() {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancellation = CancellationToken::new();
+        let router = axum::Router::new().route(
+            "/",
+            get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }),
+        );
+        let server = tokio::spawn(serve_http(
+            listener,
+            router,
+            cancellation.clone().cancelled_owned(),
+        ));
+
+        let body = reqwest::get(format!("http://{address}"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        cancellation.cancel();
+        server.await.unwrap().unwrap();
+
+        assert_eq!(body, Ipv4Addr::LOCALHOST.to_string());
     }
 }
