@@ -84,5 +84,15 @@ mod tests {
                 "got: {err}"
             );
         }
+
+        #[test]
+        fn yaml_rejects_invalid_cidr() {
+            let err = serde_yaml::from_str::<RateLimitConfig>("trusted_proxies: [\"not-a-cidr\"]")
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("invalid IP address syntax"),
+                "got: {err}"
+            );
+        }
     }
 }
