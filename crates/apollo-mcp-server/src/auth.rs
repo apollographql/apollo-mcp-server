@@ -35,10 +35,13 @@ use crate::scope_requirements::OperationRequiredScopes;
 
 mod networked_key_resolver;
 mod protected_resource;
+mod rate_limit;
 mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
+#[allow(unused_imports)]
+pub use rate_limit::RateLimitConfig;
 use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
