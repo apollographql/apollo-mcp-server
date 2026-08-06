@@ -33,7 +33,7 @@ mod www_authenticate;
 
 use protected_resource::ProtectedResource;
 pub(crate) use valid_token::ValidToken;
-use valid_token::TokenValidator;
+use valid_token::{TokenValidationReporter, TokenValidator};
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
@@ -303,6 +303,8 @@ struct AuthState {
     auth_servers: Arc<[Url]>,
     /// Per-operation required scopes, keyed by operation name.
     required_scopes: Arc<HashMap<String, Vec<String>>>,
+    /// Coalesces attacker-influenced token-validation warnings.
+    token_validation_reporter: Arc<TokenValidationReporter>,
 }
 
 impl Config {
@@ -385,6 +387,7 @@ impl Config {
             required_scopes: Arc::new(required_scopes),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            token_validation_reporter: Arc::new(TokenValidationReporter::default()),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -579,6 +582,7 @@ async fn oauth_validate(
             DEFAULT_JWKS_CACHE_TTL,
             JWKS_MIN_REFRESH_INTERVAL,
         ),
+        reporter: &auth_state.token_validation_reporter,
     };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -692,6 +696,7 @@ mod tests {
             required_scopes: Arc::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            token_validation_reporter: Arc::new(TokenValidationReporter::default()),
         }
     }
 
