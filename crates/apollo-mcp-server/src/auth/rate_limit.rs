@@ -5,6 +5,7 @@
 //! work happens, bounding the CPU and network cost an unauthenticated
 //! client can impose.
 
+use http::HeaderMap;
 use ipnet::IpNet;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -161,6 +162,45 @@ fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
         .as_secs_f64();
     bucket.tokens = (bucket.tokens + elapsed * rate).min(burst);
     bucket.last_refill = now;
+}
+
+const X_FORWARDED_FOR: &str = "x-forwarded-for";
+
+fn is_trusted(ip: IpAddr, trusted_proxies: &[IpNet]) -> bool {
+    trusted_proxies.iter().any(|net| net.contains(&ip))
+}
+
+/// The IP a request should be rate-limited under.
+///
+/// The socket peer address is authoritative unless it belongs to a
+/// configured trusted proxy, in which case the right-most
+/// `X-Forwarded-For` entry that is not itself a trusted proxy is the
+/// client. A malformed entry or an all-trusted chain falls back to the
+/// peer address, which shares one bucket across that proxy — conservative,
+/// but never lets an attacker choose their own key.
+#[allow(dead_code)] // Used by the rate-limit middleware added in a later commit.
+fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> IpAddr {
+    if trusted_proxies.is_empty() || !is_trusted(peer, trusted_proxies) {
+        return peer;
+    }
+
+    let entries: Vec<&str> = headers
+        .get_all(X_FORWARDED_FOR)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect();
+
+    for entry in entries.iter().rev() {
+        match entry.parse::<IpAddr>() {
+            Ok(ip) if is_trusted(ip, trusted_proxies) => continue,
+            Ok(ip) => return ip,
+            Err(_) => break,
+        }
+    }
+    peer
 }
 
 #[cfg(test)]
@@ -364,6 +404,84 @@ mod tests {
                 1,
                 "idle buckets evicted, ip5 inserted"
             );
+        }
+    }
+
+    mod client_ip {
+        use super::*;
+        use http::HeaderMap;
+        use rstest::rstest;
+        use std::net::IpAddr;
+
+        fn trusted(nets: &[&str]) -> Vec<IpNet> {
+            nets.iter().map(|n| n.parse().unwrap()).collect()
+        }
+
+        fn xff(value: &str) -> HeaderMap {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-forwarded-for", value.parse().unwrap());
+            headers
+        }
+
+        #[rstest]
+        // No trusted proxies: always the peer, XFF is attacker-controlled noise.
+        #[case::no_proxies_ignores_xff(&[], "203.0.113.7", "9.9.9.9", "203.0.113.7")]
+        // Peer is not a trusted proxy: XFF ignored.
+        #[case::untrusted_peer_ignores_xff(&["10.0.0.0/8"], "203.0.113.7", "9.9.9.9", "203.0.113.7")]
+        // Peer is trusted: right-most XFF entry is the client.
+        #[case::trusted_peer_uses_xff(&["10.0.0.0/8"], "10.0.0.1", "198.51.100.4", "198.51.100.4")]
+        // Right-most entry is another trusted proxy: skip to the real client.
+        #[case::skips_trusted_hops(&["10.0.0.0/8"], "10.0.0.1", "198.51.100.4, 10.0.0.2", "198.51.100.4")]
+        // Client-spoofed prefix is ignored; only the right-most untrusted entry counts.
+        #[case::spoofed_prefix_ignored(&["10.0.0.0/8"], "10.0.0.1", "1.1.1.1, 198.51.100.4", "198.51.100.4")]
+        fn resolves_client_ip(
+            #[case] trusted_nets: &[&str],
+            #[case] peer: &str,
+            #[case] xff_value: &str,
+            #[case] expected: &str,
+        ) {
+            let peer: IpAddr = peer.parse().unwrap();
+            let expected: IpAddr = expected.parse().unwrap();
+            let result = client_ip(peer, &xff(xff_value), &trusted(trusted_nets));
+            assert_eq!(result, expected);
+        }
+
+        #[test]
+        fn trusted_peer_without_xff_falls_back_to_peer() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &HeaderMap::new(), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, peer);
+        }
+
+        #[test]
+        fn malformed_xff_entry_falls_back_to_peer() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("not-an-ip"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, peer);
+        }
+
+        #[test]
+        fn all_trusted_chain_falls_back_to_peer() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("10.0.0.2, 10.0.0.3"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, peer);
+        }
+
+        #[test]
+        fn multiple_xff_headers_treated_as_one_chain() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let mut headers = HeaderMap::new();
+            headers.append("x-forwarded-for", "198.51.100.4".parse().unwrap());
+            headers.append("x-forwarded-for", "10.0.0.2".parse().unwrap());
+            let result = client_ip(peer, &headers, &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
+        }
+
+        #[test]
+        fn ipv6_client_behind_trusted_proxy() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("2001:db8::1"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, "2001:db8::1".parse::<IpAddr>().unwrap());
         }
     }
 }
