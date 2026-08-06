@@ -178,16 +178,31 @@ fn is_trusted(ip: IpAddr, trusted_proxies: &[IpNet]) -> bool {
 /// client. A malformed entry or an all-trusted chain falls back to the
 /// peer address, which shares one bucket across that proxy — conservative,
 /// but never lets an attacker choose their own key.
+///
+/// IPv4-mapped IPv6 addresses (e.g. `::ffff:10.0.0.1`) are canonicalized
+/// to their IPv4 form so that V4 CIDRs match dual-stack peers correctly.
 #[allow(dead_code)] // Used by the rate-limit middleware added in a later commit.
 fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> IpAddr {
+    let peer = peer.to_canonical();
+
     if trusted_proxies.is_empty() || !is_trusted(peer, trusted_proxies) {
         return peer;
     }
 
-    let entries: Vec<&str> = headers
+    // If any XFF header value is non-UTF8, fall back to peer — consistent
+    // with how malformed IP entries are handled.
+    let raw_values: Vec<&str> = match headers
         .get_all(X_FORWARDED_FOR)
         .iter()
-        .filter_map(|value| value.to_str().ok())
+        .map(|v| v.to_str())
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(values) => values,
+        Err(_) => return peer,
+    };
+
+    let entries: Vec<&str> = raw_values
+        .iter()
         .flat_map(|value| value.split(','))
         .map(str::trim)
         .filter(|entry| !entry.is_empty())
@@ -195,8 +210,13 @@ fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> Ip
 
     for entry in entries.iter().rev() {
         match entry.parse::<IpAddr>() {
-            Ok(ip) if is_trusted(ip, trusted_proxies) => continue,
-            Ok(ip) => return ip,
+            Ok(ip) => {
+                let ip = ip.to_canonical();
+                if is_trusted(ip, trusted_proxies) {
+                    continue;
+                }
+                return ip;
+            }
             Err(_) => break,
         }
     }
@@ -482,6 +502,41 @@ mod tests {
             let peer: IpAddr = "10.0.0.1".parse().unwrap();
             let result = client_ip(peer, &xff("2001:db8::1"), &trusted(&["10.0.0.0/8"]));
             assert_eq!(result, "2001:db8::1".parse::<IpAddr>().unwrap());
+        }
+
+        #[test]
+        fn ipv4_mapped_peer_matches_v4_trusted_cidr() {
+            // A dual-stack listener delivers an IPv4 client as ::ffff:10.0.0.1.
+            // The V4 CIDR 10.0.0.0/8 must still recognize it as trusted so the
+            // XFF chain is consulted.
+            let peer: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("198.51.100.4"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
+        }
+
+        #[test]
+        fn ipv4_mapped_xff_entry_is_canonicalized() {
+            // An XFF entry written as ::ffff:198.51.100.4 should resolve to the
+            // canonical V4 form 198.51.100.4 so it keys the same bucket.
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("::ffff:198.51.100.4"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, "198.51.100.4".parse::<IpAddr>().unwrap());
+        }
+
+        #[test]
+        fn empty_xff_value_falls_back_to_peer() {
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff(""), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, peer);
+        }
+
+        #[test]
+        fn xff_entry_with_port_falls_back_to_peer() {
+            // Port-stripping is a deliberate non-feature until a real deployment
+            // needs it; entries like "1.2.3.4:5678" are treated as malformed.
+            let peer: IpAddr = "10.0.0.1".parse().unwrap();
+            let result = client_ip(peer, &xff("1.2.3.4:5678"), &trusted(&["10.0.0.0/8"]));
+            assert_eq!(result, peer);
         }
     }
 }
