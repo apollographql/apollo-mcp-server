@@ -267,7 +267,7 @@ Requests over the limit receive `429 Too Many Requests` with a `Retry-After` hea
 
 By default the client IP is the connection's peer address. This is correct—and safe—when clients connect directly to the MCP server. If the server sits behind a reverse proxy or load balancer, all connections appear to come from the proxy's IP, so all clients would share one rate limit bucket.
 
-In that case, list your proxies (IPs or CIDR ranges) as trusted:
+In that case, list your proxies as trusted, using CIDR notation (use `/32` or `/128` for a single host, for example `10.0.0.1/32`):
 
 ```yaml title="mcp.yaml"
     rate_limit:

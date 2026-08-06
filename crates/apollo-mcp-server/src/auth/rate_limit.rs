@@ -40,7 +40,8 @@ pub(crate) const RATE_LIMIT_BURST: u32 = 50;
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
-    /// IPs or CIDR ranges of trusted reverse proxies.
+    /// CIDR ranges of trusted reverse proxies (use `/32` or `/128` for a
+    /// single host, e.g. `10.0.0.1/32`).
     ///
     /// When the connecting peer is in this list, the client IP is taken
     /// from the right-most `X-Forwarded-For` entry that is not itself a
@@ -328,6 +329,17 @@ mod tests {
         #[test]
         fn yaml_rejects_invalid_cidr() {
             let err = serde_yaml::from_str::<RateLimitConfig>("trusted_proxies: [\"not-a-cidr\"]")
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("invalid IP address syntax"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn yaml_rejects_bare_ip_without_prefix() {
+            // Entries must be CIDR ranges; a bare IP needs /32 (or /128).
+            let err = serde_yaml::from_str::<RateLimitConfig>("trusted_proxies: [\"10.0.0.1\"]")
                 .unwrap_err();
             assert!(
                 err.to_string().contains("invalid IP address syntax"),
