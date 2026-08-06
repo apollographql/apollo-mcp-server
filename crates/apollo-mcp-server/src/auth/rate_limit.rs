@@ -426,6 +426,40 @@ mod tests {
         }
 
         #[test]
+        fn attacker_at_10x_is_clamped_and_legit_traffic_unaffected() {
+            // The shipped constants: 10 req/s sustained, burst 50.
+            let limiter = IpRateLimiter::new(
+                crate::auth::rate_limit::RATE_LIMIT_REQUESTS_PER_SECOND,
+                crate::auth::rate_limit::RATE_LIMIT_BURST,
+            );
+            let start = Instant::now();
+            let attacker = ip(66);
+
+            // Attacker sends 100 req/s for 10 seconds (10x the limit),
+            // spread evenly (one request every 10ms).
+            let mut allowed = 0u32;
+            for i in 0..1000u32 {
+                let now = start + Duration::from_millis(u64::from(i) * 10);
+                if limiter.check(attacker, now) {
+                    allowed += 1;
+                }
+            }
+            // At most: initial burst (50) + 10/s refill over 10s (100).
+            assert!(allowed <= 150, "attacker got {allowed} through");
+
+            // Meanwhile 20 legitimate IPs each send 1 req/s: all allowed.
+            for client in 0..20u8 {
+                for second in 0..10u64 {
+                    let now = start + Duration::from_secs(second);
+                    assert!(
+                        limiter.check(ip(client), now),
+                        "legit client {client} blocked at second {second}"
+                    );
+                }
+            }
+        }
+
+        #[test]
         fn full_map_of_active_buckets_does_not_grow() {
             // rate=1 token/s, burst=2, max_tracked=2: fill the map with two
             // active (fully spent) IPs so the sweep has nothing to evict.
