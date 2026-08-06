@@ -11,18 +11,24 @@ use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use axum::{
+    extract::{ConnectInfo, Request, State},
+    http::StatusCode,
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
 
 /// Sustained requests per second allowed per client IP; not
 /// operator-configurable (like the JWKS cache TTL, a knob can be added
 /// later without a breaking change if real deployments need it).
-#[allow(dead_code)]
 pub(crate) const RATE_LIMIT_REQUESTS_PER_SECOND: u32 = 10;
 
 /// Extra requests a client may send in a short spike before being
 /// limited (the token bucket capacity); not operator-configurable.
-#[allow(dead_code)]
 pub(crate) const RATE_LIMIT_BURST: u32 = 50;
 
 /// Per-client-IP rate limit configuration.
@@ -31,7 +37,6 @@ pub(crate) const RATE_LIMIT_BURST: u32 = 50;
 /// a token bucket ([`RATE_LIMIT_BURST`] tokens, refilling at
 /// [`RATE_LIMIT_REQUESTS_PER_SECOND`]). Requests that find the bucket
 /// empty receive `429 Too Many Requests` before token validation runs.
-#[allow(dead_code)] // consumed in the rate limiter middleware (next task)
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RateLimitConfig {
@@ -56,7 +61,6 @@ pub struct RateLimitConfig {
 /// refusing every brand-new legitimate IP would turn the limiter into the
 /// DoS. A brand-new IP's first request would be allowed anyway (fresh
 /// bucket = full burst).
-#[allow(dead_code)] // consumed by the middleware (next commit)
 const MAX_TRACKED_IPS: usize = 50_000;
 
 /// Minimum time between eviction sweeps. Prevents an attacker from forcing
@@ -77,7 +81,6 @@ struct Buckets {
 }
 
 /// In-memory token bucket rate limiter keyed by client IP.
-#[allow(dead_code)] // consumed by the middleware (next commit)
 pub(crate) struct IpRateLimiter {
     rate: f64,
     burst: f64,
@@ -85,7 +88,6 @@ pub(crate) struct IpRateLimiter {
     buckets: Mutex<Buckets>,
 }
 
-#[allow(dead_code)] // consumed by the middleware (next commit)
 impl IpRateLimiter {
     pub(crate) fn new(requests_per_second: u32, burst: u32) -> Self {
         Self::with_max_tracked(requests_per_second, burst, MAX_TRACKED_IPS)
@@ -155,13 +157,72 @@ impl IpRateLimiter {
     }
 }
 
-#[allow(dead_code)] // consumed by the middleware (next commit)
 fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
     let elapsed = now
         .saturating_duration_since(bucket.last_refill)
         .as_secs_f64();
     bucket.tokens = (bucket.tokens + elapsed * rate).min(burst);
     bucket.last_refill = now;
+}
+
+/// Shared state for the rate-limit middleware.
+#[derive(Clone)]
+pub(crate) struct RateLimitState {
+    limiter: Arc<IpRateLimiter>,
+    trusted_proxies: Arc<[IpNet]>,
+}
+
+impl RateLimitState {
+    pub(crate) fn new(config: &RateLimitConfig) -> Self {
+        Self::with_limits(
+            RATE_LIMIT_REQUESTS_PER_SECOND,
+            RATE_LIMIT_BURST,
+            config.trusted_proxies.clone(),
+        )
+    }
+
+    /// Private constructor, doubling as the test seam: tests pass small
+    /// limits, while production always goes through `new`, which applies
+    /// the fixed constants.
+    fn with_limits(requests_per_second: u32, burst: u32, trusted_proxies: Vec<IpNet>) -> Self {
+        Self {
+            limiter: Arc::new(IpRateLimiter::new(requests_per_second, burst)),
+            trusted_proxies: Arc::from(trusted_proxies),
+        }
+    }
+}
+
+/// Axum middleware enforcing the per-IP rate limit. Runs before
+/// `oauth_validate`, so limited requests never reach JWT parsing.
+pub(crate) async fn rate_limit(
+    State(state): State<RateLimitState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect_info| connect_info.0.ip());
+
+    let Some(peer) = peer else {
+        // Missing socket info means a server wiring regression. Rate
+        // limiting is defence in depth, so fail open loudly rather than
+        // rejecting all traffic.
+        tracing::error!("rate limiter could not determine peer address; allowing request");
+        return next.run(request).await;
+    };
+
+    let ip = client_ip(peer, request.headers(), &state.trusted_proxies);
+    if state.limiter.check(ip, Instant::now()) {
+        next.run(request).await
+    } else {
+        tracing::warn!(client_ip = %ip, "request rate limited");
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(http::header::RETRY_AFTER, "1")],
+        )
+            .into_response()
+    }
 }
 
 const X_FORWARDED_FOR: &str = "x-forwarded-for";
@@ -181,7 +242,6 @@ fn is_trusted(ip: IpAddr, trusted_proxies: &[IpNet]) -> bool {
 ///
 /// IPv4-mapped IPv6 addresses (e.g. `::ffff:10.0.0.1`) are canonicalized
 /// to their IPv4 form so that V4 CIDRs match dual-stack peers correctly.
-#[allow(dead_code)] // Used by the rate-limit middleware added in a later commit.
 fn client_ip(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> IpAddr {
     let peer = peer.to_canonical();
 
@@ -537,6 +597,103 @@ mod tests {
             let peer: IpAddr = "10.0.0.1".parse().unwrap();
             let result = client_ip(peer, &xff("1.2.3.4:5678"), &trusted(&["10.0.0.0/8"]));
             assert_eq!(result, peer);
+        }
+    }
+
+    mod middleware {
+        use super::*;
+        use axum::{
+            Router,
+            body::Body,
+            extract::ConnectInfo,
+            http::{Request, StatusCode},
+            middleware::from_fn_with_state,
+            routing::get,
+        };
+        use std::net::SocketAddr;
+        use tower::ServiceExt;
+
+        fn app(rps: u32, burst: u32) -> Router {
+            // Tests use small limits via the internal constructor; production
+            // always uses the RATE_LIMIT_* constants through `new`.
+            let state = RateLimitState::with_limits(rps, burst, vec![]);
+            Router::new()
+                .route("/test", get(|| async { "ok" }))
+                .layer(from_fn_with_state(state, rate_limit))
+        }
+
+        fn request_from(ip: &str) -> Request<Body> {
+            let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(addr));
+            req
+        }
+
+        #[tokio::test]
+        async fn allows_within_burst() {
+            let app = app(1, 2);
+            for _ in 0..2 {
+                let res = app
+                    .clone()
+                    .oneshot(request_from("203.0.113.7"))
+                    .await
+                    .unwrap();
+                assert_eq!(res.status(), StatusCode::OK);
+            }
+        }
+
+        #[tokio::test]
+        async fn returns_429_with_retry_after_when_over_limit() {
+            let app = app(1, 1);
+            let ok = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            assert_eq!(ok.status(), StatusCode::OK);
+            let limited = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                limited.headers().get(http::header::RETRY_AFTER).unwrap(),
+                "1"
+            );
+        }
+
+        #[tokio::test]
+        async fn other_ips_unaffected() {
+            let app = app(1, 1);
+            let _ = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            let limited = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            let other = app
+                .clone()
+                .oneshot(request_from("203.0.113.8"))
+                .await
+                .unwrap();
+            assert_eq!(other.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn missing_connect_info_fails_open() {
+            let app = app(1, 1);
+            // No ConnectInfo extension: wiring regression. Requests pass.
+            for _ in 0..3 {
+                let req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+                let res = app.clone().oneshot(req).await.unwrap();
+                assert_eq!(res.status(), StatusCode::OK);
+            }
         }
     }
 }

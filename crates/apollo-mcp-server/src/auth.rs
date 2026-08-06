@@ -31,7 +31,6 @@ mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
-#[allow(unused_imports)]
 pub use rate_limit::RateLimitConfig;
 use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
@@ -232,6 +231,14 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_header_map")]
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
+
+    /// Per-client-IP rate limit applied before token validation.
+    ///
+    /// Disabled when not configured. The rate and burst are fixed
+    /// (10 requests/second, burst 50, like the JWKS cache TTL); the only
+    /// setting is `trusted_proxies`. See `RateLimitConfig`.
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitConfig>,
 }
 
 /// TLS configuration for OAuth server connections
@@ -385,10 +392,22 @@ impl Config {
             .with_state(auth_state.clone())
             .layer(cors);
 
+        // Auth first, then (optionally) the rate limiter layered outside it.
+        // Axum runs the outermost (last-added) layer first, so limited
+        // requests are rejected before any token validation work.
+        let mut protected = router.layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            oauth_validate,
+        ));
+        if let Some(rate_limit_config) = &self.rate_limit {
+            protected = protected.layer(axum::middleware::from_fn_with_state(
+                rate_limit::RateLimitState::new(rate_limit_config),
+                rate_limit::rate_limit,
+            ));
+        }
+
         // Merge with MCP server routes
-        Ok(Router::new().merge(auth_router).merge(router.layer(
-            axum::middleware::from_fn_with_state(auth_state, oauth_validate),
-        )))
+        Ok(Router::new().merge(auth_router).merge(protected))
     }
 }
 
@@ -651,6 +670,7 @@ mod tests {
             tls: TlsConfig::default(),
             discovery_timeout: None,
             discovery_headers: HeaderMap::new(),
+            rate_limit: None,
         }
     }
 
@@ -1613,6 +1633,125 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             "#;
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
+        }
+    }
+
+    mod rate_limit_integration {
+        use super::*;
+        use crate::auth::rate_limit::RateLimitConfig;
+        use axum::extract::ConnectInfo;
+        use std::net::SocketAddr;
+
+        fn request_from(ip: &str) -> Request<Body> {
+            let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(addr));
+            req
+        }
+
+        fn rate_limited_app() -> Router {
+            let mut config = test_config();
+            config.rate_limit = Some(RateLimitConfig::default());
+            let base = Router::new().route("/test", get(|| async { "ok" }));
+            config.enable_middleware(base, HashMap::new()).unwrap()
+        }
+
+        #[tokio::test]
+        async fn under_limit_still_hits_auth() {
+            // No bearer token: with capacity left, the request must reach
+            // oauth_validate and get 401 (not 429, not 200).
+            let app = rate_limited_app();
+            let res = app.oneshot(request_from("203.0.113.7")).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        #[tokio::test]
+        async fn over_limit_returns_429_before_auth() {
+            // The full stack uses the hard-coded constants (burst 50):
+            // the first 50 requests reach auth (401), the 51st gets 429,
+            // NOT 401 — proof the limiter runs before token validation.
+            let app = rate_limited_app();
+            for i in 0..u64::from(super::super::rate_limit::RATE_LIMIT_BURST) {
+                let res = app
+                    .clone()
+                    .oneshot(request_from("203.0.113.7"))
+                    .await
+                    .unwrap();
+                assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "request {i}");
+            }
+            let limited = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        #[tokio::test]
+        async fn metadata_endpoint_not_rate_limited() {
+            let app = rate_limited_app();
+            // The .well-known metadata route is outside the protected
+            // router: far more requests than burst all succeed.
+            for _ in 0..(super::super::rate_limit::RATE_LIMIT_BURST + 10) {
+                let mut req = Request::builder()
+                    .uri("/.well-known/oauth-protected-resource")
+                    .body(Body::empty())
+                    .unwrap();
+                let addr: SocketAddr = "203.0.113.7:12345".parse().unwrap();
+                req.extensions_mut().insert(ConnectInfo(addr));
+                let res = app.clone().oneshot(req).await.unwrap();
+                assert_eq!(res.status(), StatusCode::OK);
+            }
+        }
+
+        #[test]
+        fn yaml_config_with_rate_limit() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                rate_limit:
+                  trusted_proxies:
+                    - 10.0.0.0/8
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let rl = config.rate_limit.unwrap();
+            assert_eq!(rl.trusted_proxies.len(), 1);
+        }
+
+        #[test]
+        fn yaml_config_with_empty_rate_limit_block() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                rate_limit: {}
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.rate_limit.is_some());
+        }
+
+        #[test]
+        fn yaml_config_without_rate_limit_is_disabled() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.rate_limit.is_none());
         }
     }
 
