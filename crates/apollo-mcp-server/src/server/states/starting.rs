@@ -244,9 +244,14 @@ impl Starting {
                         }
                     };
                     // Health check is already active from creation
-                    if let Err(e) = axum::serve(tcp_listener, router)
-                        .with_graceful_shutdown(graceful_shutdown)
-                        .await
+                    // Expose the peer socket address so middleware (e.g. the
+                    // per-IP rate limiter) can key on the client address.
+                    if let Err(e) = axum::serve(
+                        tcp_listener,
+                        router.into_make_service_with_connect_info::<SocketAddr>(),
+                    )
+                    .with_graceful_shutdown(graceful_shutdown)
+                    .await
                     {
                         // This can never really happen
                         error!("Failed to start MCP server: {e:?}");
