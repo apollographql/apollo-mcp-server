@@ -308,8 +308,8 @@ mod tests {
 
         #[test]
         fn full_map_of_active_buckets_does_not_grow() {
-            // rate=1 token/s, burst=2, max=1 → ip1 and ip2 can't both fit
-            // without eviction; use max=2 to fill with two active IPs.
+            // rate=1 token/s, burst=2, max_tracked=2: fill the map with two
+            // active (fully spent) IPs so the sweep has nothing to evict.
             let limiter = IpRateLimiter::with_max_tracked(1, 2, 2);
             let start = Instant::now();
             // Both IPs spend all tokens (active, not idle).
