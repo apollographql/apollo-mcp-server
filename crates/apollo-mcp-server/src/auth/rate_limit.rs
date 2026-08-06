@@ -67,7 +67,6 @@ const MAX_TRACKED_IPS: usize = 50_000;
 /// an O(n) retain on every request while the map is full.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
-#[allow(dead_code)] // fields accessed via refill function
 struct Bucket {
     tokens: f64,
     last_refill: Instant,
