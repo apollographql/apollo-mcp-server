@@ -290,15 +290,20 @@ pub(super) async fn serve_http(
     shutdown: CancellationToken,
     signal: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = signal => {},
-                _ = shutdown.cancelled() => {},
-            }
-            shutdown.cancel();
-        })
-        .await
+    // Expose the peer socket address so middleware (e.g. the
+    // per-IP rate limiter) can key on the client address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = signal => {},
+            _ = shutdown.cancelled() => {},
+        }
+        shutdown.cancel();
+    })
+    .await
 }
 
 fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
