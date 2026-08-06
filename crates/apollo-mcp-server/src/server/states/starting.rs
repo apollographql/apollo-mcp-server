@@ -436,9 +436,13 @@ impl ListenerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use axum::{
         body::Body,
+        extract::ConnectInfo,
         http::{Request, StatusCode},
+        routing::get,
     };
     use http::HeaderMap;
     use tower::ServiceExt;
@@ -514,6 +518,36 @@ mod tests {
         ));
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn streamable_http_supplies_connect_info() {
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let cancellation = CancellationToken::new();
+        let router = axum::Router::new().route(
+            "/",
+            get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }),
+        );
+        let server = tokio::spawn(serve_http(
+            listener,
+            router,
+            cancellation.clone(),
+            std::future::pending(),
+        ));
+
+        let body = reqwest::get(format!("http://{address}"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        cancellation.cancel();
+        server.await.unwrap().unwrap();
+
+        assert_eq!(body, Ipv4Addr::LOCALHOST.to_string());
     }
 
     #[tokio::test]

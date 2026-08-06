@@ -44,6 +44,9 @@ impl TelemetryAttribute {
             TelemetryAttribute::GraphqlResponse => {
                 Key::from_static_str(TelemetryAttribute::GraphqlResponse.as_str())
             }
+            TelemetryAttribute::RateLimitKind => {
+                Key::from_static_str(TelemetryAttribute::RateLimitKind.as_str())
+            }
         }
     }
 
