@@ -11,6 +11,7 @@ tool_arguments = "Tool call input arguments as a JSON string"
 tool_result = "Tool call output result as a JSON string"
 graphql_query = "GraphQL query string sent to the endpoint"
 graphql_response = "GraphQL response JSON received from the endpoint"
+rate_limit_kind = "The rate limit that rejected the request: credential or peer"
 
 [metrics.apollo.mcp]
 "initialize.count" = "Number of times initialize has been called"
@@ -20,3 +21,5 @@ graphql_response = "GraphQL response JSON received from the endpoint"
 "get_info.count" = "Number of times get_info has been called"
 "operation.duration" = "Duration of graphql execute"
 "operation.count" = "Number of times graphql execute has been called"
+"auth.rate_limit.count" = "Number of requests rejected before OAuth token validation"
+"auth.rate_limit.overflow.count" = "Number of rate-limiter keys allowed untracked because capacity was exhausted"

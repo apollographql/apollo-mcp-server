@@ -258,6 +258,21 @@ Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm
 
 - When a request presents a `kid` that is not in the cached JWKS, Apollo MCP Server triggers a re-fetch, but to prevent fabricated `kid` values from driving one upstream round-trip per request, up to one re-fetch per issuer is allowed within a short internal window. Concurrent requests during an active re-fetch share that single upstream call. If the window is exhausted, the request is rejected with `401 Unauthorized`, and the client can retry.
 
+### Authentication rate limiting
+
+When OAuth authentication is configured, Apollo MCP Server automatically rate limits requests before any token validation work runs. This bounds the CPU and network cost that unauthenticated clients can impose on the server and limits the blast radius of token-flooding attacks.
+
+The limiter has two fixed, process-local layers:
+
+- Each bearer credential may make 10 requests per second sustained, with bursts of up to 50 requests. The credential is represented by a process-randomized fingerprint; raw bearer tokens are never stored or logged. Distinct credentials receive separate buckets even when they arrive through the same reverse proxy.
+- Each connection peer IP has a higher safety fuse of 500 requests per second sustained, with bursts of up to 1,000 requests. This limits clients that rotate fabricated credentials or omit credentials entirely.
+
+Forwarded client-IP headers aren't used. Traffic arriving through one reverse proxy, load balancer, or shared NAT therefore shares the higher peer safety fuse, while the lower limit remains isolated by bearer credential. Clients intentionally sharing one bearer token also share its credential bucket.
+
+The limits aren't configurable. Requests over either limit receive `429 Too Many Requests` with a `Retry-After` header before the server does any token parsing or JWKS fetching. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
+
+Each limiter tracks up to 50,000 keys. If a map is full and no idle bucket can be evicted, new keys fail open rather than displacing active buckets; the other limiter continues to apply. Rejections and fail-open events increment metrics. The first event in each category is logged immediately, and subsequent events are summarized at most once every 60 seconds with a `suppressed` count. Rejections use `WARN`; capacity fail-open and a missing peer address use `ERROR`. These logs don't include peer IPs or bearer credentials.
+
 ### OIDC Discovery compatibility
 
 Per the MCP specification, authorization servers must provide at least one of:

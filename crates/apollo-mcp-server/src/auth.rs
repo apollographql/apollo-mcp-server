@@ -24,14 +24,16 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
+mod log_throttle;
 mod networked_key_resolver;
 mod protected_resource;
+mod rate_limit;
 mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
-use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
+use valid_token::{TokenValidationReporter, TokenValidator};
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Scope enforcement mode for authenticated requests.
@@ -301,6 +303,8 @@ struct AuthState {
     auth_servers: Arc<[Url]>,
     /// Per-operation required scopes, keyed by operation name.
     required_scopes: Arc<HashMap<String, Vec<String>>>,
+    /// Coalesces attacker-influenced token-validation warnings.
+    token_validation_reporter: Arc<TokenValidationReporter>,
 }
 
 impl Config {
@@ -311,6 +315,19 @@ impl Config {
         &self,
         router: Router,
         required_scopes: HashMap<String, Vec<String>>,
+    ) -> Result<Router, TlsConfigError> {
+        self.enable_middleware_with_rate_limit_state(
+            router,
+            required_scopes,
+            rate_limit::RateLimitState::new(),
+        )
+    }
+
+    fn enable_middleware_with_rate_limit_state(
+        &self,
+        router: Router,
+        required_scopes: HashMap<String, Vec<String>>,
+        rate_limit_state: rate_limit::RateLimitState,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -370,6 +387,7 @@ impl Config {
             required_scopes: Arc::new(required_scopes),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            token_validation_reporter: Arc::new(TokenValidationReporter::default()),
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -382,10 +400,21 @@ impl Config {
             .with_state(auth_state.clone())
             .layer(cors);
 
+        // Auth first, then the rate limiter layered outside it.
+        // Axum runs the outermost (last-added) layer first, so limited
+        // requests are rejected before any token validation work.
+        let protected = router
+            .layer(axum::middleware::from_fn_with_state(
+                auth_state,
+                oauth_validate,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                rate_limit_state,
+                rate_limit::rate_limit,
+            ));
+
         // Merge with MCP server routes
-        Ok(Router::new().merge(auth_router).merge(router.layer(
-            axum::middleware::from_fn_with_state(auth_state, oauth_validate),
-        )))
+        Ok(Router::new().merge(auth_router).merge(protected))
     }
 }
 
@@ -553,6 +582,7 @@ async fn oauth_validate(
             DEFAULT_JWKS_CACHE_TTL,
             JWKS_MIN_REFRESH_INTERVAL,
         ),
+        reporter: &auth_state.token_validation_reporter,
     };
     let token = token.ok_or_else(|| {
         tracing::Span::current().record("reason", "missing_token");
@@ -666,6 +696,7 @@ mod tests {
             required_scopes: Arc::new(HashMap::new()),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            token_validation_reporter: Arc::new(TokenValidationReporter::default()),
         }
     }
 
@@ -1610,6 +1641,70 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             "#;
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
+        }
+    }
+
+    mod rate_limit_integration {
+        use super::*;
+        use axum::extract::ConnectInfo;
+        use std::net::SocketAddr;
+
+        fn request_from(ip: &str) -> Request<Body> {
+            let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
+            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(addr));
+            req.headers_mut()
+                .insert(AUTHORIZATION, "Bearer invalid-token".parse().unwrap());
+            req
+        }
+
+        fn rate_limited_app() -> Router {
+            let config = test_config();
+            let base = Router::new().route("/test", get(|| async { "ok" }));
+            config
+                .enable_middleware_with_rate_limit_state(
+                    base,
+                    HashMap::new(),
+                    rate_limit::RateLimitState::for_test(0, 1, 0, 10),
+                )
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn over_limit_returns_429_before_auth() {
+            let app = rate_limited_app();
+            let first = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+            let limited = app
+                .clone()
+                .oneshot(request_from("203.0.113.7"))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                (first.status(), limited.status()),
+                (StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS)
+            );
+        }
+
+        #[tokio::test]
+        async fn metadata_endpoint_not_rate_limited() {
+            let app = rate_limited_app();
+            // The second request would be limited if this route shared the
+            // protected router's one-request test bucket.
+            for _ in 0..2 {
+                let mut req = Request::builder()
+                    .uri("/.well-known/oauth-protected-resource")
+                    .body(Body::empty())
+                    .unwrap();
+                let addr: SocketAddr = "203.0.113.7:12345".parse().unwrap();
+                req.extensions_mut().insert(ConnectInfo(addr));
+                let res = app.clone().oneshot(req).await.unwrap();
+                assert_eq!(res.status(), StatusCode::OK);
+            }
         }
     }
 

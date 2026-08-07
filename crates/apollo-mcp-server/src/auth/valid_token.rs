@@ -1,11 +1,12 @@
-use std::ops::Deref;
+use std::{ops::Deref, time::Instant};
 
 use headers::{Authorization, authorization::Bearer};
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header, jwk};
 use jwks::Jwk;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
 use url::Url;
+
+use super::log_throttle::LogThrottle;
 
 /// A validated authentication token
 ///
@@ -43,6 +44,85 @@ pub(super) trait KeyResolver {
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)>;
 }
 
+enum TokenValidationWarning<'a> {
+    MissingJwkAlgorithm,
+    UnsupportedJwkAlgorithm(jwk::KeyAlgorithm),
+    MissingAudience,
+    MissingIssuer,
+    IssuerMismatch {
+        token_issuer: &'a str,
+        server_issuer: &'a str,
+    },
+    ValidationFailed(&'a jsonwebtoken::errors::Error),
+}
+
+/// Coalesces attacker-influenced token-validation warnings across requests.
+#[derive(Default)]
+pub(super) struct TokenValidationReporter {
+    missing_jwk_algorithm: LogThrottle,
+    unsupported_jwk_algorithm: LogThrottle,
+    missing_audience: LogThrottle,
+    missing_issuer: LogThrottle,
+    issuer_mismatch: LogThrottle,
+    validation_failed: LogThrottle,
+}
+
+impl TokenValidationReporter {
+    fn record(&self, warning: TokenValidationWarning<'_>) {
+        let throttle = match &warning {
+            TokenValidationWarning::MissingJwkAlgorithm => &self.missing_jwk_algorithm,
+            TokenValidationWarning::UnsupportedJwkAlgorithm(_) => &self.unsupported_jwk_algorithm,
+            TokenValidationWarning::MissingAudience => &self.missing_audience,
+            TokenValidationWarning::MissingIssuer => &self.missing_issuer,
+            TokenValidationWarning::IssuerMismatch { .. } => &self.issuer_mismatch,
+            TokenValidationWarning::ValidationFailed(_) => &self.validation_failed,
+        };
+        let Some(suppressed) = throttle.record(Instant::now()) else {
+            return;
+        };
+
+        match warning {
+            TokenValidationWarning::MissingJwkAlgorithm => tracing::warn!(
+                validation_warning_kind = "missing_jwk_algorithm",
+                suppressed,
+                "Skipping JWK with no algorithm specified"
+            ),
+            TokenValidationWarning::UnsupportedJwkAlgorithm(algorithm) => tracing::warn!(
+                validation_warning_kind = "unsupported_jwk_algorithm",
+                ?algorithm,
+                suppressed,
+                "Skipping JWT signed by unsupported algorithm"
+            ),
+            TokenValidationWarning::MissingAudience => tracing::warn!(
+                validation_warning_kind = "missing_audience",
+                suppressed,
+                "Token is missing the required `aud` claim"
+            ),
+            TokenValidationWarning::MissingIssuer => tracing::warn!(
+                validation_warning_kind = "missing_issuer",
+                suppressed,
+                "Token is missing the required `iss` claim"
+            ),
+            TokenValidationWarning::IssuerMismatch {
+                token_issuer,
+                server_issuer,
+            } => tracing::warn!(
+                validation_warning_kind = "issuer_mismatch",
+                token_issuer,
+                server_issuer,
+                suppressed,
+                "Token `iss` does not match the issuer of the server that signed it"
+            ),
+            TokenValidationWarning::ValidationFailed(error) => tracing::warn!(
+                validation_warning_kind = "validation_failed",
+                error = %error,
+                suppressed,
+                "Token failed validation"
+            ),
+        }
+    }
+}
+
 /// Validates bearer JWTs against the configured audiences, issuers, and upstream
 /// servers, resolving signing keys through `keys`.
 pub(super) struct TokenValidator<'a, R: KeyResolver> {
@@ -56,6 +136,8 @@ pub(super) struct TokenValidator<'a, R: KeyResolver> {
     pub(super) servers: &'a [Url],
     /// Resolves signing keys (the network seam).
     pub(super) keys: R,
+    /// Coalesces validation warnings across requests.
+    pub(super) reporter: &'a TokenValidationReporter,
 }
 
 impl<R: KeyResolver> TokenValidator<'_, R> {
@@ -72,11 +154,13 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
 
             let validation = {
                 let Some(alg) = jwk.alg else {
-                    warn!("Skipping JWK with no algorithm specified");
+                    self.reporter
+                        .record(TokenValidationWarning::MissingJwkAlgorithm);
                     continue;
                 };
                 let Some(algorithm) = jwt_algorithm(alg) else {
-                    warn!("Skipping JWT signed by unsupported algorithm: {alg:?}");
+                    self.reporter
+                        .record(TokenValidationWarning::UnsupportedJwkAlgorithm(alg));
                     continue;
                 };
                 let mut val = Validation::new(algorithm);
@@ -100,7 +184,8 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                     // own audience check when the claim is absent from the raw JWT,
                     // so we enforce it here.
                     if !self.allow_any_audience && token_data.claims.aud.is_empty() {
-                        warn!("Token is missing the required `aud` claim");
+                        self.reporter
+                            .record(TokenValidationWarning::MissingAudience);
                         break;
                     }
                     if !self.issuers.is_empty() {
@@ -109,7 +194,7 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         // own issuer check when the claim is absent from the raw JWT,
                         // so we enforce it here.
                         let Some(token_issuer) = token_data.claims.iss.as_deref() else {
-                            warn!("Token is missing the required `iss` claim");
+                            self.reporter.record(TokenValidationWarning::MissingIssuer);
                             break;
                         };
 
@@ -119,11 +204,11 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         // by one configured server from being accepted while claiming
                         // a different configured server's issuer.
                         if discovered_issuer != token_issuer {
-                            warn!(
-                                token_issuer = %token_issuer,
-                                server_issuer = %discovered_issuer,
-                                "Token `iss` does not match the issuer of the server that signed it"
-                            );
+                            self.reporter
+                                .record(TokenValidationWarning::IssuerMismatch {
+                                    token_issuer,
+                                    server_issuer: &discovered_issuer,
+                                });
                             break;
                         }
                     }
@@ -132,11 +217,12 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         scopes: token_data.claims.scopes(),
                     });
                 }
-                Err(e) => warn!("Token failed validation with error: {e}"),
+                Err(error) => self
+                    .reporter
+                    .record(TokenValidationWarning::ValidationFailed(&error)),
             };
         }
 
-        info!("Token did not pass validation");
         None
     }
 }
@@ -247,7 +333,9 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{Claims, KeyResolver, TokenValidator, ValidToken, jwt_algorithm};
+    use super::{
+        Claims, KeyResolver, TokenValidationReporter, TokenValidator, ValidToken, jwt_algorithm,
+    };
 
     /// A single upstream server in the stub resolver: its URL, the one
     /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
@@ -285,6 +373,7 @@ mod test {
         servers: Vec<TestServer>,
         /// Parsed server URLs, kept index-aligned with `servers`.
         server_urls: Vec<Url>,
+        reporter: TokenValidationReporter,
     }
 
     impl TestTokenValidator {
@@ -301,6 +390,7 @@ mod test {
                 allow_any_audience,
                 servers,
                 server_urls,
+                reporter: TokenValidationReporter::default(),
             }
         }
 
@@ -337,6 +427,7 @@ mod test {
                 keys: StubKeyResolver {
                     servers: &self.servers,
                 },
+                reporter: &self.reporter,
             }
             .validate(token)
             .await
@@ -452,6 +543,47 @@ mod test {
                 .any(|line| line.contains("InvalidSignature"))
                 .then_some(())
                 .ok_or("Expected warning for validation failure".to_string())
+        });
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn repeated_validation_failures_emit_one_immediate_warning() {
+        let key_id = "some-example-id".to_string();
+        let (_, decode_key) = create_key("CAFED00D");
+        let (bad_encode_key, _) = create_key("DEADC0DE");
+        let jwk = Jwk {
+            alg: Some(KeyAlgorithm::HS512),
+            decoding_key: decode_key,
+        };
+
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let jwt = create_jwt(
+            key_id.clone(),
+            bad_encode_key,
+            audience.clone(),
+            in_the_future,
+        );
+        let server =
+            Url::from_str("https://auth.example.com").expect("should parse a valid example server");
+        let test_validator =
+            TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
+
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
+        assert_eq!(test_validator.validate(jwt).await, None);
+
+        logs_assert(|lines: &[&str]| {
+            let warnings = lines
+                .iter()
+                .filter(|line| line.contains("WARN") && line.contains("Token failed validation"))
+                .collect::<Vec<_>>();
+            match warnings.as_slice() {
+                [warning] if warning.contains("suppressed=0") => Ok(()),
+                _ => Err(format!(
+                    "Expected one immediate validation warning with suppressed=0, got {warnings:?}"
+                )),
+            }
         });
     }
 
