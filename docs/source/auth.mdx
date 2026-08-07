@@ -83,6 +83,15 @@ When `issuers` is empty (the default), the server skips issuer validation, so yo
 
 Use the `scope_mode` option to control how the MCP Server validates scopes from OAuth tokens.
 
+The `scopes` list has two functions. First, the mode below controls how the server validates it against incoming tokens. Second, the server also sends this same list to clients, in two places:
+
+- the `scope` parameter of `401` [`WWW-Authenticate` challenges](#www-authenticate-header)
+- the `scopes_supported` field of its [Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document
+
+A compliant client reads this list, then requests exactly these scopes at your IdP's `/authorize` endpoint. So, this list is more than a validation rule. It is also a contract between your server and every client that finds it.
+
+These scopes belong to your resource server, not to your IdP. They do not need to match the scopes that your IdP advertises as supported. For example, a generic OIDC provider can expose only `openid`, `profile`, and `email`. Your IdP must define and issue finer-grained scopes, for example `graphs:read`, before you can require them here.
+
 | Mode          | Behavior                                                  |
 | ------------- | --------------------------------------------------------- |
 | `require_all` | Token must have all configured scopes (default)           |
@@ -141,6 +150,10 @@ Use `scope_mode: disabled` only when downstream services, such as subgraphs, han
 
 </Caution>
 
+### Scope claim: `scope` vs `scp`
+
+Apollo MCP Server reads the standard `scope` claim first. This claim is a space-separated string, defined in [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068). If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
+
 ## Per-operation scope requirements
 
 The global `scopes` and `scope_mode` settings apply uniformly to every request. For finer-grained control, you can declare required OAuth scopes per operation using `overrides.required_scopes`. This enables _step-up authorization_: a client with a limited token can call most tools freely, but is prompted to re-authorize with elevated scopes when it tries to call a more sensitive operation.
@@ -167,6 +180,10 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
 ```
 
 The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
+
+`required_scopes` adds to the global requirement. It does not replace it. A token must satisfy the global `scopes` and `scope_mode` requirement. For a listed operation, the token must also carry every scope listed for that operation. This is true no matter what `scope_mode` is set to: per-operation validation always requires all listed scopes.
+
+This validation applies only to `tools/call` requests for a listed operation. The global `scopes` and `scope_mode` setting alone governs other methods, for example `tools/list`. This design makes step-up authorization possible: discovery calls stay cheap, and only a call to a sensitive tool needs the extra scopes.
 
 ## HTTP error responses
 
@@ -198,7 +215,7 @@ WWW-Authenticate: Bearer error="insufficient_scope",
                          resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
 ```
 
-Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the scopes missing for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`. 
+Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the full set of scopes required for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`, not just the scopes the token is missing.
 
 ## Performance considerations
 
