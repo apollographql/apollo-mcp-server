@@ -27,7 +27,7 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     }
 }
 
-/// W3C Trace Context plus W3C Baggage, the OpenTelemetry default propagator set.
+/// Composite propagator for W3C Trace Context and W3C Baggage.
 #[cfg(test)]
 pub(crate) fn w3c_text_map_propagator() -> TextMapCompositePropagator {
     TextMapCompositePropagator::new(vec![

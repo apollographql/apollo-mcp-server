@@ -362,7 +362,7 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
     Ok(tracer_provider)
 }
 
-/// W3C Trace Context plus W3C Baggage, the OpenTelemetry default propagator set.
+/// Composite propagator for W3C Trace Context and W3C Baggage.
 fn w3c_text_map_propagator() -> TextMapCompositePropagator {
     TextMapCompositePropagator::new(vec![
         Box::new(TraceContextPropagator::new()),
