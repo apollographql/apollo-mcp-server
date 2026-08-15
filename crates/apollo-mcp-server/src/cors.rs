@@ -58,6 +58,7 @@ impl Default for CorsConfig {
                 "mcp-session-id".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
                 "traceparent".to_string(), // https://www.w3.org/TR/trace-context/#traceparent-header
                 "tracestate".to_string(),  // https://www.w3.org/TR/trace-context/#tracestate-header
+                "baggage".to_string(), // https://www.w3.org/TR/baggage/#baggage-http-header-format
             ],
             expose_headers: vec![
                 "mcp-session-id".to_string(), // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management
@@ -255,6 +256,7 @@ mod tests {
                     "mcp-session-id".to_string(),
                     "traceparent".to_string(),
                     "tracestate".to_string(),
+                    "baggage".to_string(),
                 ]
             );
         }

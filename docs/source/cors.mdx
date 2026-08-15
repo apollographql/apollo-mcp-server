@@ -116,7 +116,7 @@ cors:
     - POST
 
   # The headers to allow.
-  # These are the default headers required for MCP protocol and trace context
+  # These are the default headers required for MCP protocol, W3C Trace Context, and W3C Baggage
   allow_headers:
     - accept
     - content-type
@@ -124,6 +124,7 @@ cors:
     - mcp-session-id
     - traceparent # W3C Trace Context
     - tracestate # W3C Trace Context
+    - baggage # W3C Baggage
 
   # Which response headers are available to scripts running in the
   # browser in response to a cross-origin request.

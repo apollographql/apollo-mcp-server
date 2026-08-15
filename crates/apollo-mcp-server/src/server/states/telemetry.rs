@@ -3,7 +3,11 @@ use axum::middleware::Next;
 use axum::response::Response;
 use opentelemetry::global;
 use opentelemetry::propagation::Extractor;
+#[cfg(test)]
+use opentelemetry::propagation::TextMapCompositePropagator;
 use opentelemetry::trace::{TraceContextExt, TraceId};
+#[cfg(test)]
+use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 use rmcp::RoleServer;
 use rmcp::service::RequestContext;
 use tracing::Instrument;
@@ -21,6 +25,15 @@ impl<'a> Extractor for HeaderExtractor<'a> {
     fn keys(&self) -> Vec<&str> {
         self.0.keys().map(|k| k.as_str()).collect()
     }
+}
+
+/// W3C Trace Context plus W3C Baggage, the OpenTelemetry default propagator set.
+#[cfg(test)]
+pub(crate) fn w3c_text_map_propagator() -> TextMapCompositePropagator {
+    TextMapCompositePropagator::new(vec![
+        Box::new(TraceContextPropagator::new()),
+        Box::new(BaggagePropagator::new()),
+    ])
 }
 
 // Middleware that extracts and stores OpenTelemetry context in request extensions
@@ -92,6 +105,7 @@ mod tests {
     use axum::{Router, body::Body, http::Request, routing::get};
     use http::HeaderName;
     use opentelemetry::Context as OtelContext;
+    use opentelemetry::baggage::BaggageExt;
     use opentelemetry::trace::TracerProvider as _;
     use opentelemetry_sdk::trace::SdkTracerProvider;
     use tower::ServiceExt;
@@ -101,9 +115,7 @@ mod tests {
 
     #[tokio::test()]
     async fn middleware_stores_span_context_and_handler_works() {
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
+        opentelemetry::global::set_text_map_propagator(w3c_text_map_propagator());
 
         async fn test_handler(req: Request<Body>) -> &'static str {
             let (parts, _body) = req.into_parts();
@@ -141,9 +153,7 @@ mod tests {
 
     #[tokio::test]
     async fn middleware_works_without_traceparent() {
-        opentelemetry::global::set_text_map_propagator(
-            opentelemetry_sdk::propagation::TraceContextPropagator::new(),
-        );
+        opentelemetry::global::set_text_map_propagator(w3c_text_map_propagator());
 
         let app = Router::new()
             .route("/test", get(|| async { "ok" }))
@@ -154,6 +164,68 @@ mod tests {
         let response = app.oneshot(request).await.unwrap();
 
         assert_eq!(response.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn middleware_extracts_w3c_baggage_into_otel_context() {
+        opentelemetry::global::set_text_map_propagator(w3c_text_map_propagator());
+
+        async fn test_handler(req: Request<Body>) -> &'static str {
+            let (parts, _body) = req.into_parts();
+
+            let otel_ctx = parts
+                .extensions
+                .get::<OtelContext>()
+                .expect("OtelContext should be in extensions");
+
+            let baggage = otel_ctx.baggage();
+            assert_eq!(baggage.get("userId").map(|v| v.as_str()), Some("alice"));
+            assert_eq!(baggage.get("serverNode").map(|v| v.as_str()), Some("DF28"));
+
+            let trace_id = format!("{:032x}", otel_ctx.span().span_context().trace_id());
+            assert_eq!(trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
+
+            "ok"
+        }
+
+        let app = Router::new()
+            .route("/test", get(test_handler))
+            .layer(axum::middleware::from_fn(otel_context_middleware));
+
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let request = Request::builder()
+            .uri("/test")
+            .header("traceparent", traceparent)
+            .header("baggage", "userId=alice,serverNode=DF28")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+    }
+
+    #[test]
+    fn w3c_propagator_injects_and_extracts_baggage() {
+        use opentelemetry::KeyValue;
+        use opentelemetry::propagation::TextMapPropagator;
+        use std::collections::HashMap;
+
+        let propagator = w3c_text_map_propagator();
+        let cx = OtelContext::current().with_baggage(vec![KeyValue::new("userId", "alice")]);
+
+        let mut headers = HashMap::new();
+        propagator.inject_context(&cx, &mut headers);
+
+        let baggage_header = headers
+            .get("baggage")
+            .expect("composite propagator should inject a baggage header");
+        assert!(baggage_header.contains("userId=alice"));
+
+        let extracted = propagator.extract(&headers);
+        assert_eq!(
+            extracted.baggage().get("userId").map(|v| v.as_str()),
+            Some("alice")
+        );
     }
 
     #[test]
