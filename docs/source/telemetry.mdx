@@ -164,7 +164,7 @@ Spans are generated for the following actions:
 - **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
 - **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
 - **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
-- **Downstream GraphQL Calls**: Apollo MCP Server's `execute` tool and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is request-scoped context, not identity. Apollo MCP Server does not automatically copy baggage onto exported span attributes.
+- **Downstream GraphQL Calls**: The `execute` tool in Apollo MCP Server and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is request-scoped context, not identity. Apollo MCP Server doesn't automatically copy baggage onto exported span attributes.
 
 ### Span Attributes
 
