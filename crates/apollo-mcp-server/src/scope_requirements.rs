@@ -62,15 +62,17 @@ impl OperationRequiredScopes {
 
     /// Scopes to include in `WWW-Authenticate`.
     ///
-    /// The OAuth bearer `scope` auth-param is a space-delimited list and cannot
-    /// represent grouped OR conditions. Returns the complete group that
-    /// requires the fewest additional scopes for this token; ties go to the
-    /// first listed alternative.
-    pub fn challenge_scopes(&self, present: &[String]) -> Vec<String> {
+    /// Per [RFC 6750 Section 3](https://datatracker.ietf.org/doc/html/rfc6750#section-3),
+    /// the `scope` auth-param describes what the resource requires, not what
+    /// the caller's token is missing, so the challenge doesn't vary by
+    /// presented token. The OAuth `scope` auth-param is also a space-delimited
+    /// list and cannot represent grouped OR conditions, so this always
+    /// advertises the complete first-listed alternative, giving operators
+    /// control over which scope set gets advertised.
+    pub fn challenge_scopes(&self) -> Vec<String> {
         #[allow(clippy::expect_used)] // `new` guarantees at least one group
         self.0
-            .iter()
-            .min_by_key(|group| missing_scope_count(group, present))
+            .first()
             .cloned()
             .expect("OperationRequiredScopes always has at least one group")
     }
@@ -156,13 +158,6 @@ impl JsonSchema for OperationRequiredScopes {
     }
 }
 
-fn missing_scope_count(required: &[String], present: &[String]) -> usize {
-    required
-        .iter()
-        .filter(|scope| !present.contains(*scope))
-        .count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,22 +218,10 @@ mod tests {
     }
 
     #[test]
-    fn challenge_scopes_returns_best_matching_alternative() {
+    fn challenge_scopes_returns_first_listed_alternative() {
         let required = required(vec![scopes(&["read", "write"]), scopes(&["admin"])]);
 
-        assert_eq!(
-            required.challenge_scopes(&scopes(&["read"])),
-            scopes(&["read", "write"])
-        );
-        assert_eq!(required.challenge_scopes(&[]), scopes(&["admin"]));
-    }
-
-    #[test]
-    fn challenge_scopes_ties_go_to_the_first_listed_alternative() {
-        let required = required(vec![scopes(&["a", "b"]), scopes(&["c", "d"])]);
-
-        // Neither group is present at all, so both are tied at "2 missing."
-        assert_eq!(required.challenge_scopes(&[]), scopes(&["a", "b"]));
+        assert_eq!(required.challenge_scopes(), scopes(&["read", "write"]));
     }
 
     #[test]

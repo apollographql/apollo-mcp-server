@@ -510,14 +510,14 @@ async fn oauth_validate(
 
     // RFC 6750 insufficient-scope challenge. Advertise the full requirement so
     // clients know the target scope set, rather than only the scopes they lack.
-    let forbidden_error = |required_scopes: &[String]| {
+    let forbidden_error = |required_scopes: &[String], scope_mode: Option<ScopeMode>| {
         (
             StatusCode::FORBIDDEN,
             TypedHeader(WwwAuthenticate::Bearer {
                 resource_metadata: resource_metadata_url.clone(),
                 scope: Some(required_scopes.join(" ")),
                 error: Some(BearerError::InsufficientScope),
-                scope_mode: Some(auth_config.scope_mode),
+                scope_mode,
             }),
         )
     };
@@ -609,7 +609,10 @@ async fn oauth_validate(
             // NOTE: WWW-Authenticate lists all configured global scopes per RFC 6750.
             // In require_any mode, only one is needed, but the header format
             // doesn't distinguish. This matches existing behavior.
-            return Err(forbidden_error(&auth_config.scopes));
+            return Err(forbidden_error(
+                &auth_config.scopes,
+                Some(auth_config.scope_mode),
+            ));
         }
     }
 
@@ -618,7 +621,7 @@ async fn oauth_validate(
     if let Some(required) = body_peek.as_ref().and_then(|peek| {
         missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
     }) {
-        let challenge_scopes = required.challenge_scopes(&valid_token.scopes);
+        let challenge_scopes = required.challenge_scopes();
         tracing::warn!(
             required = ?required,
             present = ?valid_token.scopes,
@@ -626,7 +629,14 @@ async fn oauth_validate(
         );
         tracing::Span::current().record("reason", "insufficient_scope");
         tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-        return Err(forbidden_error(&challenge_scopes));
+        // Per-operation `required_scopes` groups are always a fully-required
+        // AND set (that's the unit an alternative represents), regardless of
+        // the global `scope_mode`, so the challenge reports `require_all`
+        // rather than inheriting the global hint.
+        return Err(forbidden_error(
+            &challenge_scopes,
+            Some(ScopeMode::RequireAll),
+        ));
     }
 
     // Insert new context to ensure that handlers only use our enforced token verification
@@ -866,7 +876,9 @@ mod tests {
         /// Drives a real `tools/call` request through the middleware for an
         /// operation with a nested (OR-of-AND) scope requirement, where the
         /// token satisfies neither group completely but is closer to the
-        /// first: the second group is missing two scopes, the first only one.
+        /// second: the first group is missing both scopes, the second only
+        /// one. The global `scope_mode` is `require_any`, distinct from the
+        /// per-operation challenge's `require_all`.
         async fn insufficient_nested_scope_response() -> (StatusCode, String) {
             let mut server = mockito::Server::new_async().await;
             let kid = "test-kid";
@@ -897,14 +909,14 @@ mod tests {
                 .await;
 
             // Satisfies the global `read` scope (test_config's default) and
-            // one scope of the first operation-level group, but not enough
+            // one scope of the second operation-level group, but not enough
             // to complete either group.
             let exp = chrono::Utc::now().timestamp() + 1000;
             let claims = serde_json::json!({
                 "aud": "test-audience",
                 "exp": exp,
                 "sub": "test-user",
-                "scope": "read sensitive:read",
+                "scope": "read admin",
             });
             let header = {
                 let mut h = Header::new(Algorithm::HS512);
@@ -916,6 +928,7 @@ mod tests {
 
             let mut config = test_config();
             config.servers = vec![server.url()];
+            config.scope_mode = ScopeMode::RequireAny;
             let required_scopes = HashMap::from([(
                 "RestrictedOp".to_string(),
                 OperationRequiredScopes::new(vec![
@@ -963,11 +976,26 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn insufficient_nested_scope_challenge_names_the_closest_alternative() {
+        async fn insufficient_nested_scope_challenge_names_the_first_listed_alternative() {
             let (_, www_auth) = insufficient_nested_scope_response().await;
 
+            // The token is closer to satisfying the second group, but the
+            // challenge always names the first-listed alternative regardless.
             assert!(
                 www_auth.contains(r#"scope="sensitive:read tenant:admin""#),
+                "got: {www_auth}"
+            );
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_challenge_reports_require_all() {
+            let (_, www_auth) = insufficient_nested_scope_response().await;
+
+            // The global scope_mode is require_any, but a per-operation
+            // challenge always reports require_all: every scope in the
+            // advertised group is required.
+            assert!(
+                www_auth.contains(r#"scope_mode="require_all""#),
                 "got: {www_auth}"
             );
         }
