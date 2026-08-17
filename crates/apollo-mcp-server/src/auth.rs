@@ -174,14 +174,7 @@ pub struct Config {
     #[serde(default)]
     pub audiences: Vec<String>,
 
-    /// List of accepted token issuers (the JWT `iss` claim).
-    ///
-    /// When non-empty, a token's `iss` claim must match one of these values and
-    /// the discovered issuer of the server whose key verified it. When empty
-    /// (default), these token issuer checks are skipped; authorization-server
-    /// metadata issuer validation still applies. Not `Vec<Url>`: like
-    /// `servers`, `Url::parse` appends `/` to bare-authority inputs, which would
-    /// break exact `iss` string matching.
+    /// Optional allowlist for token issuers (the JWT `iss` claim).
     #[serde(default)]
     pub issuers: Vec<String>,
 
