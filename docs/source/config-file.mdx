@@ -54,6 +54,12 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 | `apollo_registry_url`     | `URL`    |         | The URL to use for Apollo's registry                                                                            |
 | `apollo_uplink_endpoints` | `URL`    |         | List of uplink URL overrides. You can also provide this with the `APOLLO_UPLINK_ENDPOINTS` environment variable |
 
+<Note>
+
+Apollo MCP Server redacts the GraphOS key from debug configuration output. This does not encrypt the key or prevent it from being written literally in YAML. Prefer the `APOLLO_KEY` environment variable or another runtime secret-injection mechanism.
+
+</Note>
+
 ### Static headers
 
 The `headers` option enables you to specify a list of static, hard-coded headers and values. These are included in all GraphQL requests.
@@ -61,6 +67,12 @@ The `headers` option enables you to specify a list of static, hard-coded headers
 ```yaml title="mcp.yaml"
 headers: { "apollographql-client-name": "my-mcp-server" }
 ```
+
+<Caution>
+
+Static header values are ordinary strings after the configuration is loaded and are not redacted from debug configuration output. Using `${env.VAR}` keeps the literal value out of the YAML file, but it does not redact the expanded value at runtime. Unlike static headers, the GraphOS key is redacted from debug output.
+
+</Caution>
 
 To forward dynamic header values from the client, use the [`forward_headers` option](#forwarding-headers) instead.
 
@@ -92,6 +104,8 @@ forward_headers:
 <Caution>
 
 Avoid header forwarding for sensitive credentials like API keys or access tokens. Apollo MCP Server logs a warning when you forward sensitive headers such as `Authorization`, `Cookie`, `Proxy-Authorization`, or `X-Api-Key` to the upstream GraphQL API.
+
+`disable_auth_token_passthrough` disables only the automatic propagation of a validated OAuth token. It does not override `forward_headers`. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request. Audit both settings together.
 
 <br />
 <br />
@@ -191,6 +205,12 @@ These fields are under the top-level `logging` key.
 | `path`     | `FilePath`                                          |            | An output file path for logging. If not provided logging outputs to stdio/stderr. |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
 
+<Caution>
+
+At `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary static header values, including values populated through `${env.VAR}`, can appear in this output. The GraphOS key is redacted. Do not enable debug logging in production without protecting and restricting access to the resulting logs.
+
+</Caution>
+
 ### Operation source
 
 These fields are under the top-level `operations` key. The available fields depend on the value of the nested `source` key.
@@ -207,6 +227,12 @@ The default value for `source` is `"infer"`. Learn more about [defining tools as
 | Manifest           | `path`   | `FilePath`       | The path to the persisted query manifest                                                                                                                |
 | Uplink             | `source` | `"uplink"`       | Load operations from an uplink manifest. Note: This source requires an Apollo key and graph reference                                                   |
 | Infer              | `source` | `"infer"`        | Infer where to load operations based on other configuration options.                                                                                    |
+
+<Note>
+
+Environment variable expansion applies only to the YAML configuration file. Local `.graphql` operation files and persisted query manifest bodies are loaded verbatim. Do not embed credentials in operation content or expect `${env.VAR}` placeholders there to be expanded.
+
+</Note>
 
 <Note>
 
@@ -345,7 +371,7 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
 | `scopes`                          | `List<string>`        |               | List of queryable OAuth scopes from the upstream OAuth servers                                                                                                                                                   |
 | `scope_mode`                      | `string`              | `require_all` | Scope enforcement mode: `disabled`, `require_all`, or `require_any`                                                                                                                                              |
-| `disable_auth_token_passthrough`  | `bool`                | `false`       | Optional flag to disable passing validated Authorization header to downstream API                                                                                                                                |
+| `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. This does not override `forward_headers`.                                                                             |
 | `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery).                            |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
 | `discovery_headers`               | `Map<string, string>` | `{}`          | Custom headers to include in OIDC discovery and JWKS requests. Useful when upstream OAuth servers or WAFs require headers like `User-Agent`. See [discovery headers](/apollo-mcp-server/auth#discovery-headers). |
@@ -633,6 +659,12 @@ telemetry:
 ```
 
 When Apollo MCP Server loads the configuration, it expands these references to their values before parsing the YAML.
+
+<Note>
+
+Expansion applies only to values in the YAML configuration file. Apollo MCP Server reads local `.graphql` operation files and persisted query manifest bodies verbatim. Do not embed credentials in operation content or expect `${env.VAR}` placeholders there to be expanded.
+
+</Note>
 
 ### Default values
 

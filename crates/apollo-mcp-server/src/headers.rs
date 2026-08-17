@@ -22,7 +22,8 @@ pub fn build_request_headers(
     // Starts with static headers
     let mut headers = static_headers.clone();
 
-    // Forward headers dynamically
+    // Explicitly forwarded headers are independent of automatic validated-token passthrough,
+    // so the passthrough setting does not override `forward_headers`.
     forward_headers(forward_header_names, incoming_headers, &mut headers);
 
     // Optionally extract the validated token and propagate it to upstream servers if present
@@ -179,6 +180,37 @@ mod tests {
             );
 
             assert!(result.get("authorization").is_none());
+        }
+
+        #[test]
+        fn forwards_configured_authorization_header_when_token_passthrough_is_disabled() {
+            let static_headers = HeaderMap::new();
+            let forward_header_names = vec!["authorization".to_string()];
+
+            let mut incoming_headers = HeaderMap::new();
+            incoming_headers.insert(
+                "authorization",
+                HeaderValue::from_static("Bearer forwarded-token"),
+            );
+
+            let mut extensions = Extensions::new();
+            extensions.insert(ValidToken {
+                token: Authorization::bearer("validated-token").unwrap(),
+                scopes: vec![],
+            });
+
+            let result = super::super::build_request_headers(
+                &static_headers,
+                &forward_header_names,
+                &incoming_headers,
+                &extensions,
+                true,
+            );
+
+            assert_eq!(
+                result.get("authorization").unwrap(),
+                "Bearer forwarded-token"
+            );
         }
 
         #[test]

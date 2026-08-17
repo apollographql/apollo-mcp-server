@@ -11,6 +11,12 @@ You can manually define the GraphQL operations that are exposed by Apollo MCP Se
 
 Alternatively, you can let an AI model read your graph schema via GraphQL introspection and have it determine the available operations.
 
+<Caution>
+
+Apollo MCP Server loads local `.graphql` operation files and persisted query manifest bodies verbatim. Environment variable expansion using `${env.VAR}` applies only to the YAML configuration file. Do not embed credentials in operation content or expect environment placeholders there to be expanded.
+
+</Caution>
+
 ## Define GraphQL operations for tools
 
 ### From operation files

@@ -79,6 +79,8 @@ impl OperationSource {
 
     #[tracing::instrument]
     fn stream_file_changes(paths: Vec<PathBuf>) -> impl Stream<Item = Event> {
+        // Operation documents are loaded verbatim; `${env.*}` expansion applies only to YAML
+        // configuration values.
         let path_count = paths.len();
         let state = Arc::new(Mutex::new(HashMap::<PathBuf, Vec<RawOperation>>::new()));
         futures::stream::select_all(paths.into_iter().map(|path| {
