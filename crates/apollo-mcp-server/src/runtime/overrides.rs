@@ -23,9 +23,9 @@ pub struct Overrides {
     /// Set the mutation mode access level for the MCP server
     pub mutation_mode: MutationMode,
 
-    /// Optional map from operation name to tool description. When provided,
-    /// these descriptions override the auto-generated tool descriptions for
-    /// the matching operations, regardless of the operation source.
+    /// Optional map from exact operation name to top-level tool description. Matching entries
+    /// override source-derived descriptions regardless of the operation source. Unmatched entries
+    /// are ignored and do not affect operation names, input descriptions, or executable documents.
     pub descriptions: HashMap<String, String>,
 
     /// Optional map from operation name to MCP tool annotation hints.

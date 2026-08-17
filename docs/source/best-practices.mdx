@@ -8,7 +8,7 @@ subtitle: Guidelines for using Apollo MCP Server
 The schema is required for:
 
 - **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
-- **Input Validation**: The schema is used to translate GraphQL input types into JSON Schema, ensuring that AI models provide correctly formatted inputs.
+- **Input Schemas**: The schema is used to translate GraphQL input types into JSON Schema that MCP clients and AI models can use when constructing tool arguments. Apollo MCP Server doesn't independently enforce this generated JSON Schema for predefined operation tools.
 - **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
 
 ## Use contract variants to control AI access to graphs
@@ -21,6 +21,23 @@ In particular, we strongly recommend contract variants when using:
 
 - [GraphOS-managed persisted queries](/apollo-mcp-server/define-tools#from-graphos-managed-persisted-queries)
 - [Introspection](/apollo-mcp-server/define-tools#introspection-tools)
+
+## Protect tool definitions from poisoning
+
+MCP clients expose tool names, descriptions, input property names, and input property descriptions to AI models. Models use all of this text when selecting tools and arguments. Treat every operation and schema source that contributes to this model-facing surface as security-sensitive. This risk is described by [OWASP MCP03: Tool Poisoning](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning).
+
+For a predefined operation tool, Apollo MCP Server stores the GraphQL document separately from its model-facing metadata. Changing only a description can't add a new server-side code path, but a malicious description can still steer a model toward attacker-chosen tools, arguments, or otherwise valid operations. An operation-source update can also change the stored document itself.
+
+Apollo MCP Server doesn't automatically scan tool metadata for hidden instructions, compare the live tool list with an approved snapshot, or require approval before applying a hot-reloaded source update. Establish these controls around your deployment:
+
+1. Restrict write access to operation, schema, manifest, collection, and configuration sources. Require review for changes promoted to production.
+2. Capture the live `tools/list` response after deployment. Store an approved, canonicalized snapshot using a consistent MCP protocol version and server configuration.
+3. Review tool names, descriptions, input property names, and input property descriptions for unexpected model-directed instructions, sensitive paths, external destinations, hidden Unicode characters, and misleading semantics.
+4. Compare the live response with the approved snapshot whenever operations, schemas, or description overrides are added, removed, renamed, or hot-reloaded. Review changes to the stored GraphQL documents as well as metadata.
+
+[`overrides.descriptions`](/apollo-mcp-server/define-tools#config-level-descriptions) controls only the top-level description of an exact operation-name match. It doesn't pin the operation name, input property names or descriptions, or executable document. A renamed or unmatched operation falls back to its source-derived description.
+
+See [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
 
 ## Review per-operation scope requirements when tools change
 

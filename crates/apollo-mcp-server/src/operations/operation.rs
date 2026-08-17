@@ -29,7 +29,11 @@ use super::{
     schema_walker,
 };
 
-/// A valid GraphQL operation
+/// A syntactically parsed, named GraphQL operation exposed as an MCP tool.
+///
+/// Construction derives model-facing metadata from the configured schema, but it does not
+/// validate the executable document against that schema. The upstream GraphQL service performs
+/// execution-time GraphQL validation.
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     pub(crate) tool: Tool,
@@ -359,6 +363,8 @@ impl Operation {
 
 impl graphql::Executable for Operation {
     fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
+        // SECURITY: Model-facing descriptions and input schemas never select the document for a
+        // predefined tool. Execution always uses the operation body retained at tool construction.
         Ok(OperationDetails {
             query: self
                 .stripped_source_text

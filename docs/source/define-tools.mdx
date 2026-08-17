@@ -17,6 +17,14 @@ Apollo MCP Server loads local `.graphql` operation files and persisted query man
 
 </Caution>
 
+## Understand execution and validation boundaries
+
+For each predefined operation tool, Apollo MCP Server parses a single named GraphQL operation and stores its document separately from the model-facing tool metadata. When a client calls the tool by name, the server sends that stored document to the upstream GraphQL endpoint. Changing only the tool description or generated input schema doesn't change the stored document.
+
+Apollo MCP Server derives the tool's JSON `inputSchema` from the operation variables and configured GraphQL schema. This schema guides MCP clients and AI models, but the server doesn't independently enforce it for predefined operation calls. The server also doesn't validate a predefined operation against the configured GraphQL schema before exposing it as a tool. The upstream GraphQL endpoint performs GraphQL document and variable validation during execution, so test and review predefined operations before deploying them.
+
+The optional [`validate` tool](#introspection-tools) validates an agent-supplied operation against the current schema. It isn't an automatic prerequisite for `execute`, and it doesn't prevalidate predefined operation tools.
+
 ## Define GraphQL operations for tools
 
 ### From operation files
@@ -77,6 +85,12 @@ operations:
 ```
 
 MCP Server supports hot reloading of the GraphOS operation collection, so it picks up changes from GraphOS without restarting. MCP Server polls GraphOS for changes periodically, so expect up to 60 seconds before new or modified operations appear as tools.
+
+<Note>
+
+Apollo MCP Server polls operation collections containing up to 100 operations. A collection with more than 100 operations is loaded, but subsequent polling is disabled. If a later update increases the collection beyond 100 operations, that update is applied and polling then stops.
+
+</Note>
 
 #### Setting operation collection variables
 
@@ -153,6 +167,12 @@ operations:
   source: uplink
 ```
 
+<Caution>
+
+Hot-reloaded operation and schema sources can change tool names, descriptions, inputs, and executable documents without an automatic security diff or approval step. Restrict source write access and [review the live tool definitions](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning) after changes.
+
+</Caution>
+
 ## Tool descriptions
 
 Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates a tool description using the GraphQL schema's field and type descriptions.
@@ -192,6 +212,23 @@ query GetAlerts($state: String!) {
 }
 ```
 
+### GraphQL comments on operation variables
+
+Add `#` comments before operation variable definitions to override their generated input property descriptions:
+
+```graphql title="operations/GetAlerts.graphql" {2}
+query GetAlerts(
+  # Two-letter US state abbreviation
+  $state: String!
+) {
+  alerts(state: $state) {
+    severity
+  }
+}
+```
+
+Variable comments take priority over descriptions derived from GraphQL schema arguments. These input property descriptions remain model-facing text and aren't affected by `overrides.descriptions`.
+
 ### Config-level descriptions
 
 If you can't modify the operation source directly, add a `descriptions` map under the `overrides` config key to map operation names to tool descriptions. These descriptions override auto-generated descriptions for the matching operations, regardless of the operation source.
@@ -206,7 +243,9 @@ overrides:
     GetForecast: "Get a detailed weather forecast for a geographic coordinate"
 ```
 
-Config-level descriptions take priority over comment-based descriptions when both are present for the same operation.
+Config-level descriptions take priority over comment-based and schema-generated tool descriptions when both are present for the same operation. Keys must exactly match operation names. An unmatched or renamed operation uses its source-derived description, and the server doesn't warn about unmatched description keys.
+
+`overrides.descriptions` controls only the top-level tool description. It doesn't change or pin the operation name, input property names or descriptions, annotations, or executable GraphQL document.
 
 ### Config-level scope requirements
 
@@ -273,6 +312,12 @@ You can enable the following introspection tools:
 - `execute`: executes an operation on the GraphQL endpoint
 
 The MCP client can use these tools to provide schema information to the model and its context window, and allow the model to execute GraphQL operations based on that schema.
+
+<Caution>
+
+Unlike predefined operation tools, `execute` accepts the GraphQL document from each tool call and isn't pinned to a previously reviewed document. Enabling `validate` doesn't force clients to call it before `execute`. Limit `execute` and mutation access to use cases that need dynamic operations, and apply authorization and demand controls at the GraphQL API.
+
+</Caution>
 
 ### Minification
 
