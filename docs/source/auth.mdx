@@ -201,12 +201,12 @@ In the previous example, `UpdateUser` requires either (`user:write` and `tenant:
 When a token lacks the required scopes for a tool call, Apollo MCP Server returns `403 Forbidden` with a `WWW-Authenticate` header:
 
 ```
-WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
+WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write tenant:admin", scope_mode="require_all"
 ```
 
 The client can use this response to initiate targeted re-authorization and retry. Per [RFC 6750 Section 3](https://datatracker.ietf.org/doc/html/rfc6750#section-3), the `scope` auth-param describes what the resource requires, not what the caller's token is missing, so this doesn't vary by presented token. The OAuth `scope` auth-param is also a space-delimited list and cannot represent grouped OR conditions, so for nested alternatives the header always includes the complete first-listed alternative, giving operators control over which scope set gets advertised. Apollo MCP Server rejects an empty scope list and empty inner alternatives during config parsing, so a `required_scopes` entry can never be accidentally satisfied by every token. When auth is not configured or Apollo MCP Server runs in stdio mode, Apollo MCP Server skips `required_scopes`.
 
-`required_scopes` adds to the global requirement and doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, the token must also carry every scope listed for that operation. Per-operation validation always requires all listed scopes, regardless of `scope_mode`, and setting `scope_mode: disabled` skips only the global requirement. Because of this, the `WWW-Authenticate` challenge for a per-operation `403` reports `scope_mode="require_all"` regardless of the globally configured `scope_mode`.
+`required_scopes` adds to the global requirement and doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, a flat list requires every listed scope; nested alternatives require every scope in at least one inner group. Per-operation validation always applies regardless of `scope_mode`, and setting `scope_mode: disabled` skips only the global requirement. Because each selected inner group is an AND set, the `WWW-Authenticate` challenge for a per-operation `403` reports `scope_mode="require_all"` regardless of the globally configured `scope_mode`.
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
 
