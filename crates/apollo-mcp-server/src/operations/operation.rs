@@ -423,6 +423,10 @@ impl graphql::Executable for Operation {
     }
 }
 
+/// Parses exactly one GraphQL operation and filters disallowed operation types.
+///
+/// This performs syntactic parsing only; it does not validate the executable document against a
+/// schema.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all)]
 pub fn operation_defs(

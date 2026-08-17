@@ -3,12 +3,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Default, Debug, Deserialize, Serialize, PartialEq, Copy, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+/// Controls which GraphQL mutation operation types Apollo MCP Server exposes.
+///
+/// This is a configuration gate, not a per-invocation approval mechanism.
 pub enum MutationMode {
-    /// Don't allow any mutations
+    /// Block mutation operations. Predefined mutations from configured operation sources are
+    /// skipped, and ad hoc mutations submitted to the `execute` tool are rejected.
     #[default]
     None,
-    /// Allow explicit mutations, but don't allow the LLM to build them
+    /// Allow predefined mutations loaded from configured operation sources, but reject ad hoc
+    /// mutations submitted to the `execute` tool.
     Explicit,
-    /// Allow the LLM to build mutations
+    /// Allow predefined mutations and ad hoc mutations submitted to an enabled `execute` tool.
     All,
 }

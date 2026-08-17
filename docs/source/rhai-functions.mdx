@@ -5,6 +5,12 @@ subtitle: Built-in functions available in Rhai scripts
 
 Apollo MCP Server provides several built-in function namespaces in the Rhai scripting environment. These functions are available in all Rhai scripts without any imports.
 
+<Caution>
+
+Rhai scripts run as trusted server-side code. Restrict and review script changes, especially when using environment variables or outbound HTTP. See the [Rhai security guidance](/apollo-mcp-server/rhai-getting-started#security).
+
+</Caution>
+
 ## Env
 
 Read environment variables from the server process.

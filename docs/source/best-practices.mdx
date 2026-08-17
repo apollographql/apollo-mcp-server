@@ -11,6 +11,14 @@ The schema is required for:
 - **Input Schemas**: The schema is used to translate GraphQL input types into JSON Schema that MCP clients and AI models can use when constructing tool arguments. Apollo MCP Server doesn't independently enforce this generated JSON Schema for predefined operation tools.
 - **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
 
+## Understand the execution and validation boundary
+
+The base GraphQL request path serializes operation text and variables into a structured HTTP request. It doesn't construct an operating-system shell command or spawn a child process from MCP tool input.
+
+Apollo MCP Server parses predefined and ad hoc operation documents, but it doesn't automatically validate those documents against the configured schema before forwarding them. The upstream GraphQL endpoint performs execution-time GraphQL validation. For ad hoc operations, you can expose the optional [`validate` tool](/apollo-mcp-server/define-tools#introspection-tools), but enabling it doesn't force a client to call it before `execute`.
+
+This boundary doesn't cover code in the upstream GraphQL service or operator-provided [Rhai scripts](/apollo-mcp-server/rhai-getting-started). Treat both as part of your deployment's execution surface. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
+
 ## Use contract variants to control AI access to graphs
 
 GraphOS [contract variants](/graphos/platform/schema-management/delivery/contracts/overview) let you deliver different subsets of your graph to different consumers.
@@ -21,6 +29,14 @@ In particular, we strongly recommend contract variants when using:
 
 - [GraphOS-managed persisted queries](/apollo-mcp-server/define-tools#from-graphos-managed-persisted-queries)
 - [Introspection](/apollo-mcp-server/define-tools#introspection-tools)
+
+## Gate mutations and enforce approval outside the server
+
+Keep [`mutation_mode`](/apollo-mcp-server/config-file#mutation-modes) at its default value, `none`, unless the use case requires GraphQL mutations. Use `explicit` to expose only mutations already present in the configured operation source. Use `all` only when an enabled `execute` tool must accept ad hoc mutations.
+
+These modes are configuration gates, not human approval. In particular, `explicit` doesn't require an operation to be stored locally, committed to version control, or reviewed before use. Apply review and promotion controls to every configured operation source, and implement per-invocation approval for sensitive actions in the MCP client, the upstream API, or another policy-enforcement layer.
+
+`mutation_mode` relies on the declared GraphQL operation type. Keep `query` fields read-only at the upstream API; the MCP server can't identify a write implemented behind a query.
 
 ## Protect tool definitions from poisoning
 

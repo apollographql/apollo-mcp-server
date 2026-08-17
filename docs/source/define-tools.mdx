@@ -308,14 +308,16 @@ You can enable the following introspection tools:
 
 - `introspect`: allows the AI model to introspect the schema of the GraphQL API by providing a specific type name to get information about, and a depth parameter to determine how deep to traverse the subtype hierarchy. The AI model can start the introspection by looking up the top-level `Query` or `Mutation` type.
 - `search`: allows the AI model to search for type information by providing a set of search terms. This can result in fewer tool calls than `introspect`, especially if the desired type is deep in the type hierarchy of the schema. Search results include all the parent type information needed to construct operations involving the matching type.
-- `validate`: validates a GraphQL operation against the schema without executing it. This allows AI models to verify that their operations are syntactically correct and conform to the schema before execution, preventing unintended side effects. Operations should be validated prior to calling the `execute` tool.
-- `execute`: executes an operation on the GraphQL endpoint
+- `validate`: validates a GraphQL operation against the configured schema without executing it. Operations should be validated prior to calling the `execute` tool.
+- `execute`: parses one ad hoc operation, applies the configured operation-type restrictions, and forwards it to the GraphQL endpoint
 
 The MCP client can use these tools to provide schema information to the model and its context window, and allow the model to execute GraphQL operations based on that schema.
 
 <Caution>
 
-Unlike predefined operation tools, `execute` accepts the GraphQL document from each tool call and isn't pinned to a previously reviewed document. Enabling `validate` doesn't force clients to call it before `execute`. Limit `execute` and mutation access to use cases that need dynamic operations, and apply authorization and demand controls at the GraphQL API.
+Unlike predefined operation tools, `execute` accepts the GraphQL document from each tool call and isn't pinned to a previously reviewed document. It checks GraphQL syntax, rejects subscriptions, and applies [`mutation_mode`](/apollo-mcp-server/config-file#mutation-modes), but it doesn't automatically validate fields, arguments, or variable types against the configured schema. Enabling `validate` doesn't force clients to call it before `execute`; the upstream GraphQL endpoint ultimately validates any operation that is forwarded.
+
+Limit `execute` and mutation access to use cases that need dynamic operations, and apply authorization and demand controls at the GraphQL API. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution) for the complete boundary.
 
 </Caution>
 

@@ -179,7 +179,7 @@ These fields are under the top-level `introspection` key. Learn more about the M
 | Option                      | Type     | Default    | Description                                                           |
 | :-------------------------- | :------- | :--------- | :-------------------------------------------------------------------- |
 | `execute`                   | `object` |            | Execution configuration for introspection                             |
-| `execute.enabled`           | `bool`   | `false`    | Enable introspection for execution                                    |
+| `execute.enabled`           | `bool`   | `false`    | Expose the `execute` tool for ad hoc GraphQL operations                |
 | `execute.hint`              | `string` |            | Append custom instructions to the `execute` tool description          |
 | `introspect`                | `object` |            | Introspection configuration for allowing clients to run introspection |
 | `introspect.enabled`        | `bool`   | `false`    | Enable introspection requests                                         |
@@ -266,10 +266,38 @@ These fields are under the top-level `overrides` key.
 | `disable_schema_description` | `bool`                              | `false`  | Disable schema descriptions to save on context-window space                                                                                                                                    |
 | `enable_output_schema`       | `bool`                              | `false`  | Enable output schema generation for tools. Adds token overhead but helps LLMs understand response structure                                                                                    |
 | `enable_explorer`            | `bool`                              | `false`  | Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer. Note: This requires a GraphOS graph reference                                                               |
-| `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Defines the mutation access level for the MCP server                                                                                                                                           |
+| `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Controls which GraphQL mutation operation types the MCP server exposes                                                                                                                          |
 | `descriptions`               | `Map<String, String>`               | `{}`     | Top-level tool descriptions keyed by exact operation name. Overrides source-derived descriptions for matching operations but doesn't affect input descriptions or executable documents. Unmatched keys don't produce a warning. [Learn more](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
 | `required_scopes`            | `Map<String, List<String>>`         | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Requirements add to the global scope requirement and use all-of semantics. Unlisted tools receive no additional restriction. [Learn more](/apollo-mcp-server/auth#per-operation-scope-requirements). |
+
+#### Mutation modes
+
+`mutation_mode` applies to predefined GraphQL operations loaded from every configured operation source. It also controls whether an enabled [`execute` tool](/apollo-mcp-server/define-tools#introspection-tools) accepts an ad hoc mutation.
+
+| Mode       | Predefined queries | Predefined mutations | Ad hoc queries through `execute` | Ad hoc mutations through `execute` |
+| :--------- | :----------------- | :------------------- | :------------------------------- | :--------------------------------- |
+| `none`     | Exposed            | Skipped              | Allowed                          | Rejected                           |
+| `explicit` | Exposed            | Exposed              | Allowed                          | Rejected                           |
+| `all`      | Exposed            | Exposed              | Allowed                          | Allowed                            |
+
+The ad hoc columns apply only when `introspection.execute.enabled` is `true`. Subscriptions are never exposed as predefined tools and are rejected by `execute` in every mode.
+
+<Caution>
+
+`mutation_mode` is a configuration gate, not a per-invocation approval mechanism. `explicit` means the mutation is already present in the active operation source; it doesn't mean the operation came from a local file, was committed to version control, or passed a review enforced by Apollo MCP Server. Hot-reloaded source changes can therefore add or change mutations without an approval step.
+
+The setting classifies documents by their declared GraphQL operation type. It cannot detect side effects implemented behind a `query` field, so the upstream GraphQL API must preserve read-only query semantics.
+
+</Caution>
+
+<Note>
+
+MCP App manifests are subject to the same mutation gate. With `mutation_mode: none`, Apollo MCP Server rejects an app manifest that contains a mutation instead of partially loading that app.
+
+</Note>
+
+Apollo MCP Server parses operation documents locally but doesn't automatically validate them against the configured schema. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
 
 ### Schema source
 

@@ -49,6 +49,10 @@ pub(crate) async fn execute_operation(
     axum_parts: Option<&Parts>,
     tool_name: &str,
 ) -> Result<CallToolResult, McpError> {
+    // SECURITY: This executes only the operator-provided Rhai AST loaded from disk. Incoming MCP
+    // request metadata is passed as hook context and is never compiled as Rhai source. The hook can
+    // still redirect the endpoint or replace headers, so the configured script directory is a
+    // trusted input.
     let (endpoint, headers) = checkpoints::on_execute_graphql_operation(
         rhai_engine,
         endpoint,

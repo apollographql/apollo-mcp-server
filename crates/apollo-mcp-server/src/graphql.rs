@@ -98,6 +98,8 @@ pub trait Executable {
             request_body.insert(String::from("operationName"), Value::String(op_name));
         }
 
+        // SECURITY: Query text and variables are serialized into a structured GraphQL HTTP body.
+        // MCP arguments do not enter a shell or child-process command in this request path.
         let response = match GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
             .headers(self.headers(request.headers))

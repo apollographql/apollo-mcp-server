@@ -16,6 +16,11 @@ use super::description::append_description_hint;
 /// The name of the tool to execute an ad hoc GraphQL operation
 pub const EXECUTE_TOOL_NAME: &str = "execute";
 
+/// Executes an ad hoc GraphQL operation against the configured endpoint.
+///
+/// The tool parses one operation and enforces subscription and mutation-mode restrictions, but it
+/// does not validate the document against the configured schema. Schema validation is a separate
+/// `validate` tool call or an upstream GraphQL endpoint responsibility.
 #[derive(Clone)]
 pub struct Execute {
     pub tool: Tool,

@@ -20,7 +20,8 @@ pub struct Overrides {
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     pub enable_explorer: bool,
 
-    /// Set the mutation mode access level for the MCP server
+    /// Select which GraphQL mutation operation types the MCP server exposes. This configuration
+    /// gate does not provide per-invocation approval.
     pub mutation_mode: MutationMode,
 
     /// Optional map from exact operation name to top-level tool description. Matching entries

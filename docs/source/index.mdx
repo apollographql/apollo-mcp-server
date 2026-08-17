@@ -80,13 +80,14 @@ The architecture enables intelligent API orchestration through these components:
 * Transport Options: Communication happens over stdio for local development or Streamable HTTP. 
 * Tool Generation: Apollo MCP Server creates MCP tools from your GraphQL operations using:
     * Operation Files: Individual `.graphql` files for specific queries or mutations
-    * Persisted Query Manifests: Pre-approved operation lists from Apollo GraphOS
+    * GraphOS Operation Collections: Predefined operation lists maintained in GraphOS
+    * Persisted Query Manifests: Predefined operation lists loaded locally or from GraphOS
     * Schema Introspection: Dynamic operation discovery for flexible AI exploration
 
-* Secure Execution: When invoked, the server executes GraphQL operations against your API endpoint, respecting all existing authentication, headers, and security policies.
+* Structured Execution: When invoked, the server sends a structured GraphQL HTTP request to your API endpoint using the configured headers and authentication.
 * Existing Infrastructure: Your GraphQL API handles requests normally, with Apollo MCP Server acting as a controlled gateway rather than requiring any changes to your graph.
 
-This design lets you expose precise GraphQL capabilities to AI while maintaining complete control over data access and security.
+This design lets you choose which GraphQL capabilities to expose to AI while continuing to enforce data access and security policies at your GraphQL API.
 
 ### Example usage
 
@@ -120,7 +121,7 @@ With Apollo MCP Server, these GraphQL advantages become immediately accessible t
 
 - **🎨 Build Custom Interactive Experiences**. With MCP Apps support, you can create custom, interactive experiences in any host that supports the MCP Apps specification (such as ChatGPT). Control how your data appears with custom HTML/UI resources, enabling rich visualizations, interactive forms, and branded experiences powered by your GraphQL APIs.
 
-- **🔒 Maintain Full Security Control**. By using pre-defined, pre-approved persisted queries, developers can maintain precise governance over which data and operations AI clients can access. This ensures that AI uses existing security protocols and data access policies.
+- **🔒 Govern AI access**. By using predefined persisted queries and restricting who can update operation sources, developers can govern which data and operations AI clients can access. The GraphQL API continues to enforce its authentication, authorization, and data-access policies.
 
 ## Prerequisites
 
