@@ -226,6 +226,8 @@ overrides:
       - admin
 ```
 
+Keys must exactly match the MCP tool name sent in `tools/call`. Only listed tools receive an additional scope check; an empty list or an absent entry leaves the tool governed by the global scope requirement alone. The server accepts unknown keys without warning, so review this map whenever tools are added, removed, or renamed.
+
 ### Config-level annotations
 
 MCP tool annotations are hints that help AI clients understand tool behavior. Apollo MCP Server auto-detects these defaults:

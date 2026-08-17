@@ -34,11 +34,15 @@ use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
 use www_authenticate::{BearerError, WwwAuthenticate};
 
-/// Scope enforcement mode for authenticated requests.
+/// Enforcement mode for the global OAuth scope requirement on authenticated
+/// requests.
+///
+/// Per-operation requirements are evaluated separately and always require
+/// every listed scope.
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeMode {
-    /// Skip scope enforcement entirely.
+    /// Skip the global scope requirement. Per-operation requirements still apply.
     Disabled,
     /// Token must have ALL configured scopes (default).
     #[default]
@@ -48,9 +52,9 @@ pub enum ScopeMode {
 }
 
 impl ScopeMode {
-    /// Whether the `present` scopes satisfy the `required` scopes under this
-    /// mode. Callers skip this check when no scopes are configured, so
-    /// `required` is expected to be non-empty.
+    /// Whether the `present` scopes satisfy the global `required` scopes under
+    /// this mode. Callers skip this check when no global scopes are configured,
+    /// so `required` is expected to be non-empty.
     fn is_satisfied_by(self, required: &[String], present: &[String]) -> bool {
         match self {
             ScopeMode::Disabled => true,
@@ -194,7 +198,8 @@ pub struct Config {
     /// Supported OAuth scopes by this resource server
     pub scopes: Vec<String>,
 
-    /// Scope enforcement mode: disabled, require_all (default), or require_any.
+    /// Global scope enforcement mode: disabled, require_all (default), or require_any.
+    /// This does not change the all-of semantics of per-operation requirements.
     #[serde(default)]
     pub scope_mode: ScopeMode,
 
@@ -299,7 +304,9 @@ struct AuthState {
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
     /// path neither re-parses nor allocates them.
     auth_servers: Arc<[Url]>,
-    /// Per-operation required scopes, keyed by operation name.
+    /// Per-operation required scopes, keyed by the exact MCP tool name used in
+    /// `tools/call`.
+    /// Missing keys impose no additional restriction beyond the global requirement.
     required_scopes: Arc<HashMap<String, Vec<String>>>,
 }
 
@@ -346,7 +353,7 @@ impl Config {
 
         if self.scope_mode == ScopeMode::Disabled && !self.scopes.is_empty() {
             warn!(
-                "scope_mode is 'disabled' but scopes are configured - scope enforcement will be skipped"
+                "scope_mode is 'disabled' but scopes are configured - global scope enforcement will be skipped"
             );
         }
 
@@ -446,7 +453,9 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 /// Checks if a `tools/call` request is missing required scopes for the named operation.
 ///
 /// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
-/// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
+/// has no matching per-operation requirement or all listed scopes are present. Matching is
+/// exact: non-`tools/call` methods, missing names, and unknown names receive no additional
+/// restriction beyond the global scope requirement.
 fn missing_scopes_for_operation<'a>(
     peek: &JsonRpcBodyPeek,
     required_scopes: &'a HashMap<String, Vec<String>>,
@@ -493,7 +502,8 @@ async fn oauth_validate(
         )
     };
 
-    // Forbidden error for valid tokens with insufficient scopes (RFC 6750 Section 3.1)
+    // RFC 6750 insufficient-scope challenge. Advertise the full requirement so
+    // clients know the target scope set, rather than only the scopes they lack.
     let forbidden_error = |required_scopes: &[String]| {
         (
             StatusCode::FORBIDDEN,
@@ -566,7 +576,8 @@ async fn oauth_validate(
         unauthorized_error()
     })?;
 
-    // Scope validation: only applies when scopes are configured
+    // Global scope validation. An empty list or `scope_mode: disabled` imposes
+    // no global scope requirement; per-operation requirements still run below.
     if !auth_config.scopes.is_empty() {
         let sufficient = auth_config
             .scope_mode
@@ -589,14 +600,15 @@ async fn oauth_validate(
             );
             tracing::Span::current().record("reason", "insufficient_scope");
             tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-            // NOTE: WWW-Authenticate lists all configured scopes per RFC 6750.
+            // NOTE: WWW-Authenticate lists all configured global scopes.
             // In require_any mode, only one is needed, but the header format
             // doesn't distinguish. This matches existing behavior.
             return Err(forbidden_error(&auth_config.scopes));
         }
     }
 
-    // Per-operation scope check using the already-extracted body peek.
+    // Per-operation requirements add to the global check and always require
+    // every listed scope, independently of the global `scope_mode`.
     if let Some(required) = body_peek.as_ref().and_then(|peek| {
         missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
     }) {

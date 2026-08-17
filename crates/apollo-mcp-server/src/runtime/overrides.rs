@@ -35,9 +35,11 @@ pub struct Overrides {
     pub annotations: HashMap<String, AnnotationOverrides>,
 
     /// Per-operation OAuth scope requirements for step-up authorization.
-    /// Keys are operation names; values are lists of required scopes.
-    /// When a token lacks the required scopes for an operation, the server
-    /// returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`.
+    /// Keys must exactly match the MCP tool name sent in `tools/call`; unmatched
+    /// keys impose no additional restriction. Values use all-of semantics and
+    /// add to any global scope requirement. When a token lacks a listed scope,
+    /// the server returns HTTP 403 with
+    /// `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
     pub required_scopes: HashMap<String, Vec<String>>,
 }

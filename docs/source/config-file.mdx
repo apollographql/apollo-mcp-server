@@ -259,7 +259,7 @@ These fields are under the top-level `overrides` key.
 | `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Defines the mutation access level for the MCP server                                                                                                                                           |
 | `descriptions`               | `Map<String, String>`               | `{}`     | Optional map from operation name to tool description. Overrides auto-generated descriptions for any operation source. [Learn more](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
-| `required_scopes`            | `Map<String, List<String>>`         | `{}`     | Optional map from operation name to a list of required OAuth scopes. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more](/apollo-mcp-server/auth#per-operation-scope-requirements). |
+| `required_scopes`            | `Map<String, List<String>>`         | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Requirements add to the global scope requirement and use all-of semantics. Unlisted tools receive no additional restriction. [Learn more](/apollo-mcp-server/auth#per-operation-scope-requirements). |
 
 ### Schema source
 
@@ -369,8 +369,8 @@ These fields are under the top-level `transport` key, nested under the `auth` ke
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
-| `scopes`                          | `List<string>`        |               | List of queryable OAuth scopes from the upstream OAuth servers                                                                                                                                                   |
-| `scope_mode`                      | `string`              | `require_all` | Scope enforcement mode: `disabled`, `require_all`, or `require_any`                                                                                                                                              |
+| `scopes`                          | `List<string>`        |               | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`.                                                                    |
+| `scope_mode`                      | `string`              | `require_all` | Global scope enforcement mode: `disabled`, `require_all`, or `require_any`. Per-operation requirements always use all-of semantics.                                                                              |
 | `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. This does not override `forward_headers`.                                                                             |
 | `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery).                            |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
@@ -413,11 +413,13 @@ transport:
     # Optional link to more documentation relating to this MCP server.
     resource_documentation: https://info.mcp.server
 
-    # List of queryable OAuth scopes from the upstream OAuth servers
+    # Global OAuth scopes supported by this MCP resource server.
+    # These are enforced according to scope_mode.
     scopes:
       - read
       - mcp
       - profile
+    scope_mode: require_all
 
     # Timeout for authorization server metadata discovery (default: 5s)
     discovery_timeout: 5s

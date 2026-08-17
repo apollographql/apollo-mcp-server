@@ -22,6 +22,14 @@ In particular, we strongly recommend contract variants when using:
 - [GraphOS-managed persisted queries](/apollo-mcp-server/define-tools#from-graphos-managed-persisted-queries)
 - [Introspection](/apollo-mcp-server/define-tools#introspection-tools)
 
+## Review per-operation scope requirements when tools change
+
+Use global OAuth scopes as a server-wide baseline and [`overrides.required_scopes`](/apollo-mcp-server/auth#per-operation-scope-requirements) for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check.
+
+During deployment, compare the configured keys with the live `tools/list` response. Repeat this review whenever operations are added, removed, renamed, or hot-reloaded. A new or mismatched tool name remains governed only by the global scope requirement because the server does not reject or warn about unknown `required_scopes` keys.
+
+Scope checks enforce the permissions present in a token at runtime. Manage token expiration, just-in-time elevation, entitlement review, and permission-change approval through your identity provider and operational controls.
+
 ## Send client name header when using persisted queries
 
 If you register a persisted query with a specific client name instead of `null`, you must configure the MCP Server to send the necessary header indicating the client name to the router.
