@@ -81,14 +81,15 @@ pub struct Server {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Transport {
-    /// Use standard IO for server <> client communication
+    /// Use standard IO for server <> client communication.
+    /// Authentication middleware is not available for this transport.
     // Struct variant, not unit: `deny_unknown_fields` only rejects misplaced keys
     // (e.g. a stdio `auth` block) on struct variants, not unit ones.
     Stdio {},
 
     /// Host the MCP server on the configuration, using streamable HTTP messages.
     StreamableHttp {
-        /// Authentication configuration
+        /// Authentication configuration for Streamable HTTP requests.
         #[serde(default)]
         auth: Option<Box<auth::Config>>,
 

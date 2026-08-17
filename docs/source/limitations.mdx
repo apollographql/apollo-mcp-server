@@ -40,6 +40,7 @@ Apollo MCP Server passes through validated OAuth tokens received from MCP client
 
 ```yaml title="config.yaml"
 transport:
+  type: streamable_http
   auth:
     disable_auth_token_passthrough: true
 ```
@@ -48,13 +49,13 @@ When disabled, tokens are still validated for MCP client authentication but are 
 
 <Caution>
 
-`disable_auth_token_passthrough` does not override `forward_headers`. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when automatic token passthrough is disabled. Audit both settings together.
+`disable_auth_token_passthrough` does not override `forward_headers`. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when automatic token passthrough is disabled. With `transport.auth` configured, the request is authenticated before tool execution; without an auth block, Apollo MCP Server does not validate the explicitly forwarded value. Audit both settings together.
 
 </Caution>
 
-#### Rationale 
+#### Rationale
 
-The decision to pass through tokens stems from practical enterprise requirements that may conflict with the MCP specification. For example: 
+The [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction) forbids token passthrough. Apollo MCP Server retains it by default for practical enterprise requirements such as:
 
 - **Multi-user scenarios**: Enterprise GraphQL APIs often require direct user identity to perform granular access control and tenant isolation.
 - **Existing enterprise patterns**: Many organizations have GraphQL APIs that depend on the original Authorization header to identify users and apply existing identity-based access controls.
@@ -64,16 +65,18 @@ The decision to pass through tokens stems from practical enterprise requirements
 #### Security implications
 
 - Token passthrough can lead to confused deputy vulnerabilities.
-- Upstream APIs might incorrectly trust tokens as if they were validated by the MCP server.
+- Upstream APIs might treat successful MCP-server validation as proof that a token was issued for the upstream API.
 - Tokens intended for the MCP server audience might be inappropriately used with different services.
-- However, if upstream APIs enforce proper audience (`aud` claim) validation, they should reject inappropriately scoped tokens.
+- Forwarded credentials might be captured when upstream logging or tracing records request headers.
+- If upstream APIs enforce proper audience (`aud` claim) validation, they should reject tokens that aren't intended for them.
 
 #### Recommended workaround
 
-- Use the MCP server only with GraphQL APIs that accept the same OAuth tokens and audiences
-- Ensure your OAuth authorization server issues tokens with appropriate audience claims for both the MCP server and upstream APIs
-- Verify that your upstream APIs properly validate token audiences
-- Consider the security implications in your threat model, especially regarding OAuth trust boundaries
+- Disable automatic passthrough and remove `authorization` from `forward_headers` when the GraphQL API doesn't require the caller's token.
+- Use the MCP server only with GraphQL APIs that accept the same OAuth tokens and audiences.
+- Ensure your OAuth authorization server issues tokens with appropriate audience claims for both the MCP server and upstream APIs.
+- Verify that your upstream APIs validate token audiences and redact authorization headers from logs and traces.
+- Consider OAuth trust boundaries in your threat model.
 
 #### Future plans
 

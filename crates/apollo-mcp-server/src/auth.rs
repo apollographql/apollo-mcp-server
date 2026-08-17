@@ -176,10 +176,12 @@ pub struct Config {
 
     /// List of accepted token issuers (the JWT `iss` claim).
     ///
-    /// When non-empty, a token's `iss` claim must exactly match one of these
-    /// values or the token is rejected. When empty (default), issuer validation
-    /// is skipped. Not `Vec<Url>`: like `servers`, `Url::parse` appends `/` to
-    /// bare-authority inputs, which would break exact `iss` string matching.
+    /// When non-empty, a token's `iss` claim must match one of these values and
+    /// the discovered issuer of the server whose key verified it. When empty
+    /// (default), these token issuer checks are skipped; authorization-server
+    /// metadata issuer validation still applies. Not `Vec<Url>`: like
+    /// `servers`, `Url::parse` appends `/` to bare-authority inputs, which would
+    /// break exact `iss` string matching.
     #[serde(default)]
     pub issuers: Vec<String>,
 
@@ -472,7 +474,8 @@ fn missing_scopes_for_operation<'a>(
     Some(required)
 }
 
-/// Validate that requests made have a corresponding bearer JWT token
+/// Validates bearer JWTs and configured scopes, except for explicitly allowed
+/// anonymous discovery requests.
 #[tracing::instrument(skip_all, fields(status_code, reason))]
 async fn oauth_validate(
     State(auth_state): State<AuthState>,

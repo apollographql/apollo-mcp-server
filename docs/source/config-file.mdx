@@ -92,6 +92,8 @@ Header names should match exactly but are case-insensitive.
 
 Header values are forwarded as-is, according to what the MCP client provides.
 
+With `transport.auth` configured, the HTTP authentication middleware validates the request before a tool call reaches the GraphQL API. Without an auth block, Apollo MCP Server does not validate an explicitly forwarded `authorization` header.
+
 Hop-by-hop headers (like `connection`, `transfer-encoding`) are automatically blocked for security.
 
 ```yaml title="mcp.yaml"
@@ -110,7 +112,7 @@ Avoid header forwarding for sensitive credentials like API keys or access tokens
 <br />
 <br />
 
-According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-06-18/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/authorization#access-token-privilege-restriction), token passthrough introduces serious security risks:
+According to [MCP security best practices](https://modelcontextprotocol.io/specification/2025-11-25/basic/security_best_practices#token-passthrough) and the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction), token passthrough introduces serious security risks:
 
 - **Audience confusion**: If the MCP Server accepts tokens not intended for it, it can violate OAuth's trust boundaries.
 - **Confused deputy problem**: If an unvalidated token is passed downstream, a downstream API may incorrectly trust it as though it were validated by the MCP Server.
@@ -369,7 +371,7 @@ These fields are under the `host_validation` key within the `transport` configur
 
 | Option            | Type           | Default | Description                                                                 |
 | :---------------- | :------------- | :------ | :-------------------------------------------------------------------------- |
-| `enabled`         | `bool`         | `true`  | Enable Host and Origin header validation                                    |
+| `enabled`         | `bool`         | `true`  | Enable Host validation and any configured Origin validation                 |
 | `allowed_hosts`   | `List<string>` | `[]`    | Additional allowed hostnames beyond localhost (can include port)            |
 | `allowed_origins` | `List<string>` | `[]`    | Allowed browser origins (RFC 6454); empty leaves Origin validation disabled |
 
@@ -401,11 +403,17 @@ transport:
 
 These fields are under the top-level `transport` key, nested under the `auth` key. Learn more about [authorization and authentication](/apollo-mcp-server/auth).
 
+<Note>
+
+Authentication is available only for `streamable_http`. Because the default transport is `stdio`, an auth configuration must also set `transport.type: streamable_http`. The server rejects an `auth` block configured under `stdio`.
+
+</Note>
+
 | Option                            | Type                  | Default       | Description                                                                                                                                                                                                      |
 | :-------------------------------- | :-------------------- | :------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `servers`                         | `List<URL>`           |               | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint).                                                                                                            |
 | `audiences`                       | `List<string>`        | `[]`          | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                                                                                 |
-| `issuers`                         | `List<string>`        | `[]`          | List of accepted token issuers. The JWT `iss` claim must match one of these values, and must equal the issuer advertised by the server that signed the token (skipped if empty).                                 |
+| `issuers`                         | `List<string>`        | `[]`          | Additional allowlist for token issuers. When set, `iss` must match this list and the issuer advertised by the signing server. Empty skips token issuer checks, not authorization-server metadata validation.      |
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
@@ -435,9 +443,9 @@ transport:
     audiences:
       - mcp.example.audience
 
-    # List of accepted token issuers. The JWT `iss` claim must match one of
-    # these values and the issuer the signing server advertises in discovery.
-    # When empty (the default), the server skips issuer validation.
+    # Additional allowlist for token issuers. The JWT `iss` claim must match one
+    # of these values and the issuer the signing server advertises in discovery.
+    # When empty (the default), the server skips these token issuer checks.
     issuers:
       - "https://auth.example.com"
 

@@ -65,7 +65,8 @@ enum SlotOutcome {
 }
 
 /// [`KeyResolver`] that fetches signing keys from the network via OIDC/OAuth
-/// discovery.
+/// discovery. Metadata is accepted only when its issuer identifies the
+/// configured authorization server; signing keys are fetched afterward.
 pub(super) struct NetworkedKeyResolver<'a> {
     client: &'a reqwest::Client,
     discovery_timeout: Duration,
@@ -290,8 +291,8 @@ struct DiscoveryMetadata {
     /// The authorization server's issuer identifier. RFC 8414 and OpenID
     /// Connect Discovery both require this field, and it must equal the `iss`
     /// claim of tokens the server issues (OpenID Connect Core §2, RFC 9068
-    /// §2.2). Used to bind issuer validation to the server whose JWKS verified
-    /// the signature.
+    /// §2.2). When token issuer validation is configured, this value binds the
+    /// token's `iss` claim to the server whose JWKS verified the signature.
     issuer: String,
     jwks_uri: String,
     #[serde(default)]

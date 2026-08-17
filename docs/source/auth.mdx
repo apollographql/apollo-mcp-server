@@ -8,6 +8,12 @@ The Apollo MCP Server supports authorizing clients (e.g., LLMs) according to [th
 
 The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs. You can read more about [security considerations](/apollo-mcp-server/limitations#oauth-token-passthrough) when using this feature.
 
+<Note>
+
+Authentication is available only with the `streamable_http` transport. The default transport is `stdio`, where authentication middleware does not run. Configuring an `auth` block under `stdio` causes the server to reject the configuration and exit during startup.
+
+</Note>
+
 ## Implement authorization with Apollo MCP Server
 
 To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/2.1/) Identity Provider (for example, your own in-house IdP or a third-party IdP such as Auth0, Okta, or Keycloak). You need the following values from your IdP:
@@ -15,6 +21,8 @@ To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/
 - **URL**: The base URL of your Identity Provider, which is used to validate the JSON Web Tokens (JWTs) issued by it.
 - **Audience**: Identifies the intended recipient of the token, typically a resource server or API. Represented by the `aud` claim in the JWT.
 - **Scopes**: The scopes that the client will request. These scopes define the permissions granted to the client when it accesses the API.
+
+Apollo MCP Server validates signed JWT bearer access tokens; it does not support opaque access tokens. Each JWT must contain a `kid` header and `exp` and `sub` claims. It must also contain an `aud` claim unless `allow_any_audience` is enabled, and an `iss` claim when `issuers` is configured. The identity provider must expose RFC 8414 or OpenID Connect discovery metadata containing `issuer` and `jwks_uri`, and the selected JWK must identify a supported signing algorithm, either directly or through the [documented discovery fallback](#jwks-that-omit-alg).
 
 Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/config-file#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
@@ -50,7 +58,7 @@ transport:
     allow_any_audience: true
 ```
 
-If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server will skip audience validation entirely. This means tokens with _any_ audience claim will be accepted.
+If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server skips audience validation entirely. The token does not need an `aud` claim, and any value is accepted when the claim is present.
 
 <Caution>
 
@@ -75,9 +83,9 @@ transport:
 
 Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
 
-The server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata. This means a token signed by one configured server cannot be accepted while it claims a different configured server's issuer, which keeps issuer validation correct when you delegate to multiple servers.
+When `issuers` is configured, the server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata. This means a token signed by one configured server cannot be accepted while it claims a different configured server's issuer, even when both values appear in the allowlist.
 
-When `issuers` is empty (the default), the server skips issuer validation, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
+When `issuers` is empty (the default), the server skips the token issuer allowlist and does not require an `iss` claim. It still rejects authorization-server metadata whose advertised issuer does not identify the configured server. To validate the issuer of every token, set `issuers` to the exact issuer values your OAuth servers use.
 
 ## Configure scope enforcement
 
@@ -199,7 +207,7 @@ Apollo MCP Server returns different HTTP status codes depending on the type of a
 
 | Status             | When returned                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------------- |
-| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails audience validation |
+| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails configured audience or issuer validation |
 | `403 Forbidden`    | Token is authentic but lacks the required scopes (global or per-operation)                   |
 
 ### WWW-Authenticate header
@@ -283,9 +291,9 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 | 2        | `https://auth.example.com/.well-known/openid-configuration/tenant`       | OIDC Discovery (path-insertion)        |
 | 3        | `https://auth.example.com/tenant/.well-known/openid-configuration`       | OIDC Discovery (legacy path-appending) |
 
-The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
+The first URL that returns a parseable metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
 
-The metadata `issuer` must match the authorization server the discovery URL was built from, as required by [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3). A document that advertises a different issuer is rejected, and discovery continues with the next URL pattern.
+The metadata `issuer` must match the authorization server the discovery URL was built from, as required by [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3). A document that advertises a different issuer is rejected and its `jwks_uri` is not fetched. Fallback to another URL pattern happens only when a discovery request fails, times out, or doesn't return parseable metadata.
 
 ## Discovery headers
 
@@ -306,7 +314,7 @@ These headers are sent with every request the server makes to discover authoriza
 
 ## JWKs that omit `alg`
 
-Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). Apollo MCP Server supports these providers automatically, inferring the signing algorithm from the authorization server's discovery document.
+Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). When a JWK omits `alg`, Apollo MCP Server uses `id_token_signing_alg_values_supported` from the authorization server's discovery document only when it contains exactly one supported algorithm. The key is rejected when that field is empty, contains multiple values, or contains an unsupported value.
 
 ## Anonymous MCP discovery
 

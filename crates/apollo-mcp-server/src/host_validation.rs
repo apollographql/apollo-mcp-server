@@ -13,7 +13,7 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct HostValidationConfig {
-    /// Enable Host and Origin header validation (enabled by default for security).
+    /// Enable Host validation and any configured Origin validation (default: true).
     pub enabled: bool,
 
     /// Additional allowed hosts beyond the loopback defaults

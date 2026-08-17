@@ -26,7 +26,7 @@ pub fn build_request_headers(
     // so the passthrough setting does not override `forward_headers`.
     forward_headers(forward_header_names, incoming_headers, &mut headers);
 
-    // Optionally extract the validated token and propagate it to upstream servers if present
+    // Automatic passthrough uses only the marker inserted after token validation.
     if !disable_auth_token_passthrough && let Some(token) = extensions.get::<ValidToken>() {
         headers.typed_insert(token.deref().clone());
     }
