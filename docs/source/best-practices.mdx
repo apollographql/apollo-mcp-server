@@ -68,6 +68,19 @@ Apollo MCP Server doesn't automatically scan tool metadata for hidden instructio
 
 See [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
 
+## Plan audit and telemetry controls
+
+[OWASP MCP08: Lack of Audit and Telemetry](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) describes the visibility and governance risks of incomplete activity records. Apollo MCP Server can export traces and metrics over OTLP and correlates application log lines emitted inside active spans with `trace_id`, but the surrounding observability system remains part of the control.
+
+Before production deployment:
+
+1. Configure trace and metric exporters and route application logs to managed destinations.
+2. Review captured span attributes and omit payload fields that your investigation process doesn't require.
+3. Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
+4. Alert on tool failures, unexpected usage patterns, and telemetry ingestion gaps.
+
+Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and use traces plus correlated logs for request-level investigation. See [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.
+
 ## Review per-operation scope requirements when tools change
 
 Use global OAuth scopes as a server-wide baseline and [`overrides.required_scopes`](/apollo-mcp-server/auth#per-operation-scope-requirements) for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check.

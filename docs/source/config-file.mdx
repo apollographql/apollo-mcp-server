@@ -204,7 +204,7 @@ These fields are under the top-level `logging` key.
 | Option     | Type                                                | Default    | Description                                                                       |
 | :--------- | :-------------------------------------------------- | :--------- | :-------------------------------------------------------------------------------- |
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
-| `path`     | `FilePath`                                          |            | An output file path for logging. If not provided logging outputs to stdio/stderr. |
+| `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to stdout.      |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
 
 <Caution>
@@ -510,7 +510,7 @@ transport:
 | Option               | Type                   | Default                     | Description                                                                                               |
 | :------------------- | :--------------------- | :-------------------------- | :-------------------------------------------------------------------------------------------------------- |
 | `otlp`               | `OTLP Metric Exporter` | `null` (Exporting disabled) | Configuration for exporting metrics via OTLP.                                                             |
-| `omitted_attributes` | `List<String>`         |                             | List of attributes to be omitted from metrics.                                                            |
+| `omitted_attributes` | `List<String>`         |                             | Supported Apollo metric attributes to omit before export.                                                 |
 | `export_interval`    | `Duration`             | `30s`                       | Interval at which metrics are exported. Supports human-readable durations (e.g. `30s`, `1m`, `1h`, `1d`). |
 
 #### OTLP Metrics Exporter
@@ -569,7 +569,7 @@ export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR
 | :------------------- | :-------------------- | :-------------------------- | :-------------------------------------------- |
 | `otlp`               | `OTLP Trace Exporter` | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.  |
 | `sampler`            | `SamplerOption`       | `ALWAYS_ON`                 | Configuration to control sampling of traces.  |
-| `omitted_attributes` | `List<String>`        |                             | List of attributes to be omitted from traces. |
+| `omitted_attributes` | `List<String>`        |                             | Supported Apollo span attributes to omit before export. |
 
 #### OTLP Trace Exporter
 

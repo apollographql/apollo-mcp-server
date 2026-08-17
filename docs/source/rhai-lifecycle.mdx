@@ -103,7 +103,7 @@ fn on_execute_graphql_operation(ctx) {
 }
 ```
 
-`ctx.trace_id` is a 32-character lowercase hex string when an OpenTelemetry trace context is active, and an empty string otherwise (for example, when the MCP client did not propagate a `traceparent` header and tracing is not configured server-side). The same trace ID is also prefixed onto server log lines, so values emitted from Rhai can be correlated with the rest of the server's output.
+`ctx.trace_id` is a 32-character lowercase hex string when an OpenTelemetry trace context is active, and an empty string when the hook runs without an active span. The same trace ID is also prefixed onto server log lines, so values emitted from Rhai can be correlated with the rest of the server's output.
 
 ## Error handling with throw
 

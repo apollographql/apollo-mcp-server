@@ -134,7 +134,7 @@ pub trait Executable {
                     (json, None)
                 };
 
-                // Record the filtered view so @private fields never appear in spans.
+                // Record the same filtered response exposed to the LLM.
                 if let Ok(s) = serde_json::to_string(&structured_content) {
                     tracing::Span::current().record("apollo.mcp.graphql_response", s.as_str());
                 }

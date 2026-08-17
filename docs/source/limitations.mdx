@@ -78,6 +78,8 @@ The [MCP authorization specification](https://modelcontextprotocol.io/specificat
 - Verify that your upstream APIs validate token audiences and redact authorization headers from logs and traces.
 - Consider OAuth trust boundaries in your threat model.
 
+Apollo MCP Server's telemetry `omitted_attributes` settings apply only to supported attributes exported by this server. They don't modify the forwarded authorization header or telemetry produced by the upstream API. Configure header capture and redaction independently at each telemetry producer and collector.
+
 #### Future plans
 
 We plan to address this limitation in a future release by implementing token exchange or separate authentication flows for upstream APIs, while still supporting the enterprise requirement for user identity propagation.

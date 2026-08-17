@@ -4,6 +4,8 @@
 //! Users opt attributes out via `telemetry.exporters.tracing.omitted_attributes`
 //! in YAML; the keys land in [`FilteringExporter::new`] and are removed at
 //! export time so the inner exporter (typically OTLP) never sees them.
+//! Filtering applies only to this server's exported span attributes; log output
+//! and telemetry emitted by downstream services use their own configuration.
 
 use opentelemetry::Key;
 use opentelemetry_sdk::Resource;
