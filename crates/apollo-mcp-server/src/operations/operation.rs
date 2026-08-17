@@ -363,8 +363,8 @@ impl Operation {
 
 impl graphql::Executable for Operation {
     fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
-        // SECURITY: Model-facing descriptions and input schemas never select the document for a
-        // predefined tool. Execution always uses the operation body retained at tool construction.
+        // Tool metadata does not select the executable document. Predefined tools use the
+        // operation body retained when the tool was constructed.
         Ok(OperationDetails {
             query: self
                 .stripped_source_text

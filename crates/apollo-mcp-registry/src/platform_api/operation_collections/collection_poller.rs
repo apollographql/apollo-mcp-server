@@ -32,8 +32,8 @@ use operation_collection_query::{
     OperationCollectionQueryOperationCollectionOnValidationError as ValidationError,
 };
 
-// LIMIT: The current collection is emitted before this cap is checked. Collections above the cap
-// load once, but subsequent hot-reload polling is disabled.
+// The current collection is emitted before this limit is checked, so oversized collections load
+// once but are not polled for later changes.
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
 
 type Timestamp = String;
