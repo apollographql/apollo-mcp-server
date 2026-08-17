@@ -16,6 +16,9 @@ use apollo_mcp_rhai::{RhaiEngine, checkpoints};
 
 use super::Operation;
 
+/// Executes the predefined operation whose MCP tool name matches `tool_name`.
+///
+/// Returns `None` when the name is absent from the current operation catalog.
 pub(crate) async fn find_and_execute_operation(
     operations: &[Operation],
     tool_name: &str,

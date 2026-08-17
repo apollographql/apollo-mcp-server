@@ -18,6 +18,14 @@ The `execute` tool accepts a new GraphQL document with each call, so it isn't bo
 
 Treat operation, schema, manifest, collection, and configuration sources as trusted inputs. Hot-reloaded changes are applied when observed, and model-facing text can steer an agent even when the stored operation itself is unchanged. Follow [Protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning) to restrict source changes and review the live tool surface.
 
+### Intent-flow enforcement
+
+Apollo MCP Server dispatches tool calls, but it doesn't compare a proposed call with the user's original goal. It doesn't detect instructions embedded in retrieved context, label tool results as untrusted for the model, detect intent drift, or require human confirmation before each call. These controls require an MCP client, agent framework, or policy layer that participates in planning.
+
+For predefined operations, the requested tool name must match an entry in the current operation catalog, and execution uses the stored GraphQL document for that entry. This bounds calls through the server to its live tool surface, but it doesn't establish that every loaded operation was reviewed or that a call is intended. Hot-reloaded sources can change that surface, and one operation's variables can address a broad set of data or resources.
+
+Enabling `execute` expands the surface to agent-supplied queries. It also permits agent-supplied mutations when `mutation_mode` is `all`. The upstream GraphQL API remains responsible for document validation, authorization, and other execution controls. Follow [Limit the impact of intent-flow subversion](/apollo-mcp-server/best-practices#limit-the-impact-of-intent-flow-subversion) for deployment guidance.
+
 ### Operation validation and execution
 
 Apollo MCP Server syntactically parses predefined and ad hoc GraphQL documents and enforces operation-type restrictions. It doesn't validate the documents against the configured schema before exposing or forwarding them. An operation containing an unknown field, argument, or variable type can therefore become a predefined tool or be sent through `execute`.

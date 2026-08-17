@@ -38,6 +38,19 @@ These modes are configuration gates, not human approval. In particular, `explici
 
 `mutation_mode` relies on the declared GraphQL operation type. Keep `query` fields read-only at the upstream API; the MCP server can't identify a write implemented behind a query.
 
+## Limit the impact of intent-flow subversion
+
+[OWASP MCP06: Intent Flow Subversion](https://owasp.org/www-project-mcp-top-10/2025/MCP06-2025%E2%80%93Intent-Flow-Subversion) describes how instructions from retrieved context can steer an agent away from the user's goal and toward a different valid action. Apollo MCP Server limits predefined calls to operations in its current tool catalog, but it doesn't determine whether a proposed tool call remains aligned with the user's request. A valid, permitted call can still be unintended.
+
+Treat the exposed tool surface as a way to limit impact, not as intent validation:
+
+1. Expose only the operations required for the use case. Review both what each operation can do and how broadly its variables can target data or resources.
+2. Keep `execute` disabled unless the agent needs ad hoc queries. An enabled `execute` tool accepts an agent-supplied query document; with `mutation_mode: all`, it also accepts agent-supplied mutations.
+3. Protect every configured operation source. The effective boundary is the live tool catalog, and hot-reloaded changes can add or replace operations without restarting the server.
+4. Enforce authentication, authorization, safelisting, and demand controls at the GraphQL API. Implement intent checks, untrusted-context handling, and per-action approval in the MCP client, agent framework, or another policy layer that can compare a proposed action with the user's goal.
+
+See [Intent-flow enforcement limitations](/apollo-mcp-server/limitations#intent-flow-enforcement) for the controls Apollo MCP Server doesn't provide.
+
 ## Protect tool definitions from poisoning
 
 MCP clients expose tool names, descriptions, input property names, and input property descriptions to AI models. Models use all of this text when selecting tools and arguments. Treat every operation and schema source that contributes to this model-facing surface as security-sensitive. This risk is described by [OWASP MCP03: Tool Poisoning](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning).

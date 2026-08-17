@@ -89,9 +89,9 @@ impl Running {
             && protocol_version.is_some_and(|v| *v >= ProtocolVersion::V_2025_06_18)
     }
 
-    /// Update a running server with a new schema.
+    /// Rebuilds the current predefined operation catalog against a new schema.
     ///
-    /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
+    /// Only state behind shared locks changes, so active server clones observe the update.
     pub(super) async fn update_schema(&self, schema: Valid<Schema>) {
         debug!("Schema updated:\n{}", schema);
 
@@ -144,9 +144,9 @@ impl Running {
         Self::notify_tool_list_changed(self.peers.clone()).await;
     }
 
-    /// Update a running server with new operations.
+    /// Replaces the current predefined operation catalog with the latest source update.
     ///
-    /// Note: It's important that this takes an immutable reference to ensure we're only updating things that are shared with the server (`RwLock`s)
+    /// Only state behind shared locks changes, so active server clones observe the update.
     #[tracing::instrument(skip_all)]
     pub(super) async fn update_operations(&self, operations: Vec<RawOperation>) {
         debug!("Operations updated:\n{:?}", operations);
