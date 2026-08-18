@@ -52,7 +52,6 @@ pub(crate) async fn execute_operation(
     axum_parts: Option<&Parts>,
     tool_name: &str,
 ) -> Result<CallToolResult, McpError> {
-    // Configured Rhai hooks can update the endpoint and headers before the request is sent.
     let (endpoint, headers) = checkpoints::on_execute_graphql_operation(
         rhai_engine,
         endpoint,

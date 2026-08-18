@@ -98,7 +98,6 @@ pub trait Executable {
             request_body.insert(String::from("operationName"), Value::String(op_name));
         }
 
-        // Operation text and variables remain data in the structured GraphQL request body.
         let response = match GRAPHQL_CLIENT
             .post(request.endpoint.as_str())
             .headers(self.headers(request.headers))
