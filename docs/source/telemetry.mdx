@@ -13,7 +13,7 @@ AI agents create unpredictable usage patterns and complex request flows that are
 
 ## How it works
 
-Apollo MCP Server exports metrics and traces using the OpenTelemetry Protocol (OTLP). Application logs use the configured logging output rather than an OTLP logs exporter.
+Apollo MCP Server exports metrics and traces using the OpenTelemetry Protocol (OTLP). Application logs use the configured logging output instead of an OTLP logs exporter.
 
 | Signal  | Default behavior                         | Destination                              | Correlation                                                                                         |
 | ------- | ---------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -52,7 +52,7 @@ The fastest way to see Apollo MCP Server telemetry in action is with a local set
 
 ### Production deployment
 
-For production environments, configure your MCP server to send metrics and traces to any OTLP-compatible backend. The Apollo MCP Server uses standard OpenTelemetry protocols, ensuring compatibility with all major observability platforms.
+For production environments, configure your MCP server to send metrics and traces to any OTLP-compatible backend. The Apollo MCP Server uses standard OpenTelemetry protocols, which enables compatibility with all major observability platforms.
 
 #### Configuration example
 
@@ -123,7 +123,7 @@ telemetry:
 - The `ENVIRONMENT` variable automatically tags all telemetry with `deployment.environment.name`
 - Use consistent `service_name` across all your Apollo infrastructure (Router, subgraphs, MCP server)
 - Set `version` to track releases and correlate issues with deployments
-- Log lines emitted inside active spans include the span's `trace_id`, enabling trace-to-log correlation. Metrics use resource attributes and metric labels rather than per-request trace IDs.
+- Log lines emitted inside active spans include the span's `trace_id`, enabling trace-to-log correlation. Metrics use resource attributes and metric labels instead of per-request trace IDs.
 
 #### Troubleshooting
 
@@ -191,15 +191,15 @@ For tools that execute a downstream GraphQL operation, the child `execute` span 
 | `apollo.mcp.graphql_query`    | The GraphQL query string sent to the endpoint.                                                                                                                                   |
 | `apollo.mcp.graphql_response` | The GraphQL response JSON received from the endpoint. |
 
-These attributes are populated only after the corresponding value is available and can be serialized. Early validation errors, network failures, and response-decoding failures can leave one or more attributes unset.
+These attributes are populated only after the corresponding value is available and can be serialized. Early validation errors, network failures, and response-decoding failures can leave one or more of your attributes unset.
 
 ### Sensitive data in traces
 
-When tracing export is configured, populated span attributes are exported as provided unless you omit them. Tool arguments, tool results, GraphQL queries, and GraphQL responses can contain identifiers, user-provided values, or other data that requires restricted handling.
+When you configure tracing export, the server exports populated span attributes as provided unless you omit them. Tool arguments, tool results, GraphQL queries, and GraphQL responses can contain identifiers, user-provided values, or other data that requires restricted handling.
 
-For operations that use the MCP Apps `@private` directive, Apollo MCP Server records the LLM-visible GraphQL response and excludes the response metadata containing the full `@private` result from the `tool_result` span attribute. This protects those marked response fields, but it doesn't redact tool arguments, query text, or other response fields.
+For operations that use the MCP Apps @private directive, Apollo MCP Server records the LLM-visible GraphQL response and excludes the response metadata containing the full @private result from the tool_result span attribute. This protects those marked response fields, but it doesn't redact tool arguments, query text, or other response fields.
 
-To exclude the four payload attributes from exported traces, configure the tracing exporter:
+Exclude the four payload attributes from exported traces by configuring the tracing exporter:
 
 ```yaml title="config.yaml"
 telemetry:
@@ -224,7 +224,7 @@ To prevent performance issues and reduce costs, the Apollo MCP Server provides t
 
 #### Trace Sampling
 
-Configure the Apollo MCP Server to sample traces sent to your OpenTelemetry Collector using the `sampler` field in the `telemetry.exporters.tracing` configuration:
+Configure Apollo MCP Server to sample traces sent to your OpenTelemetry Collector using the sampler field in the telemetry.exporters.tracing configuration:
 
 - **always_on** - Send every trace
 - **always_off** - Disable trace collection entirely
@@ -234,19 +234,19 @@ Configure the Apollo MCP Server to sample traces sent to your OpenTelemetry Coll
 
 Trace and metric exporters have independent `omitted_attributes` lists:
 
-- `telemetry.exporters.tracing.omitted_attributes` removes the selected `apollo.*` attributes from spans exported by this server.
-- `telemetry.exporters.metrics.omitted_attributes` removes the selected supported labels from Apollo metrics. It doesn't affect spans.
+- `telemetry.exporters.tracing.omitted_attributes` removes the selected `apollo.*` attributes from spans exported by this server
+- `telemetry.exporters.metrics.omitted_attributes` removes the selected supported labels from Apollo metrics
 
 Use short attribute names such as `tool_name`, `operation_id`, `tool_arguments`, and `graphql_response`. For detailed configuration options, see the [telemetry configuration reference](/apollo-mcp-server/config-file#telemetry).
 
 <Caution>
 
-Attribute filtering applies only to supported Apollo attributes exported by this server. It doesn't filter application log output, non-`apollo.*` span attributes, outgoing GraphQL requests and responses, or telemetry produced by the downstream GraphQL service. Configure data-handling policies independently for each logging and telemetry destination.
+Attribute filtering applies only to supported Apollo attributes exported by your server. It doesn't filter application log output, non-`apollo.*` span attributes, outgoing GraphQL requests and responses, or telemetry produced by the downstream GraphQL service. Configure data-handling policies independently for each logging and telemetry destination.
 
 </Caution>
 
 ### Audit and deployment responsibilities
 
-Apollo MCP Server telemetry provides request traces, operational metrics, and correlated application logs that can support investigations. A complete audit trail also depends on the surrounding observability system. Configure your collector and backend for centralized storage, access controls, retention, integrity protection, alerting, and periodic review appropriate to your environment.
+Apollo MCP Server telemetry provides request traces, operational metrics, and correlated application logs that can support investigations. A complete audit trail also depends on the surrounding observability system. Configure the collector and backend for centralized storage, access controls, retention, integrity protection, alerting, and periodic review appropriate to your environment.
 
 See [OWASP MCP08: Lack of Audit and Telemetry](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) for additional audit and monitoring considerations.

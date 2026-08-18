@@ -8,16 +8,16 @@ subtitle: Guidelines for using Apollo MCP Server
 The schema is required for:
 
 - **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
-- **Input Schemas**: The schema is used to translate GraphQL input types into JSON Schema that MCP clients and AI models can use when constructing tool arguments. Apollo MCP Server doesn't independently enforce this generated JSON Schema for predefined operation tools.
+- **Input Schemas**: Use the schema to translate GraphQL input types into JSON Schema that your MCP clients and AI models can use when constructing tool arguments. Apollo MCP Server doesn't independently enforce this generated JSON Schema for predefined operation tools.
 - **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
 
 ## Understand the execution and validation boundary
 
 The base GraphQL request path serializes operation text and variables into a structured HTTP request. It doesn't construct an operating-system shell command or spawn a child process from MCP tool input.
 
-Apollo MCP Server parses predefined and ad hoc operation documents, but it doesn't automatically validate those documents against the configured schema before forwarding them. The upstream GraphQL endpoint performs execution-time GraphQL validation. For ad hoc operations, you can expose the optional [`validate` tool](/apollo-mcp-server/define-tools#introspection-tools), but enabling it doesn't force a client to call it before `execute`.
+Apollo MCP Server parses predefined and ad hoc operation documents, but it doesn't automatically validate those documents against the configured schema before forwarding them. The upstream GraphQL endpoint performs execution-time GraphQL validation. For ad hoc operations, you can expose the optional `validate` tool, but enabling it doesn't force a client to call it before `execute`. For details, see the [introspection tools documentation](/apollo-mcp-server/define-tools#introspection-tools).
 
-This boundary doesn't cover code in the upstream GraphQL service or operator-provided [Rhai scripts](/apollo-mcp-server/rhai-getting-started). Treat both as part of your deployment's execution surface. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
+This boundary doesn't cover code in the upstream GraphQL service or operator-provided [Rhai scripts](/apollo-mcp-server/rhai-getting-started). Treat both as part of your deployment's execution surface. For more information, see [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
 
 ## Use contract variants to control AI access to graphs
 
@@ -32,11 +32,11 @@ In particular, we strongly recommend contract variants when using:
 
 ## Gate mutations and enforce approval outside the server
 
-Keep [`mutation_mode`](/apollo-mcp-server/config-file#mutation-modes) at its default value, `none`, unless the use case requires GraphQL mutations. Use `explicit` to expose only mutations already present in the configured operation source. Use `all` only when an enabled `execute` tool must accept ad hoc mutations.
+Keep `mutation_mode` at its default value, `none`, unless the use case requires GraphQL mutations. Use `explicit` to expose only mutations already present in the configured operation source. Use `all` only when an enabled `execute` tool must accept ad hoc mutations. For details, see the [mutation modes documentation](/apollo-mcp-server/config-file#mutation-modes).
 
 These modes are configuration gates, not human approval. In particular, `explicit` doesn't require an operation to be stored locally, committed to version control, or reviewed before use. Apply review and promotion controls to every configured operation source, and implement per-invocation approval for sensitive actions in the MCP client, the upstream API, or another policy-enforcement layer.
 
-`mutation_mode` relies on the declared GraphQL operation type. Keep `query` fields read-only at the upstream API; the MCP server can't identify a write implemented behind a query.
+`mutation_mode` relies on the declared GraphQL operation type. Always keep `query` fields read-only at the upstream API; the MCP server can't identify a write implemented behind a query.
 
 ## Limit the impact of intent-flow subversion
 
@@ -47,47 +47,47 @@ Treat the exposed tool surface as a way to limit impact, not as intent validatio
 1. Expose only the operations required for the use case. Review both what each operation can do and how broadly its variables can target data or resources.
 2. Keep `execute` disabled unless the agent needs ad hoc queries. An enabled `execute` tool accepts an agent-supplied query document; with `mutation_mode: all`, it also accepts agent-supplied mutations.
 3. Protect every configured operation source. The effective boundary is the live tool catalog, and hot-reloaded changes can add or replace operations without restarting the server.
-4. Enforce authentication, authorization, safelisting, and demand controls at the GraphQL API. Implement intent checks, untrusted-context handling, and per-action approval in the MCP client, agent framework, or another policy layer that can compare a proposed action with the user's goal.
+4. Enforce authentication, authorization, allowlisting, and demand controls at the GraphQL API. Implement intent checks, untrusted-context handling, and per-action approval in the MCP client, agent framework, or another policy layer that can compare a proposed action with the user's goal.
 
 See [Intent-flow enforcement limitations](/apollo-mcp-server/limitations#intent-flow-enforcement) for the controls Apollo MCP Server doesn't provide.
 
 ## Protect tool definitions from poisoning
 
-MCP clients expose tool names, descriptions, input property names, and input property descriptions to AI models. Models use all of this text when selecting tools and arguments. Treat every operation and schema source that contributes to this model-facing surface as security-sensitive. This risk is described by [OWASP MCP03: Tool Poisoning](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning).
+MCP clients expose tool names, descriptions, input property names, and input property descriptions to AI models. Models use all of this text when selecting tools and arguments. Treat every operation and schema source that contributes to this model-facing surface as security-sensitive. [OWASP MCP03: Tool Poisoning](https://owasp.org/www-project-mcp-top-10/2025/MCP03-2025%E2%80%93Tool-Poisoning) describes this risk.
 
 For a predefined operation tool, Apollo MCP Server stores the GraphQL document separately from its model-facing metadata. Changing only a description can't add a new server-side code path, but a malicious description can still steer a model toward attacker-chosen tools, arguments, or otherwise valid operations. An operation-source update can also change the stored document itself.
 
-Apollo MCP Server doesn't automatically scan tool metadata for hidden instructions, compare the live tool list with an approved snapshot, or require approval before applying a hot-reloaded source update. Establish these controls around your deployment:
+Apollo MCP Server doesn't automatically scan tool metadata for hidden instructions, compare the live tool list with an approved snapshot, or require approval before applying a hot-reloaded source update. Establish these controls around the deployment:
 
-1. Restrict write access to operation, schema, manifest, collection, and configuration sources. Require review for changes promoted to production.
-2. Capture the live `tools/list` response after deployment. Store an approved, canonicalized snapshot using a consistent MCP protocol version and server configuration.
-3. Review tool names, descriptions, input property names, and input property descriptions for unexpected model-directed instructions, sensitive paths, external destinations, hidden Unicode characters, and misleading semantics.
-4. Compare the live response with the approved snapshot whenever operations, schemas, or description overrides are added, removed, renamed, or hot-reloaded. Review changes to the stored GraphQL documents as well as metadata.
+- Restrict write access to operation, schema, manifest, collection, and configuration sources. Require review for changes promoted to production.
+2. Capture the live `tools/list` response after deployment. Store an approved, standardized snapshot using a consistent MCP protocol version and server configuration.
+- Review tool names, descriptions, input property names, and input property descriptions for unexpected model-directed instructions, sensitive paths, external destinations, hidden Unicode characters, and misleading semantics.
+- Compare the live response with the approved snapshot whenever operations, schemas, or description overrides are added, removed, renamed, or hot-reloaded. Review changes to the stored GraphQL documents as well as metadata.
 
-[`overrides.descriptions`](/apollo-mcp-server/define-tools#config-level-descriptions) controls only the top-level description of an exact operation-name match. It doesn't pin the operation name, input property names or descriptions, or executable document. A renamed or unmatched operation falls back to its source-derived description.
+`overrides.descriptions` controls only the top-level description of an exact operation-name match. It doesn't pin the operation name, input property names or descriptions, or executable document. A renamed or unmatched operation falls back to its source-derived description.
 
-See [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
+See the Tool-definition integrity limitations for the controls Apollo MCP Server doesn't provide automatically.
 
 ## Plan audit and telemetry controls
 
-[OWASP MCP08: Lack of Audit and Telemetry](https://owasp.org/www-project-mcp-top-10/2025/MCP08-2025%E2%80%93Lack-of-Audit-and-Telemetry) describes the visibility and governance risks of incomplete activity records. Apollo MCP Server can export traces and metrics over OTLP and correlates application log lines emitted inside active spans with `trace_id`, but the surrounding observability system remains part of the control.
+Apollo MCP Server can export traces and metrics over OTLP and correlates application log lines emitted inside active spans with `trace_id`, but your surrounding observability system remains part of the control.
 
 Before production deployment:
 
-1. Configure trace and metric exporters and route application logs to managed destinations.
-2. Review captured span attributes and omit payload fields that your investigation process doesn't require.
-3. Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
-4. Alert on tool failures, unexpected usage patterns, and telemetry ingestion gaps.
+- Configure trace and metric exporters and route application logs to managed destinations.
+Review captured span attributes and omit payload fields that the investigation process doesn't require.
+Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
+- Alert on tool failures, unexpected usage patterns, and telemetry ingestion gaps.
 
-Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and use traces plus correlated logs for request-level investigation. See [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.
+Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and adopt traces plus correlated logs for request-level investigation. See [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.
 
 ## Review per-operation scope requirements when tools change
 
-Use global OAuth scopes as a server-wide baseline and [`overrides.required_scopes`](/apollo-mcp-server/auth#per-operation-scope-requirements) for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check.
+Use global OAuth scopes as a server-wide baseline and `overrides.required_scopes` for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check.
 
-During deployment, compare the configured keys with the live `tools/list` response. Repeat this review whenever operations are added, removed, renamed, or hot-reloaded. A new or mismatched tool name remains governed only by the global scope requirement because the server does not reject or warn about unknown `required_scopes` keys.
+During deployment, compare the configured keys with the live `tools/list` response. Repeat this review whenever operations are added, removed, renamed, or hot-reloaded. A new or mismatched tool name remains governed only by the global scope requirement because the server doesn't reject or warn about unknown `required_scopes` keys.
 
-Scope checks enforce the permissions present in a token at runtime. Manage token expiration, just-in-time elevation, entitlement review, and permission-change approval through your identity provider and operational controls.
+Scope checks enforce the permissions present in a token at runtime. Manage token expiration, just-in-time elevation, entitlement review, and permission-change approval through the identity provider and operational controls.
 
 ## Send client name header when using persisted queries
 

@@ -18,7 +18,7 @@ MCP follows a client-server architecture. MCP servers expose functions, called t
 
 Apollo MCP Server is an implementation of an MCP server. It makes GraphQL API operations available to AI clients as MCP tools and supports MCP prompts for guided workflows. You can use Apollo MCP Server with any GraphQL API.
 
-The GraphQL operations can be configured from persisted queries, which are predefined lists of operations registered with and maintained by a graph. The operations can also be determined by AI introspecting your graph schema.
+You can configure GraphQL operations from persisted queries, which are predefined lists of operations registered with and maintained by a graph. AI can also determine operations by introspecting your graph schema.
 
 Apollo MCP Server is deployable in local environments via Apollo's Rover CLI or in containerized services in your cloud infrastructure. It can expose an MCP endpoint using Streamable HTTP for communication with AI clients.
 
@@ -80,14 +80,14 @@ The architecture enables intelligent API orchestration through these components:
 * Transport Options: Communication happens over stdio for local development or Streamable HTTP. 
 * Tool Generation: Apollo MCP Server creates MCP tools from your GraphQL operations using:
     * Operation Files: Individual `.graphql` files for specific queries or mutations
-    * GraphOS Operation Collections: Predefined operation lists maintained in GraphOS
-    * Persisted Query Manifests: Predefined operation lists loaded locally or from GraphOS
+- GraphOS Operation Collections: Predefined operation lists maintained in GraphOS
+- Persisted Query Manifests: Predefined operation lists loaded locally or from GraphOS
     * Schema Introspection: Dynamic operation discovery for flexible AI exploration
 
-* Structured Execution: When invoked, the server sends a structured GraphQL HTTP request to your API endpoint using the configured headers and authentication.
-* Existing Infrastructure: Your GraphQL API handles requests normally, with Apollo MCP Server acting as a GraphQL-to-MCP bridge rather than requiring any changes to your graph.
+- Structured Execution: When invoked, the server sends a structured GraphQL HTTP request to your API endpoint using the configured headers and authentication.
+- Existing Infrastructure: Your GraphQL API handles requests normally, with Apollo MCP Server acting as a GraphQL-to-MCP bridge rather than requiring any changes to your graph.
 
-This design lets you choose which GraphQL capabilities to expose to AI while continuing to enforce data access and security policies at your GraphQL API.
+This design enables you to expose specific GraphQL capabilities to AI while continuing to enforce data access and security policies at your GraphQL API.
 
 ### Example usage
 
@@ -103,9 +103,9 @@ Once configured, AI applications can use your GraphQL operations naturally:
 
 GraphQL's architecture provides unique advantages for AI-powered API orchestration:
 
-**🎯 Typed Execution**: GraphQL operations declare their fields, arguments, and response shapes. The GraphQL API validates each request against its schema before resolver execution. This makes the request contract explicit, but doesn't determine which operation an AI agent should call or in what sequence.
+🎯 Typed Execution: GraphQL operations declare their fields, arguments, and response shapes. The GraphQL API validates each request against its schema before resolver execution. This makes the request contract explicit, but doesn't determine which operation an AI agent should call or in what sequence.
 
-**🛡️ Policy Reuse**: Authentication, authorization, and data-access policies implemented by your GraphQL API continue to apply when it receives operations from Apollo MCP Server, including operations that span multiple underlying APIs or microservices.
+🛡️ Policy Reuse: Authentication, authorization, and data-access policies implemented by your GraphQL API continue to apply when it receives operations from Apollo MCP Server, including operations that span multiple underlying APIs or microservices.
 
 **⚡ Efficiency**: AI agents can request precisely the data needed in a single GraphQL query, reducing API calls, network overhead, and token usage. This focused approach delivers faster responses and lower operational costs compared to orchestrating multiple REST endpoints.
 
@@ -121,7 +121,7 @@ With Apollo MCP Server, these GraphQL advantages become immediately accessible t
 
 - **🎨 Build Custom Interactive Experiences**. With MCP Apps support, you can create custom, interactive experiences in any host that supports the MCP Apps specification (such as ChatGPT). Control how your data appears with custom HTML/UI resources, enabling rich visualizations, interactive forms, and branded experiences powered by your GraphQL APIs.
 
-- **🔒 Govern AI access**. By using predefined persisted queries and restricting who can update operation sources, developers can govern which data and operations AI clients can access. The GraphQL API continues to enforce its authentication, authorization, and data-access policies.
+- **🔒 Govern AI access**. By adopting predefined persisted queries and restricting who can update operation sources, developers can govern which data and operations AI clients can access. The GraphQL API continues to enforce its authentication, authorization, and data-access policies.
 
 ## Prerequisites
 
