@@ -37,8 +37,9 @@ use www_authenticate::{BearerError, WwwAuthenticate};
 /// Enforcement mode for the global OAuth scope requirement on authenticated
 /// requests.
 ///
-/// Per-operation requirements are evaluated separately and always require
-/// every listed scope.
+/// This mode only affects the global `scopes` list. Per-operation scope
+/// requirements are checked separately and always require all of that
+/// operation's scopes.
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ScopeMode {
@@ -452,10 +453,10 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 
 /// Checks if a `tools/call` request is missing required scopes for the named operation.
 ///
-/// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
-/// has no matching per-operation requirement or all listed scopes are present. Matching is
-/// exact: non-`tools/call` methods, missing names, and unknown names receive no additional
-/// restriction beyond the global scope requirement.
+/// Returns `Some(required_scopes)` when the token lacks one or more of the operation's
+/// required scopes, and `None` when the check passes or does not apply. It does not apply
+/// to non-`tools/call` methods, requests without a tool name, or tools with no entry in
+/// `required_scopes` — those are governed only by the global scope requirement.
 fn missing_scopes_for_operation<'a>(
     peek: &JsonRpcBodyPeek,
     required_scopes: &'a HashMap<String, Vec<String>>,
@@ -601,7 +602,7 @@ async fn oauth_validate(
             );
             tracing::Span::current().record("reason", "insufficient_scope");
             tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-            // NOTE: WWW-Authenticate lists all configured global scopes.
+            // NOTE: WWW-Authenticate lists all configured global scopes per RFC 6750.
             // In require_any mode, only one is needed, but the header format
             // doesn't distinguish. This matches existing behavior.
             return Err(forbidden_error(&auth_config.scopes));
