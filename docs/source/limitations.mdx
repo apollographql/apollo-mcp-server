@@ -49,7 +49,7 @@ When disabled, Apollo MCP Server still validates tokens for MCP client authentic
 
 <Caution>
 
-Audit both settings together. `disable_auth_token_passthrough` does not override `forward_headers`. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when you disable automatic token passthrough. With `transport.auth` configured, the request is authenticated before tool execution; without an auth block, Apollo MCP Server does not validate the explicitly forwarded value.
+Audit both settings together. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when you disable automatic token passthrough. When automatic passthrough is enabled, the validated token replaces a forwarded `authorization` header. With `transport.auth` configured, the request is authenticated before tool execution; without an auth block, Apollo MCP Server does not validate the explicitly forwarded value.
 
 </Caution>
 

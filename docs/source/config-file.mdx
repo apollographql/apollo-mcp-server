@@ -107,7 +107,7 @@ forward_headers:
 
 Avoid header forwarding for sensitive credentials like API keys or access tokens. Apollo MCP Server logs a warning when you forward sensitive headers such as `Authorization`, `Cookie`, `Proxy-Authorization`, or `X-Api-Key` to the upstream GraphQL API.
 
-`disable_auth_token_passthrough` disables only the automatic propagation of a validated OAuth token. It does not override `forward_headers`. If `forward_headers` contains `Authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request. Audit both settings together.
+`disable_auth_token_passthrough` disables only the automatic propagation of a validated OAuth token. If `forward_headers` contains `Authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when passthrough is disabled. When passthrough is enabled, the validated token replaces a forwarded `Authorization` header. Audit both settings together.
 
 <br />
 <br />
@@ -419,7 +419,7 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
 | `scopes`                          | `List<string>`        |               | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`.                                                                    |
 | `scope_mode`                      | `string`              | `require_all` | Global scope enforcement mode: `disabled`, `require_all`, or `require_any`. Per-operation requirements always use all-of semantics.                                                                              |
-| `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. This doesn't override `forward_headers`.                                                                             |
+| `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. Disabling it leaves headers forwarded via `forward_headers` untouched; when enabled, the validated token replaces a forwarded `Authorization` header. |
 | `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery).                            |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
 | `discovery_headers`               | `Map<string, string>` | `{}`          | Custom headers to include in OIDC discovery and JWKS requests. Useful when upstream OAuth servers or WAFs require headers like `User-Agent`. See [discovery headers](/apollo-mcp-server/auth#discovery-headers). |
