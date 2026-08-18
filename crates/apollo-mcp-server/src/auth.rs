@@ -176,6 +176,8 @@ pub struct Config {
     pub audiences: Vec<String>,
 
     /// Optional allowlist for token issuers (the JWT `iss` claim).
+    /// Not `Vec<Url>`: `Url::parse` appends `/` to bare-authority inputs,
+    /// breaking exact `iss` string matching.
     ///
     /// When non-empty, a token's `iss` claim must match one of these values and
     /// the discovered issuer of the server whose key verified it. When empty

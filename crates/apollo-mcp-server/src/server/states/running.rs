@@ -697,7 +697,8 @@ impl ServerHandler for Running {
             .call_tool_impl(request, &context.extensions, protocol_version)
             .await;
 
-        // Span output follows the LLM-visible result and excludes response-only metadata.
+        // Strip meta before recording: _meta.structuredContent holds the unfiltered
+        // @private payload and must not be exported to the span.
         if let Ok(r) = &result {
             let mut stripped = r.clone();
             stripped.meta = None;

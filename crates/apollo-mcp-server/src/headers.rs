@@ -22,8 +22,9 @@ pub fn build_request_headers(
     // Starts with static headers
     let mut headers = static_headers.clone();
 
-    // Explicitly forwarded headers are independent of automatic validated-token passthrough,
-    // so the passthrough setting does not override `forward_headers`.
+    // Disabling passthrough leaves explicitly forwarded headers untouched, but when
+    // passthrough is enabled the validated token below replaces any forwarded
+    // `authorization` header.
     forward_headers(forward_header_names, incoming_headers, &mut headers);
 
     // Automatic passthrough uses only the marker inserted after token validation.
