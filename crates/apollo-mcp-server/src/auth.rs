@@ -634,7 +634,7 @@ async fn oauth_validate(
         // the global `scope_mode`, so the challenge reports `require_all`
         // rather than inheriting the global hint.
         return Err(forbidden_error(
-            &challenge_scopes,
+            challenge_scopes,
             Some(ScopeMode::RequireAll),
         ));
     }

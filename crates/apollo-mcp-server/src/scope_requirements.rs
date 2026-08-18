@@ -69,12 +69,9 @@ impl OperationRequiredScopes {
     /// list and cannot represent grouped OR conditions, so this always
     /// advertises the complete first-listed alternative, giving operators
     /// control over which scope set gets advertised.
-    pub fn challenge_scopes(&self) -> Vec<String> {
-        #[allow(clippy::expect_used)] // `new` guarantees at least one group
-        self.0
-            .first()
-            .cloned()
-            .expect("OperationRequiredScopes always has at least one group")
+    pub fn challenge_scopes(&self) -> &[String] {
+        // `new` guarantees at least one group, so this never falls back.
+        self.0.first().map_or(&[], Vec::as_slice)
     }
 }
 
@@ -126,7 +123,7 @@ impl From<HashMap<String, OperationRequiredScopes>> for OperationScopeRequiremen
 #[serde(untagged)]
 enum OperationRequiredScopesDefinition {
     All(#[schemars(length(min = 1))] Vec<String>),
-    AnyOf(#[schemars(length(min = 1))] Vec<Vec<String>>),
+    AnyOf(#[schemars(length(min = 1), inner(length(min = 1)))] Vec<Vec<String>>),
 }
 
 impl<'de> Deserialize<'de> for OperationRequiredScopes {
@@ -221,7 +218,10 @@ mod tests {
     fn challenge_scopes_returns_first_listed_alternative() {
         let required = required(vec![scopes(&["read", "write"]), scopes(&["admin"])]);
 
-        assert_eq!(required.challenge_scopes(), scopes(&["read", "write"]));
+        assert_eq!(
+            required.challenge_scopes(),
+            scopes(&["read", "write"]).as_slice()
+        );
     }
 
     #[test]
@@ -290,16 +290,13 @@ mod tests {
             "the parser rejects an empty list, so the schema should reject it too"
         );
 
-        // Known, accepted gap: `length(min = 1)` on the outer `Vec<Vec<String>>`
-        // stops a schema author from writing zero alternatives, but it doesn't
-        // reach inside to constrain each alternative's own length. Catching
-        // that too would need a dedicated newtype for a scope group; the real
-        // enforcement for this case lives in `OperationRequiredScopes::new`
-        // regardless, so this is editor-hinting only, not a security gap.
+        // `inner(length(min = 1))` on the outer `Vec<Vec<String>>` field
+        // constrains each inner group's length too, so an empty inner group
+        // is rejected by the generated schema, matching the parser.
         let empty_inner_group = serde_json::json!([[]]);
         assert!(
-            jsonschema::is_valid(&schema, &empty_inner_group),
-            "documenting a known schema limitation, not asserting desired behavior"
+            !jsonschema::is_valid(&schema, &empty_inner_group),
+            "the parser rejects an empty inner group, so the schema should reject it too"
         );
     }
 }
