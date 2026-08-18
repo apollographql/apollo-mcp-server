@@ -80,12 +80,12 @@ The architecture enables intelligent API orchestration through these components:
 * Transport Options: Communication happens over stdio for local development or Streamable HTTP. 
 * Tool Generation: Apollo MCP Server creates MCP tools from your GraphQL operations using:
     * Operation Files: Individual `.graphql` files for specific queries or mutations
-- GraphOS Operation Collections: Predefined operation lists maintained in GraphOS
-- Persisted Query Manifests: Predefined operation lists loaded locally or from GraphOS
+    * GraphOS Operation Collections: Predefined operation lists maintained in GraphOS
+    * Persisted Query Manifests: Predefined operation lists loaded locally or from GraphOS
     * Schema Introspection: Dynamic operation discovery for flexible AI exploration
 
-- Structured Execution: When invoked, the server sends a structured GraphQL HTTP request to your API endpoint using the configured headers and authentication.
-- Existing Infrastructure: Your GraphQL API handles requests normally, with Apollo MCP Server acting as a GraphQL-to-MCP bridge rather than requiring any changes to your graph.
+* Structured Execution: When invoked, the server sends a structured GraphQL HTTP request to your API endpoint using the configured headers and authentication.
+* Existing Infrastructure: Your GraphQL API handles requests normally, with Apollo MCP Server acting as a GraphQL-to-MCP bridge rather than requiring any changes to your graph.
 
 This design enables you to expose specific GraphQL capabilities to AI while continuing to enforce data access and security policies at your GraphQL API.
 

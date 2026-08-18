@@ -72,7 +72,7 @@ The [MCP authorization specification](https://modelcontextprotocol.io/specificat
 
 #### Recommended workaround
 
-Disable automatic passthrough and remove `authorization` from `forward_headers` when your GraphQL API doesn't require the caller's token.
+- Disable automatic passthrough and remove `authorization` from `forward_headers` when your GraphQL API doesn't require the caller's token.
 - Adopt the MCP server only with GraphQL APIs that accept the same OAuth tokens and audiences.
 - Ensure your OAuth authorization server issues tokens with appropriate audience claims for both the MCP server and upstream APIs.
 - Verify that your upstream APIs validate token audiences, and redact authorization headers from logs and traces.

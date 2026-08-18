@@ -60,13 +60,13 @@ For a predefined operation tool, Apollo MCP Server stores the GraphQL document s
 Apollo MCP Server doesn't automatically scan tool metadata for hidden instructions, compare the live tool list with an approved snapshot, or require approval before applying a hot-reloaded source update. Establish these controls around the deployment:
 
 - Restrict write access to operation, schema, manifest, collection, and configuration sources. Require review for changes promoted to production.
-2. Capture the live `tools/list` response after deployment. Store an approved, standardized snapshot using a consistent MCP protocol version and server configuration.
+- Capture the live `tools/list` response after deployment. Store an approved, standardized snapshot using a consistent MCP protocol version and server configuration.
 - Review tool names, descriptions, input property names, and input property descriptions for unexpected model-directed instructions, sensitive paths, external destinations, hidden Unicode characters, and misleading semantics.
 - Compare the live response with the approved snapshot whenever operations, schemas, or description overrides are added, removed, renamed, or hot-reloaded. Review changes to the stored GraphQL documents as well as metadata.
 
 `overrides.descriptions` controls only the top-level description of an exact operation-name match. It doesn't pin the operation name, input property names or descriptions, or executable document. A renamed or unmatched operation falls back to its source-derived description.
 
-See the Tool-definition integrity limitations for the controls Apollo MCP Server doesn't provide automatically.
+See [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
 
 ## Plan audit and telemetry controls
 
@@ -75,8 +75,8 @@ Apollo MCP Server can export traces and metrics over OTLP and correlates applica
 Before production deployment:
 
 - Configure trace and metric exporters and route application logs to managed destinations.
-Review captured span attributes and omit payload fields that the investigation process doesn't require.
-Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
+- Review captured span attributes and omit payload fields that the investigation process doesn't require.
+- Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
 - Alert on tool failures, unexpected usage patterns, and telemetry ingestion gaps.
 
 Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and adopt traces plus correlated logs for request-level investigation. See [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.

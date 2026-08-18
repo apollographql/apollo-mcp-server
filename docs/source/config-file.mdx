@@ -413,7 +413,7 @@ Authentication is available only for `streamable_http`. Because the default tran
 | :-------------------------------- | :-------------------- | :------------ | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `servers`                         | `List<URL>`           |               | List of upstream delegated OAuth servers (must support RFC 8414 or OIDC metadata discovery endpoint).                                                                                                            |
 | `audiences`                       | `List<string>`        | `[]`          | List of accepted audiences from upstream signed JWTs (ignored if `allow_any_audience` is `true`)                                                                                                                 |
-| `issuers`                         | `List<string>`        | `[]`          | Additional allowlist for token issuers. When set, `iss` must match this list and the issuer advertised by the signing server. Empty skips token issuer checks, not authorization-server metadata validation.     |
+| `issuers`                         | `List<string>`        | `[]`          | Additional allowlist for token issuers. When set, `iss` must match this list and the issuer advertised in the authorization server's discovery metadata. Empty skips token issuer checks, not authorization-server metadata validation.     |
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
@@ -444,7 +444,7 @@ transport:
       - mcp.example.audience
 
     # Additional allowlist for token issuers. The JWT `iss` claim must match one
-    # of these values and the issuer the signing server advertises in discovery.
+    # of these values and the issuer the authorization server advertises in discovery.
     # When empty (the default), the server skips these token issuer checks.
     issuers:
       - "https://auth.example.com"
