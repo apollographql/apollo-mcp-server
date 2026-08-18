@@ -861,7 +861,7 @@ mod test {
             h
         };
 
-        // The configured allowlist holds two issuers. The signing server
+        // The configured allowlist holds two issuers. The authorization server
         // advertises the SECOND one as its discovered issuer, and the token's
         // `iss` matches it — exercising both the allowlist (any-match) and the
         // discovery binding to the actual signer.
@@ -1085,7 +1085,7 @@ mod test {
                 .filter(|line| line.contains("WARN"))
                 .any(|line| line.contains("does not match the issuer of the server that signed it"))
                 .then_some(())
-                .ok_or("Expected issuer-mismatch warning from the signing server".to_string())
+                .ok_or("Expected issuer-mismatch warning from the authorization server".to_string())
         });
     }
 
