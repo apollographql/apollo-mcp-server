@@ -5,7 +5,7 @@ use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::Logging;
 use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
-use opentelemetry::propagation::TextMapCompositePropagator;
+use apollo_mcp_server::server::w3c_text_map_propagator;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
@@ -13,7 +13,6 @@ use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
-    propagation::{BaggagePropagator, TraceContextPropagator},
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
 use opentelemetry_semantic_conventions::{
@@ -360,14 +359,6 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
         .build();
 
     Ok(tracer_provider)
-}
-
-/// Composite propagator for W3C Trace Context and W3C Baggage.
-fn w3c_text_map_propagator() -> TextMapCompositePropagator {
-    TextMapCompositePropagator::new(vec![
-        Box::new(TraceContextPropagator::new()),
-        Box::new(BaggagePropagator::new()),
-    ])
 }
 
 /// Initialize tracing-subscriber and return TelemetryGuard for logging and opentelemetry-related termination processing
