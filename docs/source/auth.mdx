@@ -164,7 +164,7 @@ Apollo MCP Server reads the standard `scope` claim first. This claim is a space-
 
 ## Per-operation scope requirements
 
-When enabled, the global `scopes` and `scope_mode` requirement applies uniformly to every authenticated MCP request. For finer-grained control, you can declare additional OAuth scopes per operation using `overrides.required_scopes`. This enables step-up authorization: a client with a limited token can call tools governed only by the global requirement, but is prompted to re-authorize with elevated scopes when it calls a more sensitive operation.
+When enabled, the global `scopes` and `scope_mode` requirement applies uniformly to every authenticated MCP request. For finer-grained control, you can declare additional OAuth scopes per operation using `overrides.required_scopes`. This enables step-up authorization: a client with a limited token can call tools governed only by the global requirement, but is prompted to re-authorize with elevated scopes when calling a more sensitive operation.
 
 ```yaml title="mcp.yaml"
 transport:
