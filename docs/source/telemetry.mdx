@@ -197,7 +197,7 @@ These attributes are populated only after the corresponding value is available a
 
 When you configure tracing export, the server exports populated span attributes as provided unless you omit them. Tool arguments, tool results, GraphQL queries, and GraphQL responses can contain identifiers, user-provided values, or other data that requires restricted handling.
 
-For operations that use the MCP Apps `@private` directive, Apollo MCP Server records the LLM-visible GraphQL response and excludes the response metadata containing the full `@private` result from the `tool_result` span attribute. This protects those marked response fields, but it doesn't redact tool arguments, query text, or other response fields.
+For operations that use the MCP Apps `@private` directive, Apollo MCP Server records the LLM-visible GraphQL response and excludes the response metadata containing the full `@private` result from the `tool_result` span attribute. This protects those marked response fields but doesn't redact tool arguments, query text, or other response fields.
 
 Exclude the four payload attributes from exported traces by configuring the tracing exporter:
 
