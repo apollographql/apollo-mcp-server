@@ -193,7 +193,7 @@ The client can use this response to initiate a targeted re-authorization and ret
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
 
-The server doesn't validate `required_scopes` keys against the current tool list and doesn't warn about unknown keys. A misspelled or stale key therefore doesn't protect the intended tool, and a newly added or renamed tool remains governed only by the global requirement until you update the map.
+The server doesn't validate `required_scopes` keys against the current tool list and doesn't warn about unknown keys, so a misspelled or stale key doesn't protect the intended tool, and a newly added or renamed tool remains governed only by the global requirement until you update the map.
 
 <Caution>
 
