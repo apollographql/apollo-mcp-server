@@ -58,7 +58,7 @@ transport:
     allow_any_audience: true
 ```
 
-If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server skips audience validation entirely. The token doesn't need an `aud` claim, and any value is accepted when the claim is present.
+If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server skips audience validation entirely. The token doesn't need an `aud` claim, but the server accepts any value when the claim is present.
 
 <Caution>
 
