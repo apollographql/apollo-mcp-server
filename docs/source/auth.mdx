@@ -293,7 +293,7 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 
 The first URL that returns a parseable metadata document is used, which means IdPs that only support OIDC Discovery, like Auth0 and many cloud identity providers, enable you to get started without any additional configuration.
 
-The metadata `issuer` must match the authorization server the discovery URL was built from, as required by RFC 8414 section 3.3. A document that advertises a different issuer is rejected and its `jwks_uri` is not fetched. Fallback to another URL pattern happens only when a discovery request fails, times out, or doesn't return parseable metadata. For details, see [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3).
+The metadata `issuer` must match the authorization server the discovery URL was built from, as required by RFC 8414 section 3.3. A document that advertises a different issuer is rejected, and its `jwks_uri` isn't fetched. Fallback to another URL pattern happens only when a discovery request fails, times out, or doesn't return parseable metadata. For details, see [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3).
 
 ## Discovery headers
 
