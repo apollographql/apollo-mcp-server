@@ -32,6 +32,8 @@ use operation_collection_query::{
     OperationCollectionQueryOperationCollectionOnValidationError as ValidationError,
 };
 
+// Max number of operations in a collection before polling is disabled. The collection is
+// emitted before this limit is checked, so oversized collections load once but go stale.
 const MAX_COLLECTION_SIZE_FOR_POLLING: usize = 100;
 
 type Timestamp = String;

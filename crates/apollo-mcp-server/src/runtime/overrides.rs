@@ -20,12 +20,13 @@ pub struct Overrides {
     /// Expose a tool that returns the URL to open a GraphQL operation in Apollo Explorer (requires APOLLO_GRAPH_REF)
     pub enable_explorer: bool,
 
-    /// Set the mutation mode access level for the MCP server
+    /// Select which GraphQL mutation operation types the MCP server exposes. This configuration
+    /// gate does not provide per-invocation approval.
     pub mutation_mode: MutationMode,
 
-    /// Optional map from operation name to tool description. When provided,
-    /// these descriptions override the auto-generated tool descriptions for
-    /// the matching operations, regardless of the operation source.
+    /// Optional map from exact operation name to top-level tool description. Matching entries
+    /// override source-derived descriptions regardless of the operation source. Unmatched entries
+    /// are ignored and do not affect operation names, input descriptions, or executable documents.
     pub descriptions: HashMap<String, String>,
 
     /// Optional map from operation name to MCP tool annotation hints.
@@ -35,9 +36,11 @@ pub struct Overrides {
     pub annotations: HashMap<String, AnnotationOverrides>,
 
     /// Per-operation OAuth scope requirements for step-up authorization.
-    /// Keys are operation names; values are lists of required scopes.
-    /// When a token lacks the required scopes for an operation, the server
-    /// returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`.
+    /// Keys must exactly match the MCP tool name sent in `tools/call`; unmatched
+    /// keys impose no additional restriction. Values use all-of semantics and
+    /// add to any global scope requirement. When a token lacks a listed scope,
+    /// the server returns HTTP 403 with
+    /// `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
     pub required_scopes: HashMap<String, Vec<String>>,
 }

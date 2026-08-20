@@ -45,7 +45,10 @@ where
 #[cfg_attr(test, derive(Serialize))]
 #[serde(default, deny_unknown_fields)]
 pub struct GraphOSConfig {
-    /// The apollo key
+    /// The Apollo key.
+    ///
+    /// Stored as `SecretString` so its debug representation is redacted. It may still be specified
+    /// literally in YAML.
     #[schemars(with = "Option<String>")]
     #[cfg_attr(test, serde(skip_serializing))]
     apollo_key: Option<SecretString>,

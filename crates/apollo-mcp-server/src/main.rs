@@ -94,6 +94,8 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
             as ConfigValidator
     });
 
+    // `Config` redacts secret-wrapped fields in `Debug`, but ordinary header values, including
+    // expanded environment values, remain visible.
     #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
     #[cfg_attr(coverage_nightly, coverage(on))]

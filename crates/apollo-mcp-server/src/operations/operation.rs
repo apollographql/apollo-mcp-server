@@ -29,7 +29,11 @@ use super::{
     schema_walker,
 };
 
-/// A valid GraphQL operation
+/// A syntactically parsed, named GraphQL operation exposed as an MCP tool.
+///
+/// Construction derives model-facing metadata from the configured schema, but it does not
+/// validate the executable document against that schema. The upstream GraphQL service performs
+/// execution-time GraphQL validation.
 #[derive(Debug, Clone, Serialize)]
 pub struct Operation {
     pub(crate) tool: Tool,
@@ -359,6 +363,8 @@ impl Operation {
 
 impl graphql::Executable for Operation {
     fn operation(&self, _input: Value) -> Result<OperationDetails, ValidationError> {
+        // Tool metadata does not select the executable document. Predefined tools use the
+        // operation body retained when the tool was constructed.
         Ok(OperationDetails {
             query: self
                 .stripped_source_text
@@ -417,6 +423,10 @@ impl graphql::Executable for Operation {
     }
 }
 
+/// Parses exactly one GraphQL operation and filters disallowed operation types.
+///
+/// This performs syntactic parsing only; it does not validate the executable document against a
+/// schema.
 #[allow(clippy::type_complexity)]
 #[tracing::instrument(skip_all)]
 pub fn operation_defs(

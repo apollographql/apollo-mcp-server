@@ -11,6 +11,16 @@ Common use-cases include:
 - Routing requests to different GraphQL endpoints based on request properties
 - Rejecting requests that don't meet certain criteria
 
+## Security
+
+<Caution>
+
+Treat Rhai scripts as trusted code, not as a security sandbox. The server loads scripts from the configured directory and runs their lifecycle hooks while processing requests. Scripts can read server environment variables, make outbound HTTP requests, and change the endpoint or headers of an outgoing GraphQL request.
+
+Restrict write access to the script directory, require review before deploying script changes, and monitor outbound destinations. Incoming MCP request metadata is provided to hooks as data rather than compiled as Rhai source, but a script can still copy or interpolate that metadata into headers, URLs, logs, or HTTP request bodies. Validate and allow values from an allowlist before using them.
+
+</Caution>
+
 ## Setup
 
 Create a `rhai/` directory in the server's working directory, and add a `main.rhai` file inside it:

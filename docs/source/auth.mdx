@@ -8,6 +8,12 @@ The Apollo MCP Server supports authorizing clients (e.g., LLMs) according to [th
 
 The current implementation passes through OAuth tokens from MCP clients directly to upstream GraphQL APIs. You can read more about [security considerations](/apollo-mcp-server/limitations#oauth-token-passthrough) when using this feature.
 
+<Note>
+
+Authentication is available only with the `streamable_http` transport. The default transport is `stdio`, where authentication middleware doesn't run. If you configure an `auth` block under `stdio`, the server rejects the configuration and exits during startup.
+
+</Note>
+
 ## Implement authorization with Apollo MCP Server
 
 To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/2.1/) Identity Provider (for example, your own in-house IdP or a third-party IdP such as Auth0, Okta, or Keycloak). You need the following values from your IdP:
@@ -15,6 +21,8 @@ To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/
 - **URL**: The base URL of your Identity Provider, which is used to validate the JSON Web Tokens (JWTs) issued by it.
 - **Audience**: Identifies the intended recipient of the token, typically a resource server or API. Represented by the `aud` claim in the JWT.
 - **Scopes**: The scopes that the client will request. These scopes define the permissions granted to the client when it accesses the API.
+
+Apollo MCP Server validates signed JWT bearer access tokens; it doesn't support opaque access tokens. Each JWT must contain a `kid` header, as well as `exp` and `sub` claims. The token must also contain an `aud` claim unless you enable `allow_any_audience`, as well as an `iss` claim when you configure `issuers`. The identity provider must expose RFC 8414 or OpenID Connect discovery metadata containing `issuer` and `jwks_uri`, and the selected JWK must identify a supported signing algorithm, either directly or through the [documented discovery fallback](#jwks-that-omit-alg).
 
 Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/config-file#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
@@ -50,7 +58,7 @@ transport:
     allow_any_audience: true
 ```
 
-If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server will skip audience validation entirely. This means tokens with _any_ audience claim will be accepted.
+If you set `allow_any_audience` to `true` (the default is `false`), Apollo MCP Server skips audience validation entirely. The token doesn't need an `aud` claim, but the server accepts any value when the claim is present.
 
 <Caution>
 
@@ -75,15 +83,15 @@ transport:
 
 Set `issuers` to a list of accepted issuer values. The JWT's `iss` claim must match one of these values for the token to be valid. The server rejects a token with `401 Unauthorized` when its `iss` claim is missing or does not match any configured issuer.
 
-The server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata. This means a token signed by one configured server cannot be accepted while it claims a different configured server's issuer, which keeps issuer validation correct when you delegate to multiple servers.
+When you configure `issuers`, the server also binds the `iss` claim to the authorization server that signed the token: the claim must equal the issuer that server advertises in its discovery metadata.
 
-When `issuers` is empty (the default), the server skips issuer validation, so your existing configurations are unaffected. To validate the source of every token, set `issuers` to the exact issuer values your OAuth servers use.
+To validate the issuer of every token, always set `issuers` to the exact issuer values your OAuth servers use.
 
 ## Configure scope enforcement
 
-Use the `scope_mode` option to control how the MCP Server validates scopes from OAuth tokens.
+Use the `scopes` and `scope_mode` options to configure a global OAuth scope requirement. When you configure authentication, this requirement applies uniformly to authenticated MCP requests and does not distinguish between tools.
 
-The `scopes` list has two functions. First, the mode below controls how the server validates it against incoming tokens. Second, the server also sends this same list to clients, in two places:
+The `scopes` list has two functions:
 
 - the `scope` parameter of `401` [`WWW-Authenticate` challenges](#www-authenticate-header)
 - the `scopes_supported` field of its [Protected Resource Metadata](https://datatracker.ietf.org/doc/html/rfc9728) document
@@ -96,7 +104,7 @@ These scopes belong to your resource server, not to your IdP. They do not need t
 | ------------- | --------------------------------------------------------- |
 | `require_all` | Token must have all configured scopes (default)           |
 | `require_any` | Token must have **at least one** of the configured scopes |
-| `disabled`    | Skip scope checks entirely                                |
+| `disabled`    | Skip the global scope requirement                         |
 
 ### Require all scopes (default)
 
@@ -142,11 +150,11 @@ transport:
     scope_mode: disabled
 ```
 
-Skip scope enforcement entirely. The server validates token authenticity (signature and audience) but not scopes.
+Skip the global scope requirement. The server still validates the token's signature, as well as any configured issuer and audience constraints. Any matching [per-operation scope requirements](#per-operation-scope-requirements) continue to apply.
 
 <Caution>
 
-Use `scope_mode: disabled` only when downstream services, such as subgraphs, handle authorization. Without scope enforcement, any valid token grants full access to the MCP Server.
+Adopt `scope_mode: disabled` only when downstream services, like subgraphs, handle authorization, or when you rely exclusively on per-operation requirements. Without a matching per-operation requirement, the MCP Server permits any valid token to call the tool.
 
 </Caution>
 
@@ -156,7 +164,7 @@ Apollo MCP Server reads the standard `scope` claim first. This claim is a space-
 
 ## Per-operation scope requirements
 
-The global `scopes` and `scope_mode` settings apply uniformly to every request. For finer-grained control, you can declare required OAuth scopes per operation using `overrides.required_scopes`. This enables _step-up authorization_: a client with a limited token can call most tools freely, but is prompted to re-authorize with elevated scopes when it tries to call a more sensitive operation.
+When enabled, the global `scopes` and `scope_mode` requirement applies uniformly to every authenticated MCP request. For finer-grained control, you can declare additional OAuth scopes per operation using `overrides.required_scopes`. This enables step-up authorization: a client with a limited token can call tools governed only by the global requirement, but is prompted to re-authorize with elevated scopes when calling a more sensitive operation.
 
 ```yaml title="mcp.yaml"
 transport:
@@ -181,9 +189,17 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
 
 The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
 
-`required_scopes` adds to the global requirement. It does not replace it. A token must satisfy the global `scopes` and `scope_mode` requirement. For a listed operation, the token must also carry every scope listed for that operation. This is true no matter what `scope_mode` is set to: per-operation validation always requires all listed scopes.
+`required_scopes` adds to the global requirement and doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, the token must also carry every scope listed for that operation. Per-operation validation always requires all listed scopes, regardless of `scope_mode`. Setting `scope_mode: disabled` skips only the global requirement.
 
-This validation applies only to `tools/call` requests for a listed operation. The global `scopes` and `scope_mode` setting alone governs other methods, for example `tools/list`. This design makes step-up authorization possible: discovery calls stay cheap, and only a call to a sensitive tool needs the extra scopes.
+The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
+
+The server doesn't validate `required_scopes` keys against the current tool list and doesn't warn about unknown keys, so a misspelled or stale key doesn't protect the intended tool, and a newly added or renamed tool remains governed only by the global requirement until you update the map.
+
+<Caution>
+
+Treat `required_scopes` as a manually maintained security policy. Compare its keys with the live `tools/list` response during deployment and whenever you add, remove, rename, or hot-reload operations.
+
+</Caution>
 
 ## HTTP error responses
 
@@ -191,7 +207,7 @@ Apollo MCP Server returns different HTTP status codes depending on the type of a
 
 | Status             | When returned                                                                                |
 | ------------------ | -------------------------------------------------------------------------------------------- |
-| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails audience validation |
+| `401 Unauthorized` | Token is missing, malformed, expired, has an invalid signature, or fails configured audience or issuer validation |
 | `403 Forbidden`    | Token is authentic but lacks the required scopes (global or per-operation)                   |
 
 ### WWW-Authenticate header
@@ -203,19 +219,21 @@ Every `401` and `403` response includes a `WWW-Authenticate` header to guide cli
 ```http
 HTTP/1.1 401 Unauthorized
 WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource",
-                         scope="read write"
+                         scope="read write",
+                         scope_mode="require_all"
 ```
 
-**403 response** — includes `error="insufficient_scope"` along with the scopes required for the specific operation:
+### 403 response
 
 ```http
 HTTP/1.1 403 Forbidden
-WWW-Authenticate: Bearer error="insufficient_scope",
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource",
+                         error="insufficient_scope",
                          scope="user:write admin",
-                         resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource"
+                         scope_mode="require_all"
 ```
 
-Clients should use the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the full set of scopes required for the specific operation, either from `auth.scopes` or from `overrides.required_scopes`, not just the scopes the token is missing.
+Clients can adopt the `scope` parameter provided by the header as the set of scopes to request when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the full requirement that failed, either from `auth.scopes` or from `overrides.required_scopes`, not just the scopes the token is missing. The `scope_mode` parameter reports the configured global mode; per-operation requirements still use all-of semantics.
 
 ## Performance considerations
 
@@ -273,9 +291,9 @@ Apollo MCP Server supports both and tries them in the following order to maximiz
 | 2        | `https://auth.example.com/.well-known/openid-configuration/tenant`       | OIDC Discovery (path-insertion)        |
 | 3        | `https://auth.example.com/tenant/.well-known/openid-configuration`       | OIDC Discovery (legacy path-appending) |
 
-The first URL that returns a valid metadata document is used. This means IdPs that only support OIDC Discovery (such as Auth0 and many cloud identity providers) work out of the box without any additional configuration.
+The first URL that returns a parseable metadata document is used, which means IdPs that only support OIDC Discovery, like Auth0 and many cloud identity providers, enable you to get started without any additional configuration.
 
-The metadata `issuer` must match the authorization server the discovery URL was built from, as required by [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3). A document that advertises a different issuer is rejected, and discovery continues with the next URL pattern.
+The metadata `issuer` must match the authorization server the discovery URL was built from, as required by RFC 8414 section 3.3. A document that advertises a different issuer is rejected, and its `jwks_uri` isn't fetched. Fallback to another URL pattern happens only when a discovery request fails, times out, or doesn't return parseable metadata. For details, see [RFC 8414 section 3.3](https://datatracker.ietf.org/doc/html/rfc8414#section-3.3).
 
 ## Discovery headers
 
@@ -296,7 +314,7 @@ These headers are sent with every request the server makes to discover authoriza
 
 ## JWKs that omit `alg`
 
-Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). Apollo MCP Server supports these providers automatically, inferring the signing algorithm from the authorization server's discovery document.
+Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). When a JWK omits `alg`, Apollo MCP Server uses `id_token_signing_alg_values_supported` from the authorization server's discovery document if it contains exactly one supported algorithm. The key is rejected if that field is empty, contains multiple values, or contains an unsupported value.
 
 ## Anonymous MCP discovery
 

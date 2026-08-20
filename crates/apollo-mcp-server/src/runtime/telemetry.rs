@@ -92,6 +92,7 @@ pub enum TraceTelemetryExporter {
 #[serde(deny_unknown_fields)]
 pub struct MetricsExporters {
     otlp: Option<MetricTelemetryExporter>,
+    /// Apollo metric attributes excluded before export.
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
     /// Interval at which metrics are exported.
     ///
@@ -156,6 +157,7 @@ impl Default for MetricTelemetryExporter {
 pub struct TracingExporters {
     otlp: Option<TraceTelemetryExporter>,
     sampler: Option<SamplerOption>,
+    /// Apollo span attributes excluded before export.
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
 }
 

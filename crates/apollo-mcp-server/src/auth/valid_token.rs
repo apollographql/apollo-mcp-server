@@ -37,18 +37,20 @@ pub(super) trait KeyResolver {
     /// advertises in its discovery metadata. Returns `None` when the server
     /// does not serve a key with that `key_id`.
     ///
-    /// The returned issuer is the value issuer validation binds to: a token's
-    /// `iss` claim must equal it, so a token signed by one configured server
-    /// cannot pass by claiming a different server's issuer.
+    /// When accepted issuers are configured, the returned issuer binds token
+    /// validation to the server whose key verified the signature: the token's
+    /// `iss` claim must equal it.
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)>;
 }
 
-/// Validates bearer JWTs against the configured audiences, issuers, and upstream
-/// servers, resolving signing keys through `keys`.
+/// Validates bearer JWTs against the configured audiences and authorization
+/// servers. Configured issuers add an `iss` allowlist and bind the claim to the
+/// server whose key verified the signature.
 pub(super) struct TokenValidator<'a, R: KeyResolver> {
     /// Accepted audiences. Ignored when `allow_any_audience` is set.
     pub(super) audiences: &'a [String],
-    /// Accepted issuers (empty = skip issuer validation).
+    /// Additional accepted token issuers. Empty skips JWT `iss` validation;
+    /// metadata validation performed by the network resolver remains independent.
     pub(super) issuers: &'a [String],
     /// Skip audience validation entirely.
     pub(super) allow_any_audience: bool,
@@ -104,10 +106,10 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         break;
                     }
                     if !self.issuers.is_empty() {
-                        // When issuer validation is enabled, explicitly reject tokens
-                        // with a missing `iss` claim. The `jsonwebtoken` crate skips its
-                        // own issuer check when the claim is absent from the raw JWT,
-                        // so we enforce it here.
+                        // When token issuer validation is enabled, explicitly reject
+                        // tokens with a missing `iss` claim. The `jsonwebtoken` crate
+                        // skips its own issuer check when the claim is absent from the
+                        // raw JWT, so we enforce it here.
                         let Some(token_issuer) = token_data.claims.iss.as_deref() else {
                             warn!("Token is missing the required `iss` claim");
                             break;
@@ -859,7 +861,7 @@ mod test {
             h
         };
 
-        // The configured allowlist holds two issuers. The signing server
+        // The configured allowlist holds two issuers. The authorization server
         // advertises the SECOND one as its discovered issuer, and the token's
         // `iss` matches it — exercising both the allowlist (any-match) and the
         // discovery binding to the actual signer.
@@ -985,7 +987,7 @@ mod test {
         let server =
             Url::from_str("https://auth.example.com").expect("should parse a valid example server");
 
-        // Empty issuers list - issuer validation is skipped (backward compatible)
+        // An empty allowlist skips token `iss` validation for backward compatibility.
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
@@ -1002,10 +1004,9 @@ mod test {
 
     // --- Multi-server issuer binding ---------------------------------------
     //
-    // These exercise the cross-server case: issuer validation is bound to the
-    // discovered issuer of the server whose JWKS verified the signature, so a
-    // token signed by one server cannot pass by claiming another server's
-    // issuer — even when both issuers are in the configured allowlist.
+    // These exercise the cross-server case: token issuer validation is bound
+    // to the discovered issuer of the server whose JWKS verified the signature,
+    // even when both issuers are in the configured allowlist.
 
     #[traced_test]
     #[tokio::test]
@@ -1084,7 +1085,7 @@ mod test {
                 .filter(|line| line.contains("WARN"))
                 .any(|line| line.contains("does not match the issuer of the server that signed it"))
                 .then_some(())
-                .ok_or("Expected issuer-mismatch warning from the signing server".to_string())
+                .ok_or("Expected issuer-mismatch warning from the authorization server".to_string())
         });
     }
 
