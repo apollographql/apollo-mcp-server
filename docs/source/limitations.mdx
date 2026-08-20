@@ -7,32 +7,32 @@ title: Limitations
 
 ### Tool-definition integrity
 
-For predefined operation tools, Apollo MCP Server stores the executable GraphQL document separately from model-facing metadata. Changing only a tool description cannot add a new server-side code path. However, Apollo MCP Server doesn't provide the following controls:
+For predefined operation tools, Apollo MCP Server stores the executable GraphQL document separately from model-facing metadata. Changing only a tool description can't add a new server-side code path. However, Apollo MCP Server doesn't provide these controls:
 
 - Automatic scanning of tool names, descriptions, or input descriptions for hidden or model-directed instructions
 - Comparison of the live `tools/list` response with an approved snapshot
 - A semantic diff or approval step before applying a hot-reloaded operation or schema source update
 - Independent enforcement of the generated JSON `inputSchema` for predefined operation arguments
 
-The `execute` tool accepts a new GraphQL document with each call, so it isn't bound to a previously reviewed predefined document.
+The `execute` tool accepts a new GraphQL document with each call, so the tool isn't bound to a previously reviewed predefined document.
 
-Treat operation, schema, manifest, collection, and configuration sources as trusted inputs. Hot-reloaded changes are applied when observed, and model-facing text can steer an agent even when the stored operation itself is unchanged. For details, see the guide on how to [protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
+Treat operation, schema, manifest, collection, and configuration sources as trusted inputs. Hot-reloaded changes are applied when observed, and model-facing text can steer an agent even when the stored operation itself is unchanged. For details, go to the guide that explains how to [protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
 
 ### Intent-flow enforcement
 
-Apollo MCP Server dispatches tool calls, but it doesn't compare a proposed call with the user's original goal. It doesn't detect instructions embedded in retrieved context, label tool results as untrusted for the model, detect intent drift, or require human confirmation before each call. These controls require an MCP client, agent framework, or policy layer that participates in planning.
+Apollo MCP Server dispatches tool calls but doesn't compare a proposed call with the user's original goal. MCP Server doesn't detect instructions embedded in retrieved context, label tool results as untrusted for the model, detect intent drift, or require human confirmation before each call. Those kinds of controls require an MCP client, agent framework, or policy layer that participates in planning.
 
-For predefined operations, the requested tool name must match an entry in the current operation catalog, and execution uses the stored GraphQL document for that entry. This bounds calls through the server to its live tool surface, but it doesn't establish that you reviewed every loaded operation or that a call is intended. Hot-reloaded sources can change that surface, and one operation's variables can address a broad set of data or resources.
+For predefined operations, the requested tool name must match an entry in the current operation catalog, and execution uses the stored GraphQL document for that entry. This bounds calls through the server to its live tool surface but doesn't establish that you reviewed every loaded operation or that a call is intended. Hot-reloaded sources can change that surface, and one operation's variables can address a broad set of data or resources.
 
-Adopting `execute` expands the surface to agent-supplied queries. It also permits agent-supplied mutations when `mutation_mode` is `all`. The upstream GraphQL API remains responsible for document validation, authorization, and other execution controls. Follow [Limit the impact of intent-flow subversion](/apollo-mcp-server/best-practices#limit-the-impact-of-intent-flow-subversion) for deployment guidance.
+Adopting `execute` expands the surface to agent-supplied queries and also permits agent-supplied mutations when `mutation_mode` is set to `all`. The upstream GraphQL API remains responsible for document validation, authorization, and other execution controls. For deployment guidance, go to [Limit the impact of intent-flow subversion](/apollo-mcp-server/best-practices#limit-the-impact-of-intent-flow-subversion).
 
 ### Operation validation and execution
 
-Apollo MCP Server syntactically parses predefined and ad hoc GraphQL documents and enforces operation-type restrictions. It doesn't validate the documents against the configured schema before exposing or forwarding them. An operation containing an unknown field, argument, or variable type can therefore become a predefined tool or be sent through `execute`.
+Apollo MCP Server syntactically parses predefined and ad hoc GraphQL documents and enforces operation-type restrictions but doesn't validate the documents against the configured schema before exposing or forwarding them. As a result, an operation containing an unknown field, argument, or variable type can become a predefined tool or be sent through `execute`.
 
-The upstream GraphQL endpoint performs GraphQL document and variable validation when it receives the request. The optional `validate` tool validates an ad hoc operation against Apollo MCP Server's configured schema without executing it, but clients aren't required to call `validate` before `execute`.
+The upstream GraphQL endpoint performs GraphQL document and variable validation when it receives the request. The optional `validate` tool validates an ad hoc operation against Apollo MCP Server's configured schema without executing the operation, but clients aren't required to call `validate` before `execute`.
 
-The base request path sends GraphQL as a structured JSON HTTP request and doesn't invoke an operating-system shell or child process from MCP tool input. Operator-provided Rhai scripts run before outgoing GraphQL requests and can change the endpoint or headers, read environment variables, and make their own HTTP requests. Treat the script directory as trusted code and see the [Rhai security guidance](/apollo-mcp-server/rhai-getting-started#security).
+The base request path sends GraphQL as a structured JSON HTTP request and doesn't invoke an operating-system shell or child process from MCP tool input. Operator-provided Rhai scripts run before outgoing GraphQL requests and can change the endpoint or headers, read environment variables, and make their own HTTP requests. Treat the script directory as trusted code, and follow the [Rhai security guidance](/apollo-mcp-server/rhai-getting-started#security).
 
 ### OAuth token passthrough
 
@@ -45,17 +45,17 @@ transport:
     disable_auth_token_passthrough: true
 ```
 
-When disabled, Apollo MCP Server still validates tokens for MCP client authentication but does not automatically forward them to the upstream GraphQL API.
+When disabled, Apollo MCP Server still validates tokens for MCP client authentication but doesn't automatically forward them to the upstream GraphQL API.
 
 <Caution>
 
-Audit both settings together. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when you disable automatic token passthrough. When automatic passthrough is enabled, the validated token replaces a forwarded `authorization` header. With `transport.auth` configured, the request is authenticated before tool execution; without an auth block, Apollo MCP Server does not validate the explicitly forwarded value.
+Audit both settings together. If `forward_headers` contains `authorization`, Apollo MCP Server still copies the incoming header to the GraphQL request even when you disable automatic token passthrough. When automatic passthrough is enabled, the validated token replaces a forwarded `authorization` header. With `transport.auth` configured, the request is authenticated before tool execution; without an auth block, Apollo MCP Server doesn't validate the explicitly forwarded value.
 
 </Caution>
 
 #### Rationale
 
-The [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction) forbids token passthrough. Apollo MCP Server retains it by default for practical enterprise requirements such as:
+The [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#access-token-privilege-restriction) forbids token passthrough. By default, Apollo MCP Server retains the token for practical enterprise requirements like:
 
 - **Multi-user scenarios**: Enterprise GraphQL APIs often require direct user identity to perform granular access control and tenant isolation.
 - **Existing enterprise patterns**: Many organizations have GraphQL APIs that depend on the original Authorization header to identify users and apply existing identity-based access controls.
@@ -68,17 +68,17 @@ The [MCP authorization specification](https://modelcontextprotocol.io/specificat
 - Upstream APIs might treat successful MCP-server validation as proof that a token was issued for the upstream API.
 - Tokens intended for the MCP server audience might be inappropriately used with different services.
 - Forwarded credentials might be captured when upstream logging or tracing records request headers.
-- If upstream APIs enforce proper audience (`aud` claim) validation, they should reject tokens that aren't intended for them.
+- If upstream APIs enforce proper audience (`aud` claim) validation, they should reject tokens that aren't intended for those APIs.
 
 #### Recommended workaround
 
 - Disable automatic passthrough and remove `authorization` from `forward_headers` when your GraphQL API doesn't require the caller's token.
 - Adopt the MCP server only with GraphQL APIs that accept the same OAuth tokens and audiences.
-- Ensure your OAuth authorization server issues tokens with appropriate audience claims for both the MCP server and upstream APIs.
+- Make sure your OAuth authorization server issues tokens with appropriate audience claims for both the MCP server and upstream APIs.
 - Verify that your upstream APIs validate token audiences, and redact authorization headers from logs and traces.
 - Incorporate OAuth trust boundaries into your threat model to ensure comprehensive security.
 
-Apollo MCP Server's telemetry `omitted_attributes` settings apply only to supported attributes exported by this server. They do not modify the forwarded authorization header or telemetry that the upstream API produces. Configure header capture and redaction independently at each telemetry producer and collector.
+Apollo MCP Server's telemetry `omitted_attributes` settings apply only to supported attributes exported by this server. They don't modify the forwarded authorization header or telemetry that the upstream API produces. Configure header capture and redaction independently at each telemetry producer and collector.
 
 #### Future plans
 

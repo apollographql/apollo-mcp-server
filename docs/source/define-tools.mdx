@@ -19,11 +19,11 @@ Apollo MCP Server loads local `.graphql` operation files and persisted query man
 
 ## Understand execution and validation boundaries
 
-For each predefined operation tool, Apollo MCP Server parses a single named GraphQL operation and stores its document separately from the model-facing tool metadata. A predefined call must match an operation in the server's current catalog by name; the server rejects unknown tool names. For a match, the server sends the stored document to the upstream GraphQL endpoint. Changing only the tool description or generated input schema does not change the stored document.
+For each predefined operation tool, Apollo MCP Server parses a single named GraphQL operation and stores its document separately from the model-facing tool metadata. A predefined call must match an operation in the server's current catalog by name; the server rejects unknown tool names. For a match, the server sends the stored document to the upstream GraphQL endpoint. Changing only the tool description or generated input schema doesn't change the stored document.
 
-Apollo MCP Server derives the tool's JSON `inputSchema` from the operation variables and configured GraphQL schema. This schema guides MCP clients and AI models, but the server doesn't independently enforce it for predefined operation calls. The server also doesn't validate a predefined operation against the configured GraphQL schema before exposing it as a tool. The upstream GraphQL endpoint performs GraphQL document and variable validation during execution, so test and review your predefined operations before deploying them.
+Apollo MCP Server derives the tool's JSON `inputSchema` from the operation variables and configured GraphQL schema. This schema guides MCP clients and AI models, but the server doesn't independently enforce it for predefined operation calls. The server also doesn't validate a predefined operation against the configured GraphQL schema before exposing the operation as a tool. The upstream GraphQL endpoint performs GraphQL document and variable validation during execution, so test and review your predefined operations before deploying them.
 
-The optional [`validate` tool](#introspection-tools) validates an agent-supplied operation against the current schema. It isn't an automatic prerequisite for `execute`, and it doesn't prevalidate predefined operation tools.
+The optional [`validate` tool](#introspection-tools) validates an agent-supplied operation against the current schema; it isn't an automatic prerequisite for `execute` and doesn't prevalidate predefined operation tools.
 
 ## Define GraphQL operations for tools
 
@@ -169,7 +169,7 @@ operations:
 
 <Caution>
 
-Hot-reloaded operation and schema sources can change tool names, descriptions, inputs, and executable documents without an automatic security diff or approval step. Restrict source write access and review the live tool definitions after changes. For details, see [Protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
+Hot-reloaded operation and schema sources can change tool names, descriptions, inputs, and executable documents without an automatic security diff or approval step. Restrict source write access and review the live tool definitions after changes. For details, go to [Protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
 
 </Caution>
 
@@ -265,7 +265,7 @@ overrides:
       - admin
 ```
 
-Keys must exactly match the MCP tool name sent in `tools/call`. Only listed tools receive an additional scope check; an empty list or an absent entry leaves the tool governed by the global scope requirement alone. The server accepts unknown keys without warning, so review your map whenever tools are added, removed, or renamed.
+Keys must exactly match the MCP tool name sent in `tools/call`. Only listed tools receive an additional scope check; an empty list or an absent entry leaves the tool solely governed by the global scope requirement. The server accepts unknown keys without warning, so review your map any time tools are added, removed, or renamed.
 
 ### Config-level annotations
 
@@ -315,9 +315,9 @@ The MCP client can use these tools to provide schema information to the model an
 
 <Caution>
 
-Unlike predefined operation tools, `execute` accepts the GraphQL document from each tool call and isn't pinned to a previously reviewed document. It checks GraphQL syntax, rejects subscriptions, and applies [`mutation_mode`](/apollo-mcp-server/config-file#mutation-modes), but it doesn't automatically validate fields, arguments, or variable types against the configured schema. Adopting `validate` doesn't force clients to call it before `execute`; the upstream GraphQL endpoint ultimately validates any operation that is forwarded.
+Unlike predefined operation tools, `execute` accepts the GraphQL document from each tool call and isn't pinned to a previously reviewed document. `execute` checks GraphQL syntax, rejects subscriptions, and applies [`mutation_mode`](/apollo-mcp-server/config-file#mutation-modes) but doesn't automatically validate fields, arguments, or variable types against the configured schema. Adopting `validate` doesn't force clients to call it before `execute`; instead, the upstream GraphQL endpoint validates any operation that is forwarded.
 
-Limit `execute` and mutation access to use cases that need dynamic operations, and use authorization and demand controls at the GraphQL API. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution) for the complete boundary.
+Limit `execute` and mutation access to use-cases that need dynamic operations, and use authorization and demand controls at the GraphQL API. For more information, go to [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution) for the complete boundary.
 
 </Caution>
 

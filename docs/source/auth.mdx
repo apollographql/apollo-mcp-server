@@ -314,7 +314,7 @@ These headers are sent with every request the server makes to discover authoriza
 
 ## JWKs that omit `alg`
 
-Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). When a JWK omits `alg`, Apollo MCP Server uses `id_token_signing_alg_values_supported` from the authorization server's discovery document when it contains exactly one supported algorithm. The key is rejected when that field is empty, contains multiple values, or contains an unsupported value.
+Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). When a JWK omits `alg`, Apollo MCP Server uses `id_token_signing_alg_values_supported` from the authorization server's discovery document if it contains exactly one supported algorithm. The key is rejected if that field is empty, contains multiple values, or contains an unsupported value.
 
 ## Anonymous MCP discovery
 

@@ -56,7 +56,7 @@ These fields are under the top-level `graphos` key and define your GraphOS graph
 
 <Note>
 
-Apollo MCP Server redacts the GraphOS key from debug configuration output. This does not encrypt the key or prevent it from being written literally in YAML. Use the `APOLLO_KEY` environment variable or another runtime secret-injection mechanism.
+Apollo MCP Server redacts the GraphOS key from debug configuration output. This doesn't encrypt the key or prevent it from being written literally in YAML. Use the `APOLLO_KEY` environment variable or another runtime secret-injection mechanism.
 
 </Note>
 
@@ -209,7 +209,7 @@ These fields are under the top-level `logging` key.
 
 <Caution>
 
-At `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary static header values, including values you populate through `${env.VAR}`, can appear in this output. The GraphOS key is redacted. Do not enable debug logging in production without protecting and restricting access to the resulting logs.
+At the `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary static header values, including values you populate through `${env.VAR}`, can appear in this output. The GraphOS key is redacted. Do not enable debug logging in production without protecting and restricting access to the resulting logs.
 
 </Caution>
 
@@ -232,7 +232,7 @@ The default value for `source` is `"infer"`. Learn more about [defining tools as
 
 <Note>
 
-Environment variable expansion applies only to the YAML configuration file. Local `.graphql` operation files and persisted query manifest bodies are loaded exactly as written. Do not embed credentials in operation content or expect `${env.VAR}` placeholders there to be expanded.
+Environment variable expansion applies only to the YAML configuration file. Local `.graphql` operation files and persisted query manifest bodies are loaded exactly as written. Don't embed credentials in operation content or expect `${env.VAR}` placeholders to be expanded.
 
 </Note>
 
@@ -250,7 +250,7 @@ Operation collection polling supports collections containing up to 100 operation
 
 For `source: collection`, the server retries connection failures, timeouts, HTTP `429` responses, and server errors.
 
-A successfully fetched source update replaces the current catalog; it isn't compared with an approved version or held for confirmation. Operations that Apollo MCP Server can't parse are skipped during the rebuild instead of preserving their previous versions. For deployment guidance, see [Protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
+A successfully fetched source update replaces the current catalog; it isn't compared with an approved version or held for confirmation. Operations that Apollo MCP Server can't parse are skipped during the rebuild instead of preserving their previous versions. For deployment guidance, go to [Protect tool definitions from poisoning](/apollo-mcp-server/best-practices#protect-tool-definitions-from-poisoning).
 
 <Tip>
 
@@ -275,7 +275,7 @@ These fields are under the top-level `overrides` key.
 
 #### Mutation modes
 
-`mutation_mode` applies to predefined GraphQL operations loaded from every configured operation source. It also controls whether an enabled [`execute` tool](/apollo-mcp-server/define-tools#introspection-tools) accepts an ad hoc mutation.
+`mutation_mode` applies to predefined GraphQL operations loaded from every configured operation source. `mutation_mode` also controls whether an enabled [`execute` tool](/apollo-mcp-server/define-tools#introspection-tools) accepts an ad hoc mutation.
 
 | Mode       | Predefined queries | Predefined mutations | Ad hoc queries through `execute` | Ad hoc mutations through `execute` |
 | :--------- | :----------------- | :------------------- | :------------------------------- | :--------------------------------- |
@@ -287,9 +287,9 @@ The ad hoc columns apply only when `introspection.execute.enabled` is `true`. Th
 
 <Caution>
 
-`mutation_mode` is a configuration gate, not a per-invocation approval mechanism. `explicit` means the mutation is already present in the active operation source; it doesn't mean the operation came from a local file, was committed to version control, or passed a review enforced by Apollo MCP Server. Hot-reloaded source changes can therefore add or change mutations without an approval step.
+`mutation_mode` is a configuration gate, not a per-invocation approval mechanism. `explicit` means the mutation is already present in the active operation source; it doesn't mean the operation came from a local file, was committed to version control, or passed a review enforced by Apollo MCP Server. As a result, hot-reloaded source changes can add or change mutations without an approval step.
 
-The setting classifies documents by their declared GraphQL operation type. It cannot detect side effects implemented behind a query field, so ensure your upstream GraphQL API preserves read-only query semantics.
+The setting classifies documents by their declared GraphQL operation type. It can't detect side effects implemented behind a query field, so make sure your upstream GraphQL API preserves read-only query semantics.
 
 </Caution>
 
@@ -299,7 +299,7 @@ MCP App manifests are subject to the same mutation gate. With `mutation_mode: no
 
 </Note>
 
-Apollo MCP Server parses operation documents locally but doesn't automatically validate them against the configured schema. See [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
+Apollo MCP Server parses operation documents locally but doesn't automatically validate them against the configured schema. For more information, go to [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
 
 ### Schema source
 
@@ -712,7 +712,7 @@ When Apollo MCP Server loads the configuration, it expands these references to t
 
 <Note>
 
-Expansion applies only to values in the YAML configuration file. Apollo MCP Server reads local `.graphql` operation files and persisted query manifest bodies verbatim. Do not embed credentials in operation content or expect `${env.VAR}` placeholders to expand.
+Expansion applies only to values in the YAML configuration file. Apollo MCP Server reads local `.graphql` operation files and persisted query manifest bodies verbatim. Don't embed credentials in operation content or expect `${env.VAR}` placeholders to expand.
 
 </Note>
 

@@ -15,9 +15,9 @@ The schema is required for:
 
 The base GraphQL request path serializes operation text and variables into a structured HTTP request. It doesn't construct an operating-system shell command or spawn a child process from MCP tool input.
 
-Apollo MCP Server parses predefined and ad hoc operation documents, but it doesn't automatically validate those documents against the configured schema before forwarding them. The upstream GraphQL endpoint performs execution-time GraphQL validation. For ad hoc operations, you can expose the optional `validate` tool, but enabling it doesn't force a client to call it before `execute`. For details, see the [introspection tools documentation](/apollo-mcp-server/define-tools#introspection-tools).
+Apollo MCP Server parses predefined and ad hoc operation documents, but it doesn't automatically validate those documents against the configured schema before forwarding them. The upstream GraphQL endpoint performs execution-time GraphQL validation. For ad hoc operations, you can expose the optional `validate` tool, but enabling it doesn't force a client to call that tool before `execute`. For details, see the [introspection tools documentation](/apollo-mcp-server/define-tools#introspection-tools).
 
-This boundary doesn't cover code in the upstream GraphQL service or operator-provided [Rhai scripts](/apollo-mcp-server/rhai-getting-started). Treat both as part of your deployment's execution surface. For more information, see [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
+This boundary doesn't cover code in the upstream GraphQL service or operator-provided [Rhai scripts](/apollo-mcp-server/rhai-getting-started). Treat both as part of your deployment's execution surface. For more information, go to [Operation validation and execution](/apollo-mcp-server/limitations#operation-validation-and-execution).
 
 ## Use contract variants to control AI access to graphs
 
@@ -32,7 +32,7 @@ In particular, we strongly recommend contract variants when using:
 
 ## Gate mutations and enforce approval outside the server
 
-Keep `mutation_mode` at its default value, `none`, unless the use case requires GraphQL mutations. Use `explicit` to expose only mutations already present in the configured operation source. Use `all` only when an enabled `execute` tool must accept ad hoc mutations. For details, see the [mutation modes documentation](/apollo-mcp-server/config-file#mutation-modes).
+Keep `mutation_mode` at its default value, `none`, unless the use case requires GraphQL mutations. Use `explicit` to expose only mutations already present in the configured operation source. Use `all` only when an enabled `execute` tool must accept ad hoc mutations. For details, go to [Mutation modes](/apollo-mcp-server/config-file#mutation-modes).
 
 These modes are configuration gates, not human approval. In particular, `explicit` doesn't require an operation to be stored locally, committed to version control, or reviewed before use. Apply review and promotion controls to every configured operation source, and implement per-invocation approval for sensitive actions in the MCP client, the upstream API, or another policy-enforcement layer.
 
@@ -45,11 +45,11 @@ These modes are configuration gates, not human approval. In particular, `explici
 Treat the exposed tool surface as a way to limit impact, not as intent validation:
 
 1. Expose only the operations required for the use case. Review both what each operation can do and how broadly its variables can target data or resources.
-2. Keep `execute` disabled unless the agent needs ad hoc queries. An enabled `execute` tool accepts an agent-supplied query document; with `mutation_mode: all`, it also accepts agent-supplied mutations.
+2. Keep `execute` disabled unless the agent needs ad hoc queries. An enabled `execute` tool accepts an agent-supplied query document; with `mutation_mode: all`, the tool also accepts agent-supplied mutations.
 3. Protect every configured operation source. The effective boundary is the live tool catalog, and hot-reloaded changes can add or replace operations without restarting the server.
 4. Enforce authentication, authorization, allowlisting, and demand controls at the GraphQL API. Implement intent checks, untrusted-context handling, and per-action approval in the MCP client, agent framework, or another policy layer that can compare a proposed action with the user's goal.
 
-See [Intent-flow enforcement limitations](/apollo-mcp-server/limitations#intent-flow-enforcement) for the controls Apollo MCP Server doesn't provide.
+Go to [Intent-flow enforcement limitations](/apollo-mcp-server/limitations#intent-flow-enforcement) for the controls Apollo MCP Server doesn't provide.
 
 ## Protect tool definitions from poisoning
 
@@ -66,7 +66,7 @@ Apollo MCP Server doesn't automatically scan tool metadata for hidden instructio
 
 `overrides.descriptions` controls only the top-level description of an exact operation-name match. It doesn't pin the operation name, input property names or descriptions, or executable document. A renamed or unmatched operation falls back to its source-derived description.
 
-See [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
+Go to [Tool-definition integrity limitations](/apollo-mcp-server/limitations#tool-definition-integrity) for the controls Apollo MCP Server doesn't provide automatically.
 
 ## Plan audit and telemetry controls
 
@@ -79,7 +79,7 @@ Before production deployment:
 - Apply access controls, retention, integrity protection, and data-handling policies in the collector and storage backend.
 - Alert on tool failures, unexpected usage patterns, and telemetry ingestion gaps.
 
-Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and adopt traces plus correlated logs for request-level investigation. See [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.
+Metrics don't include per-request trace IDs. Use them for aggregate monitoring, and adopt traces plus correlated logs for request-level investigation. Go to [Telemetry](/apollo-mcp-server/telemetry) for signal behavior, captured attributes, and filtering boundaries.
 
 ## Review per-operation scope requirements when tools change
 
