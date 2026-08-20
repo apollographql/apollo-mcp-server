@@ -233,7 +233,7 @@ WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/
                          scope_mode="require_all"
 ```
 
-Clients can adopt the `scope` parameter provided by the header as the target scope set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the full requirement that failed, either from `auth.scopes` or from `overrides.required_scopes`, not just the scopes the token is missing. The `scope_mode` parameter reports the configured global mode; per-operation requirements still use all-of semantics.
+Clients can adopt the `scope` parameter provided by the header as the target scope, which is set when initiating or re-initiating authorization. The `scope` parameter on a `401` response reflects the globally configured scopes (from `auth.scopes`). The `scope` parameter on a `403` response reflects the full requirement that failed, either from `auth.scopes` or from `overrides.required_scopes`, not just the scopes the token is missing. The `scope_mode` parameter reports the configured global mode; per-operation requirements still use all-of semantics.
 
 ## Performance considerations
 
