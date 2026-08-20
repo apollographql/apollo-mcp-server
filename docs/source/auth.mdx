@@ -22,7 +22,7 @@ To implement authorization, you need an [OAuth 2.1-compliant](https://oauth.net/
 - **Audience**: Identifies the intended recipient of the token, typically a resource server or API. Represented by the `aud` claim in the JWT.
 - **Scopes**: The scopes that the client will request. These scopes define the permissions granted to the client when it accesses the API.
 
-Apollo MCP Server validates signed JWT bearer access tokens; it does not support opaque access tokens. Each JWT must contain a `kid` header and `exp` and `sub` claims. It must also contain an `aud` claim unless you enable `allow_any_audience`, and an `iss` claim when you configure `issuers`. The identity provider must expose RFC 8414 or OpenID Connect discovery metadata containing `issuer` and `jwks_uri`, and the selected JWK must identify a supported signing algorithm, either directly or through the [documented discovery fallback](#jwks-that-omit-alg).
+Apollo MCP Server validates signed JWT bearer access tokens; it doesn't support opaque access tokens. Each JWT must contain a `kid` header with `exp` and `sub` claims. The token must also contain an `aud` claim unless you enable `allow_any_audience`, as well as an `iss` claim when you configure `issuers`. The identity provider must expose RFC 8414 or OpenID Connect discovery metadata containing `issuer` and `jwks_uri`, and the selected JWK must identify a supported signing algorithm, either directly or through the [documented discovery fallback](#jwks-that-omit-alg).
 
 Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/config-file#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
