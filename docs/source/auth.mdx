@@ -189,7 +189,7 @@ WWW-Authenticate: Bearer error="insufficient_scope", scope="user:write admin"
 
 The client can use this response to initiate a targeted re-authorization and retry. If auth is not configured or the server is running in stdio mode, `required_scopes` is silently ignored.
 
-`required_scopes` adds to the global requirement; it doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, the token must also carry every scope listed for that operation. Per-operation validation always requires all listed scopes, regardless of `scope_mode`. Setting `scope_mode: disabled` skips only the global requirement.
+`required_scopes` adds to the global requirement and doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, the token must also carry every scope listed for that operation. Per-operation validation always requires all listed scopes, regardless of `scope_mode`. Setting `scope_mode: disabled` skips only the global requirement.
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
 
