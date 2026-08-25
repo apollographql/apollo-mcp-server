@@ -1,6 +1,7 @@
 use rmcp::model::{Icon, IconTheme};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer};
+use url::Url;
 
 /// Server metadata configuration returned in the MCP initialize response.
 /// All fields are optional and fall back to defaults if not provided.
@@ -31,8 +32,11 @@ pub struct ServerInfoConfig {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IconConfig {
-    /// URI of the icon: an `https://` URL or a base64-encoded `data:` URI
+    /// URI of the icon, such as an `https://` URL or a base64-encoded `data:` URI.
+    /// Not `Url`: the value is advertised to clients verbatim, and `Url::parse`
+    /// normalizes its input
     #[serde(deserialize_with = "deserialize_icon_src")]
+    #[schemars(with = "Url")]
     pub src: String,
 
     /// MIME type of the icon, such as `image/png`. Set this when the source
@@ -42,7 +46,7 @@ pub struct IconConfig {
 
     /// Sizes the icon is available in, each `WxH` (e.g. `48x48`) or `any` for
     /// scalable formats
-    #[serde(default, deserialize_with = "deserialize_icon_sizes")]
+    #[serde(default)]
     pub sizes: Option<Vec<String>>,
 
     /// Background theme this icon is designed for. Omit to let the client use
@@ -51,84 +55,16 @@ pub struct IconConfig {
     pub theme: Option<IconThemeConfig>,
 }
 
-/// Reject `src` values whose scheme the MCP spec instructs clients to refuse
-/// (`javascript:`, `file:`, `ftp:`, `ws:`, and anything else that isn't
-/// `https://` or `data:`), and reject well-schemed but empty inputs like a
-/// bare `https://` or a `data:` URI without an `image/*` payload.
+/// `Icon.src` is `@format uri` in the MCP schema, so the one thing it has to do
+/// is parse as a URI.
 fn deserialize_icon_src<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let raw = String::deserialize(deserializer)?;
-    let ok = if let Some(rest) = raw.strip_prefix("https://") {
-        has_host(rest)
-    } else if let Some(rest) = raw.strip_prefix("data:") {
-        is_image_data_uri(rest)
-    } else {
-        false
-    };
-    if ok {
-        Ok(raw)
-    } else {
-        Err(serde::de::Error::custom(format!(
-            "server_info.icons[].src must be an `https://` URL with a host or an \
-             `image/*` `data:` URI (got {raw:?})"
-        )))
-    }
-}
-
-fn has_host(after_scheme: &str) -> bool {
-    let host_end = after_scheme
-        .find(['/', '?', '#'])
-        .unwrap_or(after_scheme.len());
-    !after_scheme[..host_end].is_empty()
-}
-
-/// A `data:` URI is `mediatype[;base64],data`. Accept it only when the media
-/// type is `image/<subtype>` and the payload is non-empty; the RFC allows
-/// omitting either but neither shape makes sense for an icon source.
-fn is_image_data_uri(after_scheme: &str) -> bool {
-    let (metadata, data) = match after_scheme.split_once(',') {
-        Some(pair) => pair,
-        None => return false,
-    };
-    if data.is_empty() {
-        return false;
-    }
-    let mime = metadata.split(';').next().unwrap_or("");
-    match mime.strip_prefix("image/") {
-        Some(subtype) => !subtype.is_empty(),
-        None => false,
-    }
-}
-
-fn deserialize_icon_sizes<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw = Option::<Vec<String>>::deserialize(deserializer)?;
-    if let Some(entries) = &raw {
-        for entry in entries {
-            if entry != "any" && !is_wxh_size(entry) {
-                return Err(serde::de::Error::custom(format!(
-                    "server_info.icons[].sizes entries must be `WxH` (e.g. `48x48`) or `any` (got {entry:?})"
-                )));
-            }
-        }
-    }
-    Ok(raw)
-}
-
-fn is_wxh_size(entry: &str) -> bool {
-    match entry.split_once('x') {
-        Some((width, height)) => {
-            !width.is_empty()
-                && !height.is_empty()
-                && width.bytes().all(|b| b.is_ascii_digit())
-                && height.bytes().all(|b| b.is_ascii_digit())
-        }
-        None => false,
-    }
+    use serde::de::Error;
+    let src = String::deserialize(deserializer)?;
+    Url::parse(&src).map_err(|e| D::Error::custom(format!("invalid icon src {src:?}: {e}")))?;
+    Ok(src)
 }
 
 /// Background theme an icon is designed for.
@@ -258,53 +194,31 @@ icons:
     }
 
     #[test]
-    fn icons_reject_unsafe_src_schemes() {
-        for src in [
-            "http://example.com/icon.png",
-            "javascript:alert(1)",
-            "file:///etc/passwd",
-            "ftp://example.com/icon.png",
-            "ws://example.com/icon",
-            "",
-            "example.com/icon.png",
-        ] {
+    fn icons_preserve_src_verbatim() {
+        let yaml = r#"
+icons:
+  - src: "https://example.com"
+"#;
+        let config: ServerInfoConfig = serde_yaml::from_str(yaml).unwrap();
+
+        assert_eq!(config.icons[0].src, "https://example.com");
+    }
+
+    #[test]
+    fn icons_reject_src_that_is_not_a_uri() {
+        for src in ["", "example.com/icon.png", "/icons/mark.svg", "https://"] {
             let yaml = format!("icons:\n  - src: \"{src}\"\n");
             let err = serde_yaml::from_str::<ServerInfoConfig>(&yaml)
-                .expect_err(&format!("scheme {src:?} should be rejected"));
+                .expect_err(&format!("src {src:?} should be rejected"));
             assert!(
-                err.to_string()
-                    .contains("must be an `https://` URL with a host"),
+                err.to_string().contains("invalid icon src"),
                 "unexpected error for {src:?}: {err}"
             );
         }
     }
 
     #[test]
-    fn icons_reject_malformed_https_and_data_sources() {
-        for src in [
-            "https://",
-            "https:///path",
-            "https://?query",
-            "data:",
-            "data:,",
-            "data:image/png,",
-            "data:text/plain;base64,Zm9v",
-            "data:image/;base64,AAAA",
-            "data:base64,AAAA",
-        ] {
-            let yaml = format!("icons:\n  - src: \"{src}\"\n");
-            let err = serde_yaml::from_str::<ServerInfoConfig>(&yaml)
-                .expect_err(&format!("malformed src {src:?} should be rejected"));
-            assert!(
-                err.to_string()
-                    .contains("must be an `https://` URL with a host"),
-                "unexpected error for {src:?}: {err}"
-            );
-        }
-    }
-
-    #[test]
-    fn icons_accept_wxh_and_any_sizes() {
+    fn icons_pass_sizes_through_unchanged() {
         let yaml = r#"
 icons:
   - src: "https://example.com/mark.svg"
@@ -325,17 +239,9 @@ icons:
     }
 
     #[test]
-    fn icons_reject_malformed_size_entries() {
-        for size in ["48x", "x48", "fooxbar", "48X48", "48", "", "48x48x48"] {
-            let yaml = format!(
-                "icons:\n  - src: \"https://example.com/icon.svg\"\n    sizes: [\"{size}\"]\n"
-            );
-            let err = serde_yaml::from_str::<ServerInfoConfig>(&yaml)
-                .expect_err(&format!("size {size:?} should be rejected"));
-            assert!(
-                err.to_string().contains("must be `WxH`"),
-                "unexpected error for {size:?}: {err}"
-            );
-        }
+    fn icons_reject_sizes_that_are_not_an_array_of_strings() {
+        let yaml = "icons:\n  - src: \"https://example.com/mark.svg\"\n    sizes: \"48x48\"\n";
+
+        assert!(serde_yaml::from_str::<ServerInfoConfig>(yaml).is_err());
     }
 }
