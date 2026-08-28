@@ -216,12 +216,12 @@ At the `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary 
 ### Operation source
 
 These fields are under the top-level `operations` key. The available fields depend on the value of the nested `source` key.
-The default value for `source` is `"infer"`. Learn more about [defining tools as operations](/apollo-mcp-server/define-tools).
+The default value for `source` is `"infer"`. See [defining tools as operations](/apollo-mcp-server/define-tools).
 
 | Source             | Option   | Type             | Description                                                                                                                                             |
 | :----------------- | :------- | :--------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | GraphOS Collection | `source` | `"collection"`   | Load operations from a GraphOS collection                                                                                                               |
-| GraphOS Collection | `id`     | `string`         | The collection ID to use in GraphOS. Use `default` for the default collection. [Learn more](/apollo-mcp-server/define-tools#from-operation-collection). |
+| GraphOS Collection | `id`     | `string`         | The collection ID to use in GraphOS. Use `default` for the default collection. See [GraphOS operation collections](/apollo-mcp-server/define-tools#from-operation-collection). |
 | Introspection      | `source` | `"introspect"`   | Load operations by introspecting the schema. Note: You must enable introspection to use this source                                                     |
 | Local              | `source` | `"local"`        | Load operations from local GraphQL files or directories                                                                                                 |
 | Local              | `paths`  | `List<FilePath>` | Paths to GraphQL files or directories to search. Note: These paths are relative to the location from which you are running Apollo MCP Server.           |
@@ -271,7 +271,7 @@ These fields are under the top-level `overrides` key.
 | `mutation_mode`              | `oneOf ["none", "explicit", "all"]` | `"none"` | Controls which GraphQL mutation operation types the MCP server exposes                                                                                                                          |
 | `descriptions`               | `Map<String, String>`               | `{}`     | Top-level tool descriptions keyed by exact operation name. Overrides source-derived descriptions for matching operations but doesn't affect input descriptions or executable documents. Unmatched keys don't produce a warning. [Learn more about config-level descriptions](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
-| `required_scopes`            | `Map<String, List<String>>`         | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Requirements add to the global scope requirement and use all-of semantics. Unlisted tools receive no additional restriction. [Learn more about per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements). |
+| `required_scopes`            | `Map<String, List<String> \| List<List<String>>>` | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Unlisted tools receive no additional restriction. A flat list requires all scopes; nested lists define alternatives, where each inner list is AND and the outer list is OR. Requirements add to the global scope requirement. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more about per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements). |
 
 #### Mutation modes
 

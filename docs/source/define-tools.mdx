@@ -249,23 +249,25 @@ Config-level descriptions take priority over comment-based and schema-generated 
 
 ### Config-level scope requirements
 
-To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, the server returns HTTP 403 and the client can re-authorize with the precise scopes needed. See [Per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
+To restrict which OAuth scopes are required to call a specific tool, add a `required_scopes` map under the `overrides` config key. When a token lacks the required scopes, Apollo MCP Server returns `403 Forbidden`, and the client can re-authorize with a compatible scope set. See [per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements) for details.
 
-```yaml title="Config with per-operation scope requirements" {4-9}
+```yaml title="Config with per-operation scope requirements" {4-12}
 operations:
   source: local
   paths: [./operations]
 overrides:
   required_scopes:
-    GetAlerts: []         # No extra scopes needed
     CreateAlert:
       - alerts:write
     DeleteAlert:
       - alerts:write
       - admin
+    AcknowledgeAlert:
+      - [alerts:write]
+      - [admin]
 ```
 
-Keys must exactly match the MCP tool name sent in `tools/call`. Only listed tools receive an additional scope check; an empty list or an absent entry leaves the tool solely governed by the global scope requirement. The server accepts unknown keys without warning, so review your map any time tools are added, removed, or renamed.
+Keys must exactly match the MCP tool name sent in `tools/call`. Only listed tools receive an additional scope check; an absent entry leaves the tool solely governed by the global scope requirement. An empty list is rejected as a config error rather than treated as "no restriction," so a typo can't accidentally leave an operation unprotected. The server accepts unknown keys without warning, so review your map any time tools are added, removed, or renamed. Flat lists require all listed scopes; nested lists define alternatives, where each inner list is AND and the outer list is OR.
 
 ### Config-level annotations
 

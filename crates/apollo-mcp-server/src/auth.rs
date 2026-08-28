@@ -24,6 +24,8 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
+use crate::scope_requirements::OperationRequiredScopes;
+
 mod networked_key_resolver;
 mod protected_resource;
 mod valid_token;
@@ -310,7 +312,7 @@ struct AuthState {
     /// Per-operation required scopes, keyed by the exact MCP tool name used in
     /// `tools/call`.
     /// Missing keys impose no additional restriction beyond the global requirement.
-    required_scopes: Arc<HashMap<String, Vec<String>>>,
+    required_scopes: Arc<HashMap<String, OperationRequiredScopes>>,
 }
 
 impl Config {
@@ -320,7 +322,7 @@ impl Config {
     pub fn enable_middleware(
         &self,
         router: Router,
-        required_scopes: HashMap<String, Vec<String>>,
+        required_scopes: HashMap<String, OperationRequiredScopes>,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -461,15 +463,15 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 /// `required_scopes` — those are governed only by the global scope requirement.
 fn missing_scopes_for_operation<'a>(
     peek: &JsonRpcBodyPeek,
-    required_scopes: &'a HashMap<String, Vec<String>>,
+    required_scopes: &'a HashMap<String, OperationRequiredScopes>,
     token_scopes: &[String],
-) -> Option<&'a [String]> {
+) -> Option<&'a OperationRequiredScopes> {
     if peek.method != "tools/call" {
         return None;
     }
     let op_name = peek.params.as_ref()?.name.as_deref()?;
     let required = required_scopes.get(op_name)?;
-    if required.iter().all(|s| token_scopes.contains(s)) {
+    if required.is_satisfied_by(token_scopes) {
         return None;
     }
     Some(required)
@@ -508,14 +510,14 @@ async fn oauth_validate(
 
     // RFC 6750 insufficient-scope challenge. Advertise the full requirement so
     // clients know the target scope set, rather than only the scopes they lack.
-    let forbidden_error = |required_scopes: &[String]| {
+    let forbidden_error = |required_scopes: &[String], scope_mode: Option<ScopeMode>| {
         (
             StatusCode::FORBIDDEN,
             TypedHeader(WwwAuthenticate::Bearer {
                 resource_metadata: resource_metadata_url.clone(),
                 scope: Some(required_scopes.join(" ")),
                 error: Some(BearerError::InsufficientScope),
-                scope_mode: Some(auth_config.scope_mode),
+                scope_mode,
             }),
         )
     };
@@ -607,7 +609,10 @@ async fn oauth_validate(
             // NOTE: WWW-Authenticate lists all configured global scopes per RFC 6750.
             // In require_any mode, only one is needed, but the header format
             // doesn't distinguish. This matches existing behavior.
-            return Err(forbidden_error(&auth_config.scopes));
+            return Err(forbidden_error(
+                &auth_config.scopes,
+                Some(auth_config.scope_mode),
+            ));
         }
     }
 
@@ -616,6 +621,7 @@ async fn oauth_validate(
     if let Some(required) = body_peek.as_ref().and_then(|peek| {
         missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
     }) {
+        let challenge_scopes = required.challenge_scopes();
         tracing::warn!(
             required = ?required,
             present = ?valid_token.scopes,
@@ -623,7 +629,14 @@ async fn oauth_validate(
         );
         tracing::Span::current().record("reason", "insufficient_scope");
         tracing::Span::current().record("status_code", StatusCode::FORBIDDEN.as_u16());
-        return Err(forbidden_error(required));
+        // Per-operation `required_scopes` groups are always a fully-required
+        // AND set (that's the unit an alternative represents), regardless of
+        // the global `scope_mode`, so the challenge reports `require_all`
+        // rather than inheriting the global hint.
+        return Err(forbidden_error(
+            challenge_scopes,
+            Some(ScopeMode::RequireAll),
+        ));
     }
 
     // Insert new context to ensure that handlers only use our enforced token verification
@@ -689,6 +702,17 @@ mod tests {
         Router::new()
             .route("/test", get(|| async { "ok" }))
             .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
+    }
+
+    fn test_router_with_required_scopes(
+        config: Config,
+        required_scopes: HashMap<String, OperationRequiredScopes>,
+    ) -> Router {
+        let mut auth_state = test_auth_state(config);
+        auth_state.required_scopes = Arc::new(required_scopes);
+        Router::new()
+            .route("/test", get(|| async { "ok" }))
+            .layer(from_fn_with_state(auth_state, oauth_validate))
     }
 
     mod oauth_validate {
@@ -847,6 +871,133 @@ mod tests {
             let (_, www_auth) = valid_token_with_insufficient_scopes_response().await;
 
             assert!(www_auth.contains(r#"scope="write""#), "got: {www_auth}");
+        }
+
+        /// Drives a real `tools/call` request through the middleware for an
+        /// operation with a nested (OR-of-AND) scope requirement, where the
+        /// token satisfies neither group completely but is closer to the
+        /// second: the first group is missing both scopes, the second only
+        /// one. The global `scope_mode` is `require_any`, distinct from the
+        /// per-operation challenge's `require_all`.
+        async fn insufficient_nested_scope_response() -> (StatusCode, String) {
+            let mut server = mockito::Server::new_async().await;
+            let kid = "test-kid";
+            let secret = b"hs512-integration-test-signing-secret";
+
+            let discovery = format!(
+                r#"{{"issuer":"{url}","jwks_uri":"{url}/jwks","id_token_signing_alg_values_supported":["HS512"]}}"#,
+                url = server.url()
+            );
+            let _discovery = server
+                .mock("GET", "/.well-known/oauth-authorization-server")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(discovery)
+                .create_async()
+                .await;
+
+            let jwks = format!(
+                r#"{{"keys":[{{"kty":"oct","alg":"HS512","use":"sig","kid":"{kid}","k":"{k}"}}]}}"#,
+                k = URL_SAFE_NO_PAD.encode(secret)
+            );
+            let _jwks = server
+                .mock("GET", "/jwks")
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(jwks)
+                .create_async()
+                .await;
+
+            // Satisfies the global `read` scope (test_config's default) and
+            // one scope of the second operation-level group, but not enough
+            // to complete either group.
+            let exp = chrono::Utc::now().timestamp() + 1000;
+            let claims = serde_json::json!({
+                "aud": "test-audience",
+                "exp": exp,
+                "sub": "test-user",
+                "scope": "read admin",
+            });
+            let header = {
+                let mut h = Header::new(Algorithm::HS512);
+                h.kid = Some(kid.to_string());
+                h
+            };
+            let token =
+                encode(&header, &claims, &EncodingKey::from_secret(secret)).expect("encode JWT");
+
+            let mut config = test_config();
+            config.servers = vec![server.url()];
+            config.scope_mode = ScopeMode::RequireAny;
+            let required_scopes = HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::new(vec![
+                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                    vec!["admin".to_string(), "superuser".to_string()],
+                ])
+                .expect("valid multi-group requirement"),
+            )]);
+            let app = test_router_with_required_scopes(config, required_scopes);
+
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {"name": "RestrictedOp"}
+            })
+            .to_string();
+
+            let req = Request::builder()
+                .method("POST")
+                .uri("/test")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            let status = res.status();
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string();
+
+            (status, www_auth)
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_returns_forbidden() {
+            let (status, _) = insufficient_nested_scope_response().await;
+
+            assert_eq!(status, StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_challenge_names_the_first_listed_alternative() {
+            let (_, www_auth) = insufficient_nested_scope_response().await;
+
+            // The token is closer to satisfying the second group, but the
+            // challenge always names the first-listed alternative regardless.
+            assert!(
+                www_auth.contains(r#"scope="sensitive:read tenant:admin""#),
+                "got: {www_auth}"
+            );
+        }
+
+        #[tokio::test]
+        async fn insufficient_nested_scope_challenge_reports_require_all() {
+            let (_, www_auth) = insufficient_nested_scope_response().await;
+
+            // The global scope_mode is require_any, but a per-operation
+            // challenge always reports require_all: every scope in the
+            // advertised group is required.
+            assert!(
+                www_auth.contains(r#"scope_mode="require_all""#),
+                "got: {www_auth}"
+            );
         }
     }
 
@@ -1631,11 +1782,39 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
     mod per_operation_scope_enforcement {
         use super::*;
+        use crate::scope_requirements::OperationRequiredScopes;
 
-        fn required() -> HashMap<String, Vec<String>> {
+        fn required() -> HashMap<String, OperationRequiredScopes> {
             HashMap::from([(
                 "RestrictedOp".to_string(),
-                vec!["sensitive:read".to_string()],
+                OperationRequiredScopes::new(vec![vec!["sensitive:read".to_string()]])
+                    .expect("valid single-group requirement"),
+            )])
+        }
+
+        fn alternative_required() -> HashMap<String, OperationRequiredScopes> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::new(vec![
+                    vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                    vec!["admin".to_string()],
+                ])
+                .expect("valid multi-group requirement"),
+            )])
+        }
+
+        /// Two groups that each require more than one scope, so a token can
+        /// touch both groups without ever completing either - unlike
+        /// `alternative_required`'s single-scope `admin` group, which any
+        /// presence of `admin` completes outright.
+        fn overlapping_multi_scope_alternatives() -> HashMap<String, OperationRequiredScopes> {
+            HashMap::from([(
+                "RestrictedOp".to_string(),
+                OperationRequiredScopes::new(vec![
+                    vec!["scope:a".to_string(), "scope:b".to_string()],
+                    vec!["scope:c".to_string(), "scope:d".to_string()],
+                ])
+                .expect("valid multi-group requirement"),
             )])
         }
 
@@ -1654,7 +1833,13 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let scopes = vec!["other:scope".to_string()];
             let required = required();
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
-            assert_eq!(result, Some(["sensitive:read".to_string()].as_slice()));
+            assert_eq!(
+                result,
+                Some(
+                    &OperationRequiredScopes::new(vec![vec!["sensitive:read".to_string()]])
+                        .unwrap()
+                )
+            );
         }
 
         #[test]
@@ -1662,6 +1847,71 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
             let required = required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_one_scope_alternative() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["admin".to_string(), "other:scope".to_string()];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_one_scope_group() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec![
+                "sensitive:read".to_string(),
+                "tenant:admin".to_string(),
+                "other:scope".to_string(),
+            ];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_none());
+        }
+
+        #[test]
+        fn returns_required_scopes_when_token_satisfies_no_complete_alternative() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["sensitive:read".to_string()];
+            let required = alternative_required();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert_eq!(
+                result,
+                Some(
+                    &OperationRequiredScopes::new(vec![
+                        vec!["sensitive:read".to_string(), "tenant:admin".to_string()],
+                        vec!["admin".to_string()],
+                    ])
+                    .unwrap()
+                )
+            );
+        }
+
+        #[test]
+        fn returns_required_scopes_when_scopes_are_scattered_across_groups() {
+            // Touches both groups (`scope:a` from the first, `scope:c` from
+            // the second) without ever completing either.
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec!["scope:a".to_string(), "scope:c".to_string()];
+            let required = overlapping_multi_scope_alternatives();
+            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            assert!(result.is_some());
+        }
+
+        #[test]
+        fn returns_none_when_token_satisfies_more_than_one_group() {
+            let peek = tools_call_peek("RestrictedOp");
+            let scopes = vec![
+                "scope:a".to_string(),
+                "scope:b".to_string(),
+                "scope:c".to_string(),
+                "scope:d".to_string(),
+            ];
+            let required = overlapping_multi_scope_alternatives();
             let result = missing_scopes_for_operation(&peek, &required, &scopes);
             assert!(result.is_none());
         }
