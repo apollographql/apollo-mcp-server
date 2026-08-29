@@ -7,7 +7,7 @@ use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
 use parking_lot::Mutex;
-use rmcp::model::{CallToolResult, ContentBlock, JsonObject, Meta, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, JsonObject, MetaObject, Tool};
 use serde_json::{Map, Value, json};
 use url::Url;
 
@@ -219,7 +219,7 @@ fn nest_app_tool_result(
     result.structured_content = Some(wrapped_restricted);
 
     // Attach tool name (and full structured content if private fields exist) to meta
-    let meta = result.meta.get_or_insert_with(Meta::new);
+    let meta = result.meta.get_or_insert_with(MetaObject::new);
     meta.insert("toolName".into(), Value::String(tool_name.to_string()));
     if let Some(full_m) = full_map {
         meta.insert("structuredContent".into(), Value::Object(full_m));
@@ -246,9 +246,9 @@ fn filter_inputs_for_operation(
 
 /// This makes the tool executable from the app but hidden from the LLM
 pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
-    let meta = tool.meta.get_or_insert_with(Meta::new);
+    let meta = tool.meta.get_or_insert_with(MetaObject::new);
 
-    let mut ui = Meta::new();
+    let mut ui = MetaObject::new();
     ui.insert("visibility".into(), json!(["app"]));
     meta.insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
@@ -258,8 +258,8 @@ pub(crate) fn make_tool_private(mut tool: Tool) -> Tool {
 // Attach tool meta data when requested to allow swapping between app targets (Apps SDK, MCP Apps)
 pub(crate) fn attach_tool_metadata(app: &App, tool: &AppTool, app_target: &AppTarget) -> Tool {
     let mut inner_tool = tool.tool.clone();
-    let meta = inner_tool.meta.get_or_insert_with(Meta::new);
-    let mut ui = Meta::new();
+    let meta = inner_tool.meta.get_or_insert_with(MetaObject::new);
+    let mut ui = MetaObject::new();
 
     ui.insert("resourceUri".to_string(), app.uri.to_string().into());
     ui.insert("visibility".to_string(), json!(["model", "app"]));
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn make_tool_private_adds_ui_meta_for_mcp_apps_when_tool_has_existing_meta() {
-        let mut existing_meta = Meta::new();
+        let mut existing_meta = MetaObject::new();
         existing_meta.insert("my-awesome-key".into(), "my-awesome-value".into());
         let mut tool = Tool::new("GetId", "a description", JsonObject::new());
         tool.meta = Some(existing_meta);
@@ -818,7 +818,7 @@ mod tests {
             prefetch_operations: vec![],
         };
 
-        let mut existing_meta = Meta::new();
+        let mut existing_meta = MetaObject::new();
         existing_meta.insert("custom-key".into(), "custom-value".into());
 
         let mut tool_def = Tool::new("TestTool", "description", JsonObject::new());
@@ -920,7 +920,7 @@ mod tests {
             prefetch_operations: vec![],
         };
 
-        let mut existing_meta = Meta::new();
+        let mut existing_meta = MetaObject::new();
         existing_meta.insert("custom-key".into(), "custom-value".into());
 
         let mut tool_def = Tool::new("TestTool", "description", JsonObject::new());
@@ -993,7 +993,7 @@ mod tests {
         let restricted = json!({"data": {"fieldA": "a"}});
         let full = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
 
-        let mut meta = Meta::new();
+        let mut meta = MetaObject::new();
         meta.insert("structuredContent".into(), full.clone());
 
         let mut result = CallToolResult::success(vec![]);
@@ -1019,7 +1019,7 @@ mod tests {
         let restricted_primary = json!({"data": {"fieldA": "a"}});
         let full_primary = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
 
-        let mut primary_meta = Meta::new();
+        let mut primary_meta = MetaObject::new();
         primary_meta.insert("structuredContent".into(), full_primary.clone());
 
         let mut result = CallToolResult::success(vec![]);
@@ -1029,7 +1029,7 @@ mod tests {
         let restricted_prefetch = json!({"data": {"x": 1}});
         let full_prefetch = json!({"data": {"x": 1, "y": 2}});
 
-        let mut prefetch_meta = Meta::new();
+        let mut prefetch_meta = MetaObject::new();
         prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
 
         let mut prefetch_result = CallToolResult::success(vec![]);
@@ -1073,7 +1073,7 @@ mod tests {
         let restricted_prefetch = json!({"data": {"x": 1}});
         let full_prefetch = json!({"data": {"x": 1, "y": 2}});
 
-        let mut prefetch_meta = Meta::new();
+        let mut prefetch_meta = MetaObject::new();
         prefetch_meta.insert("structuredContent".into(), full_prefetch.clone());
 
         let mut prefetch_result = CallToolResult::success(vec![]);
@@ -1111,7 +1111,7 @@ mod tests {
         let restricted_primary = json!({"data": {"fieldA": "a"}});
         let full_primary = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
 
-        let mut primary_meta = Meta::new();
+        let mut primary_meta = MetaObject::new();
         primary_meta.insert("structuredContent".into(), full_primary.clone());
 
         let mut result = CallToolResult::success(vec![]);
@@ -1165,7 +1165,7 @@ mod tests {
         let full = json!({"data": {"fieldA": "a", "fieldB": "secret"}});
         let extra = json!({"widgetUrl": "https://example.com"});
 
-        let mut meta = Meta::new();
+        let mut meta = MetaObject::new();
         meta.insert("structuredContent".into(), full.clone());
 
         let mut result = CallToolResult::success(vec![]);

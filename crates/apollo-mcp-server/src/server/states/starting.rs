@@ -205,7 +205,7 @@ impl Starting {
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
                 let http_config = host_validation.apply_to(
-                    StreamableHttpServerConfig::default().with_stateful_mode(stateful_mode),
+                    StreamableHttpServerConfig::default().with_legacy_session_mode(stateful_mode),
                 );
                 let service = StreamableHttpService::new(
                     move || Ok(running.clone()),

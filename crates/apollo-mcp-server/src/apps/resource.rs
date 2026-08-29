@@ -1,5 +1,5 @@
 use rmcp::ErrorData;
-use rmcp::model::{Meta, Resource, ResourceContents};
+use rmcp::model::{MetaObject, Resource, ResourceContents};
 use serde_json::json;
 use url::Url;
 
@@ -85,10 +85,10 @@ pub(crate) async fn get_app_resource(
 
     // Most properties now are listed under _meta.ui.* but some openai specific properties are still at the root
     // So, we will populate both and then nest "ui" into "meta" later in this function
-    let mut meta: Option<Meta> = None;
-    let mut ui: Option<Meta> = None;
+    let mut meta: Option<MetaObject> = None;
+    let mut ui: Option<MetaObject> = None;
     if let Some(csp) = &app.csp_settings {
-        ui.get_or_insert_with(Meta::new).insert(
+        ui.get_or_insert_with(MetaObject::new).insert(
             "csp".into(),
             json!({
                 "connectDomains": csp.connect_domains,
@@ -100,7 +100,7 @@ pub(crate) async fn get_app_resource(
 
         // Openai has a weird bug where it won't merge these settings with the MCP ones... so we just have to set both.
         if matches!(app_target, AppTarget::AppsSDK) {
-            meta.get_or_insert_with(Meta::new).insert(
+            meta.get_or_insert_with(MetaObject::new).insert(
                 "openai/widgetCSP".into(),
                 json!({
                     "connect_domains": csp.connect_domains,
@@ -116,21 +116,21 @@ pub(crate) async fn get_app_resource(
         if let Some(description) = &widget_settings.description
             && matches!(app_target, AppTarget::AppsSDK)
         {
-            meta.get_or_insert_with(Meta::new).insert(
+            meta.get_or_insert_with(MetaObject::new).insert(
                 "openai/widgetDescription".into(),
                 serde_json::to_value(description).unwrap_or_default(),
             );
         }
 
         if let Some(domain) = &widget_settings.domain {
-            ui.get_or_insert_with(Meta::new).insert(
+            ui.get_or_insert_with(MetaObject::new).insert(
                 "domain".into(),
                 serde_json::to_value(domain).unwrap_or_default(),
             );
         }
 
         if let Some(prefers_border) = &widget_settings.prefers_border {
-            ui.get_or_insert_with(Meta::new).insert(
+            ui.get_or_insert_with(MetaObject::new).insert(
                 "prefersBorder".into(),
                 serde_json::to_value(prefers_border).unwrap_or_default(),
             );
@@ -138,7 +138,7 @@ pub(crate) async fn get_app_resource(
             // ChatGPT currently ignores _meta.ui.prefersBorder, so we set
             // this field to ensure this setting is honored
             if matches!(app_target, AppTarget::AppsSDK) {
-                meta.get_or_insert_with(Meta::new).insert(
+                meta.get_or_insert_with(MetaObject::new).insert(
                     "openai/widgetPrefersBorder".into(),
                     serde_json::to_value(prefers_border).unwrap_or_default(),
                 );
@@ -146,7 +146,7 @@ pub(crate) async fn get_app_resource(
         }
     }
 
-    meta.get_or_insert_with(Meta::new)
+    meta.get_or_insert_with(MetaObject::new)
         .insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
     Ok(ResourceContents::TextResourceContents {
