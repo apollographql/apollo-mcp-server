@@ -442,8 +442,15 @@ transport:
     skip_token_validation:
       methods:
         - initialize
+        - server/discover
         - tools/list
         - resources/list
 ```
 
 The server logs a deprecation warning at startup. Setting both `allow_anonymous_mcp_discovery` and `skip_token_validation.methods` is an error, because the two would describe the same list twice. Remove the flag and list the methods you want.
+
+<Note>
+
+`server/discover` may be the client's first MCP request, so this deprecated flag maps onto it too. The same applies if you list `server/discover` directly in `skip_token_validation.methods`.
+
+</Note>
