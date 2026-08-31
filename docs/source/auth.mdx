@@ -354,8 +354,15 @@ Enabling this option deviates from the [MCP specification's requirement](https:/
 
 The following MCP methods are allowed without authentication when this option is enabled:
 
-| Method           | Description                          |
-| ---------------- | ------------------------------------ |
-| `initialize`     | MCP session initialization handshake |
-| `tools/list`     | List available MCP tools             |
-| `resources/list` | List available MCP resources         |
+| Method             | Description                                          |
+| ------------------ | ---------------------------------------------------- |
+| `initialize`       | MCP session initialization handshake                 |
+| `server/discover`  | Protocol version and capability discovery            |
+| `tools/list`       | List available MCP tools                             |
+| `resources/list`   | List available MCP resources                         |
+
+<Note>
+
+`server/discover` precedes `initialize` in the MCP 2026-07-28 lifecycle, so clients call it before they have any opportunity to authenticate.
+
+</Note>
