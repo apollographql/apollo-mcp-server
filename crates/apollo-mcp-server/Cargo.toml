@@ -42,7 +42,7 @@ opentelemetry-otlp = { version = "0.32.0", features = [
   "reqwest-rustls",
 ] }
 opentelemetry-semantic-conventions = "0.32.0"
-opentelemetry_sdk = { version = "0.32.0", features = [
+opentelemetry_sdk = { version = "0.32.1", features = [
   "spec_unstable_metrics_views",
 ] }
 regex = "1.11.1"
@@ -77,7 +77,7 @@ chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 mockito = "1.7.0"
-opentelemetry_sdk = { version = "0.32.0", features = ["testing"] }
+opentelemetry_sdk = { version = "0.32.1", features = ["testing"] }
 rstest.workspace = true
 secrecy.workspace = true
 serde_yaml = "0.9.34"

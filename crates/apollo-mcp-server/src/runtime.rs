@@ -199,6 +199,7 @@ mod test {
                         "mcp-session-id",
                         "traceparent",
                         "tracestate",
+                        "baggage",
                     ],
                     expose_headers: [
                         "mcp-session-id",

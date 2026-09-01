@@ -24,6 +24,8 @@ use crate::server_info::ServerInfoConfig;
 
 pub(crate) mod states;
 
+pub use states::telemetry::w3c_text_map_propagator;
+
 use states::StateMachine;
 
 /// The reason the server shut down, used to decide whether to restart.

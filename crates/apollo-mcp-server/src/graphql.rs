@@ -295,6 +295,179 @@ mod test {
     }
 
     #[tokio::test]
+    async fn graphql_client_injects_w3c_baggage_on_outgoing_request() {
+        use crate::server::states::telemetry::{otel_context_middleware, w3c_text_map_propagator};
+        use axum::{Router, body::Body, http::Request as HttpRequest, routing::post};
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use tower::ServiceExt;
+        use tracing::Instrument;
+        use tracing_opentelemetry::OpenTelemetryLayer;
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        use tracing_subscriber::registry;
+
+        // reqwest-tracing injects from Span::current().context(), which is empty
+        // unless a tracing-opentelemetry layer bridges the OTel context onto spans.
+        global::set_text_map_propagator(w3c_text_map_propagator());
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .build();
+        let tracer = provider.tracer("test");
+        let subscriber = registry().with(OpenTelemetryLayer::new(tracer));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        let mut server = mockito::Server::new_async().await;
+        let url = Url::parse(server.url().as_str()).unwrap();
+
+        let mock = server
+            .mock("POST", "/")
+            .match_header(
+                "baggage",
+                mockito::Matcher::Regex("userId=alice".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "data": {} }).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post({
+                    let url = url.clone();
+                    move |req: HttpRequest<Body>| {
+                        let url = url.clone();
+                        async move {
+                            // Middleware extracted the incoming baggage into this context.
+                            // Parent the GraphQL execute span with it so reqwest-tracing injects.
+                            let cx = req
+                                .extensions()
+                                .get::<opentelemetry::Context>()
+                                .cloned()
+                                .expect("middleware should store extracted OTel context");
+                            let span = tracing::info_span!("graphql_execute");
+                            let _ = span.set_parent(cx);
+                            let headers = HeaderMap::new();
+                            let mock_request = Request {
+                                input: json!({}),
+                                endpoint: &url,
+                                headers: &headers,
+                            };
+                            let result = TestExecutable {}
+                                .execute(mock_request)
+                                .instrument(span)
+                                .await
+                                .unwrap();
+                            assert!(
+                                result.is_error != Some(true),
+                                "graphql execute failed: {:?}",
+                                result.content
+                            );
+                            "ok"
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn(otel_context_middleware));
+
+        let request = HttpRequest::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("baggage", "userId=alice")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        mock.assert();
+    }
+
+    #[tokio::test]
+    async fn graphql_client_omits_unsafe_baggage_and_propagates_safe_members() {
+        use crate::server::states::telemetry::{otel_context_middleware, w3c_text_map_propagator};
+        use axum::{Router, body::Body, http::Request as HttpRequest, routing::post};
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_sdk::trace::{Sampler, SdkTracerProvider};
+        use tower::ServiceExt;
+        use tracing::Instrument;
+        use tracing_opentelemetry::OpenTelemetryLayer;
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        use tracing_subscriber::registry;
+
+        global::set_text_map_propagator(w3c_text_map_propagator());
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .build();
+        let tracer = provider.tracer("test");
+        let subscriber = registry().with(OpenTelemetryLayer::new(tracer));
+        let _subscriber_guard = tracing::subscriber::set_default(subscriber);
+
+        let mut server = mockito::Server::new_async().await;
+        let url = Url::parse(server.url().as_str()).unwrap();
+
+        let mock = server
+            .mock("POST", "/")
+            .match_header("baggage", "safe=ok")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(json!({ "data": {} }).to_string())
+            .expect(1)
+            .create_async()
+            .await;
+
+        let app = Router::new()
+            .route(
+                "/mcp",
+                post({
+                    let url = url.clone();
+                    move |req: HttpRequest<Body>| {
+                        let url = url.clone();
+                        async move {
+                            let cx = req
+                                .extensions()
+                                .get::<opentelemetry::Context>()
+                                .cloned()
+                                .expect("middleware should store extracted OTel context");
+                            let span = tracing::info_span!("graphql_execute");
+                            let _ = span.set_parent(cx);
+                            let headers = HeaderMap::new();
+                            let mock_request = Request {
+                                input: json!({}),
+                                endpoint: &url,
+                                headers: &headers,
+                            };
+                            let result = TestExecutable {}
+                                .execute(mock_request)
+                                .instrument(span)
+                                .await
+                                .unwrap();
+                            assert!(
+                                result.is_error != Some(true),
+                                "graphql execute failed: {:?}",
+                                result.content
+                            );
+                            "ok"
+                        }
+                    }
+                }),
+            )
+            .layer(axum::middleware::from_fn(otel_context_middleware));
+
+        let request = HttpRequest::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("baggage", "safe=ok,userId=alice;property=one%0Atwo")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), 200);
+        mock.assert();
+    }
+
+    #[tokio::test]
     async fn returns_tool_error_when_gql_server_cannot_be_reached() {
         // given
         let url = Url::parse("http://localhost/no-server").unwrap();

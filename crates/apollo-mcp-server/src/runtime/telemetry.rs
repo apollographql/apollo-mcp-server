@@ -5,6 +5,7 @@ use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::Logging;
 use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
+use apollo_mcp_server::server::w3c_text_map_propagator;
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
@@ -12,7 +13,6 @@ use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
-    propagation::TraceContextPropagator,
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
 use opentelemetry_semantic_conventions::{
@@ -389,7 +389,7 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
     let tracer = tracer_provider.tracer("apollo-mcp-trace");
 
     global::set_meter_provider(meter_provider.clone());
-    global::set_text_map_propagator(TraceContextPropagator::new());
+    global::set_text_map_propagator(w3c_text_map_propagator());
     global::set_tracer_provider(tracer_provider.clone());
 
     tracing_subscriber::registry()
@@ -728,5 +728,47 @@ mod tests {
         );
         let result = init_meter_provider(&config.telemetry);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn w3c_propagator_extracts_and_injects_baggage_and_trace_context() {
+        use opentelemetry::baggage::BaggageExt;
+        use opentelemetry::propagation::TextMapPropagator;
+        use opentelemetry::trace::TraceContextExt;
+        use opentelemetry::{Context, KeyValue};
+        use std::collections::HashMap;
+
+        let propagator = w3c_text_map_propagator();
+        let mut incoming = HashMap::new();
+        incoming.insert(
+            "traceparent".to_string(),
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+        );
+        incoming.insert(
+            "baggage".to_string(),
+            "userId=alice,serverNode=DF28".to_string(),
+        );
+
+        let extracted = propagator.extract(&incoming);
+        assert_eq!(
+            extracted.baggage().get("userId").map(|v| v.as_str()),
+            Some("alice")
+        );
+        assert_eq!(
+            extracted.baggage().get("serverNode").map(|v| v.as_str()),
+            Some("DF28")
+        );
+        assert_eq!(
+            format!("{:032x}", extracted.span().span_context().trace_id()),
+            "4bf92f3577b34da6a3ce929d0e0e4736"
+        );
+
+        let cx = Context::current().with_baggage(vec![KeyValue::new("userId", "alice")]);
+        let mut outgoing = HashMap::new();
+        propagator.inject_context(&cx, &mut outgoing);
+        let baggage_header = outgoing
+            .get("baggage")
+            .expect("composite propagator should inject a baggage header");
+        assert!(baggage_header.contains("userId=alice"));
     }
 }
