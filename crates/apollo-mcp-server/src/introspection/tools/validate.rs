@@ -39,7 +39,11 @@ impl Validate {
         let description = append_description_hint(default_description, description_hint);
         Self {
             schema,
-            tool: Tool::new(VALIDATE_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: super::annotate_schema_lookup_tool(Tool::new(
+                VALIDATE_TOOL_NAME,
+                description,
+                schema_from_type!(Input),
+            )),
         }
     }
 
@@ -132,5 +136,19 @@ mod tests {
         });
         let result = validate.execute(input).await;
         assert!(result.is_error == Some(true));
+    }
+
+    #[tokio::test]
+    async fn validate_tool_annotations_are_schema_lookup() {
+        let validate = Validate::new(SCHEMA.clone(), None);
+        let annotations = validate
+            .tool
+            .annotations
+            .as_ref()
+            .expect("validate tool must expose annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        assert_eq!(annotations.idempotent_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
     }
 }

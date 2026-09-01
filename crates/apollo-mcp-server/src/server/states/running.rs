@@ -1803,6 +1803,63 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn builtin_tools_expose_annotations_in_tools_list() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+            let schema = Arc::new(RwLock::new(schema));
+            let mut running = test_running(schema.clone());
+            running.execute_tool = Some(Execute::new(MutationMode::None, None));
+            running.introspect_tool = Some(Introspect::new(
+                schema.clone(),
+                Some("Query".to_string()),
+                None,
+                false,
+                None,
+            ));
+            running.validate_tool = Some(Validate::new(schema.clone(), None));
+            running.search_tool = Some(
+                Search::new(schema, false, 1, 15_000_000, false, None)
+                    .expect("search tool should index"),
+            );
+
+            let result = running
+                .list_tools_impl(Extensions::new(), None, None)
+                .await
+                .unwrap();
+
+            let annotation_of = |name: &str| {
+                result
+                    .tools
+                    .iter()
+                    .find(|tool| tool.name == name)
+                    .and_then(|tool| tool.annotations.clone())
+                    .unwrap_or_else(|| {
+                        panic!("{name} should appear in tools/list with annotations")
+                    })
+            };
+
+            let introspect = annotation_of(INTROSPECT_TOOL_NAME);
+            assert_eq!(introspect.read_only_hint, Some(true));
+            assert_eq!(introspect.destructive_hint, Some(false));
+            assert_eq!(introspect.open_world_hint, Some(false));
+
+            let search = annotation_of(SEARCH_TOOL_NAME);
+            assert_eq!(search.read_only_hint, Some(true));
+            assert_eq!(search.destructive_hint, Some(false));
+
+            let validate = annotation_of(VALIDATE_TOOL_NAME);
+            assert_eq!(validate.read_only_hint, Some(true));
+            assert_eq!(validate.destructive_hint, Some(false));
+
+            let execute = annotation_of(EXECUTE_TOOL_NAME);
+            assert_eq!(execute.read_only_hint, Some(true));
+            assert_eq!(execute.destructive_hint, Some(false));
+            assert_eq!(execute.open_world_hint, Some(true));
+        }
+
+        #[tokio::test]
         async fn list_tools_with_valid_app_parameter() {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),

@@ -85,7 +85,11 @@ impl Search {
             allow_mutations,
             leaf_depth,
             minify,
-            tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: super::annotate_schema_lookup_tool(Tool::new(
+                SEARCH_TOOL_NAME,
+                description,
+                schema_from_type!(Input),
+            )),
         })
     }
 
@@ -272,5 +276,22 @@ mod tests {
         // Should contain minification legend
         assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
         assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn search_tool_annotations_are_schema_lookup(schema: Valid<Schema>) {
+        let schema = Arc::new(RwLock::new(schema));
+        let search = Search::new(schema, false, 1, 15_000_000, false, None)
+            .expect("Failed to create search tool");
+        let annotations = search
+            .tool
+            .annotations
+            .as_ref()
+            .expect("search tool must expose annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        assert_eq!(annotations.idempotent_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
     }
 }

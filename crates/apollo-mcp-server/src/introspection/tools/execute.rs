@@ -5,7 +5,7 @@ use crate::{
     schema_from_type,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
-use rmcp::model::Tool;
+use rmcp::model::{Tool, ToolAnnotations};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -44,9 +44,20 @@ impl Execute {
             "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. If available, first use the `validate` tool to validate operations. DO NOT try to execute introspection queries.",
             description_hint,
         );
+        // Execute talks to the configured GraphQL endpoint (`openWorldHint`).
+        // MutationMode::All is the only mode that lets this tool submit
+        // mutations; None and Explicit both reject ad hoc mutations here.
+        let permits_mutation = mutation_mode == MutationMode::All;
+        let mut annotations = ToolAnnotations::new()
+            .read_only(!permits_mutation)
+            .destructive(permits_mutation);
+        annotations.idempotent_hint = Some(!permits_mutation);
+        annotations.open_world_hint = Some(true);
+
         Self {
             mutation_mode,
-            tool: Tool::new(EXECUTE_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: Tool::new(EXECUTE_TOOL_NAME, description, schema_from_type!(Input))
+                .annotate(annotations),
         }
     }
 }
@@ -265,5 +276,40 @@ mod tests {
 
         let result = Executable::variables(&execute, input);
         assert!(matches!(result, Err(ValidationError(msg)) if msg.contains("Invalid variables")));
+    }
+
+    fn assert_annotations(execute: &Execute, read_only: bool, destructive: bool, idempotent: bool) {
+        let annotations = execute
+            .tool
+            .annotations
+            .as_ref()
+            .expect("execute tool must expose annotations");
+        assert_eq!(annotations.read_only_hint, Some(read_only));
+        assert_eq!(annotations.destructive_hint, Some(destructive));
+        assert_eq!(annotations.idempotent_hint, Some(idempotent));
+        assert_eq!(annotations.open_world_hint, Some(true));
+
+        let serialized = rmcp::serde_json::to_value(&execute.tool).expect("tool should serialize");
+        assert_eq!(serialized["annotations"]["readOnlyHint"], read_only);
+        assert_eq!(serialized["annotations"]["destructiveHint"], destructive);
+        assert_eq!(serialized["annotations"]["idempotentHint"], idempotent);
+        assert_eq!(serialized["annotations"]["openWorldHint"], true);
+    }
+
+    #[test]
+    fn execute_annotations_when_mutations_disabled() {
+        assert_annotations(&Execute::new(MutationMode::None, None), true, false, true);
+        // Explicit still rejects ad hoc mutations on this tool.
+        assert_annotations(
+            &Execute::new(MutationMode::Explicit, None),
+            true,
+            false,
+            true,
+        );
+    }
+
+    #[test]
+    fn execute_annotations_when_mutations_enabled() {
+        assert_annotations(&Execute::new(MutationMode::All, None), false, true, false);
     }
 }

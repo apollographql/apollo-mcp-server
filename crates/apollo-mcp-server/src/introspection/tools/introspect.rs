@@ -57,7 +57,11 @@ impl Introspect {
             schema,
             allow_mutations: root_mutation_type.is_some(),
             minify,
-            tool: Tool::new(INTROSPECT_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: super::annotate_schema_lookup_tool(Tool::new(
+                INTROSPECT_TOOL_NAME,
+                description,
+                schema_from_type!(Input),
+            )),
         }
     }
 
@@ -308,5 +312,20 @@ mod tests {
             content.contains("type Mutation"),
             "Should contain Mutation type definition"
         );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn introspect_tool_annotations_are_schema_lookup(schema: Arc<RwLock<Valid<Schema>>>) {
+        let introspect = Introspect::new(schema, None, None, false, None);
+        let annotations = introspect
+            .tool
+            .annotations
+            .as_ref()
+            .expect("introspect tool must expose annotations");
+        assert_eq!(annotations.read_only_hint, Some(true));
+        assert_eq!(annotations.destructive_hint, Some(false));
+        assert_eq!(annotations.idempotent_hint, Some(true));
+        assert_eq!(annotations.open_world_hint, Some(false));
     }
 }
