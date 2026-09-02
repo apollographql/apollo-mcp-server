@@ -1843,19 +1843,25 @@ mod tests {
             let introspect = annotation_of(INTROSPECT_TOOL_NAME);
             assert_eq!(introspect.read_only_hint, Some(true));
             assert_eq!(introspect.destructive_hint, Some(false));
+            assert_eq!(introspect.idempotent_hint, Some(true));
             assert_eq!(introspect.open_world_hint, Some(false));
 
             let search = annotation_of(SEARCH_TOOL_NAME);
             assert_eq!(search.read_only_hint, Some(true));
             assert_eq!(search.destructive_hint, Some(false));
+            assert_eq!(search.idempotent_hint, Some(true));
+            assert_eq!(search.open_world_hint, Some(false));
 
             let validate = annotation_of(VALIDATE_TOOL_NAME);
             assert_eq!(validate.read_only_hint, Some(true));
             assert_eq!(validate.destructive_hint, Some(false));
+            assert_eq!(validate.idempotent_hint, Some(true));
+            assert_eq!(validate.open_world_hint, Some(false));
 
             let execute = annotation_of(EXECUTE_TOOL_NAME);
             assert_eq!(execute.read_only_hint, Some(true));
             assert_eq!(execute.destructive_hint, Some(false));
+            assert_eq!(execute.idempotent_hint, Some(true));
             assert_eq!(execute.open_world_hint, Some(true));
         }
 

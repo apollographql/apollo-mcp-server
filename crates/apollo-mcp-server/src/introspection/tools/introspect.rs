@@ -313,19 +313,4 @@ mod tests {
             "Should contain Mutation type definition"
         );
     }
-
-    #[rstest]
-    #[tokio::test]
-    async fn introspect_tool_annotations_are_schema_lookup(schema: Arc<RwLock<Valid<Schema>>>) {
-        let introspect = Introspect::new(schema, None, None, false, None);
-        let annotations = introspect
-            .tool
-            .annotations
-            .as_ref()
-            .expect("introspect tool must expose annotations");
-        assert_eq!(annotations.read_only_hint, Some(true));
-        assert_eq!(annotations.destructive_hint, Some(false));
-        assert_eq!(annotations.idempotent_hint, Some(true));
-        assert_eq!(annotations.open_world_hint, Some(false));
-    }
 }
