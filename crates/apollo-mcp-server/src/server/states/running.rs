@@ -673,7 +673,8 @@ impl ServerHandler for Running {
     /// `initialize`) to the versions this server implements, so it can't
     /// override our cap at [`MAX_SUPPORTED_PROTOCOL_VERSION`] with a newer
     /// version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243
-    /// headers and discovery, which this server doesn't yet handle).
+    /// headers and `subscriptions/listen`, which this server doesn't yet
+    /// handle).
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         static SUPPORTED: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
             ProtocolVersion::KNOWN_VERSIONS
@@ -3014,8 +3015,8 @@ mod integration_tests {
         #[tokio::test]
         async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
             // rmcp has a constant for 2026-07-28, but this server doesn't
-            // implement that revision (SEP-2243 headers, discovery). The
-            // stateless path must cap at the max supported version rather
+            // implement that revision (SEP-2243 headers, subscriptions/listen).
+            // The stateless path must cap at the max supported version rather
             // than advertise a version whose follow-up requests we can't
             // handle.
             let running = create_running_with_output_schema();
@@ -3992,6 +3993,231 @@ mod integration_tests {
                 "set_level should not return an error: {body}"
             );
             assert_eq!(body["result"], json!({}));
+        }
+    }
+
+    /// `server/discover`: called before any other request, without a session.
+    mod discover {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::server_info::ServerInfoConfig;
+
+        /// Discovery has no top-level `serverInfo`; it lives in `_meta`.
+        const SERVER_INFO_META_KEY: &str = "io.modelcontextprotocol/serverInfo";
+
+        fn create_test_running(server_info: ServerInfoConfig) -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                prompts: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                peers: Arc::new(RwLock::new(vec![])),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                annotations: HashMap::new(),
+                health_check: None,
+                server_info,
+                instructions: None,
+                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<Running, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.clone()),
+                session_manager,
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            )
+        }
+
+        /// Carries no session id, so `_meta` and the `MCP-Protocol-Version`
+        /// header have to be self-contained.
+        fn build_discover_request(protocol_version: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": protocol_version,
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                        "io.modelcontextprotocol/clientInfo": {
+                            "name": "test-client",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", protocol_version)
+                // SEP-2243 standard header.
+                .header("Mcp-Method", "server/discover")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        async fn discover(running: Running) -> serde_json::Value {
+            let service = create_service(running, LocalSessionManager::default().into());
+            let response = service
+                .oneshot(build_discover_request(
+                    MAX_SUPPORTED_PROTOCOL_VERSION.as_str(),
+                ))
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+            let body: serde_json::Value = body_str
+                .lines()
+                .find_map(|line| serde_json::from_str(line.strip_prefix("data: ")?).ok())
+                .or_else(|| serde_json::from_str(&body_str).ok())
+                .unwrap_or_else(|| panic!("no JSON data found in response: {body_str}"));
+            assert_eq!(status, StatusCode::OK, "discover failed: {body}");
+            body["result"].clone()
+        }
+
+        #[tokio::test]
+        async fn returns_expected_result_shape() {
+            let running = create_test_running(ServerInfoConfig {
+                description: Some("Custom fleet description".to_string()),
+                ..Default::default()
+            });
+            let expected_capabilities = serde_json::to_value(running.get_info().capabilities)
+                .expect("capabilities serialize");
+
+            let result = discover(running).await;
+
+            assert_eq!(result["resultType"], "complete");
+            // `initialize` returns `get_info()` untouched but for the
+            // negotiated version, so this is the capability set both report.
+            assert_eq!(result["capabilities"], expected_capabilities);
+            assert!(result["ttlMs"].is_u64(), "ttlMs must be a number: {result}");
+            assert!(
+                result["cacheScope"].is_string(),
+                "cacheScope must be a string: {result}"
+            );
+
+            let server_info = &result["_meta"][SERVER_INFO_META_KEY];
+            assert_eq!(server_info["description"], "Custom fleet description");
+            assert_eq!(server_info["name"], "Apollo MCP Server");
+            assert!(
+                server_info["version"].is_string(),
+                "serverInfo must carry a version: {server_info}"
+            );
+        }
+
+        #[tokio::test]
+        async fn advertises_backward_compatible_protocol_versions() {
+            let result = discover(create_test_running(ServerInfoConfig::default())).await;
+
+            let versions: Vec<&str> = result["supportedVersions"]
+                .as_array()
+                .expect("supportedVersions must be an array")
+                .iter()
+                .map(|version| version.as_str().expect("versions are strings"))
+                .collect();
+
+            assert!(
+                versions.contains(&"2025-11-25"),
+                "must advertise 2025-11-25 for backward compat: {versions:?}"
+            );
+            // rmcp reuses this list as the ceiling on `initialize`
+            // negotiation, so advertising a version promises we can serve it.
+            assert!(
+                !versions
+                    .iter()
+                    .any(|version| *version > MAX_SUPPORTED_PROTOCOL_VERSION.as_str()),
+                "must not advertise past our cap: {versions:?}"
+            );
+        }
+
+        /// stdio has no headers to negotiate with, so discovery as the opening
+        /// message is the only compatibility probe available there.
+        #[tokio::test]
+        async fn works_as_opener_over_stdio() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (server_r, server_w) = tokio::io::split(server_io);
+            let (client_r, mut client_w) = tokio::io::split(client_io);
+
+            let server = tokio::spawn(async move {
+                let service = create_test_running(ServerInfoConfig::default())
+                    .serve((server_r, server_w))
+                    .await
+                    .expect("stdio serve should accept a discover opener");
+                let _ = service.waiting().await;
+            });
+
+            let mut request = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion":
+                            MAX_SUPPORTED_PROTOCOL_VERSION.as_str(),
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                }
+            })
+            .to_string();
+            request.push('\n');
+            client_w.write_all(request.as_bytes()).await.unwrap();
+
+            let mut reader = BufReader::new(client_r);
+            let mut response_line = String::new();
+            reader.read_line(&mut response_line).await.unwrap();
+            let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
+
+            assert!(
+                body.get("error").is_none(),
+                "discover over stdio returned an error: {body}"
+            );
+            let versions = body["result"]["supportedVersions"]
+                .as_array()
+                .expect("supportedVersions must be an array");
+            assert!(versions.iter().any(|version| version == "2025-11-25"));
+
+            drop(reader);
+            drop(client_w);
+            let _ = server.await;
         }
     }
 }
