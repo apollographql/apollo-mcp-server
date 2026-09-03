@@ -1,5 +1,6 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
@@ -7,9 +8,10 @@ use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 use rmcp::model::{
-    ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResult, Implementation,
-    ListPromptsResult, ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResult,
-    ResourcesCapability, Role, ToolsCapability,
+    CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
+    GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
+    PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
+    ToolsCapability,
 };
 use rmcp::{
     Peer, RoleServer, ServerHandler, ServiceError,
@@ -289,10 +291,8 @@ impl Running {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
-                Some(app) => ListToolsResult {
-                    next_cursor: None,
-                    tools: self
-                        .operations
+                Some(app) => ListToolsResult::with_all_items(
+                    self.operations
                         .read()
                         .await
                         .iter()
@@ -311,8 +311,7 @@ impl Running {
                                 .collect::<Vec<_>>(),
                         )
                         .collect(),
-                    meta: None,
-                },
+                ),
                 None => {
                     return Err(McpError::new(
                         ErrorCode::INVALID_REQUEST,
@@ -322,10 +321,8 @@ impl Running {
                 }
             }
         } else {
-            ListToolsResult {
-                next_cursor: None,
-                tools: self
-                    .operations
+            ListToolsResult::with_all_items(
+                self.operations
                     .read()
                     .await
                     .iter()
@@ -336,8 +333,7 @@ impl Running {
                     .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.validate_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .collect(),
-                meta: None,
-            }
+            )
         };
 
         if !self.client_supports_output_schema(protocol_version) {
@@ -527,11 +523,7 @@ impl Running {
             vec![]
         };
 
-        Ok(ListResourcesResult {
-            resources,
-            next_cursor: None,
-            meta: None,
-        })
+        Ok(ListResourcesResult::with_all_items(resources))
     }
 
     async fn read_resource_impl(
@@ -622,10 +614,9 @@ pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersi
 /// Echoes the client-requested protocol version when this server supports
 /// it, otherwise falls back to [`MAX_SUPPORTED_PROTOCOL_VERSION`].
 ///
-/// Unlike rmcp's `negotiate_protocol_version`, this caps at the version the
-/// server implements: rmcp's `KNOWN_VERSIONS` includes versions the SDK has
-/// constants for but that this server doesn't yet handle (e.g. `2026-07-28`
-/// SEP-2243 headers and discovery).
+/// rmcp's own re-negotiation (which runs after `initialize` on every
+/// transport, keyed off [`ServerHandler::supported_protocol_versions`]) caps
+/// at the same version, so the two stay in agreement.
 fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
     if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested)
         && *client_requested <= MAX_SUPPORTED_PROTOCOL_VERSION
@@ -669,12 +660,29 @@ impl ServerHandler for Running {
         let mut peers = self.peers.write().await;
         peers.push(context.peer);
         // Echo the client's requested protocol version when supported,
-        // falling back to our max supported version otherwise (#794). This
-        // result stands only on stateless HTTP; on stateful sessions
-        // rmcp's handshake re-negotiates and can override it (#803).
+        // falling back to our max supported version otherwise (#794). rmcp's
+        // handshake re-negotiates this after `initialize` on every
+        // transport, but `supported_protocol_versions` below keeps that
+        // re-negotiation capped at the same version (closes #803).
         let mut info = self.get_info();
         info.protocol_version = negotiate_protocol_version(&request.protocol_version);
         Ok(info)
+    }
+
+    /// Narrows rmcp's re-negotiation (run on every transport after
+    /// `initialize`) to the versions this server implements, so it can't
+    /// override our cap at [`MAX_SUPPORTED_PROTOCOL_VERSION`] with a newer
+    /// version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243
+    /// headers and discovery, which this server doesn't yet handle).
+    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+        static SUPPORTED: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
+            ProtocolVersion::KNOWN_VERSIONS
+                .iter()
+                .filter(|version| **version <= MAX_SUPPORTED_PROTOCOL_VERSION)
+                .cloned()
+                .collect()
+        });
+        Cow::Borrowed(&SUPPORTED)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -682,7 +690,7 @@ impl ServerHandler for Running {
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<CallToolResponse, McpError> {
         let span = tracing::Span::current();
         if let Some(args) = &request.arguments
             && let Ok(json) = serde_json::to_string(args)
@@ -707,7 +715,7 @@ impl ServerHandler for Running {
             }
         }
 
-        result
+        result.map(Into::into)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
@@ -738,12 +746,13 @@ impl ServerHandler for Running {
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
+    ) -> Result<ReadResourceResponse, ErrorData> {
         let peer_info = context.peer.peer_info();
         let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
 
         self.read_resource_impl(request, context.extensions, client_capabilities)
             .await
+            .map(Into::into)
     }
 
     #[tracing::instrument(skip_all)]
@@ -760,8 +769,8 @@ impl ServerHandler for Running {
         &self,
         request: GetPromptRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<GetPromptResult, McpError> {
-        self.get_prompt_impl(request)
+    ) -> Result<GetPromptResponse, McpError> {
+        self.get_prompt_impl(request).map(Into::into)
     }
 
     // `logging` is deprecated by SEP-2577, but we still override this handler so
@@ -2641,7 +2650,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(true),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
         }
 
@@ -2901,6 +2910,59 @@ mod integration_tests {
             let _ = server.await;
         }
 
+        #[tokio::test]
+        async fn stdio_caps_at_max_supported_when_client_requests_newer_known_version() {
+            // Mirrors `stateless_caps_at_max_supported_when_client_requests_newer_known_version`
+            // for the stdio transport: rmcp's generic `serve()` negotiates through
+            // the same `supported_protocol_versions` hook (service/server.rs), a
+            // different code path from `StreamableHttpService`'s tower layer. This
+            // proves the cap holds there too, closing the one transport #803's fix
+            // didn't yet have a regression test for.
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let running = create_running_with_output_schema();
+
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (server_r, server_w) = tokio::io::split(server_io);
+            let (client_r, mut client_w) = tokio::io::split(client_io);
+
+            let server = tokio::spawn(async move {
+                let service = running
+                    .serve((server_r, server_w))
+                    .await
+                    .expect("stdio serve should complete the initialize handshake");
+                let _ = service.waiting().await;
+            });
+
+            let mut request = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2026-07-28",
+                    "capabilities": {},
+                    "clientInfo": { "name": "test-client", "version": "1.0.0" }
+                }
+            })
+            .to_string();
+            request.push('\n');
+            client_w.write_all(request.as_bytes()).await.unwrap();
+
+            let mut reader = BufReader::new(client_r);
+            let mut response_line = String::new();
+            reader.read_line(&mut response_line).await.unwrap();
+            let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
+
+            drop(reader);
+            drop(client_w);
+            let _ = server.await;
+        }
+
         fn create_stateless_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
@@ -2908,7 +2970,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(false),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(false),
             )
         }
 
@@ -2973,14 +3035,18 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn stateful_echoes_newer_known_version_due_to_rmcp_override() {
-            // Known upstream divergence, tracked in #803: on stateful paths
-            // rmcp's handshake re-negotiates after our `initialize` handler
-            // and echoes any version in its KNOWN_VERSIONS, overriding our
-            // cap at MAX_SUPPORTED_PROTOCOL_VERSION. This test pins that
-            // behavior so an rmcp upgrade that changes it is caught; if it
-            // starts failing, re-check whether the cap now holds on all
-            // transports and close #803 accordingly.
+        async fn legacy_session_mode_enabled_still_caps_at_max_supported_when_client_requests_newer_known_version()
+         {
+            // Requesting protocol version 2026-07-28 always uses the
+            // stateless/discover lifecycle regardless of `legacy_session_mode`
+            // (SEP-2567), so this exercises the same `NegotiatingStatelessHttpService`
+            // path as `stateless_caps_at_max_supported_when_client_requests_newer_known_version`,
+            // not a distinct legacy-session handshake. This pins that enabling
+            // `legacy_session_mode` doesn't accidentally exempt that request from
+            // the cap (closes #803);
+            // `stdio_caps_at_max_supported_when_client_requests_newer_known_version`
+            // covers the one code path (rmcp's generic `serve()`) that isn't
+            // routed through `StreamableHttpService`.
             let running = create_running_with_output_schema();
             let service = create_service(running, LocalSessionManager::default().into());
 
@@ -2991,7 +3057,10 @@ mod integration_tests {
 
             assert_eq!(response.status(), StatusCode::OK);
             let body = extract_json_body(response).await;
-            assert_eq!(body["result"]["protocolVersion"], "2026-07-28");
+            assert_eq!(
+                body["result"]["protocolVersion"],
+                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+            );
         }
 
         #[test]
@@ -3089,7 +3158,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(true),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
         }
 
@@ -3321,7 +3390,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 LocalSessionManager::default().into(),
-                StreamableHttpServerConfig::default().with_stateful_mode(stateful_mode),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(stateful_mode),
             )
         }
 
@@ -3332,7 +3401,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(true),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
         }
 
@@ -3641,7 +3710,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(true),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
         }
 
@@ -3799,7 +3868,7 @@ mod integration_tests {
             StreamableHttpService::new(
                 move || Ok(running.clone()),
                 session_manager,
-                StreamableHttpServerConfig::default().with_stateful_mode(true),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
         }
 

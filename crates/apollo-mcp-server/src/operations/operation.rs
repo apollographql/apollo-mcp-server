@@ -895,7 +895,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1040,7 +1039,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1196,7 +1194,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1355,7 +1352,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1511,7 +1507,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1664,7 +1659,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -1827,7 +1821,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2005,7 +1998,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2148,7 +2140,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2406,7 +2397,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2552,7 +2542,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2702,7 +2691,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -2841,7 +2829,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -3384,7 +3371,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -3517,7 +3503,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -4096,7 +4081,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -4290,7 +4274,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }
@@ -4499,7 +4482,6 @@ mod tests {
                         ),
                     },
                 ),
-                execution: None,
                 icons: None,
                 meta: None,
             },
@@ -4633,7 +4615,6 @@ mod tests {
                         ),
                     },
                 ),
-                execution: None,
                 icons: None,
                 meta: None,
             },
@@ -4769,7 +4750,6 @@ mod tests {
                     ),
                 },
             ),
-            execution: None,
             icons: None,
             meta: None,
         }

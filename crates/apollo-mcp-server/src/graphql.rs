@@ -10,7 +10,7 @@ use opentelemetry::KeyValue;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware, Extension};
 use reqwest_tracing::{OtelName, TracingMiddleware};
-use rmcp::model::{CallToolResult, ContentBlock, Meta};
+use rmcp::model::{CallToolResult, ContentBlock, MetaObject};
 use serde_json::{Map, Value};
 use url::Url;
 
@@ -126,7 +126,7 @@ pub trait Executable {
                 // - full response is preserved in meta for the client to access
                 let (structured_content, meta) = if let Some(tree) = private_fields.as_ref() {
                     let restricted = filter_private_fields(&json, tree);
-                    let mut meta = Meta::new();
+                    let mut meta = MetaObject::new();
                     meta.insert("structuredContent".into(), json);
                     (restricted, Some(meta))
                 } else {
