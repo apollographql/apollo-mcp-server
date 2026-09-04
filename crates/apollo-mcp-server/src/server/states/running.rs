@@ -823,6 +823,9 @@ impl ServerHandler for Running {
         if let Some(u) = self.server_info.website_url() {
             impl_ = impl_.with_website_url(u);
         }
+        if let Some(icons) = self.server_info.icons() {
+            impl_ = impl_.with_icons(icons);
+        }
         let mut result = InitializeResult::new(capabilities)
             .with_protocol_version(protocol_version)
             .with_server_info(impl_);
@@ -2192,6 +2195,7 @@ mod tests {
                 title: Some("Custom GraphQL Server".to_string()),
                 website_url: Some("https://my-server.example.com/docs".to_string()),
                 description: Some("A custom MCP server for testing".to_string()),
+                icons: vec![],
             };
 
             let running = Running {
@@ -2240,6 +2244,70 @@ mod tests {
             let info = running.get_info();
 
             assert_eq!(info.protocol_version, MAX_SUPPORTED_PROTOCOL_VERSION);
+        }
+
+        #[test]
+        fn get_info_omits_icons_by_default() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let running = test_running(Arc::new(RwLock::new(schema)));
+
+            let info = running.get_info();
+
+            assert_eq!(info.server_info.icons, None);
+        }
+
+        #[test]
+        fn get_info_forwards_configured_icons_with_optional_fields() {
+            use crate::server_info::{IconConfig, IconThemeConfig};
+            use rmcp::model::IconTheme;
+
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let server_info = ServerInfoConfig {
+                icons: vec![
+                    IconConfig {
+                        src: "https://example.com/icon.svg".to_string(),
+                        mime_type: Some("image/svg+xml".to_string()),
+                        sizes: Some(vec!["any".to_string()]),
+                        theme: Some(IconThemeConfig::Dark),
+                    },
+                    IconConfig {
+                        src: "https://example.com/icon-48.png".to_string(),
+                        mime_type: None,
+                        sizes: None,
+                        theme: None,
+                    },
+                ],
+                ..Default::default()
+            };
+
+            let running = Running {
+                server_info,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let icons = running
+                .get_info()
+                .server_info
+                .icons
+                .expect("icons should be advertised when configured");
+
+            assert_eq!(icons.len(), 2);
+            assert_eq!(icons[0].src, "https://example.com/icon.svg");
+            assert_eq!(icons[0].mime_type.as_deref(), Some("image/svg+xml"));
+            assert_eq!(icons[0].sizes.as_deref(), Some(&["any".to_string()][..]));
+            assert_eq!(icons[0].theme, Some(IconTheme::Dark));
+            assert_eq!(icons[1].src, "https://example.com/icon-48.png");
+            assert!(icons[1].mime_type.is_none());
+            assert!(icons[1].sizes.is_none());
+            assert!(icons[1].theme.is_none());
         }
     }
 

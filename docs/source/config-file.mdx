@@ -625,6 +625,7 @@ These fields are under the top-level `server_info` key and configure the server 
 | `title`       | `string` | `"Apollo MCP Server"`                                                         | Human-readable title for the server (used for display in UIs)              |
 | `website_url` | `URL`    | `"https://www.apollographql.com/docs/apollo-mcp-server"`                      | URL to the server's website or documentation                               |
 | `description` | `string` | `"A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."` | A brief description of the server                                          |
+| `icons`       | `Icon[]` |                                                                               | Icons representing the server, for clients that display one                |
 
 All fields are optional. If not specified, sensible defaults are used. This is useful when wrapping Apollo MCP Server or branding it for specific use cases.
 
@@ -635,7 +636,28 @@ server_info:
   title: "Acme MCP Server"
   website_url: "https://acme.com/mcp-docs"
   description: "MCP server for Acme Corp's GraphQL API"
+  icons:
+    - src: "https://acme.com/mcp-icon.svg"
+      mime_type: "image/svg+xml"
+      sizes: ["any"]
 ```
+
+Each icon entry supports the fields defined by the [MCP `Icon` object](https://modelcontextprotocol.io/specification/2025-11-25/schema#icon):
+
+| Option      | Type       | Description                                                                                   |
+| :---------- | :--------- | :-------------------------------------------------------------------------------------------- |
+| `src`       | `string`   | URI of the icon, such as an `https://` URL or a base64-encoded `data:` URI. Required.       |
+| `mime_type` | `string`   | Explicit MIME type such as `image/png` or `image/svg+xml`. Optional.                          |
+| `sizes`     | `string[]` | Available sizes, each `WxH` (e.g. `48x48`) or `any` for scalable formats. Optional.           |
+| `theme`     | `string`   | Background theme the icon is designed for: `light` or `dark`. Omit this field to render with either theme. Optional. |
+
+No icon is advertised by default. Clients that support icon metadata should select the most appropriate entry for their UI. Clients that do not support icons can ignore this optional field.
+
+<Note>
+
+The MCP specification makes the client responsible for refusing unsafe icon sources, such as `javascript:` URIs, and for applying appropriate security precautions when rendering an icon. The server advertises whatever you configure.
+
+</Note>
 
 ### Initialize instructions
 
