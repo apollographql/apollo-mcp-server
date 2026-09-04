@@ -59,25 +59,17 @@ fn with_default(mut schema: Schema, default_value: Option<&GraphQLValue>) -> Sch
 
 /// Converts a constant GraphQL value into JSON.
 ///
-/// Returns `None` for values with no JSON representation: variables, and numbers
-/// outside the `f64` range.
+/// Returns `None` for values with no faithful JSON representation: variables,
+/// integers outside the `i64` range, and floats outside the `f64` range. The
+/// caller then omits `default` rather than emit a value the operation did not
+/// declare.
 fn graphql_value_to_json(value: &GraphQLValue) -> Option<Value> {
     match value {
         GraphQLValue::Null => Some(Value::Null),
         GraphQLValue::Boolean(boolean) => Some(Value::Bool(*boolean)),
         GraphQLValue::String(string) => Some(Value::String(string.clone())),
         GraphQLValue::Enum(name) => Some(Value::String(name.to_string())),
-        GraphQLValue::Int(int) => int
-            .as_str()
-            .parse::<i64>()
-            .ok()
-            .map(Value::from)
-            .or_else(|| {
-                int.try_to_f64()
-                    .ok()
-                    .and_then(Number::from_f64)
-                    .map(Value::Number)
-            }),
+        GraphQLValue::Int(int) => int.as_str().parse::<i64>().ok().map(Value::from),
         GraphQLValue::Float(float) => float
             .try_to_f64()
             .ok()
@@ -120,6 +112,8 @@ mod tests {
     use super::*;
 
     const SDL: &str = r#"
+        scalar BigInt
+
         enum Status {
             OPEN
             CLOSED
@@ -251,11 +245,38 @@ mod tests {
     #[case::enum_value("$v: Status = OPEN", json!("OPEN"))]
     #[case::list("$v: [Int] = [1, 2]", json!([1, 2]))]
     #[case::object("$v: Filter = { name: \"n\", limit: 5 }", json!({"name": "n", "limit": 5}))]
-    #[case::null("$v: String = null", json!(null))]
     fn default_value_is_emitted_as_json(#[case] definition: &str, #[case] expected: Value) {
         let (schema, _) = convert(definition, None);
 
-        assert_eq!(schema["default"], expected);
+        assert_eq!(schema.get("default"), Some(&expected));
+    }
+
+    #[test]
+    fn explicit_null_default_is_emitted_as_json_null() {
+        let (schema, _) = convert("$v: String = null", None);
+
+        assert_eq!(schema.get("default"), Some(&json!(null)));
+    }
+
+    #[test]
+    fn integer_default_outside_i64_is_omitted() {
+        let (schema, _) = convert("$v: BigInt = 12345678901234567890123", None);
+
+        assert!(schema.get("default").is_none(), "{schema}");
+    }
+
+    #[test]
+    fn float_default_outside_f64_is_omitted() {
+        let (schema, _) = convert("$v: Float = 1e999", None);
+
+        assert!(schema.get("default").is_none(), "{schema}");
+    }
+
+    #[test]
+    fn variable_default_has_no_json_representation() {
+        let value = GraphQLValue::Variable(apollo_compiler::Name::new("other").unwrap());
+
+        assert_eq!(graphql_value_to_json(&value), None);
     }
 
     #[test]
