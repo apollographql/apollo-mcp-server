@@ -175,7 +175,7 @@ mod tests {
 
         assert_eq!(
             schema,
-            json!({"oneOf": [{"type": "string"}, {"type": "null"}]})
+            json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
         );
     }
 
@@ -193,10 +193,10 @@ mod tests {
         assert_eq!(
             schema,
             json!({
-                "oneOf": [
+                "anyOf": [
                     {
                         "type": "array",
-                        "items": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+                        "items": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
                     },
                     {"type": "null"},
                 ]
@@ -222,10 +222,10 @@ mod tests {
             schema,
             json!({
                 "description": "Some numbers",
-                "oneOf": [
+                "anyOf": [
                     {
                         "type": "array",
-                        "items": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+                        "items": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
                     },
                     {"type": "null"},
                 ]
@@ -239,7 +239,7 @@ mod tests {
 
         assert_eq!(
             schema,
-            json!({"oneOf": [{"$ref": "#/definitions/Status"}, {"type": "null"}]})
+            json!({"anyOf": [{"$ref": "#/definitions/Status"}, {"type": "null"}]})
         );
     }
 

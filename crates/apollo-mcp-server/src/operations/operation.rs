@@ -806,7 +806,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("string"),
                             },
@@ -913,7 +913,7 @@ mod tests {
         {
           "properties": {
             "id": {
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
@@ -956,7 +956,7 @@ mod tests {
             "type": String("object"),
             "properties": Object {
                 "id": Object {
-                    "oneOf": Array [
+                    "anyOf": Array [
                         Object {
                             "type": String("string"),
                         },
@@ -1161,7 +1161,7 @@ mod tests {
                     "id": Object {
                         "type": String("array"),
                         "items": Object {
-                            "oneOf": Array [
+                            "anyOf": Array [
                                 Object {
                                     "type": String("string"),
                                 },
@@ -1266,14 +1266,14 @@ mod tests {
             meta: None,
         }
         "#);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&serde_json::json!(tool.input_schema)).unwrap(), @r#"
         {
           "type": "object",
           "properties": {
             "id": {
               "type": "array",
               "items": {
-                "oneOf": [
+                "anyOf": [
                   {
                     "type": "string"
                   },
@@ -1288,7 +1288,7 @@ mod tests {
             "id"
           ]
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -1475,11 +1475,11 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("array"),
                                 "items": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1591,11 +1591,11 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "array",
                   "items": {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "type": "string"
                       },
@@ -1648,7 +1648,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("array"),
                                 "items": Object {
@@ -1757,7 +1757,7 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "array",
                   "items": {
@@ -1807,15 +1807,15 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("array"),
                                 "items": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("array"),
                                             "items": Object {
-                                                "oneOf": Array [
+                                                "anyOf": Array [
                                                     Object {
                                                         "type": String("string"),
                                                     },
@@ -1933,15 +1933,15 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "array",
                   "items": {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "type": "array",
                         "items": {
-                          "oneOf": [
+                          "anyOf": [
                             {
                               "type": "string"
                             },
@@ -2000,7 +2000,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "$ref": String("#/definitions/RealInputObject"),
                             },
@@ -2016,7 +2016,7 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "oneOf": Array [
+                                "anyOf": Array [
                                     Object {
                                         "type": String("string"),
                                     },
@@ -2433,7 +2433,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {},
                             Object {
                                 "type": String("null"),
@@ -2578,7 +2578,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "$ref": String("#/definitions/RealCustomScalar"),
                             },
@@ -2734,7 +2734,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "$ref": String("#/definitions/RealCustomScalar"),
                             },
@@ -2878,7 +2878,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "$ref": String("#/definitions/RealCustomScalar"),
                             },
@@ -3416,7 +3416,7 @@ mod tests {
                 "properties": Object {
                     "filter": Object {
                         "description": String("the filter argument"),
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "$ref": String("#/definitions/Filter"),
                             },
@@ -3433,7 +3433,7 @@ mod tests {
                         "properties": Object {
                             "field": Object {
                                 "description": String("the filter.field field"),
-                                "oneOf": Array [
+                                "anyOf": Array [
                                     Object {
                                         "type": String("string"),
                                     },
@@ -3444,7 +3444,7 @@ mod tests {
                             },
                             "filter": Object {
                                 "description": String("the filter.filter field"),
-                                "oneOf": Array [
+                                "anyOf": Array [
                                     Object {
                                         "$ref": String("#/definitions/Filter"),
                                     },
@@ -3586,7 +3586,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "name": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("string"),
                             },
@@ -3717,15 +3717,15 @@ mod tests {
         {
           "properties": {
             "idArg": {
-              "description": "id description",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id description"
             }
           },
           "type": "object"
@@ -3760,26 +3760,26 @@ mod tests {
         {
           "properties": {
             "flag": {
-              "description": "Skipped when true.#a flag",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "boolean"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "Skipped when true.#a flag"
             },
             "idArg": {
-              "description": "id description",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id description"
             }
           },
           "type": "object"
@@ -3815,7 +3815,7 @@ mod tests {
           "properties": {
             "idArg": {
               "description": "id description",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
@@ -3826,7 +3826,7 @@ mod tests {
             },
             "skipArg": {
               "description": "Skipped when true.",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "boolean"
                 },
@@ -3922,15 +3922,15 @@ mod tests {
         {
           "properties": {
             "idArg": {
-              "description": "id comment override",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id comment override"
             }
           },
           "type": "object"
@@ -3965,15 +3965,15 @@ mod tests {
         {
           "properties": {
             "idArg": {
-              "description": "id comment override\n multi-line comment",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id comment override\n multi-line comment"
             }
           },
           "type": "object"
@@ -4008,15 +4008,15 @@ mod tests {
         {
           "properties": {
             "idArg": {
-              "description": "id comment override\n multi-line comment",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id comment override\n multi-line comment"
             }
           },
           "type": "object"
@@ -4051,26 +4051,26 @@ mod tests {
         {
           "properties": {
             "flag": {
-              "description": "a flag",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "boolean"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "a flag"
             },
             "idArg": {
-              "description": "id comment override\n multi-line comment",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id comment override\n multi-line comment"
             }
           },
           "type": "object"
@@ -4136,26 +4136,26 @@ mod tests {
         {
           "properties": {
             "flag": {
-              "description": "a flag",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "boolean"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "a flag"
             },
             "idArg": {
-              "description": "id arg",
-              "oneOf": [
+              "anyOf": [
                 {
                   "type": "string"
                 },
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "description": "id arg"
             }
           },
           "type": "object"
@@ -4227,11 +4227,11 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "objects": Object {
-                        "oneOf": Array [
+                        "anyOf": Array [
                             Object {
                                 "type": String("array"),
                                 "items": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "$ref": String("#/definitions/RealInputObject"),
                                         },
@@ -4253,7 +4253,7 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "oneOf": Array [
+                                "anyOf": Array [
                                     Object {
                                         "type": String("string"),
                                     },
@@ -4371,15 +4371,15 @@ mod tests {
             "RealInputObject": {
               "properties": {
                 "optional": {
-                  "description": "optional is a input field that is optional",
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "type": "string"
                     },
                     {
                       "type": "null"
                     }
-                  ]
+                  ],
+                  "description": "optional is a input field that is optional"
                 },
                 "required": {
                   "description": "required is a input field that is required",
@@ -4394,10 +4394,10 @@ mod tests {
           },
           "properties": {
             "objects": {
-              "oneOf": [
+              "anyOf": [
                 {
                   "items": {
-                    "oneOf": [
+                    "anyOf": [
                       {
                         "$ref": "#/definitions/RealInputObject"
                       },
@@ -4467,7 +4467,7 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "oneOf": Array [
+                                "anyOf": Array [
                                     Object {
                                         "type": String("string"),
                                     },
@@ -4585,15 +4585,15 @@ mod tests {
             "RealInputObject": {
               "properties": {
                 "optional": {
-                  "description": "optional is a input field that is optional",
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "type": "string"
                     },
                     {
                       "type": "null"
                     }
-                  ]
+                  ],
+                  "description": "optional is a input field that is optional"
                 },
                 "required": {
                   "description": "required is a input field that is required",

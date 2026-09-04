@@ -60,11 +60,13 @@ impl From<Type<'_>> for JSONSchema {
 
         // Spell out nullability instead of implying it by absence from `required`, so
         // clients that move every property into `required` can still pass null.
+        // `anyOf` rather than `oneOf`: the strict-mode schema subsets of both OpenAI
+        // and Anthropic accept `anyOf` and reject `oneOf`.
         let nullable = if r#type.is_non_null() {
             inner
         } else {
             json_schema!({
-                "oneOf": [inner, {"type": "null"}],
+                "anyOf": [inner, {"type": "null"}],
             })
         };
 
