@@ -417,7 +417,9 @@ fn named_type_to_output_schema(
                 }
             }
 
-            // Union types - oneOf the possible types based on inline fragments
+            // Union types - anyOf the possible types based on inline fragments. Member
+            // schemas carry no discriminator and allow extra properties, so one response
+            // object can match several members and `oneOf` would reject it.
             Some(ExtendedType::Union(_union_def)) => {
                 if selection_set.is_empty() {
                     json_schema!({})
@@ -450,7 +452,7 @@ fn named_type_to_output_schema(
                     } else if type_schemas.len() == 1 {
                         type_schemas.remove(0)
                     } else {
-                        json_schema!({"oneOf": type_schemas})
+                        json_schema!({"anyOf": type_schemas})
                     }
                 }
             }
@@ -713,6 +715,63 @@ mod tests {
         assert!(
             errors.is_empty(),
             "response must validate against the emitted output schema, got: {errors:#?}"
+        );
+    }
+
+    #[test]
+    fn output_schema_accepts_union_member_matching_several_fragments() {
+        let schema = parse_schema(
+            r#"
+            type Book {
+                id: ID!
+                name: String
+            }
+
+            type Author {
+                id: ID!
+                name: String
+            }
+
+            union SearchResult = Book | Author
+
+            type Query {
+                search: SearchResult!
+            }
+            "#,
+        );
+
+        let (_, selection_set) = parse_operation(
+            r#"
+            query Search {
+                search {
+                    ... on Book { id name }
+                    ... on Author { id name }
+                }
+            }
+            "#,
+        );
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            None,
+        );
+
+        let validator = jsonschema::validator_for(&serde_json::to_value(&output_schema).unwrap())
+            .expect("emitted output schema should itself be a valid JSON Schema");
+        let response = serde_json::json!({"data": {"search": {"id": "1", "name": "Dune"}}});
+
+        let errors: Vec<String> = validator
+            .iter_errors(&response)
+            .map(|e| format!("{}: {e}", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "a member object that matches more than one fragment must validate, got: {errors:#?}"
         );
     }
 
