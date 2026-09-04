@@ -31,6 +31,7 @@ use url::Url;
 use crate::apps::app::AppTarget;
 use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
+use crate::auth::{OperationScopePolicy, ValidToken};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
@@ -283,6 +284,20 @@ impl Running {
             .build()
             .add(1, &[]);
 
+        let operation_scope_context =
+            extensions
+                .get::<axum::http::request::Parts>()
+                .and_then(|parts| {
+                    let policy = parts.extensions.get::<OperationScopePolicy>()?;
+                    policy.filters_tools_list().then(|| {
+                        let token_scopes = parts
+                            .extensions
+                            .get::<ValidToken>()
+                            .map(|token| token.scopes.clone())
+                            .unwrap_or_default();
+                        (policy.clone(), token_scopes)
+                    })
+                });
         let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, client_capabilities))?;
 
@@ -335,6 +350,12 @@ impl Running {
                     .collect(),
             )
         };
+
+        if let Some((policy, token_scopes)) = operation_scope_context {
+            result
+                .tools
+                .retain(|tool| policy.allows_tool(tool.name.as_ref(), &token_scopes));
+        }
 
         if !self.client_supports_output_schema(protocol_version) {
             for tool in &mut result.tools {
@@ -1791,8 +1812,48 @@ mod tests {
 
     mod list_tools {
         use crate::apps::app::{AppResource, AppResourceSource};
+        use crate::scope_requirements::OperationRequiredScopes;
+        use axum_extra::headers::{Authorization, authorization::Bearer};
 
         use super::*;
+
+        fn scope_extensions(
+            required_scopes: HashMap<String, OperationRequiredScopes>,
+            filter_tools_list: bool,
+            token_scopes: Option<Vec<String>>,
+        ) -> Extensions {
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (mut parts, _) = request.into_parts();
+            parts.extensions.insert(OperationScopePolicy::new(
+                required_scopes,
+                filter_tools_list,
+            ));
+            if let Some(scopes) = token_scopes {
+                parts.extensions.insert(ValidToken {
+                    token: Authorization::<Bearer>::bearer("test-token").unwrap(),
+                    scopes,
+                });
+            }
+            extensions.insert(parts);
+            extensions
+        }
+
+        fn required_scopes(
+            tool_name: &str,
+            scopes: &[&str],
+        ) -> HashMap<String, OperationRequiredScopes> {
+            HashMap::from([(
+                tool_name.to_string(),
+                OperationRequiredScopes::new(vec![
+                    scopes.iter().map(|scope| (*scope).to_string()).collect(),
+                ])
+                .expect("test scope requirement must be non-empty"),
+            )])
+        }
 
         #[tokio::test]
         async fn list_tools_without_app_parameter() {
@@ -1809,6 +1870,72 @@ mod tests {
 
             assert_eq!(result.tools.len(), 0);
             assert_eq!(result.next_cursor, None);
+        }
+
+        #[tokio::test]
+        async fn filters_tools_using_authenticated_token_scopes() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+            let required = required_scopes("GetId", &["app:read"]);
+
+            let hidden = running
+                .list_tools_impl(
+                    scope_extensions(required.clone(), true, Some(vec![])),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let visible = running
+                .list_tools_impl(
+                    scope_extensions(required, true, Some(vec!["app:read".to_string()])),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+
+            assert!(hidden.tools.is_empty());
+            assert_eq!(visible.tools.len(), 1);
+            assert_eq!(visible.tools[0].name, "GetId");
+        }
+
+        #[tokio::test]
+        async fn anonymous_discovery_hides_tools_with_required_scopes() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+            let required = required_scopes("GetId", &["app:read"]);
+
+            let result = running
+                .list_tools_impl(scope_extensions(required, true, None), None, None)
+                .await
+                .unwrap();
+
+            assert!(result.tools.is_empty());
+        }
+
+        #[tokio::test]
+        async fn disabled_scope_filter_preserves_existing_tool_list() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+            let required = required_scopes("GetId", &["app:read"]);
+
+            let result = running
+                .list_tools_impl(scope_extensions(required, false, Some(vec![])), None, None)
+                .await
+                .unwrap();
+
+            assert_eq!(result.tools.len(), 1);
+            assert_eq!(result.tools[0].name, "GetId");
         }
 
         #[tokio::test]
