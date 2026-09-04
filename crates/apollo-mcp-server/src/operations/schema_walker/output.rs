@@ -316,7 +316,8 @@ fn type_to_output_schema(
             })
         }
 
-        // Nullable types - allow null
+        // Nullable types - allow null. `anyOf` rather than `oneOf`: the inner schema may
+        // itself accept `null`, and `oneOf` would then reject it for matching both branches.
         GraphQLType::Named(name) => {
             let inner = named_type_to_output_schema(
                 name,
@@ -328,7 +329,7 @@ fn type_to_output_schema(
                 private_tree,
             );
             json_schema!({
-                "oneOf": [inner, {"type": "null"}]
+                "anyOf": [inner, {"type": "null"}]
             })
         }
         GraphQLType::List(inner) => {
@@ -342,7 +343,7 @@ fn type_to_output_schema(
                 private_tree,
             );
             json_schema!({
-                "oneOf": [
+                "anyOf": [
                     {"type": "array", "items": items},
                     {"type": "null"}
                 ]
@@ -540,6 +541,7 @@ fn with_description(mut schema: JSONSchema, description: Option<String>) -> JSON
 mod tests {
     use super::*;
     use apollo_compiler::parser::Parser;
+    use rstest::rstest;
 
     use crate::operations::private_fields::{collect_named_fragments, collect_private_fields};
 
@@ -655,6 +657,63 @@ mod tests {
         );
 
         insta::assert_snapshot!(serde_json::to_string_pretty(&output_schema).unwrap());
+    }
+
+    #[rstest]
+    #[case::null_scalar(serde_json::json!({"id": "1", "meta": null, "tags": []}))]
+    #[case::null_list(serde_json::json!({"id": "1", "meta": {"k": "v"}, "tags": null}))]
+    #[case::null_list_item(serde_json::json!({"id": "1", "meta": {"k": "v"}, "tags": [null, 1]}))]
+    fn output_schema_accepts_null_for_unmapped_custom_scalar(#[case] thing: Value) {
+        let schema = parse_schema(
+            r#"
+            scalar JSON
+
+            type Thing {
+                id: ID!
+                meta: JSON
+                tags: [JSON]
+            }
+
+            type Query {
+                thing: Thing
+            }
+            "#,
+        );
+
+        let (_, selection_set) = parse_operation(
+            r#"
+            query GetThing {
+                thing {
+                    id
+                    meta
+                    tags
+                }
+            }
+            "#,
+        );
+
+        let query_type = schema.types.get("Query").unwrap();
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            query_type,
+            &schema,
+            None,
+            &HashMap::new(),
+            None,
+        );
+
+        let validator = jsonschema::validator_for(&serde_json::to_value(&output_schema).unwrap())
+            .expect("emitted output schema should itself be a valid JSON Schema");
+        let response = serde_json::json!({"data": {"thing": thing}});
+
+        let errors: Vec<String> = validator
+            .iter_errors(&response)
+            .map(|e| format!("{}: {e}", e.instance_path()))
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "response must validate against the emitted output schema, got: {errors:#?}"
+        );
     }
 
     #[test]
