@@ -29,6 +29,7 @@ use tracing::{debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
+use crate::apps::app_param_from_query;
 use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
@@ -834,14 +835,11 @@ impl ServerHandler for Running {
 }
 
 fn extract_app_param(extensions: &Extensions) -> Option<String> {
-    extensions
-        .get::<axum::http::request::Parts>()
-        .and_then(|parts| parts.uri.query())
-        .and_then(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .find(|(key, _)| key == "app")
-                .map(|(_, value)| value.into_owned())
-        })
+    app_param_from_query(
+        extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.uri.query()),
+    )
 }
 
 fn tool_not_found(name: &str) -> McpError {

@@ -333,29 +333,117 @@ These headers are sent with every request the server makes to discover authoriza
 
 Some identity providers (Microsoft Entra ID, Azure AD B2C, AWS Cognito, and Ping Identity) intentionally omit the `alg` field from JSON Web Keys, which is [optional per RFC 7517](https://datatracker.ietf.org/doc/html/rfc7517#section-4.4). When a JWK omits `alg`, Apollo MCP Server uses `id_token_signing_alg_values_supported` from the authorization server's discovery document if it contains exactly one supported algorithm. The key is rejected if that field is empty, contains multiple values, or contains an unsupported value.
 
-## Anonymous MCP discovery
+## Skipping token validation
 
-Some MCP clients need to call discovery methods before they have obtained an OAuth token. By default, these methods require authentication like every other request. You can allow unauthenticated access to these methods by setting `allow_anonymous_mcp_discovery` to `true`:
+When `transport.auth` is set, every request needs a valid bearer token. Some deployments need exceptions. An MCP client might call discovery methods before it has a token. A server might expose public tools alongside private ones. A server might also accept a second credential, such as an API key that an upstream API validates.
+
+`skip_token_validation` describes those exceptions. It holds three lists, and each one keys on a different part of the request:
+
+| List      | Matches on                       | Example      |
+| --------- | -------------------------------- | ------------ |
+| `methods` | The JSON-RPC method name         | `tools/list` |
+| `tools`   | The tool named by a `tools/call` | `SearchDocs` |
+| `headers` | An HTTP header name              | `x-api-key`  |
 
 ```yaml title="mcp.yaml"
+# Required for the `headers` entry below to reach the upstream GraphQL API.
+# Without it, the header is dropped and nothing downstream can validate it.
+forward_headers:
+  - x-api-key
 transport:
   type: streamable_http
   auth:
     servers:
       - https://auth.example.com
-    allow_anonymous_mcp_discovery: true
+    resource: https://mcp.example.com/mcp
+    skip_token_validation:
+      methods:
+        - initialize
+        - notifications/initialized
+        - tools/list
+      tools:
+        - SearchDocs
+      headers:
+        - x-api-key
 ```
+
+An empty list is off, so there is no separate switch to turn the lists on.
+
+A stateful session needs both `initialize` and the `notifications/initialized` notification that follows it on its own POST; missing either one from `methods` still ends the handshake in a 401, one step after `initialize` succeeded. A stateful session also opens a GET request for the server-to-client stream, which carries no JSON-RPC body: only `headers` can match a GET, since `methods` and `tools` need a body to inspect. A session with no token and no listed header does not get that stream.
 
 <Caution>
 
-Enabling this option deviates from the [MCP specification's requirement](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) that authorization be present on every request. Unauthenticated clients will be able to discover which tools and resources the server exposes without providing a token. Only enable this when your deployment requires unauthenticated discovery, for example to support agent frameworks or platform registrations that list tools before initiating an OAuth flow.
+These lists deviate from the [MCP specification's requirement](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) that authorization be present on every request. A client with no token can discover what the server exposes, and can call any tool you list. Only configure this when your deployment needs it, for example to support agent frameworks that list tools before they start an OAuth flow, or to keep public tools reachable for users who have no account with you.
 
 </Caution>
 
-The following MCP methods are allowed without authentication when this option is enabled:
+### Why `tools/call` cannot go in `methods`
 
-| Method           | Description                          |
-| ---------------- | ------------------------------------ |
-| `initialize`     | MCP session initialization handshake |
-| `tools/list`     | List available MCP tools             |
-| `resources/list` | List available MCP resources         |
+Every tool call uses the method name `tools/call`, so listing it there would make every tool reachable without a token. Apollo MCP Server rejects it at startup. Name the individual tools in `tools` instead.
+
+`resources/read`, `resources/subscribe`, `resources/unsubscribe`, `prompts/get`, and `completion/complete` are rejected for the same reason: each resolves one of many resources or prompts through a request parameter, and there is no per-item list like `tools` to redirect to. The last three are not served today, but are rejected anyway so the guardrail doesn't need a revisit when support lands.
+
+For the same reason, a `tools/call` that carries an `?app=` query parameter never matches the `tools` list. That parameter makes the server run the named app's own tool instead of the operation the name refers to, so the name in `tools` would not identify what actually executes. Those calls always require a token.
+
+### The header list moves authentication, it does not remove it
+
+A request that carries a listed header skips token validation, and a later layer authenticates it. Apollo MCP Server cannot judge a credential it does not understand, so it only reads whether the header is present.
+
+A listed header is checked before the JSON-RPC body, so a match skips validation for every method and tool, including ones absent from `methods` and `tools`. `headers` is not scoped down by the other two lists.
+
+Make sure something downstream validates that header. If nothing does, the header is an open door: any caller can send it with any value.
+
+That validator only gates requests that reach your API. Requests the MCP server answers itself, such as the `initialize` handshake, `notifications/initialized`, `tools/list`, `resources/read`, and the `GET` stream, never reach your API, so nothing validates the header value on them even with a correctly configured downstream validator. A caller that sends the header with any value gets a working session, the full tool list, and your schema. Downstream validation gates tool execution, not discovery.
+
+The header only reaches your API if you also list it in [`forward_headers`](/apollo-mcp-server/config-file#forwarding-headers). If you do not, the header is dropped before the GraphQL request goes out, and nothing downstream can validate it: the middleware skips validation, and the upstream request looks like an ordinary anonymous call.
+
+If your clients run in a browser, the header must also appear in [`cors.allow_headers`](/apollo-mcp-server/cors#all-cors-options), or the preflight response omits it and the browser never sends it on the real request. That request then reaches the server with no header and no token, matches no list, and gets a `401` that looks unrelated to CORS.
+
+Never assume a header name. The upstream API decides it, which is why the list is configuration rather than a built-in name.
+
+### A token is always validated when one is present
+
+Every list applies only to a request that carries no `Authorization` header. A caller that presents a token always gets it validated.
+
+One result surprises people. A caller with an **expired** token gets `401` on a public tool, while a caller with **no** token succeeds on that same tool:
+
+```http
+POST /mcp HTTP/1.1
+Authorization: Bearer <expired token>
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"SearchDocs"}}
+```
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+```
+
+```http
+POST /mcp HTTP/1.1
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"SearchDocs"}}
+```
+
+```http
+HTTP/1.1 200 OK
+```
+
+This ordering is deliberate. An OAuth client refreshes on the `401` and retries, so it learns its token is dead on the first call rather than the first protected call. Callers with no account send no token, and the lists exist for them.
+
+### Deprecated: `allow_anonymous_mcp_discovery`
+
+`allow_anonymous_mcp_discovery` still works and now maps onto `skip_token_validation.methods`. Setting it is the same as writing:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    skip_token_validation:
+      methods:
+        - initialize
+        - tools/list
+        - resources/list
+```
+
+The server logs a deprecation warning at startup. Setting both `allow_anonymous_mcp_discovery` and `skip_token_validation.methods` is an error, because the two would describe the same list twice. Remove the flag and list the methods you want.
