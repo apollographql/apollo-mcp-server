@@ -5,7 +5,7 @@ use tracing::warn;
 
 use crate::custom_scalar_map::CustomScalarMap;
 
-use super::{r#type::Type, with_desc};
+use super::{r#type::Type, with_default, with_desc};
 
 /// A GraphQL Named Walker
 pub(super) struct Name<'a> {
@@ -14,9 +14,6 @@ pub(super) struct Name<'a> {
 
     /// Custom scalar map for supplementing information from the GraphQL schema
     pub(super) custom_scalar_map: Option<&'a CustomScalarMap>,
-
-    /// The optional description of the named type, from comments in the schema
-    pub(super) description: &'a Option<String>,
 
     /// The actual named type to translate into a JSON schema
     pub(super) name: &'a GraphQLName,
@@ -30,14 +27,13 @@ impl From<Name<'_>> for JSONSchema {
         Name {
             cache,
             custom_scalar_map,
-            description,
             name,
             schema,
         }: Name,
     ) -> Self {
         let unknown_type = json_schema!({});
 
-        let result = match name.as_str() {
+        match name.as_str() {
             // Basic types map nicely
             "String" | "ID" => json_schema!({"type": "string"}),
             "Float" => json_schema!({"type": "number"}),
@@ -117,13 +113,16 @@ impl From<Name<'_>> for JSONSchema {
                             .get_or_insert(&mut Map::default())
                             .insert(
                                 name.to_string(),
-                                JSONSchema::from(Type {
-                                    cache,
-                                    custom_scalar_map,
-                                    description: &field_description,
-                                    schema,
-                                    r#type: &field.ty,
-                                })
+                                with_default(
+                                    JSONSchema::from(Type {
+                                        cache,
+                                        custom_scalar_map,
+                                        description: &field_description,
+                                        schema,
+                                        r#type: &field.ty,
+                                    }),
+                                    field.default_value.as_deref(),
+                                )
                                 .into(),
                             );
 
@@ -193,9 +192,7 @@ impl From<Name<'_>> for JSONSchema {
                     unknown_type
                 }
             },
-        };
-
-        with_desc(result, description)
+        }
     }
 }
 
@@ -210,13 +207,11 @@ mod tests {
                 .unwrap()
                 .into_inner();
         let name = GraphQLName::new(type_name).unwrap();
-        let description = None;
         let mut cache = Map::new();
 
         Name {
             cache: &mut cache,
             custom_scalar_map: None,
-            description: &description,
             name: &name,
             schema: &schema,
         }

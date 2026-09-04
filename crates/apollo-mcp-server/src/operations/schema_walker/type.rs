@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 
 use crate::custom_scalar_map::CustomScalarMap;
 
-use super::name::Name;
+use super::{name::Name, with_desc};
 
 pub(super) struct Type<'a> {
     /// The definition cache which contains full schemas for nested types
@@ -33,42 +33,43 @@ impl From<Type<'_>> for JSONSchema {
             r#type,
         }: Type,
     ) -> Self {
-        // JSON Schema assumes that all properties are nullable unless there is a
-        // required field, so we treat cases the same here.
-        match r#type {
-            GraphQLType::List(list) | GraphQLType::NonNullList(list) => {
-                let nested_schema: JSONSchema = Type {
+        let inner = match r#type {
+            GraphQLType::List(items) | GraphQLType::NonNullList(items) => {
+                let items: JSONSchema = Type {
                     cache,
                     custom_scalar_map,
-                    description,
+                    description: &None,
                     schema,
-                    r#type: list,
+                    r#type: items,
                 }
                 .into();
 
-                // Arrays, however, do need to specify that fields can be null
-                let nested_schema = if list.is_non_null() {
-                    nested_schema
-                } else {
-                    json_schema!({"oneOf": [
-                        nested_schema,
-                        {"type": "null"},
-                    ]})
-                };
-
                 json_schema!({
                     "type": "array",
-                    "items": nested_schema,
+                    "items": items,
                 })
             }
 
             GraphQLType::Named(name) | GraphQLType::NonNullNamed(name) => JSONSchema::from(Name {
                 cache,
                 custom_scalar_map,
-                description,
                 name,
                 schema,
             }),
-        }
+        };
+
+        // Spell out nullability instead of implying it by absence from `required`, so
+        // clients that move every property into `required` can still pass null.
+        // `anyOf` rather than `oneOf`: the strict-mode schema subsets of both OpenAI
+        // and Anthropic accept `anyOf` and reject `oneOf`.
+        let nullable = if r#type.is_non_null() {
+            inner
+        } else {
+            json_schema!({
+                "anyOf": [inner, {"type": "null"}],
+            })
+        };
+
+        with_desc(nullable, description)
     }
 }
