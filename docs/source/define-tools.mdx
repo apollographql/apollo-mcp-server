@@ -23,6 +23,8 @@ For each predefined operation tool, Apollo MCP Server parses a single named Grap
 
 Apollo MCP Server derives the tool's JSON `inputSchema` from the operation variables and configured GraphQL schema. This schema guides MCP clients and AI models, but the server doesn't independently enforce it for predefined operation calls. The server also doesn't validate a predefined operation against the configured GraphQL schema before exposing the operation as a tool. The upstream GraphQL endpoint performs GraphQL document and variable validation during execution, so test and review your predefined operations before deploying them.
 
+Nullable variables and input fields are generated with an explicit `null` alternative (`"oneOf": [..., {"type": "null"}]`) and are left out of `required`, so a model can leave a value unset either by omitting the property or by passing `null`. This keeps the schema sound for clients that move every property into `required` for strict function calling. Default values declared on operation variables or input fields are emitted as JSON Schema `default`, and a variable with a default value isn't `required` even when its GraphQL type is non-null.
+
 The optional [`validate` tool](#introspection-tools) validates an agent-supplied operation against the current schema; it isn't an automatic prerequisite for `execute` and doesn't prevalidate predefined operation tools.
 
 ## Define GraphQL operations for tools

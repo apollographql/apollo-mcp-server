@@ -652,6 +652,7 @@ fn get_json_schema(
                 &mut definitions,
                 custom_scalar_map,
                 description,
+                variable.default_value.as_deref(),
             );
             schema
                 .ensure_object()
@@ -661,7 +662,7 @@ fn get_json_schema(
                 .get_or_insert(&mut Map::default())
                 .insert(variable_name.clone(), nested.into());
 
-            if variable.ty.is_non_null() {
+            if variable.ty.is_non_null() && variable.default_value.is_none() {
                 schema
                     .ensure_object()
                     .entry("required")
@@ -805,7 +806,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "type": String("string"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("string"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
             },
@@ -905,10 +913,70 @@ mod tests {
         {
           "properties": {
             "id": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
+        }
+        "#);
+    }
+
+    #[test]
+    fn variables_with_defaults_expose_default_and_are_optional() {
+        let operation = Operation::from_raw(
+            RawOperation {
+                source_text: r#"query QueryName($id: ID = "abc", $flag: Boolean! = true, $limit: Int!) { id }"#
+                    .to_string(),
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        insta::assert_debug_snapshot!(tool.input_schema, @r#"
+        {
+            "type": String("object"),
+            "properties": Object {
+                "id": Object {
+                    "oneOf": Array [
+                        Object {
+                            "type": String("string"),
+                        },
+                        Object {
+                            "type": String("null"),
+                        },
+                    ],
+                    "default": String("abc"),
+                },
+                "flag": Object {
+                    "type": String("boolean"),
+                    "default": Bool(true),
+                },
+                "limit": Object {
+                    "type": String("integer"),
+                },
+            },
+            "required": Array [
+                String("limit"),
+            ],
         }
         "#);
     }
@@ -1407,17 +1475,24 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "type": String("array"),
-                        "items": Object {
-                            "oneOf": Array [
-                                Object {
-                                    "type": String("string"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("string"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
                                 },
-                                Object {
-                                    "type": String("null"),
-                                },
-                            ],
-                        },
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
             },
@@ -1516,17 +1591,24 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "type": "array",
-              "items": {
-                "oneOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "null"
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
-                ]
-              }
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }
@@ -1566,10 +1648,17 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "type": String("array"),
-                        "items": Object {
-                            "type": String("string"),
-                        },
+                        "oneOf": Array [
+                            Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "type": String("string"),
+                                },
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
             },
@@ -1668,10 +1757,17 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }
@@ -1711,27 +1807,34 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "type": String("array"),
-                        "items": Object {
-                            "oneOf": Array [
-                                Object {
-                                    "type": String("array"),
-                                    "items": Object {
-                                        "oneOf": Array [
-                                            Object {
-                                                "type": String("string"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "type": String("array"),
+                                            "items": Object {
+                                                "oneOf": Array [
+                                                    Object {
+                                                        "type": String("string"),
+                                                    },
+                                                    Object {
+                                                        "type": String("null"),
+                                                    },
+                                                ],
                                             },
-                                            Object {
-                                                "type": String("null"),
-                                            },
-                                        ],
-                                    },
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
                                 },
-                                Object {
-                                    "type": String("null"),
-                                },
-                            ],
-                        },
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
             },
@@ -1830,27 +1933,34 @@ mod tests {
           "type": "object",
           "properties": {
             "id": {
-              "type": "array",
-              "items": {
-                "oneOf": [
-                  {
-                    "type": "array",
-                    "items": {
-                      "oneOf": [
-                        {
-                          "type": "string"
-                        },
-                        {
-                          "type": "null"
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
-                      ]
-                    }
-                  },
-                  {
-                    "type": "null"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
-                ]
-              }
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }
@@ -1890,7 +2000,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "$ref": String("#/definitions/RealInputObject"),
+                        "oneOf": Array [
+                            Object {
+                                "$ref": String("#/definitions/RealInputObject"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -1899,7 +2016,14 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "type": String("string"),
+                                "oneOf": Array [
+                                    Object {
+                                        "type": String("string"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
                             },
                             "required": Object {
                                 "description": String("required is a input field that is required"),
@@ -2308,7 +2432,14 @@ mod tests {
             input_schema: {
                 "type": String("object"),
                 "properties": Object {
-                    "id": Object {},
+                    "id": Object {
+                        "oneOf": Array [
+                            Object {},
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
+                    },
                 },
             },
             output_schema: Some(
@@ -2447,7 +2578,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "$ref": String("#/definitions/RealCustomScalar"),
+                        "oneOf": Array [
+                            Object {
+                                "$ref": String("#/definitions/RealCustomScalar"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -2596,7 +2734,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "$ref": String("#/definitions/RealCustomScalar"),
+                        "oneOf": Array [
+                            Object {
+                                "$ref": String("#/definitions/RealCustomScalar"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -2733,7 +2878,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
-                        "$ref": String("#/definitions/RealCustomScalar"),
+                        "oneOf": Array [
+                            Object {
+                                "$ref": String("#/definitions/RealCustomScalar"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -3264,7 +3416,14 @@ mod tests {
                 "properties": Object {
                     "filter": Object {
                         "description": String("the filter argument"),
-                        "$ref": String("#/definitions/Filter"),
+                        "oneOf": Array [
+                            Object {
+                                "$ref": String("#/definitions/Filter"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -3274,11 +3433,25 @@ mod tests {
                         "properties": Object {
                             "field": Object {
                                 "description": String("the filter.field field"),
-                                "type": String("string"),
+                                "oneOf": Array [
+                                    Object {
+                                        "type": String("string"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
                             },
                             "filter": Object {
                                 "description": String("the filter.filter field"),
-                                "$ref": String("#/definitions/Filter"),
+                                "oneOf": Array [
+                                    Object {
+                                        "$ref": String("#/definitions/Filter"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
                             },
                         },
                     },
@@ -3413,7 +3586,14 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "name": Object {
-                        "type": String("string"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("string"),
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
             },
@@ -3533,17 +3713,24 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "idArg": {
               "description": "id description",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3569,21 +3756,35 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "flag": {
               "description": "Skipped when true.#a flag",
-              "type": "boolean"
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "idArg": {
               "description": "id description",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3614,11 +3815,25 @@ mod tests {
           "properties": {
             "idArg": {
               "description": "id description",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "skipArg": {
               "description": "Skipped when true.",
-              "type": "boolean"
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }
@@ -3703,17 +3918,24 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "idArg": {
               "description": "id comment override",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3739,17 +3961,24 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "idArg": {
               "description": "id comment override\n multi-line comment",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3775,17 +4004,24 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "idArg": {
               "description": "id comment override\n multi-line comment",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3811,21 +4047,35 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "flag": {
               "description": "a flag",
-              "type": "boolean"
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "idArg": {
               "description": "id comment override\n multi-line comment",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3882,21 +4132,35 @@ mod tests {
         let tool = Tool::from(operation);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r#"
         {
           "properties": {
             "flag": {
               "description": "a flag",
-              "type": "boolean"
+              "oneOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "idArg": {
               "description": "id arg",
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "#);
     }
 
     #[test]
@@ -3963,17 +4227,24 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "objects": Object {
-                        "type": String("array"),
-                        "items": Object {
-                            "oneOf": Array [
-                                Object {
-                                    "$ref": String("#/definitions/RealInputObject"),
+                        "oneOf": Array [
+                            Object {
+                                "type": String("array"),
+                                "items": Object {
+                                    "oneOf": Array [
+                                        Object {
+                                            "$ref": String("#/definitions/RealInputObject"),
+                                        },
+                                        Object {
+                                            "type": String("null"),
+                                        },
+                                    ],
                                 },
-                                Object {
-                                    "type": String("null"),
-                                },
-                            ],
-                        },
+                            },
+                            Object {
+                                "type": String("null"),
+                            },
+                        ],
                     },
                 },
                 "definitions": Object {
@@ -3982,7 +4253,14 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "type": String("string"),
+                                "oneOf": Array [
+                                    Object {
+                                        "type": String("string"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
                             },
                             "required": Object {
                                 "description": String("required is a input field that is required"),
@@ -4087,14 +4365,21 @@ mod tests {
         "##);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r##"
         {
           "definitions": {
             "RealInputObject": {
               "properties": {
                 "optional": {
                   "description": "optional is a input field that is optional",
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "required": {
                   "description": "required is a input field that is required",
@@ -4109,22 +4394,29 @@ mod tests {
           },
           "properties": {
             "objects": {
-              "items": {
-                "oneOf": [
-                  {
-                    "$ref": "#/definitions/RealInputObject"
+              "oneOf": [
+                {
+                  "items": {
+                    "oneOf": [
+                      {
+                        "$ref": "#/definitions/RealInputObject"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "type": "array"
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           },
           "type": "object"
         }
-        "###);
+        "##);
     }
 
     #[test]
@@ -4175,7 +4467,14 @@ mod tests {
                         "properties": Object {
                             "optional": Object {
                                 "description": String("optional is a input field that is optional"),
-                                "type": String("string"),
+                                "oneOf": Array [
+                                    Object {
+                                        "type": String("string"),
+                                    },
+                                    Object {
+                                        "type": String("null"),
+                                    },
+                                ],
                             },
                             "required": Object {
                                 "description": String("required is a input field that is required"),
@@ -4280,14 +4579,21 @@ mod tests {
         "##);
 
         let json = to_sorted_json!(tool.input_schema);
-        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r###"
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap(), @r##"
         {
           "definitions": {
             "RealInputObject": {
               "properties": {
                 "optional": {
                   "description": "optional is a input field that is optional",
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "required": {
                   "description": "required is a input field that is required",
@@ -4313,7 +4619,7 @@ mod tests {
           ],
           "type": "object"
         }
-        "###);
+        "##);
     }
 
     #[test]
