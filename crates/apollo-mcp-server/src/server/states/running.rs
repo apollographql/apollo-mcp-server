@@ -611,16 +611,22 @@ impl Running {
 /// than this server's capabilities.
 pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
 
-/// Echoes the client-requested protocol version when this server supports
-/// it, otherwise falls back to [`MAX_SUPPORTED_PROTOCOL_VERSION`].
-///
-/// rmcp's own re-negotiation (which runs after `initialize` on every
-/// transport, keyed off [`ServerHandler::supported_protocol_versions`]) caps
-/// at the same version, so the two stay in agreement.
+/// The protocol versions this server negotiates and advertises: every version
+/// rmcp knows, capped at [`MAX_SUPPORTED_PROTOCOL_VERSION`]. Single source of
+/// truth for that set.
+static SUPPORTED_PROTOCOL_VERSIONS: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
+    ProtocolVersion::KNOWN_VERSIONS
+        .iter()
+        .filter(|version| **version <= MAX_SUPPORTED_PROTOCOL_VERSION)
+        .cloned()
+        .collect()
+});
+
+/// Echoes the client-requested protocol version when it is in
+/// [`SUPPORTED_PROTOCOL_VERSIONS`], otherwise falls back to
+/// [`MAX_SUPPORTED_PROTOCOL_VERSION`].
 fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
-    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested)
-        && *client_requested <= MAX_SUPPORTED_PROTOCOL_VERSION
-    {
+    if SUPPORTED_PROTOCOL_VERSIONS.contains(client_requested) {
         client_requested.clone()
     } else {
         // debug rather than warn: falling back is expected, handled behavior,
@@ -670,19 +676,11 @@ impl ServerHandler for Running {
     }
 
     /// Narrows rmcp's re-negotiation (run on every transport after
-    /// `initialize`) to the versions this server implements, so it can't
-    /// override our cap at [`MAX_SUPPORTED_PROTOCOL_VERSION`] with a newer
-    /// version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243
-    /// headers and discovery, which this server doesn't yet handle).
+    /// `initialize`) to [`SUPPORTED_PROTOCOL_VERSIONS`], so it can't advertise
+    /// a newer version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s
+    /// SEP-2243 headers and discovery, which this server doesn't yet handle).
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        static SUPPORTED: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
-            ProtocolVersion::KNOWN_VERSIONS
-                .iter()
-                .filter(|version| **version <= MAX_SUPPORTED_PROTOCOL_VERSION)
-                .cloned()
-                .collect()
-        });
-        Cow::Borrowed(&SUPPORTED)
+        Cow::Borrowed(&SUPPORTED_PROTOCOL_VERSIONS)
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
