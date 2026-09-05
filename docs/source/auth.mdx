@@ -172,6 +172,7 @@ transport:
   auth:
     servers:
       - https://auth.example.com
+    filter_tools_by_scope: true
 overrides:
   required_scopes:
     GetUser:
@@ -217,6 +218,8 @@ The server doesn't validate `required_scopes` keys against the current tool list
 Treat `required_scopes` as a manually maintained security policy. Compare its keys with the live `tools/list` response during deployment and whenever you add, remove, rename, or hot-reload operations.
 
 </Caution>
+
+By default, `tools/list` continues to return all tools after global authorization succeeds. Set `transport.auth.filter_tools_by_scope: true` to apply `required_scopes` during discovery as well. Authenticated clients then see a protected tool only when their token satisfies its flat requirement or at least one configured alternative group. Tools without an entry remain visible. If `allow_anonymous_mcp_discovery` is also enabled, anonymous clients see only tools without a `required_scopes` entry. This filtering changes discovery only; `tools/call` remains the authorization boundary and still returns HTTP 403 for insufficient scopes.
 
 ## HTTP error responses
 

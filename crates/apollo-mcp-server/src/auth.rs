@@ -220,6 +220,14 @@ pub struct Config {
     #[serde(default)]
     pub allow_anonymous_mcp_discovery: bool,
 
+    /// Filter `tools/list` results using `overrides.required_scopes`.
+    ///
+    /// Tools without an entry in `required_scopes` remain visible. Authenticated
+    /// clients only see protected tools when their token satisfies the configured
+    /// scope requirement; anonymous discovery clients only see unprotected tools.
+    #[serde(default)]
+    pub filter_tools_by_scope: bool,
+
     /// TLS configuration for connecting to OAuth servers
     #[serde(default)]
     pub tls: TlsConfig,
@@ -298,6 +306,43 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
     url
 }
 
+/// Shared per-operation scope policy used by request authorization and tool discovery.
+#[derive(Clone, Debug)]
+pub(crate) struct OperationScopePolicy {
+    required_scopes: Arc<HashMap<String, OperationRequiredScopes>>,
+    filter_tools_list: bool,
+}
+
+impl OperationScopePolicy {
+    pub(crate) fn new(
+        required_scopes: HashMap<String, OperationRequiredScopes>,
+        filter_tools_list: bool,
+    ) -> Self {
+        Self {
+            required_scopes: Arc::new(required_scopes),
+            filter_tools_list,
+        }
+    }
+
+    pub(crate) fn filters_tools_list(&self) -> bool {
+        self.filter_tools_list
+    }
+
+    pub(crate) fn allows_tool(&self, op_name: &str, token_scopes: &[String]) -> bool {
+        self.required_scopes
+            .get(op_name)
+            .is_none_or(|required| required.is_satisfied_by(token_scopes))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.required_scopes.is_empty()
+    }
+
+    fn required_for(&self, op_name: &str) -> Option<&OperationRequiredScopes> {
+        self.required_scopes.get(op_name)
+    }
+}
+
 /// Internal state for the auth middleware, containing both config and pre-built HTTP client
 #[derive(Clone)]
 struct AuthState {
@@ -309,10 +354,8 @@ struct AuthState {
     /// Upstream OAuth server URLs, parsed once at startup so the per-request
     /// path neither re-parses nor allocates them.
     auth_servers: Arc<[Url]>,
-    /// Per-operation required scopes, keyed by the exact MCP tool name used in
-    /// `tools/call`.
-    /// Missing keys impose no additional restriction beyond the global requirement.
-    required_scopes: Arc<HashMap<String, OperationRequiredScopes>>,
+    /// Per-operation scope requirements and discovery filtering behavior.
+    operation_scope_policy: OperationScopePolicy,
 }
 
 impl Config {
@@ -379,7 +422,10 @@ impl Config {
             client,
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
-            required_scopes: Arc::new(required_scopes),
+            operation_scope_policy: OperationScopePolicy::new(
+                required_scopes,
+                self.filter_tools_by_scope,
+            ),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         };
@@ -457,21 +503,19 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 
 /// Checks if a `tools/call` request is missing required scopes for the named operation.
 ///
-/// Returns `Some(required_scopes)` when the token lacks one or more of the operation's
-/// required scopes, and `None` when the check passes or does not apply. It does not apply
-/// to non-`tools/call` methods, requests without a tool name, or tools with no entry in
-/// `required_scopes` — those are governed only by the global scope requirement.
+/// Returns `Some(required_scopes)` if the token is missing scopes, `None` if the request
+/// is allowed to proceed (wrong method, unknown operation, or scopes satisfied).
 fn missing_scopes_for_operation<'a>(
     peek: &JsonRpcBodyPeek,
-    required_scopes: &'a HashMap<String, OperationRequiredScopes>,
+    policy: &'a OperationScopePolicy,
     token_scopes: &[String],
 ) -> Option<&'a OperationRequiredScopes> {
     if peek.method != "tools/call" {
         return None;
     }
     let op_name = peek.params.as_ref()?.name.as_deref()?;
-    let required = required_scopes.get(op_name)?;
-    if required.is_satisfied_by(token_scopes) {
+    let required = policy.required_for(op_name)?;
+    if policy.allows_tool(op_name, token_scopes) {
         return None;
     }
     Some(required)
@@ -526,7 +570,7 @@ async fn oauth_validate(
     // anonymous discovery or per-operation scope checks.
     let body_peek = if request.method() == http::Method::POST
         && ((auth_config.allow_anonymous_mcp_discovery && token.is_none())
-            || !auth_state.required_scopes.is_empty())
+            || !auth_state.operation_scope_policy.is_empty())
     {
         match extract_body(&mut request).await {
             Ok(peek) => Some(peek),
@@ -538,6 +582,13 @@ async fn oauth_validate(
     } else {
         None
     };
+
+    // Make the scope policy available to the MCP handler. For anonymous
+    // discovery there is intentionally no ValidToken extension, so tools/list
+    // evaluates the policy with an empty scope set.
+    request
+        .extensions_mut()
+        .insert(auth_state.operation_scope_policy.clone());
 
     // Anonymous discovery bypass: when enabled, unauthenticated POST requests
     // whose body contains a discovery method (e.g. tools/list) skip auth entirely.
@@ -616,10 +667,14 @@ async fn oauth_validate(
         }
     }
 
-    // Per-operation requirements add to the global check and always require
-    // every listed scope, independently of the global `scope_mode`.
+    // Per-operation requirements add to the global check and use their configured
+    // all-of or alternative-group semantics independently of global `scope_mode`.
     if let Some(required) = body_peek.as_ref().and_then(|peek| {
-        missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
+        missing_scopes_for_operation(
+            peek,
+            &auth_state.operation_scope_policy,
+            &valid_token.scopes,
+        )
     }) {
         let challenge_scopes = required.challenge_scopes();
         tracing::warn!(
@@ -674,6 +729,7 @@ mod tests {
             scope_mode: ScopeMode::default(),
             disable_auth_token_passthrough: false,
             allow_anonymous_mcp_discovery: false,
+            filter_tools_by_scope: false,
             tls: TlsConfig::default(),
             discovery_timeout: None,
             discovery_headers: HeaderMap::new(),
@@ -692,7 +748,7 @@ mod tests {
             client: reqwest::Client::new(),
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
-            required_scopes: Arc::new(HashMap::new()),
+            operation_scope_policy: OperationScopePolicy::new(HashMap::new(), false),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -709,7 +765,7 @@ mod tests {
         required_scopes: HashMap<String, OperationRequiredScopes>,
     ) -> Router {
         let mut auth_state = test_auth_state(config);
-        auth_state.required_scopes = Arc::new(required_scopes);
+        auth_state.operation_scope_policy = OperationScopePolicy::new(required_scopes, false);
         Router::new()
             .route("/test", get(|| async { "ok" }))
             .layer(from_fn_with_state(auth_state, oauth_validate))
@@ -1778,6 +1834,37 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
         }
+
+        #[test]
+        fn yaml_with_filter_tools_by_scope() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                filter_tools_by_scope: true
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.filter_tools_by_scope);
+        }
+
+        #[test]
+        fn yaml_defaults_filter_tools_by_scope_to_false() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                audiences:
+                  - test-audience
+                resource: http://localhost:4000
+                scopes:
+                  - read
+            "#;
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(!config.filter_tools_by_scope);
+        }
     }
 
     mod per_operation_scope_enforcement {
@@ -1818,6 +1905,10 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             )])
         }
 
+        fn policy() -> OperationScopePolicy {
+            OperationScopePolicy::new(required(), true)
+        }
+
         fn tools_call_peek(op: &str) -> JsonRpcBodyPeek {
             JsonRpcBodyPeek {
                 method: "tools/call".to_string(),
@@ -1831,8 +1922,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         fn returns_required_scopes_when_token_missing_scope() {
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["other:scope".to_string()];
-            let required = required();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = policy();
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert_eq!(
                 result,
                 Some(
@@ -1846,8 +1937,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         fn returns_none_when_token_has_required_scope() {
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["sensitive:read".to_string(), "other:scope".to_string()];
-            let required = required();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = policy();
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert!(result.is_none());
         }
 
@@ -1855,8 +1946,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         fn returns_none_when_token_satisfies_one_scope_alternative() {
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["admin".to_string(), "other:scope".to_string()];
-            let required = alternative_required();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = OperationScopePolicy::new(alternative_required(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert!(result.is_none());
         }
 
@@ -1868,8 +1959,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 "tenant:admin".to_string(),
                 "other:scope".to_string(),
             ];
-            let required = alternative_required();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = OperationScopePolicy::new(alternative_required(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert!(result.is_none());
         }
 
@@ -1877,8 +1968,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         fn returns_required_scopes_when_token_satisfies_no_complete_alternative() {
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["sensitive:read".to_string()];
-            let required = alternative_required();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = OperationScopePolicy::new(alternative_required(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert_eq!(
                 result,
                 Some(
@@ -1897,8 +1988,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             // the second) without ever completing either.
             let peek = tools_call_peek("RestrictedOp");
             let scopes = vec!["scope:a".to_string(), "scope:c".to_string()];
-            let required = overlapping_multi_scope_alternatives();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = OperationScopePolicy::new(overlapping_multi_scope_alternatives(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert!(result.is_some());
         }
 
@@ -1911,16 +2002,16 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 "scope:c".to_string(),
                 "scope:d".to_string(),
             ];
-            let required = overlapping_multi_scope_alternatives();
-            let result = missing_scopes_for_operation(&peek, &required, &scopes);
+            let policy = OperationScopePolicy::new(overlapping_multi_scope_alternatives(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &scopes);
             assert!(result.is_none());
         }
 
         #[test]
-        fn returns_none_for_unrestricted_operation() {
+        fn returns_none_for_unrestricted_tool() {
             let peek = tools_call_peek("PublicOp");
-            let required = required();
-            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            let policy = policy();
+            let result = missing_scopes_for_operation(&peek, &policy, &[]);
             assert!(result.is_none());
         }
 
@@ -1930,17 +2021,36 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 method: "tools/list".to_string(),
                 params: None,
             };
-            let required = required();
-            let result = missing_scopes_for_operation(&peek, &required, &[]);
+            let policy = policy();
+            let result = missing_scopes_for_operation(&peek, &policy, &[]);
             assert!(result.is_none());
         }
 
         #[test]
         fn returns_none_when_required_scopes_map_is_empty() {
             let peek = tools_call_peek("RestrictedOp");
-            let empty = HashMap::new();
-            let result = missing_scopes_for_operation(&peek, &empty, &[]);
+            let policy = OperationScopePolicy::new(HashMap::new(), true);
+            let result = missing_scopes_for_operation(&peek, &policy, &[]);
             assert!(result.is_none());
+        }
+
+        #[test]
+        fn policy_requires_all_configured_scopes() {
+            let policy = OperationScopePolicy::new(
+                HashMap::from([(
+                    "RestrictedOp".to_string(),
+                    OperationRequiredScopes::new(vec![vec![
+                        "read".to_string(),
+                        "admin".to_string(),
+                    ]])
+                    .unwrap(),
+                )]),
+                true,
+            );
+
+            assert!(!policy.allows_tool("RestrictedOp", &["read".to_string()]));
+            assert!(policy.allows_tool("RestrictedOp", &["read".to_string(), "admin".to_string()]));
+            assert!(policy.allows_tool("PublicOp", &[]));
         }
     }
 }
