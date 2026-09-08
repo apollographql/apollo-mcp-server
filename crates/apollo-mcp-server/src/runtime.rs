@@ -16,12 +16,14 @@ mod schema_source;
 mod schemas;
 pub mod telemetry;
 
+use std::mem::discriminant;
 use std::path::Path;
 
 pub use config::Config;
 use figment::{
-    Figment,
+    Figment, Metadata, Profile, Provider,
     providers::{Env, Format, Yaml},
+    value::{Dict, Map},
 };
 pub use operation_source::{IdOrDefault, OperationSource};
 pub use schema_source::SchemaSource;
@@ -30,19 +32,18 @@ pub use schema_source::SchemaSource;
 const ENV_NESTED_SEPARATOR: &str = "__";
 
 /// Read configuration from environment variables only (when no config file is provided)
-#[allow(clippy::result_large_err)]
+// `figment::Error` is large, but this runs once at startup, so boxing it buys nothing
+#[expect(clippy::result_large_err)]
 pub fn read_config_from_env() -> Result<Config, figment::Error> {
-    Figment::new()
-        .join(apollo_common_env())
-        .join(Env::prefixed("APOLLO_MCP_").split(ENV_NESTED_SEPARATOR))
-        .extract()
+    env_figment().extract()
 }
 
 /// Read in a config from a YAML file, filling in any missing values from the environment.
 ///
 /// Environment variable references using `${env.VAR_NAME}` syntax are expanded
 /// before the YAML is parsed.
-#[allow(clippy::result_large_err)]
+// `figment::Error` is large, but this runs once at startup, so boxing it buys nothing
+#[expect(clippy::result_large_err)]
 pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error> {
     // Read and expand environment variables in the config content
     let content = std::fs::read_to_string(yaml_path.as_ref()).map_err(|e| {
@@ -56,11 +57,70 @@ pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error
     let expanded = apollo_mcp_server::env_expansion::expand_yaml(&content)
         .map_err(|e| figment::Error::from(e.to_string()))?;
 
+    let file = ConfigFile {
+        path: yaml_path.as_ref(),
+        expanded: &expanded,
+    };
+
+    env_figment()
+        .join(&file)
+        .extract()
+        .map_err(|error| attribute_to_source(error, &file))
+}
+
+/// Figment provider for the config file, after `${env.VAR}` expansion. Wraps the YAML
+/// provider so that errors name the file the operator wrote rather than an anonymous
+/// source string.
+struct ConfigFile<'a> {
+    path: &'a Path,
+    expanded: &'a str,
+}
+
+impl Provider for ConfigFile<'_> {
+    fn metadata(&self) -> Metadata {
+        Metadata::named(format!("config file '{}'", self.path.display()))
+    }
+
+    fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
+        Yaml::string(self.expanded).data()
+    }
+}
+
+/// Point a config error at the source that holds the offending value.
+///
+/// Figment tags a section assembled from several providers with whichever provider won
+/// precedence, so without this an error in the config file is reported against the
+/// environment as soon as any `APOLLO_MCP_` variable touches the same section.
+fn attribute_to_source(mut error: figment::Error, file: &ConfigFile<'_>) -> figment::Error {
+    if fails_without_the_environment(&error, file) {
+        error.metadata = Some(file.metadata());
+    }
+
+    error
+}
+
+/// Whether the config file on its own fails the same way.
+///
+/// Figment reports an error against a key path only as precise as the deserializer that
+/// failed, so for a section both sources filled in the path cannot say which one supplied
+/// the offending value. Extracting the file by itself answers that directly: a failure
+/// that survives without the environment belongs to the file.
+fn fails_without_the_environment(error: &figment::Error, file: &ConfigFile<'_>) -> bool {
+    let Err(without_env) = Figment::from(file).extract::<Config>() else {
+        return false;
+    };
+
+    // The same kind of failure at the same key is the file's even when the details differ.
+    // A file missing several required fields reports the first one, while the merged
+    // config reports whichever of them the environment did not fill in.
+    discriminant(&without_env.kind) == discriminant(&error.kind) && without_env.path == error.path
+}
+
+/// Figment for the `APOLLO_*` and `APOLLO_MCP_*` environment variables
+fn env_figment() -> Figment {
     Figment::new()
         .join(apollo_common_env())
         .join(Env::prefixed("APOLLO_MCP_").split(ENV_NESTED_SEPARATOR))
-        .join(Yaml::string(&expanded))
-        .extract()
 }
 
 /// Figment provider that handles mapping common Apollo environment variables into
@@ -428,6 +488,269 @@ mod test {
 
             let err = result.unwrap_err().to_string();
             assert!(err.contains("unknown field"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_names_the_config_file_in_yaml_errors() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                overrides:
+                    unknown_flag: true
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert!(err.ends_with("in config file 'config.yaml'"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_config_file_when_env_touches_the_same_section() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+                    auth:
+                        servers:
+                            - https://auth.example.com
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__PORT", "5000");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "missing field `resource` for key \"default.transport\" in config file 'config.yaml'"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_config_file_for_unknown_fields_when_env_touches_the_same_section() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+                    bogus_field: 1
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__PORT", "5000");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert!(err.ends_with("in config file 'config.yaml'"), "{err}");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_config_file_when_its_root_is_not_a_mapping() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let path = "config.yaml";
+
+            jail.create_file(path, "just-a-string\n")?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__PORT", "5000");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "invalid type: string \"just-a-string\", expected a map in config file 'config.yaml'"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_config_file_when_the_environment_fills_in_only_one_missing_field() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+                    auth: {}
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env(
+                "APOLLO_MCP_TRANSPORT__AUTH__SERVERS",
+                "[https://auth.example.com]",
+            );
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "missing field `resource` for key \"default.transport\" in config file 'config.yaml'"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_environment_when_it_overrides_a_valid_file_value() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+                    address: 127.0.0.1
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__ADDRESS", "not-an-ip-address");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "invalid IP address syntax for key \"TRANSPORT\" in `APOLLO_MCP_` environment variable(s)"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_environment_for_a_bad_item_in_a_list_it_supplies() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = "endpoint: http://localhost:4000/";
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_FORWARD_HEADERS", "[true]");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert!(
+                err.ends_with("in `APOLLO_MCP_` environment variable(s)"),
+                "{err}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_environment_when_it_overrides_a_file_value() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                logging:
+                    level: info
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_LOGGING__LEVEL", "nope");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert!(
+                err.ends_with("in `APOLLO_MCP_` environment variable(s)"),
+                "{err}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_config_file_for_bad_values_when_env_touches_the_same_section() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+                    address: not-an-ip
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__PORT", "5000");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "invalid IP address syntax for key \"default.transport\" in config file 'config.yaml'"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_environment_for_unknown_env_fields() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = r#"
+                endpoint: http://localhost:4000/
+                transport:
+                    type: streamable_http
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__BOGUS_FIELD", "1");
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert!(
+                err.ends_with("in `APOLLO_MCP_` environment variable(s)"),
+                "{err}"
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_blames_the_environment_for_sections_only_the_environment_sets() {
+        figment::Jail::expect_with(move |jail| {
+            jail.clear_env();
+            let config = "endpoint: http://localhost:4000/";
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__TYPE", "streamable_http");
+            jail.set_env(
+                "APOLLO_MCP_TRANSPORT__AUTH__SERVERS",
+                "https://auth.example.com",
+            );
+            jail.set_env(
+                "APOLLO_MCP_TRANSPORT__AUTH__RESOURCE",
+                "https://mcp.example.com/mcp",
+            );
+
+            let err = read_config(path).unwrap_err().to_string();
+
+            assert_eq!(
+                err,
+                "invalid type: found string \"https://auth.example.com\", expected a sequence \
+                 for key \"TRANSPORT\" in `APOLLO_MCP_` environment variable(s)"
+            );
             Ok(())
         });
     }
