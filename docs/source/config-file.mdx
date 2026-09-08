@@ -420,7 +420,10 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `scopes`                          | `List<string>`        |               | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`.                                                                    |
 | `scope_mode`                      | `string`              | `require_all` | Global scope enforcement mode: `disabled`, `require_all`, or `require_any`. Per-operation requirements always use all-of semantics.                                                                              |
 | `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. When passthrough is disabled, headers forwarded via `forward_headers` are left untouched; when passthrough is active, the validated token replaces a forwarded `Authorization` header. |
-| `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery).                            |
+| `skip_token_validation.methods`   | `List<string>`        | `[]`          | JSON-RPC method names that skip token validation when the request carries no `Authorization` header. Methods that name one of many items, such as `tools/call` and `resources/read`, are rejected. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation). |
+| `skip_token_validation.tools`     | `List<string>`        | `[]`          | Tool names that skip token validation when the request carries no `Authorization` header. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation).                                    |
+| `skip_token_validation.headers`   | `List<string>`        | `[]`          | HTTP header names that skip token validation when the request carries no `Authorization` header. A later layer authenticates the request. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation). |
+| `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | **Deprecated.** Use `skip_token_validation.methods` instead. Enabling this is the same as listing `initialize`, `tools/list`, and `resources/list` there. Setting both is an error.                              |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
 | `discovery_headers`               | `Map<string, string>` | `{}`          | Custom headers to include in OIDC discovery and JWKS requests. Useful when upstream OAuth servers or WAFs require headers like `User-Agent`. See [discovery headers](/apollo-mcp-server/auth#discovery-headers). |
 | `tls.ca_cert`                     | `string`              |               | Path to a CA certificate to trust (PEM format).                                                                                                                                                                  |
@@ -477,9 +480,15 @@ transport:
     discovery_headers:
       User-Agent: apollo-mcp-server
 
-    # Allow unauthenticated clients to call MCP discovery methods
-    # (initialize, tools/list, resources/list). All other methods still require auth.
-    # allow_anonymous_mcp_discovery: false
+    # Requests that skip token validation. Each list applies only when the
+    # request carries no Authorization header. Every other request is validated.
+    # skip_token_validation:
+    #   methods:
+    #     - tools/list
+    #   tools:
+    #     - PublicTool
+    #   headers:
+    #     - x-api-key
 
     # Optional TLS configuration for connecting to OAuth servers
     tls:
