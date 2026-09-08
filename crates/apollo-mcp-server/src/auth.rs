@@ -618,8 +618,12 @@ const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The methods the deprecated `allow_anonymous_mcp_discovery` flag allows,
 /// which it now expresses as `skip_token_validation.methods`.
-const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] =
-    &["initialize", "server/discover", "tools/list", "resources/list"];
+const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] = &[
+    "initialize",
+    "server/discover",
+    "tools/list",
+    "resources/list",
+];
 
 /// Maximum body size to buffer when peeking at the JSON-RPC method or tool
 /// name. A discovery request such as `tools/list` is under 100 bytes, but a
@@ -2509,7 +2513,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 let resolved = config.resolve_skip_token_validation().unwrap();
                 assert_eq!(
                     resolved.methods,
-                    vec!["initialize", "tools/list", "resources/list"]
+                    vec![
+                        "initialize",
+                        "server/discover",
+                        "tools/list",
+                        "resources/list"
+                    ]
                 );
             }
 
