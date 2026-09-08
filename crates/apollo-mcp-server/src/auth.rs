@@ -1880,8 +1880,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
         #[tokio::test]
         async fn server_discover_without_token_allowed_when_enabled() {
-            // `server/discover` precedes `initialize` in the inline lifecycle,
-            // so a client has no way to authenticate before calling it.
+            // `server/discover` may be a client's first MCP request, so this
+            // option permits it anonymously when anonymous discovery is enabled.
             let app = discovery_router(true);
             let req = Request::builder()
                 .method("POST")
