@@ -618,8 +618,12 @@ const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The methods the deprecated `allow_anonymous_mcp_discovery` flag allows,
 /// which it now expresses as `skip_token_validation.methods`.
-const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] =
-    &["initialize", "tools/list", "resources/list"];
+const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] = &[
+    "initialize",
+    "server/discover",
+    "tools/list",
+    "resources/list",
+];
 
 /// Maximum body size to buffer when peeking at the JSON-RPC method or tool
 /// name. A discovery request such as `tools/list` is under 100 bytes, but a
@@ -1874,6 +1878,36 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"resources/list"}"#)
         }
 
+        fn server_discover_body() -> Body {
+            Body::from(r#"{"jsonrpc":"2.0","id":1,"method":"server/discover"}"#)
+        }
+
+        #[tokio::test]
+        async fn server_discover_without_token_allowed_when_enabled() {
+            // `server/discover` may be a client's first MCP request, so this
+            // option permits it anonymously when anonymous discovery is enabled.
+            let app = discovery_router(true);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(server_discover_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn server_discover_without_token_rejected_when_disabled() {
+            let app = discovery_router(false);
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(server_discover_body())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
         #[tokio::test]
         async fn initialize_without_token_allowed_when_enabled() {
             let app = discovery_router(true);
@@ -2479,7 +2513,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 let resolved = config.resolve_skip_token_validation().unwrap();
                 assert_eq!(
                     resolved.methods,
-                    vec!["initialize", "tools/list", "resources/list"]
+                    vec![
+                        "initialize",
+                        "server/discover",
+                        "tools/list",
+                        "resources/list"
+                    ]
                 );
             }
 
