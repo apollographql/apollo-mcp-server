@@ -817,7 +817,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -961,7 +961,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1116,7 +1116,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1274,7 +1274,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1429,7 +1429,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1581,7 +1581,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1743,7 +1743,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -1920,7 +1920,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -2062,7 +2062,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -2319,7 +2319,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -2464,7 +2464,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -2613,7 +2613,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -2751,7 +2751,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -3293,7 +3293,7 @@ mod tests {
                             "properties": Object {
                                 "field": Object {
                                     "description": String("the Query.field field"),
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -3425,7 +3425,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -4003,7 +4003,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -4196,7 +4196,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
@@ -4406,7 +4406,7 @@ mod tests {
                                 "type": String("object"),
                                 "properties": Object {
                                     "id": Object {
-                                        "oneOf": Array [
+                                        "anyOf": Array [
                                             Object {
                                                 "type": String("string"),
                                             },
@@ -4539,7 +4539,7 @@ mod tests {
                                 "type": String("object"),
                                 "properties": Object {
                                     "id": Object {
-                                        "oneOf": Array [
+                                        "anyOf": Array [
                                             Object {
                                                 "type": String("string"),
                                             },
@@ -4672,7 +4672,7 @@ mod tests {
                             "type": String("object"),
                             "properties": Object {
                                 "id": Object {
-                                    "oneOf": Array [
+                                    "anyOf": Array [
                                         Object {
                                             "type": String("string"),
                                         },
