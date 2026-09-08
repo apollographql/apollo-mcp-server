@@ -122,6 +122,8 @@ impl From<Name<'_>> for JSONSchema {
                                         r#type: &field.ty,
                                     }),
                                     field.default_value.as_deref(),
+                                    &field.ty,
+                                    schema,
                                 )
                                 .into(),
                             );

@@ -6,6 +6,7 @@
 use apollo_compiler::{
     Schema as GraphQLSchema,
     ast::{Type, Value as GraphQLValue},
+    schema::ExtendedType,
 };
 use schemars::Schema;
 use serde_json::{Map, Number, Value};
@@ -43,12 +44,24 @@ pub fn type_to_schema(
         }
         .into(),
         default_value,
+        r#type,
+        schema,
     )
 }
 
-/// Modifies a schema to include the default value from the GraphQL definition, if any
-fn with_default(mut schema: Schema, default_value: Option<&GraphQLValue>) -> Schema {
-    if let Some(default) = default_value.and_then(graphql_value_to_json) {
+/// Modifies a schema to include the default value from the GraphQL definition, if any.
+///
+/// `ty` is the declared GraphQL type of the variable or field, used to apply input
+/// coercion to the literal.
+fn with_default(
+    mut schema: Schema,
+    default_value: Option<&GraphQLValue>,
+    ty: &Type,
+    graphql_schema: &GraphQLSchema,
+) -> Schema {
+    if let Some(default) =
+        default_value.and_then(|value| graphql_value_to_json(value, Some(ty), graphql_schema))
+    {
         schema
             .ensure_object()
             .insert("default".to_string(), default);
@@ -57,37 +70,68 @@ fn with_default(mut schema: Schema, default_value: Option<&GraphQLValue>) -> Sch
     schema
 }
 
-/// Converts a constant GraphQL value into JSON.
+/// Converts a constant GraphQL value into the JSON a client would send for `ty`.
+///
+/// Applies GraphQL input coercion so the result matches the generated schema for
+/// `ty`: a single value declared for a list type becomes a one-element list, an
+/// Int literal declared for `ID` becomes a string, and input object fields are
+/// converted against their declared field types. Without a type, the literal is
+/// converted by its own shape.
 ///
 /// Returns `None` for values with no faithful JSON representation: variables,
 /// integers outside the `i64` range, and floats outside the `f64` range. The
 /// caller then omits `default` rather than emit a value the operation did not
 /// declare.
-fn graphql_value_to_json(value: &GraphQLValue) -> Option<Value> {
+fn graphql_value_to_json(
+    value: &GraphQLValue,
+    ty: Option<&Type>,
+    graphql_schema: &GraphQLSchema,
+) -> Option<Value> {
+    let item_type = match ty {
+        Some(Type::List(inner) | Type::NonNullList(inner)) => Some(inner.as_ref()),
+        _ => None,
+    };
     match value {
         GraphQLValue::Null => Some(Value::Null),
+        GraphQLValue::Variable(_) => None,
+        GraphQLValue::List(items) => items
+            .iter()
+            .map(|item| graphql_value_to_json(item, item_type, graphql_schema))
+            .collect::<Option<Vec<_>>>()
+            .map(Value::Array),
+        // A single value declared for a list type coerces to a one-element list
+        _ if item_type.is_some() => graphql_value_to_json(value, item_type, graphql_schema)
+            .map(|item| Value::Array(vec![item])),
         GraphQLValue::Boolean(boolean) => Some(Value::Bool(*boolean)),
         GraphQLValue::String(string) => Some(Value::String(string.clone())),
         GraphQLValue::Enum(name) => Some(Value::String(name.to_string())),
+        GraphQLValue::Int(int) if ty.is_some_and(|ty| ty.inner_named_type() == "ID") => {
+            Some(Value::String(int.as_str().to_string()))
+        }
         GraphQLValue::Int(int) => int.as_str().parse::<i64>().ok().map(Value::from),
         GraphQLValue::Float(float) => float
             .try_to_f64()
             .ok()
             .and_then(Number::from_f64)
             .map(Value::Number),
-        GraphQLValue::List(items) => items
-            .iter()
-            .map(|item| graphql_value_to_json(item))
-            .collect::<Option<Vec<_>>>()
-            .map(Value::Array),
-        GraphQLValue::Object(fields) => fields
-            .iter()
-            .map(|(name, value)| {
-                graphql_value_to_json(value).map(|value| (name.to_string(), value))
-            })
-            .collect::<Option<Map<_, _>>>()
-            .map(Value::Object),
-        GraphQLValue::Variable(_) => None,
+        GraphQLValue::Object(fields) => {
+            let input_object =
+                ty.and_then(|ty| match graphql_schema.types.get(ty.inner_named_type()) {
+                    Some(ExtendedType::InputObject(input_object)) => Some(input_object),
+                    _ => None,
+                });
+            fields
+                .iter()
+                .map(|(name, value)| {
+                    let field_type = input_object
+                        .and_then(|input_object| input_object.fields.get(name.as_str()))
+                        .map(|field| field.ty.as_ref());
+                    graphql_value_to_json(value, field_type, graphql_schema)
+                        .map(|value| (name.to_string(), value))
+                })
+                .collect::<Option<Map<_, _>>>()
+                .map(Value::Object)
+        }
     }
 }
 
@@ -276,7 +320,37 @@ mod tests {
     fn variable_default_has_no_json_representation() {
         let value = GraphQLValue::Variable(apollo_compiler::Name::new("other").unwrap());
 
-        assert_eq!(graphql_value_to_json(&value), None);
+        assert_eq!(graphql_value_to_json(&value, None, &schema()), None);
+    }
+
+    #[rstest]
+    #[case::list("$v: [Int!]! = 1", json!([1]))]
+    #[case::nested_list("$v: [[Int]] = 1", json!([[1]]))]
+    #[case::list_already_a_list("$v: [Int] = [1, 2]", json!([1, 2]))]
+    fn single_value_default_for_list_type_is_coerced_to_a_list(
+        #[case] definition: &str,
+        #[case] expected: Value,
+    ) {
+        let (schema, _) = convert(definition, None);
+
+        assert_eq!(schema.get("default"), Some(&expected));
+    }
+
+    #[test]
+    fn int_default_for_id_is_emitted_as_a_string() {
+        let (schema, _) = convert("$v: ID = 123", None);
+
+        assert_eq!(schema.get("default"), Some(&json!("123")));
+    }
+
+    #[test]
+    fn input_object_default_coerces_fields_against_their_declared_types() {
+        let (schema, _) = convert("$v: Filter = { name: \"n\", tags: \"a\" }", None);
+
+        assert_eq!(
+            schema.get("default"),
+            Some(&json!({"name": "n", "tags": ["a"]}))
+        );
     }
 
     #[test]
