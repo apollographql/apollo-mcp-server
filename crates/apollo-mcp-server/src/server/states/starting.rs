@@ -215,7 +215,11 @@ impl Starting {
                 let mut router = axum::Router::new().nest_service("/mcp", service);
                 if let Some(auth) = auth {
                     router = auth
-                        .enable_middleware(router, self.config.required_scopes.clone())
+                        .enable_middleware(
+                            router,
+                            self.config.required_scopes.clone(),
+                            stateful_mode,
+                        )
                         .inspect_err(|e| {
                             error!("Failed to enable auth middleware: {}", e);
                         })?;
