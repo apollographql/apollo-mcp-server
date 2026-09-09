@@ -32,8 +32,7 @@ impl Caching {
         protocol_version: Option<&ProtocolVersion>,
     ) {
         if protocol_version.is_some_and(|v| *v >= ProtocolVersion::V_2026_07_28) {
-            result.set_ttl_ms(self.ttl_ms);
-            result.set_cache_scope(CacheScope::Private);
+            result.set_cache_hints(self.ttl_ms, CacheScope::Private);
         }
     }
 }
@@ -49,46 +48,33 @@ impl Default for Caching {
 /// Implemented by MCP list/read result types that carry SEP-2549 cache hints, so
 /// [`Caching::apply_to`] can set them without duplicating the gating logic per call site.
 pub trait CacheHints {
-    fn set_ttl_ms(&mut self, ttl_ms: u64);
-    fn set_cache_scope(&mut self, scope: CacheScope);
+    fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope);
 }
 
 impl CacheHints for rmcp::model::ListToolsResult {
-    fn set_ttl_ms(&mut self, ttl_ms: u64) {
+    fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope) {
         self.ttl_ms = Some(ttl_ms);
-    }
-
-    fn set_cache_scope(&mut self, scope: CacheScope) {
         self.cache_scope = Some(scope);
     }
 }
 
 impl CacheHints for rmcp::model::ListResourcesResult {
-    fn set_ttl_ms(&mut self, ttl_ms: u64) {
+    fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope) {
         self.ttl_ms = Some(ttl_ms);
-    }
-
-    fn set_cache_scope(&mut self, scope: CacheScope) {
         self.cache_scope = Some(scope);
     }
 }
 
 impl CacheHints for rmcp::model::ListPromptsResult {
-    fn set_ttl_ms(&mut self, ttl_ms: u64) {
+    fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope) {
         self.ttl_ms = Some(ttl_ms);
-    }
-
-    fn set_cache_scope(&mut self, scope: CacheScope) {
         self.cache_scope = Some(scope);
     }
 }
 
 impl CacheHints for rmcp::model::ReadResourceResult {
-    fn set_ttl_ms(&mut self, ttl_ms: u64) {
+    fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope) {
         self.ttl_ms = Some(ttl_ms);
-    }
-
-    fn set_cache_scope(&mut self, scope: CacheScope) {
         self.cache_scope = Some(scope);
     }
 }

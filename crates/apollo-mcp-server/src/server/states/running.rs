@@ -1306,29 +1306,33 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
+        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] expect_hints: bool,
+            #[case] ttl_ms: u64,
+            #[case] expected_ttl_ms: Option<u64>,
         ) {
-            let running = running_with_apps(
+            let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
                 None,
             );
+            running.caching.ttl_ms = ttl_ms;
 
             let result = running
                 .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            if expect_hints {
-                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-                assert_eq!(result.cache_scope, Some(CacheScope::Private));
-            } else {
-                assert_eq!(result.ttl_ms, None);
-                assert_eq!(result.cache_scope, None);
-            }
+            assert_eq!(
+                (result.ttl_ms, result.cache_scope),
+                (
+                    expected_ttl_ms,
+                    expected_ttl_ms.map(|_| CacheScope::Private)
+                ),
+            );
         }
 
         #[tokio::test]
@@ -1448,18 +1452,22 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
+        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] expect_hints: bool,
+            #[case] ttl_ms: u64,
+            #[case] expected_ttl_ms: Option<u64>,
         ) {
-            let running = running_with_apps(
+            let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
                 None,
             );
+            running.caching.ttl_ms = ttl_ms;
             let mut extensions = Extensions::new();
             let request = axum::http::Request::builder()
                 .uri("http://localhost?app=MyApp")
@@ -1479,13 +1487,13 @@ mod tests {
                 .await
                 .unwrap();
 
-            if expect_hints {
-                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-                assert_eq!(result.cache_scope, Some(CacheScope::Private));
-            } else {
-                assert_eq!(result.ttl_ms, None);
-                assert_eq!(result.cache_scope, None);
-            }
+            assert_eq!(
+                (result.ttl_ms, result.cache_scope),
+                (
+                    expected_ttl_ms,
+                    expected_ttl_ms.map(|_| CacheScope::Private)
+                ),
+            );
         }
 
         #[tokio::test]
@@ -1933,18 +1941,22 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
+        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
         #[tokio::test]
         async fn list_tools_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] expect_hints: bool,
+            #[case] ttl_ms: u64,
+            #[case] expected_ttl_ms: Option<u64>,
         ) {
-            let running = running_with_apps(
+            let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),
                 None,
                 None,
             );
+            running.caching.ttl_ms = ttl_ms;
 
             let result = running
                 .list_tools_impl(
@@ -1954,13 +1966,13 @@ mod tests {
                 .await
                 .unwrap();
 
-            if expect_hints {
-                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-                assert_eq!(result.cache_scope, Some(CacheScope::Private));
-            } else {
-                assert_eq!(result.ttl_ms, None);
-                assert_eq!(result.cache_scope, None);
-            }
+            assert_eq!(
+                (result.ttl_ms, result.cache_scope),
+                (
+                    expected_ttl_ms,
+                    expected_ttl_ms.map(|_| CacheScope::Private)
+                ),
+            );
         }
 
         #[tokio::test]
@@ -2437,22 +2449,26 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
+        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] expect_hints: bool,
+            #[case] ttl_ms: u64,
+            #[case] expected_ttl_ms: Option<u64>,
         ) {
-            let running = running_with_prompts(vec![]);
+            let mut running = running_with_prompts(vec![]);
+            running.caching.ttl_ms = ttl_ms;
             let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            if expect_hints {
-                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-                assert_eq!(result.cache_scope, Some(CacheScope::Private));
-            } else {
-                assert_eq!(result.ttl_ms, None);
-                assert_eq!(result.cache_scope, None);
-            }
+            assert_eq!(
+                (result.ttl_ms, result.cache_scope),
+                (
+                    expected_ttl_ms,
+                    expected_ttl_ms.map(|_| CacheScope::Private)
+                ),
+            );
         }
 
         #[test]
