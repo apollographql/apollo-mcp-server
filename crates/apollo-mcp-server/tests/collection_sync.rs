@@ -10,7 +10,6 @@ use apollo_mcp_registry::{
     uplink::schema::SchemaSource,
 };
 use apollo_mcp_server::{
-    caching::Caching,
     cors::CorsConfig,
     health::HealthCheckConfig,
     host_validation::HostValidationConfig,
@@ -158,7 +157,6 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
         .health_check(HealthCheckConfig::default())
         .cors(CorsConfig::default())
         .server_info(ServerInfoConfig::default())
-        .caching(Caching::default())
         .build();
 
     // Wait long enough for at least one poll cycle (500ms), then verify

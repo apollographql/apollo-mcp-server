@@ -176,7 +176,7 @@ impl Server {
         server_info: ServerInfoConfig,
         config_validator: Option<ConfigValidator>,
         instructions: Option<String>,
-        caching: Caching,
+        #[builder(default)] caching: Caching,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();

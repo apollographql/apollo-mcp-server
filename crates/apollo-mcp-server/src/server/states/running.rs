@@ -1306,10 +1306,8 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
-        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
-        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
@@ -1452,10 +1450,8 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
-        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
-        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
@@ -2449,10 +2445,8 @@ mod tests {
         }
 
         #[rstest]
-        #[case::supported(ProtocolVersion::V_2026_07_28, 300_000, Some(300_000))]
-        #[case::custom_ttl(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
-        #[case::zero_ttl(ProtocolVersion::V_2026_07_28, 0, Some(0))]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
+        #[case::supported(ProtocolVersion::V_2026_07_28, 60_000, Some(60_000))]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
@@ -2971,6 +2965,31 @@ mod integration_tests {
                 .as_array()
                 .expect("tools/list should return a tools array")
                 .clone()
+        }
+
+        #[tokio::test]
+        async fn omits_cache_hints_after_initializing_supported_protocol() {
+            let mut running = create_running_with_output_schema();
+            running.caching.ttl_ms = 60_000;
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-11-25").await;
+
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_tools_list_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            let result = &body["result"];
+            assert!(
+                !result["tools"]
+                    .as_array()
+                    .expect("tools/list should return a tools array")
+                    .is_empty()
+            );
+            assert!(result.get("ttlMs").is_none());
+            assert!(result.get("cacheScope").is_none());
         }
 
         #[tokio::test]

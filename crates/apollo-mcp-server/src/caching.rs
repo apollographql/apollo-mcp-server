@@ -26,7 +26,7 @@ impl Caching {
 
     /// Applies the `ttlMs`/`cacheScope` cache hints to `result` when the negotiated protocol
     /// version supports them (SEP-2549, MCP `2026-07-28`+); older peers are left untouched.
-    pub fn apply_to<T: CacheHints>(
+    pub(crate) fn apply_to<T: CacheHints>(
         &self,
         result: &mut T,
         protocol_version: Option<&ProtocolVersion>,
@@ -47,7 +47,7 @@ impl Default for Caching {
 
 /// Implemented by MCP list/read result types that carry SEP-2549 cache hints, so
 /// [`Caching::apply_to`] can set them without duplicating the gating logic per call site.
-pub trait CacheHints {
+pub(crate) trait CacheHints {
     fn set_cache_hints(&mut self, ttl_ms: u64, scope: CacheScope);
 }
 
