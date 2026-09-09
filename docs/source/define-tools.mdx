@@ -569,7 +569,12 @@ The output side follows the same conventions as the input side, with a few diffe
 - A union field with inline fragments becomes an `anyOf` of one object schema per fragment. For an interface field, fields from inline fragments are merged into a single object schema. `__typename`, when selected, is a plain string and isn't a discriminator.
 - Fields marked `@private` are omitted from the schema. See the [`@private` directive](/apollo-mcp-server/mcp-apps-reference#private-directive) for details.
 
-MCP clients that validate `structuredContent` against `outputSchema` reject responses that don't match, so the schema is designed to accept every response the operation can legitimately produce.
+MCP clients that validate `structuredContent` against `outputSchema` reject responses that don't match. The schema aims to accept every response the operation can produce, but it is derived from the operation text and the GraphQL schema alone, so two kinds of valid response currently fail validation:
+
+- A non-nullable field under `@skip` or `@include` is still listed in `required`. When the directive removes the field from the response, a validating client rejects the result.
+- The `data` member is typed as an object and never `null`. When an error propagates to the root and the GraphQL endpoint returns `"data": null`, the server forwards the response as an error result with `structuredContent`, and clients that validate error results reject it.
+
+If your operations use these patterns with a validating client, leave `enable_output_schema` off for now.
 
 ## Introspection tools
 
