@@ -74,7 +74,6 @@ pub(super) struct Running {
     pub(super) validate_tool: Option<Validate>,
     pub(super) custom_scalar_map: Option<CustomScalarMap>,
     pub(super) tool_list_changes: ToolListChanges,
-    pub(super) legacy_tool_notifications: LegacyToolNotifications,
     pub(super) cancellation_token: CancellationToken,
     pub(super) mutation_mode: MutationMode,
     pub(super) disable_type_description: bool,
@@ -118,12 +117,11 @@ impl<'a> PeerContext<'a> {
 }
 
 impl Running {
-    /// Create a fresh notification owner for an rmcp service. Clones of the
-    /// returned handler share that owner; the application handler never retains it.
-    pub(super) fn for_service(&self) -> Self {
-        Self {
-            legacy_tool_notifications: LegacyToolNotifications::for_service(),
-            ..self.clone()
+    /// Construct an independent rmcp service sharing this application's catalog.
+    pub(super) fn for_service(&self) -> McpService {
+        McpService {
+            application: self.clone(),
+            notifications: Default::default(),
         }
     }
 
@@ -679,7 +677,15 @@ fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVer
     }
 }
 
-impl ServerHandler for Running {
+/// Transport handler with its own legacy lifecycle. Application clones cannot
+/// accidentally be served without constructing this owner.
+#[derive(Clone)]
+pub(super) struct McpService {
+    application: Running,
+    notifications: LegacyToolNotifications,
+}
+
+impl ServerHandler for McpService {
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
@@ -708,15 +714,14 @@ impl ServerHandler for Running {
         // re-negotiation capped at the same version (closes #803).
         let mut info = self.get_info();
         info.protocol_version = negotiate_protocol_version(&request.protocol_version);
+        self.notifications
+            .initialize(&self.application.tool_list_changes);
         Ok(info)
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
-        self.legacy_tool_notifications.on_initialized(
-            context.peer,
-            &self.tool_list_changes,
-            self.cancellation_token.clone(),
-        );
+        self.notifications
+            .on_initialized(context.peer, self.application.cancellation_token.clone());
     }
 
     /// Narrows rmcp's re-negotiation (run on every transport after
@@ -744,6 +749,7 @@ impl ServerHandler for Running {
         let protocol_version = context.protocol_version();
 
         let result = self
+            .application
             .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
             .await;
 
@@ -773,7 +779,9 @@ impl ServerHandler for Running {
             protocol_version: protocol_version.as_ref(),
         };
 
-        self.list_tools_impl(context.extensions, peer).await
+        self.application
+            .list_tools_impl(context.extensions, peer)
+            .await
     }
 
     #[tracing::instrument(skip_all)]
@@ -782,10 +790,10 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let peer_info = context.peer.peer_info();
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let protocol_version = context.protocol_version();
 
-        self.list_resources_impl(&context.extensions, protocol_version)
+        self.application
+            .list_resources_impl(&context.extensions, protocol_version.as_ref())
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -801,7 +809,8 @@ impl ServerHandler for Running {
             protocol_version: protocol_version.as_ref(),
         };
 
-        self.read_resource_impl(request, context.extensions, peer)
+        self.application
+            .read_resource_impl(request, context.extensions, peer)
             .await
             .map(Into::into)
     }
@@ -812,10 +821,9 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let peer_info = context.peer.peer_info();
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let protocol_version = context.protocol_version();
 
-        self.list_prompts_impl(protocol_version)
+        self.application.list_prompts_impl(protocol_version.as_ref())
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
@@ -824,7 +832,7 @@ impl ServerHandler for Running {
         request: GetPromptRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        self.get_prompt_impl(request).map(Into::into)
+        self.application.get_prompt_impl(request).map(Into::into)
     }
 
     // `logging` is deprecated by SEP-2577, but we still override this handler so
@@ -856,8 +864,10 @@ impl ServerHandler for Running {
         let mut tools = ToolsCapability::default();
         tools.list_changed = Some(true);
         capabilities.tools = Some(tools);
-        capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
-        capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
+        capabilities.resources =
+            (!self.application.apps.is_empty()).then(ResourcesCapability::default);
+        capabilities.prompts =
+            (!self.application.prompts.is_empty()).then(PromptsCapability::default);
 
         // Advertise the max supported version as the default. Our `initialize`
         // handler negotiates the per-client value, echoing the client's requested
@@ -865,22 +875,22 @@ impl ServerHandler for Running {
         let protocol_version = MAX_SUPPORTED_PROTOCOL_VERSION;
 
         let mut impl_ = Implementation::new(
-            self.server_info.name().to_string(),
-            self.server_info.version().to_string(),
+            self.application.server_info.name().to_string(),
+            self.application.server_info.version().to_string(),
         );
-        if let Some(t) = self.server_info.title() {
+        if let Some(t) = self.application.server_info.title() {
             impl_ = impl_.with_title(t);
         }
-        if let Some(d) = self.server_info.description() {
+        if let Some(d) = self.application.server_info.description() {
             impl_ = impl_.with_description(d);
         }
-        if let Some(u) = self.server_info.website_url() {
+        if let Some(u) = self.application.server_info.website_url() {
             impl_ = impl_.with_website_url(u);
         }
         let mut result = InitializeResult::new(capabilities)
             .with_protocol_version(protocol_version)
             .with_server_info(impl_);
-        if let Some(instructions) = self.instructions.as_deref() {
+        if let Some(instructions) = self.application.instructions.as_deref() {
             result = result.with_instructions(instructions);
         }
         result
@@ -931,7 +941,6 @@ mod tests {
             validate_tool: None,
             custom_scalar_map: None,
             tool_list_changes: Default::default(),
-            legacy_tool_notifications: Default::default(),
             cancellation_token: CancellationToken::new(),
             mutation_mode: MutationMode::None,
             disable_type_description: false,
@@ -1085,7 +1094,8 @@ mod tests {
         }))
         .unwrap();
         let (server_io, _client_io) = tokio::io::duplex(4096);
-        let service = rmcp::service::serve_directly(running.clone(), server_io, Some(legacy_info));
+        let service =
+            rmcp::service::serve_directly(running.for_service(), server_io, Some(legacy_info));
         let mcp_capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
             "extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}
         })).unwrap();
@@ -1105,7 +1115,11 @@ mod tests {
             if let Some(capabilities) = capabilities {
                 context.meta.set_client_capabilities(capabilities);
             }
-            let tools = running.list_tools(None, context.clone()).await.unwrap();
+            let tools = running
+                .for_service()
+                .list_tools(None, context.clone())
+                .await
+                .unwrap();
             assert_eq!(
                 tools.tools[0]
                     .meta
@@ -1115,6 +1129,7 @@ mod tests {
                 openai
             );
             let resource = running
+                .for_service()
                 .read_resource(ReadResourceRequestParams::new(RESOURCE_URI), context)
                 .await
                 .unwrap();
@@ -2418,7 +2433,7 @@ mod tests {
 
             let running = test_running(Arc::new(RwLock::new(schema)));
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.server_info.name, "Apollo MCP Server");
             assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
@@ -2453,7 +2468,7 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert_eq!(
                 info.instructions.as_deref(),
                 Some("Prefer search before list.")
@@ -2480,7 +2495,7 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.server_info.name, "My Custom Server");
             assert_eq!(info.server_info.version, "3.0.0-beta");
@@ -2518,7 +2533,7 @@ mod tests {
                 ..test_running(Arc::clone(&schema))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.protocol_version, MAX_SUPPORTED_PROTOCOL_VERSION);
         }
@@ -2636,14 +2651,14 @@ mod tests {
                 template: "test".to_string(),
             }];
             let running = running_with_prompts(prompts);
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert!(info.capabilities.prompts.is_some());
         }
 
         #[test]
         fn get_info_no_prompts_capability_when_empty() {
             let running = running_with_prompts(vec![]);
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert!(info.capabilities.prompts.is_none());
         }
     }
@@ -2968,7 +2983,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -2988,7 +3002,7 @@ mod integration_tests {
         fn create_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 session_manager,
@@ -3050,7 +3064,7 @@ mod integration_tests {
                 "protocolVersion":"2025-03-26", "capabilities":{}, "clientInfo":{"name":"legacy", "version":"1"}
             })).unwrap();
             let service =
-                rmcp::service::serve_directly(running.clone(), server_io, Some(legacy_info));
+                rmcp::service::serve_directly(running.for_service(), server_io, Some(legacy_info));
             for (version, expected_output_schema) in [
                 (None, false),
                 (Some(ProtocolVersion::V_2025_06_18), true),
@@ -3061,7 +3075,11 @@ mod integration_tests {
                 if let Some(version) = version {
                     context.meta.set_protocol_version(version);
                 }
-                let tools = running.list_tools(None, context).await.unwrap();
+                let tools = running
+                    .for_service()
+                    .list_tools(None, context)
+                    .await
+                    .unwrap();
                 assert_eq!(
                     tools.tools[0].output_schema.is_some(),
                     expected_output_schema
@@ -3255,6 +3273,7 @@ mod integration_tests {
 
             let server = tokio::spawn(async move {
                 let service = running
+                    .for_service()
                     .serve((server_r, server_w))
                     .await
                     .expect("stdio serve should complete the initialize handshake");
@@ -3306,6 +3325,7 @@ mod integration_tests {
 
             let server = tokio::spawn(async move {
                 let service = running
+                    .for_service()
                     .serve((server_r, server_w))
                     .await
                     .expect("stdio serve should complete the initialize handshake");
@@ -3343,7 +3363,7 @@ mod integration_tests {
         fn create_stateless_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 session_manager,
@@ -3507,7 +3527,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -3610,7 +3629,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::All,
                 disable_type_description: false,
@@ -3629,7 +3647,7 @@ mod integration_tests {
 
         fn create_test_service(
             stateful_mode: bool,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             let running = create_test_running();
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
@@ -3641,7 +3659,7 @@ mod integration_tests {
         fn create_stateful_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 session_manager,
@@ -3932,7 +3950,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::All,
                 disable_type_description: false,
@@ -3952,7 +3969,7 @@ mod integration_tests {
         fn create_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 session_manager,
@@ -3962,7 +3979,7 @@ mod integration_tests {
 
         struct LegacyHttp {
             running: Running,
-            service: StreamableHttpService<Running, LocalSessionManager>,
+            service: StreamableHttpService<McpService, LocalSessionManager>,
         }
 
         impl LegacyHttp {
@@ -4010,18 +4027,18 @@ mod integration_tests {
                 .unwrap()
         }
 
-        async fn wait_for_forwarders(running: &Running, expected: usize) {
+        async fn wait_for_receivers(running: &Running, expected: usize) {
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
                 while running.tool_list_changes.receiver_count() != expected {
                     tokio::task::yield_now().await;
                 }
             })
             .await
-            .expect("initialized notification must start a forwarder");
+            .expect("initialization must register a change receiver");
         }
 
         async fn initialize_legacy_session(
-            service: &StreamableHttpService<Running, LocalSessionManager>,
+            service: &StreamableHttpService<McpService, LocalSessionManager>,
             running: &Running,
         ) -> String {
             let previous = running.tool_list_changes.receiver_count();
@@ -4035,7 +4052,7 @@ mod integration_tests {
                 .to_str()
                 .unwrap()
                 .to_owned();
-            assert_eq!(running.tool_list_changes.receiver_count(), previous);
+            assert_eq!(running.tool_list_changes.receiver_count(), previous + 1);
 
             let response = service
                 .clone()
@@ -4047,19 +4064,32 @@ mod integration_tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
-            wait_for_forwarders(running, previous + 1).await;
+            wait_for_receivers(running, previous + 1).await;
             session
         }
 
+        #[rstest::rstest]
         #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
         async fn deleted_session_releases_forwarder_without_a_catalog_update() {
             let running = create_test_running();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
             let service = create_service(running.clone(), Arc::clone(&session_manager));
             let session_id = initialize_legacy_session(&service, &running).await;
+            let mut stream = service
+                .clone()
+                .oneshot(session_get(&session_id))
+                .await
+                .unwrap()
+                .into_body();
+            running.update_operations(vec![]).await;
+            assert_eq!(
+                next_message(&mut stream).await["method"],
+                "notifications/tools/list_changed"
+            );
 
-            // Delete the session — closes the session transport
+            // Delete an actively forwarding session, not just a pending receiver.
             let service = create_service(running.clone(), Arc::clone(&session_manager));
             let response = service
                 .oneshot(build_delete_request(&session_id))
@@ -4124,31 +4154,29 @@ mod integration_tests {
             session_request(session, http::Method::POST, body)
         }
 
+        #[rstest::rstest]
+        #[case::application(false)]
+        #[case::signal(true)]
         #[tokio::test]
-        async fn http_shutdown_releases_an_open_notification_stream() {
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn http_shutdown_releases_an_open_notification_stream(#[case] signal_shutdown: bool) {
+            use crate::server::states::starting::{build_http_service, serve_http};
             let running = create_test_running();
             let shutdown = running.cancellation_token.clone();
-            let service = StreamableHttpService::new(
-                {
-                    let running = running.clone();
-                    move || Ok(running.for_service())
-                },
-                Arc::new(LocalSessionManager::default()),
-                StreamableHttpServerConfig::default()
-                    .with_legacy_session_mode(true)
-                    .with_cancellation_token(shutdown.child_token()),
-            );
+            let service = build_http_service(running.clone(), true, &Default::default());
             let session = initialize_legacy_session(&service, &running).await;
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let address = listener.local_addr().unwrap();
-            let token = shutdown.clone();
-            let server = tokio::spawn(async move {
-                axum::serve(listener, axum::Router::new().nest_service("/mcp", service))
-                    .with_graceful_shutdown(token.cancelled_owned())
-                    .await
-                    .unwrap();
-            });
-            let response = reqwest::Client::new()
+            let (signal, received) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(serve_http(
+                listener,
+                axum::Router::new().nest_service("/mcp", service),
+                shutdown.clone(),
+                async move {
+                    received.await.unwrap();
+                },
+            ));
+            let mut response = reqwest::Client::new()
                 .get(format!("http://{address}/mcp"))
                 .header("Accept", "text/event-stream")
                 .header("Mcp-Session-Id", session)
@@ -4156,32 +4184,163 @@ mod integration_tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
+            running.update_operations(vec![]).await;
+            let mut received = String::new();
+            while !received.contains("notifications/tools/list_changed") {
+                let chunk = response
+                    .chunk()
+                    .await
+                    .unwrap()
+                    .expect("open notification stream");
+                received.push_str(&String::from_utf8_lossy(&chunk));
+            }
             assert_eq!(running.tool_list_changes.receiver_count(), 1);
-            shutdown.cancel();
-            tokio::time::timeout(std::time::Duration::from_secs(2), server)
-                .await
-                .unwrap()
-                .unwrap();
-            tokio::time::timeout(
-                std::time::Duration::from_secs(2),
-                running.tool_list_changes.closed(),
-            )
-            .await
-            .unwrap();
+            if signal_shutdown {
+                signal.send(()).unwrap();
+            } else {
+                shutdown.cancel();
+            }
+            server.await.unwrap().unwrap();
+            running.tool_list_changes.closed().await;
+            assert!(shutdown.is_cancelled());
             drop(response);
         }
 
+        #[rstest::rstest]
         #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn updates_while_initialized_callback_is_delayed_are_delivered() {
+            struct DelayedService {
+                service: McpService,
+                release: Arc<tokio::sync::Semaphore>,
+                entered: tokio::sync::mpsc::UnboundedSender<()>,
+            }
+            impl ServerHandler for DelayedService {
+                fn get_info(&self) -> ServerInfo {
+                    self.service.get_info()
+                }
+                async fn initialize(
+                    &self,
+                    request: InitializeRequestParams,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<InitializeResult, McpError> {
+                    self.service.initialize(request, context).await
+                }
+                async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+                    self.entered.send(()).unwrap();
+                    self.release.acquire().await.unwrap().forget();
+                    self.service.on_initialized(context).await;
+                }
+                async fn list_tools(
+                    &self,
+                    request: Option<PaginatedRequestParams>,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<ListToolsResult, McpError> {
+                    self.service.list_tools(request, context).await
+                }
+            }
+            let running = create_test_running();
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let (entered, mut callbacks) = tokio::sync::mpsc::unbounded_channel();
+            let service = StreamableHttpService::new(
+                {
+                    let running = running.clone();
+                    let release = release.clone();
+                    move || {
+                        Ok(DelayedService {
+                            service: running.for_service(),
+                            release: release.clone(),
+                            entered: entered.clone(),
+                        })
+                    }
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            );
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            service
+                .clone()
+                .oneshot(session_post(
+                    &session,
+                    json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                ))
+                .await
+                .unwrap();
+            callbacks.recv().await.unwrap();
+            let list = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
+            let mut before = service
+                .clone()
+                .oneshot(session_post(&session, list.clone()))
+                .await
+                .unwrap()
+                .into_body();
+            assert!(
+                next_message(&mut before).await["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            let mut stream = service
+                .clone()
+                .oneshot(session_get(&session))
+                .await
+                .unwrap()
+                .into_body();
+            running
+                .update_operations(vec![("query Hello { hello }".to_owned(), None).into()])
+                .await;
+            // The update must be retained even though delivery has not started.
+            release.add_permits(1);
+            assert_eq!(
+                next_message(&mut stream).await["method"],
+                "notifications/tools/list_changed"
+            );
+            let mut after = service
+                .clone()
+                .oneshot(session_post(&session, list))
+                .await
+                .unwrap()
+                .into_body();
+            assert_eq!(
+                next_message(&mut after).await["result"]["tools"][0]["name"],
+                "Hello"
+            );
+            service
+                .oneshot(build_delete_request(&session))
+                .await
+                .unwrap();
+            running.tool_list_changes.closed().await;
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
         async fn repeated_initialized_notifications_keep_one_forwarder() {
             // rmcp dispatches notifications concurrently. Observe completion of
             // each real callback rather than treating a later request as a barrier.
             struct ObservedService {
-                running: Running,
+                running: McpService,
                 completed: tokio::sync::mpsc::UnboundedSender<()>,
             }
             impl ServerHandler for ObservedService {
                 fn get_info(&self) -> ServerInfo {
                     self.running.get_info()
+                }
+
+                async fn initialize(
+                    &self,
+                    request: InitializeRequestParams,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<InitializeResult, McpError> {
+                    self.running.initialize(request, context).await
                 }
 
                 async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
@@ -4214,7 +4373,7 @@ mod integration_tests {
                 .to_str()
                 .unwrap()
                 .to_owned();
-            assert_eq!(running.tool_list_changes.receiver_count(), 0);
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
             for _ in 0..2 {
                 let response = service
                     .clone()
@@ -4243,7 +4402,9 @@ mod integration_tests {
             .unwrap();
         }
 
+        #[rstest::rstest]
         #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
         async fn http_clients_receive_catalog_updates_across_sse_reconnects() {
             let mut running = create_test_running();
             running.enable_output_schema = true;
@@ -4327,7 +4488,9 @@ mod integration_tests {
             .unwrap();
         }
 
+        #[rstest::rstest]
         #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
         async fn stdio_delivers_changes_and_releases_forwarder_on_disconnect() {
             use rmcp::ServiceExt as _;
             use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -4361,13 +4524,13 @@ mod integration_tests {
                     .get("result")
                     .is_some()
             );
-            assert_eq!(running.tool_list_changes.receiver_count(), 0);
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
             let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
             writer
                 .write_all(format!("{initialized}\n").as_bytes())
                 .await
                 .unwrap();
-            wait_for_forwarders(&running, 1).await;
+            wait_for_receivers(&running, 1).await;
             drop(intermediate_clone);
             running.update_operations(vec![]).await;
             line.clear();
@@ -4424,7 +4587,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -4497,7 +4659,6 @@ mod integration_tests {
                 validate_tool: None,
                 custom_scalar_map: None,
                 tool_list_changes: Default::default(),
-                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -4517,7 +4678,7 @@ mod integration_tests {
         fn create_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 session_manager,
@@ -4582,8 +4743,9 @@ mod integration_tests {
                 description: Some("Custom fleet description".to_string()),
                 ..Default::default()
             });
-            let expected_capabilities = serde_json::to_value(running.get_info().capabilities)
-                .expect("capabilities serialize");
+            let expected_capabilities =
+                serde_json::to_value(running.for_service().get_info().capabilities)
+                    .expect("capabilities serialize");
 
             let result = discover(running).await;
 
@@ -4644,6 +4806,7 @@ mod integration_tests {
 
             let server = tokio::spawn(async move {
                 let service = create_test_running(ServerInfoConfig::default())
+                    .for_service()
                     .serve((server_r, server_w))
                     .await
                     .expect("stdio serve should accept a discover opener");

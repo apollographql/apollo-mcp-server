@@ -1,10 +1,6 @@
 //! Application catalog invalidation, independent of MCP notification delivery.
 
-use std::{
-    future::Future,
-    sync::{Arc, OnceLock},
-    time::Duration,
-};
+use std::{future::Future, sync::Arc, time::Duration};
 
 use rmcp::{Peer, RoleServer, ServiceError};
 use tokio::sync::watch;
@@ -42,39 +38,41 @@ impl ToolListChanges {
     }
 }
 
-/// Separates application state from the notification task owned by an rmcp service.
-///
-/// Service clones share one task owner. Dropping the last clone aborts delivery;
-/// the task must never capture its owner. Stateless requests leave the cell empty.
-/// Once delivery ends on a terminal error, it is not restarted for that service.
+/// One legacy lifecycle shared by clones of an rmcp service. The task never
+/// captures this owner, so final-owner drop releases pending or active delivery.
 #[derive(Clone, Default)]
-pub(super) enum LegacyToolNotifications {
+pub(super) struct LegacyToolNotifications(Arc<parking_lot::Mutex<Lifecycle>>);
+
+#[derive(Default)]
+enum Lifecycle {
     #[default]
-    Application,
-    Service(Arc<OnceLock<AbortOnDropHandle<()>>>),
+    AwaitingInitialize,
+    AwaitingInitialized(watch::Receiver<()>),
+    // Records that delivery was started, even after a terminal send error. Such
+    // failures do not implicitly restart delivery on repeated notifications.
+    Started {
+        _task: AbortOnDropHandle<()>,
+    },
 }
 
 impl LegacyToolNotifications {
-    pub(super) fn for_service() -> Self {
-        Self::Service(Arc::default())
+    pub(super) fn initialize(&self, changes: &ToolListChanges) {
+        let mut state = self.0.lock();
+        if matches!(*state, Lifecycle::AwaitingInitialize) {
+            *state = Lifecycle::AwaitingInitialized(changes.subscribe());
+        }
     }
 
-    pub(super) fn on_initialized(
-        &self,
-        peer: Peer<RoleServer>,
-        changes: &ToolListChanges,
-        shutdown: CancellationToken,
-    ) {
-        let Self::Service(task) = self else {
-            return;
+    pub(super) fn on_initialized(&self, peer: Peer<RoleServer>, shutdown: CancellationToken) {
+        let mut state = self.0.lock();
+        *state = match std::mem::take(&mut *state) {
+            Lifecycle::AwaitingInitialized(receiver) => Lifecycle::Started {
+                _task: AbortOnDropHandle::new(tokio::spawn(async move {
+                    forward_changes(receiver, shutdown, || peer.notify_tool_list_changed()).await;
+                })),
+            },
+            unchanged => unchanged,
         };
-        task.get_or_init(|| {
-            // Subscribe synchronously so updates cannot race with task scheduling.
-            let receiver = changes.subscribe();
-            AbortOnDropHandle::new(tokio::spawn(async move {
-                forward_changes(receiver, shutdown, || peer.notify_tool_list_changed()).await;
-            }))
-        });
     }
 }
 
@@ -124,64 +122,136 @@ async fn forward_changes<F: Future<Output = Result<(), ServiceError>>>(
 mod tests {
     use super::*;
 
+    #[derive(Clone, Copy, Debug)]
+    enum Action {
+        Publish,
+        Succeed,
+        RecoverableFailure,
+        TerminalFailure,
+        Cancel,
+    }
+
+    #[derive(Clone, Copy)]
+    enum Model {
+        Idle,
+        Sending { pending: bool },
+        Stopped,
+    }
+
     proptest::proptest! {
-        /// Each scheduled batch leaves at most one pending invalidation. A simple
-        /// boolean model predicts sends without reproducing the watch implementation.
         #[test]
         fn forwarding_matches_pending_invalidation_model(
-            batches in proptest::collection::vec(0usize..8, 1..32),
-            stop_after in 0usize..32,
+            actions in proptest::collection::vec(proptest::prop_oneof![
+                proptest::strategy::Just(Action::Publish),
+                proptest::strategy::Just(Action::Succeed),
+                proptest::strategy::Just(Action::RecoverableFailure),
+                proptest::strategy::Just(Action::TerminalFailure),
+                proptest::strategy::Just(Action::Cancel),
+            ], 1..64)
         ) {
             let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
-            runtime.block_on(async {
-                let changes = ToolListChanges::default();
-                let shutdown = CancellationToken::new();
-                let token = shutdown.clone();
-                let receiver = changes.subscribe();
-                let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
-                let release = Arc::new(tokio::sync::Semaphore::new(0));
-                let permits = release.clone();
-                let task = tokio::spawn(async move {
-                    let mut attempts = 0;
-                    forward_changes(receiver, token, || {
-                        attempts += 1;
-                        sent.send(()).unwrap();
-                        async {
-                            permits.acquire().await.unwrap().forget();
-                            Ok(())
-                        }
-                    }).await;
-                    attempts
-                });
-                // Hold a first send in progress while generating further changes.
-                changes.publish();
-                received.recv().await.unwrap();
-                let mut expected = 1;
-                for count in batches.into_iter().take(stop_after) {
-                    let mut pending = false;
-                    for _ in 0..count {
-                        changes.publish();
-                        pending = true;
-                    }
-                    if pending {
-                        expected += 1;
-                        release.add_permits(1);
-                        tokio::time::timeout(Duration::from_secs(2), received.recv()).await.unwrap().unwrap();
-                    }
-                    assert!(received.try_recv().is_err());
-                }
-                // Cancellation must end even a blocked send, discarding pending work.
-                changes.publish();
-                shutdown.cancel();
-                let attempts = tokio::time::timeout(Duration::from_secs(2), task).await.unwrap().unwrap();
-                assert_eq!(attempts, expected);
-                assert!(received.try_recv().is_err());
-                assert_eq!(changes.receiver_count(), 0);
-            });
+            runtime.block_on(check_forwarding_model(actions));
         }
     }
 
+    async fn check_forwarding_model(actions: Vec<Action>) {
+        use std::cell::{Cell, RefCell};
+        let changes = ToolListChanges::default();
+        let shutdown = CancellationToken::new();
+        let attempts = Cell::new(0);
+        let completion = RefCell::new(None);
+        let forwarding = forward_changes(changes.subscribe(), shutdown.clone(), || {
+            attempts.set(attempts.get() + 1);
+            let (send, receive) = tokio::sync::oneshot::channel();
+            *completion.borrow_mut() = Some(send);
+            async move { receive.await.unwrap() }
+        });
+        tokio::pin!(forwarding);
+        let mut model = Model::Idle;
+        let mut expected = 0;
+        assert!(futures::poll!(&mut forwarding).is_pending());
+        // Polling explicitly controls scheduling: each action runs to the next
+        // suspension point, without scheduler sleeps or production test hooks.
+        for action in actions.into_iter().chain([Action::Cancel]) {
+            if matches!(model, Model::Stopped) {
+                changes.publish();
+                assert_eq!(attempts.get(), expected);
+                continue;
+            }
+            match action {
+                Action::Publish => {
+                    changes.publish();
+                    model = match model {
+                        Model::Idle => {
+                            expected += 1;
+                            Model::Sending { pending: false }
+                        }
+                        Model::Sending { .. } => Model::Sending { pending: true },
+                        Model::Stopped => Model::Stopped,
+                    };
+                }
+                Action::Cancel => {
+                    shutdown.cancel();
+                    model = Model::Stopped;
+                }
+                Action::Succeed | Action::RecoverableFailure | Action::TerminalFailure => {
+                    if let Model::Sending { pending } = model {
+                        let result = match action {
+                            Action::Succeed => Ok(()),
+                            Action::RecoverableFailure => Err(ServiceError::UnexpectedResponse),
+                            _ => Err(ServiceError::TransportClosed),
+                        };
+                        completion
+                            .borrow_mut()
+                            .take()
+                            .unwrap()
+                            .send(result)
+                            .unwrap();
+                        model = if matches!(action, Action::TerminalFailure) {
+                            Model::Stopped
+                        } else if pending {
+                            expected += 1;
+                            Model::Sending { pending: false }
+                        } else {
+                            Model::Idle
+                        };
+                    }
+                }
+            }
+            assert_eq!(
+                futures::poll!(&mut forwarding).is_ready(),
+                matches!(model, Model::Stopped)
+            );
+            assert_eq!(attempts.get(), expected);
+        }
+    }
+
+    #[test]
+    fn pending_initialization_is_shared_and_released_with_its_final_owner() {
+        let changes = ToolListChanges::default();
+        let owner = LegacyToolNotifications::default();
+        owner.initialize(&changes);
+        changes.publish();
+        owner.initialize(&changes);
+        let clone = owner.clone();
+        drop(owner);
+        assert_eq!(changes.receiver_count(), 1);
+        let state = clone.0.lock();
+        let Lifecycle::AwaitingInitialized(receiver) = &*state else {
+            panic!("expected pending initialization")
+        };
+        assert!(
+            receiver.has_changed().unwrap(),
+            "reinitialization must preserve pending invalidation"
+        );
+        drop(state);
+        drop(clone);
+        assert_eq!(changes.receiver_count(), 0);
+    }
+
+    #[rstest::rstest]
     #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn changes_are_coalesced_for_each_receiver_without_replay() {
         let changes = ToolListChanges::default();
         changes.publish(); // No subscribers is normal.
@@ -196,7 +266,9 @@ mod tests {
         assert!(!second.has_changed().unwrap());
     }
 
+    #[rstest::rstest]
     #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn shutdown_interrupts_a_blocked_send() {
         let changes = ToolListChanges::default();
         let shutdown = CancellationToken::new();
@@ -217,7 +289,9 @@ mod tests {
         changes.closed().await;
     }
 
+    #[rstest::rstest]
     #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn recoverable_send_errors_do_not_stop_delivery() {
         let changes = ToolListChanges::default();
         let receiver = changes.subscribe();
@@ -242,7 +316,9 @@ mod tests {
         assert_eq!(task.await.unwrap(), 2);
         changes.closed().await;
     }
+    #[rstest::rstest]
     #[tokio::test(start_paused = true)]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn slow_client_times_out_without_delaying_another_client() {
         let changes = ToolListChanges::default();
         let slow = changes.subscribe();
@@ -276,7 +352,9 @@ mod tests {
         changes.closed().await;
     }
 
+    #[rstest::rstest]
     #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn dropping_the_change_source_ends_delivery() {
         let changes = ToolListChanges::default();
         let receiver = changes.subscribe();
@@ -287,7 +365,9 @@ mod tests {
         .await;
     }
 
+    #[rstest::rstest]
     #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
     async fn changes_during_a_send_are_delivered_after_it_finishes() {
         let changes = ToolListChanges::default();
         let receiver = changes.subscribe();

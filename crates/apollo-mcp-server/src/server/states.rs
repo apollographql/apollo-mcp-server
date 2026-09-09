@@ -483,7 +483,6 @@ mod tests {
             validate_tool: None,
             custom_scalar_map: None,
             tool_list_changes: Default::default(),
-            legacy_tool_notifications: Default::default(),
             cancellation_token: CancellationToken::new(),
             mutation_mode: MutationMode::None,
             disable_type_description: false,

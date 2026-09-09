@@ -177,7 +177,6 @@ impl Starting {
             validate_tool,
             custom_scalar_map: self.config.custom_scalar_map,
             tool_list_changes: Default::default(),
-            legacy_tool_notifications: Default::default(),
             cancellation_token: cancellation_token.clone(),
             mutation_mode: self.config.mutation_mode,
             disable_type_description: self.config.disable_type_description,
@@ -204,16 +203,7 @@ impl Starting {
                 info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
-                let http_config = host_validation.apply_to(
-                    StreamableHttpServerConfig::default()
-                        .with_legacy_session_mode(stateful_mode)
-                        .with_cancellation_token(cancellation_token.child_token()),
-                );
-                let service = StreamableHttpService::new(
-                    move || Ok(running.for_service()),
-                    LocalSessionManager::default().into(),
-                    http_config,
-                );
+                let service = build_http_service(running, stateful_mode, &host_validation);
                 let mut router = axum::Router::new().nest_service("/mcp", service);
                 if let Some(auth) = auth {
                     router = auth
@@ -239,23 +229,11 @@ impl Starting {
                 }
 
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
-                let shutdown_token = cancellation_token.clone();
                 tokio::spawn(async move {
-                    // Shut down when either a signal (CTRL+C/SIGTERM) is received
-                    // or the cancellation token is cancelled (e.g., config change restart).
-                    let graceful_shutdown = async move {
-                        tokio::select! {
-                            _ = shutdown_signal() => {},
-                            _ = shutdown_token.cancelled() => {},
-                        }
-                        shutdown_token.cancel();
-                    };
-                    // Health check is already active from creation
-                    if let Err(e) = axum::serve(tcp_listener, router)
-                        .with_graceful_shutdown(graceful_shutdown)
-                        .await
+                    if let Err(e) =
+                        serve_http(tcp_listener, router, cancellation_token, shutdown_signal())
+                            .await
                     {
-                        // This can never really happen
                         error!("Failed to start MCP server: {e:?}");
                     }
                 });
@@ -276,6 +254,42 @@ impl Starting {
 
         Ok(running)
     }
+}
+
+/// Construct the production transport, including cancellation of open streams.
+pub(super) fn build_http_service(
+    running: Running,
+    stateful_mode: bool,
+    host_validation: &crate::host_validation::HostValidationConfig,
+) -> StreamableHttpService<super::running::McpService, LocalSessionManager> {
+    let config = host_validation.apply_to(
+        StreamableHttpServerConfig::default()
+            .with_legacy_session_mode(stateful_mode)
+            .with_cancellation_token(running.cancellation_token.child_token()),
+    );
+    StreamableHttpService::new(
+        move || Ok(running.for_service()),
+        LocalSessionManager::default().into(),
+        config,
+    )
+}
+
+/// Both shutdown sources cancel transport streams before Axum drains connections.
+pub(super) async fn serve_http(
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+    shutdown: CancellationToken,
+    signal: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = signal => {},
+                _ = shutdown.cancelled() => {},
+            }
+            shutdown.cancel();
+        })
+        .await
 }
 
 fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
