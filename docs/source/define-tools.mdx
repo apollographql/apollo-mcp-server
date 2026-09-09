@@ -497,9 +497,9 @@ An input property's `description` comes from the first available source:
 
 ### Output schema
 
-With `overrides.enable_output_schema: true`, the tool also carries an `outputSchema` describing the GraphQL response envelope: `data`, an optional `errors` array in the standard GraphQL error shape, and `extensions`. The `data` subtree follows the operation's selection set. For the example above:
+With `overrides.enable_output_schema: true`, the tool also carries an `outputSchema` describing the GraphQL response envelope: `data`, an optional `errors` array in the standard GraphQL error shape, and `extensions`. The `data` subtree follows the operation's selection set. For the example above, with `errors` and `extensions` omitted for brevity:
 
-```json title="GetThings outputSchema (data subtree)"
+```json title="GetThings outputSchema (errors and extensions omitted)"
 {
   "type": "object",
   "properties": {
@@ -559,6 +559,8 @@ With `overrides.enable_output_schema: true`, the tool also carries an `outputSch
   }
 }
 ```
+
+The generated schema always includes all three envelope members. `errors` is an array of the standard GraphQL error shape (`message`, `locations`, `path`, `extensions`), and `extensions` is an unconstrained object.
 
 The output side follows the same conventions as the input side, with a few differences:
 
