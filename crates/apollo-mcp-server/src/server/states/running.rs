@@ -88,6 +88,32 @@ pub(super) struct Running {
     pub(super) caching: Caching,
 }
 
+/// Client capabilities and negotiated protocol version derived from the peer's `initialize`
+/// info, bundled so handlers that need both (app-target resolution, output-schema stripping,
+/// cache hints) take one argument instead of two.
+#[derive(Debug, Clone, Copy, Default)]
+struct PeerContext<'a> {
+    client_capabilities: Option<&'a ClientCapabilities>,
+    protocol_version: Option<&'a ProtocolVersion>,
+}
+
+#[cfg(test)]
+impl<'a> PeerContext<'a> {
+    fn with_client_capabilities(client_capabilities: &'a ClientCapabilities) -> Self {
+        Self {
+            client_capabilities: Some(client_capabilities),
+            protocol_version: None,
+        }
+    }
+
+    fn with_protocol_version(protocol_version: &'a ProtocolVersion) -> Self {
+        Self {
+            client_capabilities: None,
+            protocol_version: Some(protocol_version),
+        }
+    }
+}
+
 impl Running {
     /// Returns true when `enable_output_schema` is active and the negotiated
     /// protocol version supports `outputSchema` / `structuredContent` (MCP 2025-06-18+).
@@ -279,8 +305,7 @@ impl Running {
     async fn list_tools_impl(
         &self,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
-        protocol_version: Option<&ProtocolVersion>,
+        peer: PeerContext<'_>,
     ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
@@ -289,7 +314,7 @@ impl Running {
             .add(1, &[]);
 
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
@@ -341,13 +366,13 @@ impl Running {
             )
         };
 
-        if !self.client_supports_output_schema(protocol_version) {
+        if !self.client_supports_output_schema(peer.protocol_version) {
             for tool in &mut result.tools {
                 tool.output_schema = None;
             }
         }
 
-        self.caching.apply_to(&mut result, protocol_version);
+        self.caching.apply_to(&mut result, peer.protocol_version);
 
         Ok(result)
     }
@@ -540,8 +565,7 @@ impl Running {
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
-        protocol_version: Option<&ProtocolVersion>,
+        peer: PeerContext<'_>,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -550,13 +574,13 @@ impl Running {
             )
         })?;
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
         if let Some(app_name) = app_param {
             let resource =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
             let mut result = ReadResourceResult::new(vec![resource]);
-            self.caching.apply_to(&mut result, protocol_version);
+            self.caching.apply_to(&mut result, peer.protocol_version);
             Ok(result)
         } else {
             Err(ErrorData::resource_not_found(
@@ -742,11 +766,12 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let peer = PeerContext {
+            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
+            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+        };
 
-        self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
-            .await
+        self.list_tools_impl(context.extensions, peer).await
     }
 
     #[tracing::instrument(skip_all)]
@@ -768,17 +793,14 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
         let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let peer = PeerContext {
+            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
+            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+        };
 
-        self.read_resource_impl(
-            request,
-            context.extensions,
-            client_capabilities,
-            protocol_version,
-        )
-        .await
-        .map(Into::into)
+        self.read_resource_impl(request, context.extensions, peer)
+            .await
+            .map(Into::into)
     }
 
     #[tracing::instrument(skip_all)]
@@ -1254,6 +1276,8 @@ mod tests {
     }
 
     mod list_resources {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
@@ -1281,8 +1305,13 @@ mod tests {
             assert_eq!(resources[0].uri, RESOURCE_URI);
         }
 
-        #[tokio::test]
-        async fn resource_list_has_cache_hints_for_2026_07_28_peer() {
+        #[rstest]
+        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        fn resource_list_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+            #[case] expect_hints: bool,
+        ) {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
@@ -1290,27 +1319,16 @@ mod tests {
             );
 
             let result = running
-                .list_resources_impl(&Extensions::new(), Some(&ProtocolVersion::V_2026_07_28))
+                .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-            assert_eq!(result.cache_scope, Some(CacheScope::Private));
-        }
-
-        #[tokio::test]
-        async fn resource_list_omits_cache_hints_for_legacy_peer() {
-            let running = running_with_apps(
-                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-                None,
-                None,
-            );
-
-            let result = running
-                .list_resources_impl(&Extensions::new(), Some(&ProtocolVersion::V_2025_06_18))
-                .unwrap();
-
-            assert_eq!(result.ttl_ms, None);
-            assert_eq!(result.cache_scope, None);
+            if expect_hints {
+                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+                assert_eq!(result.cache_scope, Some(CacheScope::Private));
+            } else {
+                assert_eq!(result.ttl_ms, None);
+                assert_eq!(result.cache_scope, None);
+            }
         }
 
         #[tokio::test]
@@ -1376,6 +1394,7 @@ mod tests {
 
     mod read_resource {
         use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+        use rstest::rstest;
 
         use crate::apps::{
             app::{AppResource, AppResourceSource},
@@ -1406,8 +1425,7 @@ mod tests {
                         "http://localhost:4000/resource#a_different_fragment",
                     ),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1429,8 +1447,14 @@ mod tests {
             assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
         }
 
+        #[rstest]
+        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
         #[tokio::test]
-        async fn read_resource_has_cache_hints_for_2026_07_28_peer() {
+        async fn read_resource_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+            #[case] expect_hints: bool,
+        ) {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
@@ -1450,45 +1474,18 @@ mod tests {
                         "http://localhost:4000/resource#a_different_fragment",
                     ),
                     extensions,
-                    None,
-                    Some(&ProtocolVersion::V_2026_07_28),
+                    PeerContext::with_protocol_version(&protocol_version),
                 )
                 .await
                 .unwrap();
 
-            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-            assert_eq!(result.cache_scope, Some(CacheScope::Private));
-        }
-
-        #[tokio::test]
-        async fn read_resource_omits_cache_hints_for_legacy_peer() {
-            let running = running_with_apps(
-                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
-                None,
-                None,
-            );
-            let mut extensions = Extensions::new();
-            let request = axum::http::Request::builder()
-                .uri("http://localhost?app=MyApp")
-                .body(())
-                .unwrap();
-            let (parts, _) = request.into_parts();
-            extensions.insert(parts);
-
-            let result = running
-                .read_resource_impl(
-                    ReadResourceRequestParams::new(
-                        "http://localhost:4000/resource#a_different_fragment",
-                    ),
-                    extensions,
-                    None,
-                    Some(&ProtocolVersion::V_2025_06_18),
-                )
-                .await
-                .unwrap();
-
-            assert_eq!(result.ttl_ms, None);
-            assert_eq!(result.cache_scope, None);
+            if expect_hints {
+                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+                assert_eq!(result.cache_scope, Some(CacheScope::Private));
+            } else {
+                assert_eq!(result.ttl_ms, None);
+                assert_eq!(result.cache_scope, None);
+            }
         }
 
         #[tokio::test]
@@ -1510,8 +1507,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/invalid_resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1536,8 +1532,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("not a uri"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1554,8 +1549,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     Extensions::new(),
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1580,8 +1574,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1618,8 +1611,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .expect("resource fetch failed");
@@ -1663,8 +1655,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1737,8 +1728,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1777,8 +1767,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1816,8 +1805,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1863,8 +1851,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1913,8 +1900,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
 
@@ -1923,6 +1909,8 @@ mod tests {
     }
 
     mod list_tools {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
@@ -1936,7 +1924,7 @@ mod tests {
             );
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, None)
+                .list_tools_impl(Extensions::new(), PeerContext::default())
                 .await
                 .unwrap();
 
@@ -1944,8 +1932,14 @@ mod tests {
             assert_eq!(result.next_cursor, None);
         }
 
+        #[rstest]
+        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
         #[tokio::test]
-        async fn list_tools_has_cache_hints_for_2026_07_28_peer() {
+        async fn list_tools_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+            #[case] expect_hints: bool,
+        ) {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),
                 None,
@@ -1955,35 +1949,18 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2026_07_28),
+                    PeerContext::with_protocol_version(&protocol_version),
                 )
                 .await
                 .unwrap();
 
-            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-            assert_eq!(result.cache_scope, Some(CacheScope::Private));
-        }
-
-        #[tokio::test]
-        async fn list_tools_omits_cache_hints_for_legacy_peer() {
-            let running = running_with_apps(
-                AppResource::Single(AppResourceSource::Local("test".to_string())),
-                None,
-                None,
-            );
-
-            let result = running
-                .list_tools_impl(
-                    Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_06_18),
-                )
-                .await
-                .unwrap();
-
-            assert_eq!(result.ttl_ms, None);
-            assert_eq!(result.cache_scope, None);
+            if expect_hints {
+                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+                assert_eq!(result.cache_scope, Some(CacheScope::Private));
+            } else {
+                assert_eq!(result.ttl_ms, None);
+                assert_eq!(result.cache_scope, None);
+            }
         }
 
         #[tokio::test]
@@ -2003,7 +1980,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
 
@@ -2028,7 +2005,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -2050,7 +2029,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2083,7 +2062,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2121,7 +2100,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2164,7 +2143,10 @@ mod tests {
             client_capabilities.extensions = Some(extension_capabilities);
 
             let result = running
-                .list_tools_impl(extensions, Some(&client_capabilities), None)
+                .list_tools_impl(
+                    extensions,
+                    PeerContext::with_client_capabilities(&client_capabilities),
+                )
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2201,7 +2183,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -2236,8 +2220,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_03_26),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_03_26),
                 )
                 .await
                 .unwrap();
@@ -2282,8 +2265,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_06_18),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_06_18),
                 )
                 .await
                 .unwrap();
@@ -2421,6 +2403,7 @@ mod tests {
     mod prompts {
         use super::*;
         use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, Role};
+        use rstest::rstest;
 
         fn running_with_prompts(prompts: Vec<crate::prompts::PromptFile>) -> Running {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -2453,26 +2436,23 @@ mod tests {
             assert_eq!(result.prompts[0].description.as_deref(), Some("A greeting"));
         }
 
-        #[test]
-        fn list_prompts_has_cache_hints_for_2026_07_28_peer() {
+        #[rstest]
+        #[case::supported(ProtocolVersion::V_2026_07_28, true)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, false)]
+        fn list_prompts_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+            #[case] expect_hints: bool,
+        ) {
             let running = running_with_prompts(vec![]);
-            let result = running
-                .list_prompts_impl(Some(&ProtocolVersion::V_2026_07_28))
-                .unwrap();
+            let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
-            assert_eq!(result.cache_scope, Some(CacheScope::Private));
-        }
-
-        #[test]
-        fn list_prompts_omits_cache_hints_for_legacy_peer() {
-            let running = running_with_prompts(vec![]);
-            let result = running
-                .list_prompts_impl(Some(&ProtocolVersion::V_2025_06_18))
-                .unwrap();
-
-            assert_eq!(result.ttl_ms, None);
-            assert_eq!(result.cache_scope, None);
+            if expect_hints {
+                assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+                assert_eq!(result.cache_scope, Some(CacheScope::Private));
+            } else {
+                assert_eq!(result.ttl_ms, None);
+                assert_eq!(result.cache_scope, None);
+            }
         }
 
         #[test]
