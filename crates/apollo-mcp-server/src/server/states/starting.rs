@@ -35,8 +35,6 @@ pub(super) struct Starting {
 
 impl Starting {
     pub(super) async fn start(mut self) -> Result<Running, ServerError> {
-        let peers = Arc::new(RwLock::new(Vec::new()));
-
         let operations: Vec<_> = self
             .operations
             .into_iter()
@@ -178,7 +176,8 @@ impl Starting {
             explorer_tool,
             validate_tool,
             custom_scalar_map: self.config.custom_scalar_map,
-            peers,
+            tool_list_changes: Default::default(),
+            legacy_tool_notifications: Default::default(),
             cancellation_token: cancellation_token.clone(),
             mutation_mode: self.config.mutation_mode,
             disable_type_description: self.config.disable_type_description,
@@ -206,10 +205,12 @@ impl Starting {
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
                 let http_config = host_validation.apply_to(
-                    StreamableHttpServerConfig::default().with_legacy_session_mode(stateful_mode),
+                    StreamableHttpServerConfig::default()
+                        .with_legacy_session_mode(stateful_mode)
+                        .with_cancellation_token(cancellation_token.child_token()),
                 );
                 let service = StreamableHttpService::new(
-                    move || Ok(running.clone()),
+                    move || Ok(running.for_service()),
                     LocalSessionManager::default().into(),
                     http_config,
                 );
@@ -247,6 +248,7 @@ impl Starting {
                             _ = shutdown_signal() => {},
                             _ = shutdown_token.cancelled() => {},
                         }
+                        shutdown_token.cancel();
                     };
                     // Health check is already active from creation
                     if let Err(e) = axum::serve(tcp_listener, router)
@@ -261,7 +263,7 @@ impl Starting {
             Transport::Stdio {} => {
                 info!("Starting MCP server in stdio mode");
                 let service = running
-                    .clone()
+                    .for_service()
                     .serve(stdio())
                     .await
                     .inspect_err(|e| {

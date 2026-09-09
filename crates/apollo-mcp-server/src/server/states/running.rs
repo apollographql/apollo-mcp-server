@@ -16,13 +16,13 @@ use rmcp::model::{
     ToolsCapability,
 };
 use rmcp::{
-    Peer, RoleServer, ServerHandler, ServiceError,
+    RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
         ServerCapabilities, ServerInfo,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext},
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -56,6 +56,8 @@ use crate::{
 };
 use apollo_mcp_rhai::RhaiEngine;
 
+use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
+
 #[derive(Clone)]
 pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
@@ -71,7 +73,8 @@ pub(super) struct Running {
     pub(super) explorer_tool: Option<Explorer>,
     pub(super) validate_tool: Option<Validate>,
     pub(super) custom_scalar_map: Option<CustomScalarMap>,
-    pub(super) peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
+    pub(super) tool_list_changes: ToolListChanges,
+    pub(super) legacy_tool_notifications: LegacyToolNotifications,
     pub(super) cancellation_token: CancellationToken,
     pub(super) mutation_mode: MutationMode,
     pub(super) disable_type_description: bool,
@@ -115,6 +118,15 @@ impl<'a> PeerContext<'a> {
 }
 
 impl Running {
+    /// Create a fresh notification owner for an rmcp service. Clones of the
+    /// returned handler share that owner; the application handler never retains it.
+    pub(super) fn for_service(&self) -> Self {
+        Self {
+            legacy_tool_notifications: LegacyToolNotifications::for_service(),
+            ..self.clone()
+        }
+    }
+
     /// Returns true when `enable_output_schema` is active and the negotiated
     /// protocol version supports `outputSchema` / `structuredContent` (MCP 2025-06-18+).
     fn client_supports_output_schema(&self, protocol_version: Option<&ProtocolVersion>) -> bool {
@@ -166,15 +178,11 @@ impl Running {
 
         *operations_lock = operations;
 
-        // Drop the operations lock before notifying peers. The operations are
-        // already written, so clients will see the updated list when they
-        // re-fetch. Holding the lock during notification can starve all
-        // list_tools / call_tool / initialize requests if any peer notification
-        // is slow or hangs.
+        // Publish only after the updated catalog is visible to readers.
         drop(operations_lock);
 
         // Notify MCP clients that tools have changed
-        Self::notify_tool_list_changed(self.peers.clone()).await;
+        self.tool_list_changes.publish();
     }
 
     /// Replaces the current predefined operation catalog with the latest source update.
@@ -219,11 +227,11 @@ impl Running {
         );
         *operations_lock = updated_operations;
 
-        // Drop the operations lock before notifying peers (same rationale as update_schema).
+        // Publish only after the updated catalog is visible to readers.
         drop(operations_lock);
 
         // Notify MCP clients that tools have changed
-        Self::notify_tool_list_changed(self.peers.clone()).await;
+        self.tool_list_changes.publish();
     }
 
     /// Reload Rhai scripts from the configured Rhai directory.
@@ -238,68 +246,6 @@ impl Running {
                 error!("Failed to reload Rhai scripts, keeping previous version: {err}");
             }
         }
-    }
-
-    /// Notify any peers that tools have changed. Drops unreachable peers from the list.
-    ///
-    /// Locking strategy: snapshot the peer list under a **read** lock, notify
-    /// without holding any lock, then briefly take a **write** lock only to
-    /// swap in the retained list. This keeps the write-lock hold time
-    /// negligible regardless of how many peers need notifying.
-    #[tracing::instrument(skip_all)]
-    async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
-        const PEER_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-        // Snapshot under read lock, then release immediately so concurrent
-        // initialize requests can register new peers without blocking.
-        let snapshot: Vec<_> = {
-            let guard = peers.read().await;
-            if guard.is_empty() {
-                return;
-            }
-            debug!(
-                "Operations changed, notifying {} peers of tool change",
-                guard.len()
-            );
-            guard.clone()
-        };
-        let snapshot_len = snapshot.len();
-
-        // Notify without holding any lock.
-        let mut retained_peers = Vec::new();
-        for peer in &snapshot {
-            if !peer.is_transport_closed() {
-                match tokio::time::timeout(PEER_NOTIFY_TIMEOUT, peer.notify_tool_list_changed())
-                    .await
-                {
-                    Ok(Ok(_)) => retained_peers.push(peer.clone()),
-                    Ok(Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed)) => {
-                        error!("Failed to notify peer of tool list change - dropping peer");
-                    }
-                    Ok(Err(e)) => {
-                        error!("Failed to notify peer of tool list change {:?}", e);
-                        retained_peers.push(peer.clone());
-                    }
-                    Err(_) => {
-                        error!(
-                            "Timed out notifying peer of tool list change after {}s - dropping peer",
-                            PEER_NOTIFY_TIMEOUT.as_secs()
-                        );
-                    }
-                }
-            }
-        }
-
-        // Brief write lock: replace the snapshot portion with retained peers,
-        // preserving any peers added by concurrent initialize calls.
-        let mut guard = peers.write().await;
-        let new_peers: Vec<_> = if guard.len() > snapshot_len {
-            guard.split_off(snapshot_len)
-        } else {
-            vec![]
-        };
-        *guard = retained_peers;
-        guard.extend(new_peers);
     }
 
     async fn list_tools_impl(
@@ -755,9 +701,6 @@ impl ServerHandler for Running {
             .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
             .add(1, &attributes);
-        // TODO: how to remove these?
-        let mut peers = self.peers.write().await;
-        peers.push(context.peer);
         // Echo the client's requested protocol version when supported,
         // falling back to our max supported version otherwise (#794). rmcp's
         // handshake re-negotiates this after `initialize` on every
@@ -766,6 +709,14 @@ impl ServerHandler for Running {
         let mut info = self.get_info();
         info.protocol_version = negotiate_protocol_version(&request.protocol_version);
         Ok(info)
+    }
+
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.legacy_tool_notifications.on_initialized(
+            context.peer,
+            &self.tool_list_changes,
+            self.cancellation_token.clone(),
+        );
     }
 
     /// Narrows rmcp's re-negotiation (run on every transport after
@@ -790,11 +741,10 @@ impl ServerHandler for Running {
             span.record("apollo.mcp.tool_arguments", json.as_str());
         }
 
-        let peer_info = context.peer.peer_info();
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let protocol_version = context.protocol_version();
 
         let result = self
-            .call_tool_impl(request, &context.extensions, protocol_version)
+            .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
             .await;
 
         // Strip meta before recording: _meta.structuredContent holds the unfiltered
@@ -816,10 +766,11 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let peer_info = context.peer.peer_info();
+        let client_capabilities = context.client_capabilities();
+        let protocol_version = context.protocol_version();
         let peer = PeerContext {
-            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
-            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+            client_capabilities: client_capabilities.as_ref(),
+            protocol_version: protocol_version.as_ref(),
         };
 
         self.list_tools_impl(context.extensions, peer).await
@@ -843,10 +794,11 @@ impl ServerHandler for Running {
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let peer_info = context.peer.peer_info();
+        let client_capabilities = context.client_capabilities();
+        let protocol_version = context.protocol_version();
         let peer = PeerContext {
-            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
-            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+            client_capabilities: client_capabilities.as_ref(),
+            protocol_version: protocol_version.as_ref(),
         };
 
         self.read_resource_impl(request, context.extensions, peer)
@@ -978,7 +930,8 @@ mod tests {
             explorer_tool: None,
             validate_tool: None,
             custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
+            tool_list_changes: Default::default(),
+            legacy_tool_notifications: Default::default(),
             cancellation_token: CancellationToken::new(),
             mutation_mode: MutationMode::None,
             disable_type_description: false,
@@ -1112,6 +1065,69 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn request_capabilities_override_legacy_info_without_leaking_to_later_requests() {
+        use crate::apps::app::{AppResourceSource, TargetedAppResource};
+        use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+
+        let mut running = running_with_apps(
+            AppResource::Targeted(TargetedAppResource {
+                openai: Some(AppResourceSource::Local("openai resource".into())),
+                mcp: Some(AppResourceSource::Local("mcp resource".into())),
+            }),
+            None,
+            None,
+        );
+        running.apps[0].tools[0].labels.tool_invocation_invoking = Some("Loading".into());
+        let legacy_info = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "legacy", "version": "1"}
+        }))
+        .unwrap();
+        let (server_io, _client_io) = tokio::io::duplex(4096);
+        let service = rmcp::service::serve_directly(running.clone(), server_io, Some(legacy_info));
+        let mcp_capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
+            "extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}
+        })).unwrap();
+
+        for (capabilities, expected_resource, openai) in [
+            (Some(mcp_capabilities), "mcp resource", false),
+            (None, "openai resource", true),
+        ] {
+            let mut context =
+                RequestContext::new(rmcp::model::RequestId::Number(1), service.peer().clone());
+            let (parts, _) = http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap()
+                .into_parts();
+            context.extensions.insert(parts);
+            if let Some(capabilities) = capabilities {
+                context.meta.set_client_capabilities(capabilities);
+            }
+            let tools = running.list_tools(None, context.clone()).await.unwrap();
+            assert_eq!(
+                tools.tools[0]
+                    .meta
+                    .as_ref()
+                    .unwrap()
+                    .contains_key("openai/toolInvocation/invoking"),
+                openai
+            );
+            let resource = running
+                .read_resource(ReadResourceRequestParams::new(RESOURCE_URI), context)
+                .await
+                .unwrap();
+            let rmcp::model::ReadResourceResponse::Complete(resource) = resource else {
+                panic!("expected resource result");
+            };
+            let ResourceContents::TextResourceContents { text, .. } = &resource.contents[0] else {
+                panic!("expected text resource");
+            };
+            assert_eq!(text, expected_resource);
+        }
+        service.cancel().await.unwrap();
+    }
     mod protocol_version_negotiation {
         use rstest::rstest;
 
@@ -2857,6 +2873,51 @@ mod tests {
 mod integration_tests {
     use super::*;
 
+    /// Exercise the supported sessionless transport without an initialize handshake.
+    async fn stateless_request(
+        running: Running,
+        version: &str,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use tower::ServiceExt as _;
+
+        let changes = running.tool_list_changes.clone();
+        let service = StreamableHttpService::new(
+            move || Ok(running.for_service()),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default()
+                .with_legacy_session_mode(false)
+                .with_json_response(true),
+        );
+        let request = http::Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("Host", "localhost")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Protocol-Version", version)
+            .body(Body::from(
+                serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+                    .to_string(),
+            ))
+            .unwrap();
+        let response = service.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert!(!response.headers().contains_key("Mcp-Session-Id"));
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            changes.receiver_count(),
+            0,
+            "sessionless requests must not retain a forwarder"
+        );
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
     mod output_schema_gating {
         use std::sync::Arc;
 
@@ -2906,7 +2967,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -2928,7 +2990,7 @@ mod integration_tests {
             session_manager: Arc<LocalSessionManager>,
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
@@ -2958,49 +3020,6 @@ mod integration_tests {
                 .unwrap()
         }
 
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_tools_list_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
         async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
         where
             B: BodyExt,
@@ -3023,46 +3042,33 @@ mod integration_tests {
             panic!("no JSON data found in SSE response");
         }
 
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
+        #[tokio::test]
+        async fn list_tools_uses_request_protocol_with_legacy_fallback() {
+            let running = create_running_with_output_schema();
+            let (server_io, _client_io) = tokio::io::duplex(4096);
+            let legacy_info = serde_json::from_value(json!({
+                "protocolVersion":"2025-03-26", "capabilities":{}, "clientInfo":{"name":"legacy", "version":"1"}
+            })).unwrap();
+            let service =
+                rmcp::service::serve_directly(running.clone(), server_io, Some(legacy_info));
+            for (version, expected_output_schema) in [
+                (None, false),
+                (Some(ProtocolVersion::V_2025_06_18), true),
+                (None, false),
+            ] {
+                let mut context =
+                    RequestContext::new(rmcp::model::RequestId::Number(1), service.peer().clone());
+                if let Some(version) = version {
+                    context.meta.set_protocol_version(version);
+                }
+                let tools = running.list_tools(None, context).await.unwrap();
+                assert_eq!(
+                    tools.tools[0].output_schema.is_some(),
+                    expected_output_schema
+                );
+            }
+            service.cancel().await.unwrap();
         }
-
-        async fn list_tools(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-        ) -> Vec<serde_json::Value> {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_tools_list_request(session_id))
-                .await
-                .unwrap();
-            let body = extract_json_body(response).await;
-            body["result"]["tools"]
-                .as_array()
-                .expect("tools/list should return a tools array")
-                .clone()
-        }
-
         #[tokio::test]
         async fn omits_cache_hints_after_initializing_supported_protocol() {
             let mut running = create_running_with_output_schema();
@@ -3155,13 +3161,12 @@ mod integration_tests {
         #[tokio::test]
         async fn excludes_output_schema_when_protocol_predates_it() {
             let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
+            let body =
+                super::stateless_request(running, "2025-03-26", "tools/list", json!({})).await;
+            let tools = body["result"]["tools"].as_array().unwrap();
 
             assert!(!tools.is_empty());
-            for tool in &tools {
+            for tool in tools {
                 assert!(
                     tool.get("outputSchema").is_none(),
                     "tool '{}' should not have outputSchema with protocol 2025-03-26",
@@ -3173,13 +3178,12 @@ mod integration_tests {
         #[tokio::test]
         async fn includes_output_schema_when_protocol_supports_it() {
             let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
+            let body =
+                super::stateless_request(running, "2025-06-18", "tools/list", json!({})).await;
+            let tools = body["result"]["tools"].as_array().unwrap();
 
             assert!(!tools.is_empty());
-            for tool in &tools {
+            for tool in tools {
                 assert!(
                     tool.get("outputSchema").is_some(),
                     "tool '{}' should have outputSchema with protocol 2025-06-18",
@@ -3341,7 +3345,7 @@ mod integration_tests {
             session_manager: Arc<LocalSessionManager>,
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(false),
             )
@@ -3462,14 +3466,8 @@ mod integration_tests {
     mod structured_content_gating {
         use std::sync::Arc;
 
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
-        use tower::ServiceExt;
 
         use super::*;
         use crate::operations::RawOperation;
@@ -3508,7 +3506,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -3525,143 +3524,6 @@ mod integration_tests {
             }
         }
 
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
-            )
-        }
-
-        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": protocol_version,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_call_tool_request(session_id: &str, tool_name: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": {}
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
-        }
-
-        async fn call_tool(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-            tool_name: &str,
-        ) -> serde_json::Value {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_call_tool_request(session_id, tool_name))
-                .await
-                .unwrap();
-            extract_json_body(response).await
-        }
-
         #[tokio::test]
         async fn strips_structured_content_when_protocol_predates_it() {
             let mut server = mockito::Server::new_async().await;
@@ -3672,10 +3534,13 @@ mod integration_tests {
                 .await;
 
             let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
-
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let body = super::stateless_request(
+                running,
+                "2025-03-26",
+                "tools/call",
+                json!({"name": "Hello", "arguments": {}}),
+            )
+            .await;
 
             mock.assert();
             let result = &body["result"];
@@ -3695,10 +3560,13 @@ mod integration_tests {
                 .await;
 
             let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
-
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let body = super::stateless_request(
+                running,
+                "2025-06-18",
+                "tools/call",
+                json!({"name": "Hello", "arguments": {}}),
+            )
+            .await;
 
             mock.assert();
             let result = &body["result"];
@@ -3741,7 +3609,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::All,
                 disable_type_description: false,
@@ -3763,7 +3632,7 @@ mod integration_tests {
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             let running = create_test_running();
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 LocalSessionManager::default().into(),
                 StreamableHttpServerConfig::default().with_legacy_session_mode(stateful_mode),
             )
@@ -3774,7 +3643,7 @@ mod integration_tests {
             session_manager: Arc<LocalSessionManager>,
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
@@ -4031,7 +3900,7 @@ mod integration_tests {
         }
     }
 
-    mod peer_cleanup {
+    mod legacy_notifications {
         use std::sync::Arc;
 
         use axum::body::Body;
@@ -4062,7 +3931,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::All,
                 disable_type_description: false,
@@ -4084,10 +3954,26 @@ mod integration_tests {
             session_manager: Arc<LocalSessionManager>,
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
+        }
+
+        struct LegacyHttp {
+            running: Running,
+            service: StreamableHttpService<Running, LocalSessionManager>,
+        }
+
+        impl LegacyHttp {
+            fn new(running: Running) -> Self {
+                let service = create_service(running.clone(), Arc::default());
+                Self { running, service }
+            }
+
+            async fn connect(&self) -> String {
+                initialize_legacy_session(&self.service, &self.running).await
+            }
         }
 
         fn build_initialize_request() -> Request<Body> {
@@ -4096,7 +3982,7 @@ mod integration_tests {
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "clientInfo": {
                         "name": "test-client",
@@ -4124,35 +4010,54 @@ mod integration_tests {
                 .unwrap()
         }
 
+        async fn wait_for_forwarders(running: &Running, expected: usize) {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while running.tool_list_changes.receiver_count() != expected {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("initialized notification must start a forwarder");
+        }
+
+        async fn initialize_legacy_session(
+            service: &StreamableHttpService<Running, LocalSessionManager>,
+            running: &Running,
+        ) -> String {
+            let previous = running.tool_list_changes.receiver_count();
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(running.tool_list_changes.receiver_count(), previous);
+
+            let response = service
+                .clone()
+                .oneshot(session_request(
+                    &session,
+                    http::Method::POST,
+                    json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            wait_for_forwarders(running, previous + 1).await;
+            session
+        }
+
         #[tokio::test]
-        async fn closed_peers_are_cleaned_up_on_operations_update() {
+        async fn deleted_session_releases_forwarder_without_a_catalog_update() {
             let running = create_test_running();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
-            // Initialize a session — this adds a peer to running.peers
             let service = create_service(running.clone(), Arc::clone(&session_manager));
-            let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string();
-
-            // Poll until the peer is registered by the async initialize handler
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                if running.peers.read().await.len() == 1 {
-                    break;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "peer should be registered after initialize"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
+            let session_id = initialize_legacy_session(&service, &running).await;
 
             // Delete the session — closes the session transport
             let service = create_service(running.clone(), Arc::clone(&session_manager));
@@ -4162,44 +4067,341 @@ mod integration_tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
 
-            // Poll until the transport is fully closed
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                let guard = running.peers.read().await;
-                if guard.first().is_some_and(|p| p.is_transport_closed()) {
-                    break;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .expect("session teardown must release its change receiver without another update");
+        }
+        async fn next_message<B>(body: &mut B) -> Value
+        where
+            B: http_body_util::BodyExt + Unpin,
+            B::Data: AsRef<[u8]>,
+            B::Error: std::fmt::Debug,
+        {
+            tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                let mut buffer = String::new();
+                loop {
+                    let frame = body.frame().await.expect("stream closed").unwrap();
+                    if let Some(data) = frame.data_ref() {
+                        buffer.push_str(&String::from_utf8_lossy(data.as_ref()));
+                        for line in buffer.lines() {
+                            if let Some(data) = line.strip_prefix("data: ")
+                                && let Ok(message) = serde_json::from_str(data)
+                            {
+                                return message;
+                            }
+                        }
+                    }
                 }
-                drop(guard);
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "peer transport should be closed after session delete"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
+            })
+            .await
+            .expect("expected MCP message")
+        }
 
-            // Trigger update_operations which calls notify_tool_list_changed,
-            // cleaning up the now-closed peer
-            running.update_operations(vec![]).await;
+        fn session_request(session: &str, method: http::Method, body: Value) -> Request<Body> {
+            Request::builder()
+                .method(method.clone())
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Content-Type", "application/json")
+                .header("Mcp-Session-Id", session)
+                .body(if method == http::Method::GET {
+                    Body::empty()
+                } else {
+                    Body::from(body.to_string())
+                })
+                .unwrap()
+        }
 
-            assert_eq!(
-                running.peers.read().await.len(),
-                0,
-                "closed peer should be removed after update_operations"
+        fn session_get(session: &str) -> Request<Body> {
+            session_request(session, http::Method::GET, Value::Null)
+        }
+
+        fn session_post(session: &str, body: Value) -> Request<Body> {
+            session_request(session, http::Method::POST, body)
+        }
+
+        #[tokio::test]
+        async fn http_shutdown_releases_an_open_notification_stream() {
+            let running = create_test_running();
+            let shutdown = running.cancellation_token.clone();
+            let service = StreamableHttpService::new(
+                {
+                    let running = running.clone();
+                    move || Ok(running.for_service())
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(true)
+                    .with_cancellation_token(shutdown.child_token()),
             );
+            let session = initialize_legacy_session(&service, &running).await;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let token = shutdown.clone();
+            let server = tokio::spawn(async move {
+                axum::serve(listener, axum::Router::new().nest_service("/mcp", service))
+                    .with_graceful_shutdown(token.cancelled_owned())
+                    .await
+                    .unwrap();
+            });
+            let response = reqwest::Client::new()
+                .get(format!("http://{address}/mcp"))
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            shutdown.cancel();
+            tokio::time::timeout(std::time::Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
+            drop(response);
+        }
+
+        #[tokio::test]
+        async fn repeated_initialized_notifications_keep_one_forwarder() {
+            // rmcp dispatches notifications concurrently. Observe completion of
+            // each real callback rather than treating a later request as a barrier.
+            struct ObservedService {
+                running: Running,
+                completed: tokio::sync::mpsc::UnboundedSender<()>,
+            }
+            impl ServerHandler for ObservedService {
+                fn get_info(&self) -> ServerInfo {
+                    self.running.get_info()
+                }
+
+                async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+                    self.running.on_initialized(context).await;
+                    self.completed.send(()).unwrap();
+                }
+            }
+            let running = create_test_running();
+            let (completed, mut callbacks) = tokio::sync::mpsc::unbounded_channel();
+            let service = StreamableHttpService::new(
+                {
+                    let running = running.clone();
+                    move || {
+                        Ok(ObservedService {
+                            running: running.for_service(),
+                            completed: completed.clone(),
+                        })
+                    }
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            );
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(running.tool_list_changes.receiver_count(), 0);
+            for _ in 0..2 {
+                let response = service
+                    .clone()
+                    .oneshot(session_post(
+                        &session,
+                        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::ACCEPTED);
+                tokio::time::timeout(std::time::Duration::from_secs(2), callbacks.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            }
+            service
+                .oneshot(build_delete_request(&session))
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[tokio::test]
+        async fn http_clients_receive_catalog_updates_across_sse_reconnects() {
+            let mut running = create_test_running();
+            running.enable_output_schema = true;
+            let fixture = LegacyHttp::new(running.clone());
+            let service = fixture.service.clone();
+            let mut sessions = Vec::new();
+            for _ in 0..2 {
+                sessions.push(fixture.connect().await);
+            }
+            let mut streams = Vec::new();
+            for session in &sessions {
+                let response = service.clone().oneshot(session_get(session)).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                streams.push(response.into_body());
+            }
+            running
+                .update_operations(vec![("query Hello { hello }".to_owned(), None).into()])
+                .await;
+            for stream in &mut streams {
+                assert_eq!(
+                    next_message(stream).await["method"],
+                    "notifications/tools/list_changed"
+                );
+            }
+            let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+            let mut response = service
+                .clone()
+                .oneshot(session_post(&sessions[0], list.clone()))
+                .await
+                .unwrap()
+                .into_body();
+            let before = next_message(&mut response).await;
+            assert_eq!(before["result"]["tools"][0]["name"], "Hello");
+
+            // Closing a GET stream must not tear down a reconnectable legacy session.
+            streams.clear();
+            for session in &sessions {
+                let response = service.clone().oneshot(session_get(session)).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                streams.push(response.into_body());
+            }
+            running
+                .update_schema(
+                    apollo_compiler::Schema::parse_and_validate(
+                        "type Query { hello: Int! }",
+                        "test",
+                    )
+                    .unwrap(),
+                )
+                .await;
+            for stream in &mut streams {
+                assert_eq!(
+                    next_message(stream).await["method"],
+                    "notifications/tools/list_changed"
+                );
+            }
+            let mut response = service
+                .clone()
+                .oneshot(session_post(&sessions[0], list))
+                .await
+                .unwrap()
+                .into_body();
+            let after = next_message(&mut response).await;
+            assert_ne!(
+                before["result"]["tools"][0]["outputSchema"],
+                after["result"]["tools"][0]["outputSchema"]
+            );
+            for session in &sessions {
+                service
+                    .clone()
+                    .oneshot(build_delete_request(session))
+                    .await
+                    .unwrap();
+            }
+            drop(streams);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[tokio::test]
+        async fn stdio_delivers_changes_and_releases_forwarder_on_disconnect() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+            let running = create_test_running();
+            let connection = running.for_service();
+            let intermediate_clone = connection.clone();
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                connection
+                    .serve(server_io)
+                    .await
+                    .unwrap()
+                    .waiting()
+                    .await
+                    .unwrap();
+            });
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
+            let init = json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params": {
+                "protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"test", "version":"1"}
+            }});
+            writer
+                .write_all(format!("{init}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            assert!(
+                serde_json::from_str::<Value>(&line)
+                    .unwrap()
+                    .get("result")
+                    .is_some()
+            );
+            assert_eq!(running.tool_list_changes.receiver_count(), 0);
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            wait_for_forwarders(&running, 1).await;
+            drop(intermediate_clone);
+            running.update_operations(vec![]).await;
+            line.clear();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                reader.read_line(&mut line),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap()["method"],
+                "notifications/tools/list_changed"
+            );
+            drop(reader);
+            drop(writer);
+            tokio::time::timeout(std::time::Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
         }
     }
 
     mod logging_setlevel {
         use std::sync::Arc;
 
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
-        use tower::ServiceExt;
 
         use super::*;
 
@@ -4221,7 +4423,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -4238,132 +4441,16 @@ mod integration_tests {
             }
         }
 
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
-            )
-        }
-
-        fn build_initialize_request() -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": { "name": "test-client", "version": "1.0.0" }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_set_level_request(session_id: &str, level: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "logging/setLevel",
-                "params": { "level": level }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
-        }
-
         #[tokio::test]
         async fn returns_empty_success_for_any_level() {
             let running = create_test_running();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager).await;
-
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_set_level_request(&session_id, "debug"))
-                .await
-                .unwrap();
-
-            assert_eq!(response.status(), StatusCode::OK);
-            let body = extract_json_body(response).await;
+            let body = super::stateless_request(
+                running,
+                "2025-11-25",
+                "logging/setLevel",
+                json!({"level": "debug"}),
+            )
+            .await;
             assert!(
                 body.get("error").is_none(),
                 "set_level should not return an error: {body}"
@@ -4409,7 +4496,8 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
+                legacy_tool_notifications: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -4431,7 +4519,7 @@ mod integration_tests {
             session_manager: Arc<LocalSessionManager>,
         ) -> StreamableHttpService<Running, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
