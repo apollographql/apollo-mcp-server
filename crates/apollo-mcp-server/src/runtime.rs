@@ -399,6 +399,9 @@ mod test {
                     descriptions: {},
                     annotations: {},
                     required_scopes: {},
+                    caching: Caching {
+                        ttl_ms: 300000,
+                    },
                 },
                 schema: Uplink,
                 transport: Stdio,
@@ -815,6 +818,25 @@ mod test {
                 create_user.title.as_deref(),
                 Some("Create a new user account")
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_parses_overrides_caching() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+                overrides:
+                    caching:
+                        ttl_ms: 60000
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+            assert_eq!(config.overrides.caching.ttl_ms, 60_000);
             Ok(())
         });
     }

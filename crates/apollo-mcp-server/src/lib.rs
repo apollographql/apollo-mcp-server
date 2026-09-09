@@ -2,6 +2,7 @@
 
 pub(crate) mod apps;
 pub(crate) mod auth;
+pub mod caching;
 pub mod cors;
 pub mod custom_scalar_map;
 pub mod env_expansion;

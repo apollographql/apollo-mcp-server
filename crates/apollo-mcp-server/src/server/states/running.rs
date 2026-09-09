@@ -7,6 +7,8 @@ use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
+#[cfg(test)]
+use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
     GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
@@ -38,6 +40,7 @@ use crate::operations::{execute_operation, find_and_execute_operation};
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
+    caching::Caching,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -82,6 +85,7 @@ pub(super) struct Running {
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
     pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) caching: Caching,
 }
 
 impl Running {
@@ -343,6 +347,8 @@ impl Running {
             }
         }
 
+        self.caching.apply_to(&mut result, protocol_version);
+
         Ok(result)
     }
 
@@ -505,6 +511,7 @@ impl Running {
     fn list_resources_impl(
         &self,
         extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ListResourcesResult, McpError> {
         let app_param = extract_app_param(extensions);
 
@@ -524,7 +531,9 @@ impl Running {
             vec![]
         };
 
-        Ok(ListResourcesResult::with_all_items(resources))
+        let mut result = ListResourcesResult::with_all_items(resources);
+        self.caching.apply_to(&mut result, protocol_version);
+        Ok(result)
     }
 
     async fn read_resource_impl(
@@ -532,6 +541,7 @@ impl Running {
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
         client_capabilities: Option<&ClientCapabilities>,
+        protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -545,7 +555,9 @@ impl Running {
         if let Some(app_name) = app_param {
             let resource =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
-            Ok(ReadResourceResult::new(vec![resource]))
+            let mut result = ReadResourceResult::new(vec![resource]);
+            self.caching.apply_to(&mut result, protocol_version);
+            Ok(result)
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -554,10 +566,15 @@ impl Running {
         }
     }
 
-    fn list_prompts_impl(&self) -> Result<ListPromptsResult, McpError> {
-        Ok(ListPromptsResult::with_all_items(
+    fn list_prompts_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListPromptsResult, McpError> {
+        let mut result = ListPromptsResult::with_all_items(
             self.prompts.iter().map(|p| p.prompt.clone()).collect(),
-        ))
+        );
+        self.caching.apply_to(&mut result, protocol_version);
+        Ok(result)
     }
 
     fn get_prompt_impl(
@@ -738,7 +755,10 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl(&context.extensions)
+        let peer_info = context.peer.peer_info();
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+
+        self.list_resources_impl(&context.extensions, protocol_version)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -749,19 +769,28 @@ impl ServerHandler for Running {
     ) -> Result<ReadResourceResponse, ErrorData> {
         let peer_info = context.peer.peer_info();
         let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
 
-        self.read_resource_impl(request, context.extensions, client_capabilities)
-            .await
-            .map(Into::into)
+        self.read_resource_impl(
+            request,
+            context.extensions,
+            client_capabilities,
+            protocol_version,
+        )
+        .await
+        .map(Into::into)
     }
 
     #[tracing::instrument(skip_all)]
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        self.list_prompts_impl()
+        let peer_info = context.peer.peer_info();
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+
+        self.list_prompts_impl(protocol_version)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
@@ -889,6 +918,7 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            caching: Caching::default(),
         }
     }
 
@@ -1243,12 +1273,44 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
             assert_eq!(resources.len(), 1);
             assert_eq!(resources[0].uri, RESOURCE_URI);
+        }
+
+        #[tokio::test]
+        async fn resource_list_has_cache_hints_for_2026_07_28_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+
+            let result = running
+                .list_resources_impl(&Extensions::new(), Some(&ProtocolVersion::V_2026_07_28))
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+            assert_eq!(result.cache_scope, Some(CacheScope::Private));
+        }
+
+        #[tokio::test]
+        async fn resource_list_omits_cache_hints_for_legacy_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+
+            let result = running
+                .list_resources_impl(&Extensions::new(), Some(&ProtocolVersion::V_2025_06_18))
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, None);
+            assert_eq!(result.cache_scope, None);
         }
 
         #[tokio::test]
@@ -1266,7 +1328,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
@@ -1284,7 +1346,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&Extensions::new())
+            .list_resources_impl(&Extensions::new(), None)
             .unwrap()
             .resources;
 
@@ -1306,7 +1368,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions);
+            .list_resources_impl(&extensions, None);
 
             assert!(result.is_err());
         }
@@ -1345,6 +1407,7 @@ mod tests {
                     ),
                     extensions,
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1367,6 +1430,68 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn read_resource_has_cache_hints_for_2026_07_28_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams::new(
+                        "http://localhost:4000/resource#a_different_fragment",
+                    ),
+                    extensions,
+                    None,
+                    Some(&ProtocolVersion::V_2026_07_28),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+            assert_eq!(result.cache_scope, Some(CacheScope::Private));
+        }
+
+        #[tokio::test]
+        async fn read_resource_omits_cache_hints_for_legacy_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams::new(
+                        "http://localhost:4000/resource#a_different_fragment",
+                    ),
+                    extensions,
+                    None,
+                    Some(&ProtocolVersion::V_2025_06_18),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, None);
+            assert_eq!(result.cache_scope, None);
+        }
+
+        #[tokio::test]
         async fn getting_resource_that_does_not_exist() {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
@@ -1385,6 +1510,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/invalid_resource"),
                     extensions,
+                    None,
                     None,
                 )
                 .await;
@@ -1411,6 +1537,7 @@ mod tests {
                     ReadResourceRequestParams::new("not a uri"),
                     extensions,
                     None,
+                    None,
                 )
                 .await;
             assert!(result.is_err());
@@ -1427,6 +1554,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     Extensions::new(),
+                    None,
                     None,
                 )
                 .await;
@@ -1452,6 +1580,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
+                    None,
                     None,
                 )
                 .await;
@@ -1489,6 +1618,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
+                    None,
                     None,
                 )
                 .await
@@ -1533,6 +1663,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
+                    None,
                     None,
                 )
                 .await
@@ -1607,6 +1738,7 @@ mod tests {
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1646,6 +1778,7 @@ mod tests {
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -1683,6 +1816,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
+                    None,
                     None,
                 )
                 .await
@@ -1729,6 +1863,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
+                    None,
                     None,
                 )
                 .await
@@ -1779,6 +1914,7 @@ mod tests {
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
                     None,
+                    None,
                 )
                 .await;
 
@@ -1806,6 +1942,48 @@ mod tests {
 
             assert_eq!(result.tools.len(), 0);
             assert_eq!(result.next_cursor, None);
+        }
+
+        #[tokio::test]
+        async fn list_tools_has_cache_hints_for_2026_07_28_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let result = running
+                .list_tools_impl(
+                    Extensions::new(),
+                    None,
+                    Some(&ProtocolVersion::V_2026_07_28),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+            assert_eq!(result.cache_scope, Some(CacheScope::Private));
+        }
+
+        #[tokio::test]
+        async fn list_tools_omits_cache_hints_for_legacy_peer() {
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+
+            let result = running
+                .list_tools_impl(
+                    Extensions::new(),
+                    None,
+                    Some(&ProtocolVersion::V_2025_06_18),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, None);
+            assert_eq!(result.cache_scope, None);
         }
 
         #[tokio::test]
@@ -2258,7 +2436,7 @@ mod tests {
         #[test]
         fn list_prompts_empty() {
             let running = running_with_prompts(vec![]);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert!(result.prompts.is_empty());
         }
 
@@ -2269,10 +2447,32 @@ mod tests {
                 template: "Hello {{name}}!".to_string(),
             }];
             let running = running_with_prompts(prompts);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert_eq!(result.prompts.len(), 1);
             assert_eq!(result.prompts[0].name, "greeting");
             assert_eq!(result.prompts[0].description.as_deref(), Some("A greeting"));
+        }
+
+        #[test]
+        fn list_prompts_has_cache_hints_for_2026_07_28_peer() {
+            let running = running_with_prompts(vec![]);
+            let result = running
+                .list_prompts_impl(Some(&ProtocolVersion::V_2026_07_28))
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, Some(running.caching.ttl_ms));
+            assert_eq!(result.cache_scope, Some(CacheScope::Private));
+        }
+
+        #[test]
+        fn list_prompts_omits_cache_hints_for_legacy_peer() {
+            let running = running_with_prompts(vec![]);
+            let result = running
+                .list_prompts_impl(Some(&ProtocolVersion::V_2025_06_18))
+                .unwrap();
+
+            assert_eq!(result.ttl_ms, None);
+            assert_eq!(result.cache_scope, None);
         }
 
         #[test]
@@ -2637,6 +2837,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3145,6 +3346,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3377,6 +3579,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3697,6 +3900,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3855,6 +4059,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 

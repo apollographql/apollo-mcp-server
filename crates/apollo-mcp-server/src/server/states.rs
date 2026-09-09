@@ -11,6 +11,7 @@ use tracing::info;
 use url::Url;
 
 use crate::{
+    caching::Caching,
     cors::CorsConfig,
     custom_scalar_map::CustomScalarMap,
     errors::{OperationError, ServerError},
@@ -71,6 +72,7 @@ struct Config {
     cors: CorsConfig,
     server_info: ServerInfoConfig,
     instructions: Option<String>,
+    caching: Caching,
 }
 
 impl StateMachine {
@@ -128,6 +130,7 @@ impl StateMachine {
                 cors: server.cors,
                 server_info: server.server_info,
                 instructions: server.instructions,
+                caching: server.caching,
             },
         });
 
@@ -446,6 +449,7 @@ mod tests {
     use tokio::sync::RwLock;
     use tokio_util::sync::CancellationToken;
 
+    use crate::caching::Caching;
     use crate::cors::CorsConfig;
     use crate::event::Event as ServerEvent;
     use crate::health::HealthCheckConfig;
@@ -490,6 +494,7 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            caching: Caching::default(),
         }
     }
 
@@ -532,6 +537,7 @@ mod tests {
             cors: CorsConfig::default(),
             server_info: ServerInfoConfig::default(),
             instructions: None,
+            caching: Caching::default(),
         }
     }
 

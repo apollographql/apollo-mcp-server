@@ -191,6 +191,7 @@ impl Starting {
             server_info: self.config.server_info.clone(),
             instructions,
             rhai_engine: engine,
+            caching: self.config.caching,
         };
 
         match self.config.transport {
@@ -336,6 +337,7 @@ mod tests {
                 cors: Default::default(),
                 server_info: Default::default(),
                 instructions: None,
+                caching: Default::default(),
             },
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),

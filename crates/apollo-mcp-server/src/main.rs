@@ -202,6 +202,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .server_info(config.server_info)
         .maybe_config_validator(config_validator)
         .maybe_instructions(config.instructions)
+        .caching(config.overrides.caching)
         .build())
 }
 
