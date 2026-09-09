@@ -111,9 +111,11 @@ cors:
   allow_credentials: false
 
   # Allowed request methods
+  # DELETE is how a client terminates a session it no longer needs
   allow_methods:
     - GET
     - POST
+    - DELETE
 
   # Enable these request headers for cross-origin requests:
   # Defaults required by MCP, W3C Trace Context, and W3C Baggage
@@ -137,6 +139,32 @@ cors:
   # Adds the Access-Control-Max-Age header
   # Maximum age (in seconds) for preflight cache
   max_age: 7200 # 2 hours
+```
+
+<Note>
+
+`allow_methods`, `allow_headers`, and `expose_headers` replace the defaults shown above rather than extend them. If you set one of these lists, repeat every default entry you still need. Dropping `mcp-protocol-version` or `mcp-session-id` from `allow_headers` breaks browser-based MCP clients, and dropping `DELETE` from `allow_methods` breaks session termination. Neither failure appears in the server logs.
+
+</Note>
+
+### Adding a custom header
+
+To allow a header of your own, list it alongside the defaults:
+
+```yaml title="mcp.yaml"
+cors:
+  enabled: true
+  origins:
+    - https://myapp.example.com
+  allow_headers:
+    - x-my-custom-header
+    # The defaults, repeated because the list replaces them
+    - content-type
+    - mcp-protocol-version
+    - mcp-session-id
+    - traceparent
+    - tracestate
+    - baggage
 ```
 
 ## Common configurations
