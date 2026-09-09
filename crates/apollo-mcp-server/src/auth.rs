@@ -342,7 +342,10 @@ pub struct Config {
     /// Link to documentation related to the protected resource
     pub resource_documentation: Option<Url>,
 
-    /// Supported OAuth scopes by this resource server
+    /// Supported OAuth scopes by this resource server.
+    ///
+    /// When empty (default), no global scope requirement applies.
+    #[serde(default)]
     pub scopes: Vec<String>,
 
     /// Global scope enforcement mode: disabled, require_all (default), or require_any.
@@ -1722,6 +1725,37 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(yaml).unwrap();
             assert!(config.issuers.is_empty());
+        }
+    }
+
+    mod scopes_field {
+        use super::*;
+
+        #[test]
+        fn yaml_deserialization_with_scopes() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                resource: http://localhost:4000
+                scopes:
+                  - read
+                  - write
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(config.scopes, vec!["read".to_string(), "write".to_string()]);
+        }
+
+        #[test]
+        fn yaml_deserialization_without_scopes_defaults_to_empty() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                resource: http://localhost:4000
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.scopes.is_empty());
         }
     }
 
