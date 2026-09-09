@@ -4243,6 +4243,7 @@ mod integration_tests {
                 server_info,
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
