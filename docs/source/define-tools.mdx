@@ -23,7 +23,7 @@ For each predefined operation tool, Apollo MCP Server parses a single named Grap
 
 Apollo MCP Server derives the tool's JSON `inputSchema` from the operation variables and configured GraphQL schema. This schema guides MCP clients and AI models, but the server doesn't independently enforce it for predefined operation calls. The server also doesn't validate a predefined operation against the configured GraphQL schema before exposing the operation as a tool. The upstream GraphQL endpoint performs GraphQL document and variable validation during execution, so test and review your predefined operations before deploying them.
 
-Nullable variables and input fields are generated with an explicit `null` alternative (`"anyOf": [..., {"type": "null"}]`) and are left out of `required`, so a model can leave a value unset either by omitting the property or by passing `null`. This keeps the schema sound for clients that move every property into `required` for strict function calling. Default values declared on operation variables or input fields are emitted as JSON Schema `default`, and a variable with a default value isn't `required` even when its GraphQL type is non-null.
+For the exact rules that turn GraphQL types, nullability, and default values into the generated schema, see [Generated tool schemas](#generated-tool-schemas).
 
 The optional [`validate` tool](#introspection-tools) validates an agent-supplied operation against the current schema; it isn't an automatic prerequisite for `execute` and doesn't prevalidate predefined operation tools.
 
@@ -303,6 +303,278 @@ overrides:
 | `open_world_hint`  | `bool`   | If `true`, the tool interacts with systems outside its own domain    |
 
 For more details on MCP tool annotations, see the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
+
+## Generated tool schemas
+
+For each predefined operation, Apollo MCP Server derives the tool's `inputSchema` from the operation's variables and the configured GraphQL schema. With `overrides.enable_output_schema: true`, it also derives an `outputSchema` from the operation's selection set. Both are JSON Schema documents delivered in the MCP `tools/list` response. This section describes how GraphQL types map onto them.
+
+### Example
+
+This schema and operation:
+
+```graphql title="schema.graphql"
+"""Lifecycle state of a thing."""
+enum Status {
+  """Open for business"""
+  OPEN
+  """No longer accepting requests"""
+  CLOSED
+}
+
+"""A creation-date window. Omit `before` for an open-ended range."""
+input DateRange {
+  after: String!
+  before: String
+}
+
+type Thing {
+  id: ID!
+  name: String!
+  status: Status
+}
+
+type Query {
+  things(
+    """Only things with one of these statuses."""
+    statuses: [Status!]
+    range: DateRange
+    """Only active (true) or inactive (false) things."""
+    isActive: Boolean
+    limit: Int! = 10
+  ): [Thing!]!
+}
+```
+
+```graphql title="operations/GetThings.graphql"
+# Search things. Leave a filter unset to skip it.
+query GetThings(
+  # Only things with one of these statuses
+  $statuses: [Status!] = null
+  $range: DateRange
+  $isActive: Boolean
+  $limit: Int! = 10
+) {
+  things(statuses: $statuses, range: $range, isActive: $isActive, limit: $limit) {
+    id
+    name
+    status
+  }
+}
+```
+
+produce this `inputSchema`:
+
+```json title="GetThings inputSchema"
+{
+  "type": "object",
+  "properties": {
+    "statuses": {
+      "description": "Only things with one of these statuses",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Status"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "range": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/DateRange"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "isActive": {
+      "description": "Only active (true) or inactive (false) things.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "limit": {
+      "type": "integer",
+      "default": 10
+    }
+  },
+  "definitions": {
+    "Status": {
+      "description": "Lifecycle state of a thing.\n\nValues:\nOPEN: Open for business\nCLOSED: No longer accepting requests",
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "CLOSED"
+      ]
+    },
+    "DateRange": {
+      "description": "A creation-date window. Omit `before` for an open-ended range.",
+      "type": "object",
+      "properties": {
+        "after": {
+          "type": "string"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "after"
+      ]
+    }
+  }
+}
+```
+
+### Type mapping
+
+| GraphQL | JSON Schema |
+|---|---|
+| `String`, `ID` | `{"type": "string"}` |
+| `Int` | `{"type": "integer"}` |
+| `Float` | `{"type": "number"}` |
+| `Boolean` | `{"type": "boolean"}` |
+| Enum | `$ref` to a `definitions` entry with `"type": "string"` and `enum` listing the values. The entry's description combines the enum's description with each value and its description. |
+| Input object | `$ref` to a `definitions` entry with `"type": "object"`, `properties` for every field, and `required` for non-nullable fields without a default. |
+| List | `{"type": "array", "items": ...}`, with `items` mapped by the same rules. |
+| Custom scalar | The schema from the matching [`custom_scalars`](/apollo-mcp-server/custom-scalars) entry. Without an entry, an unconstrained schema `{}` carrying the scalar's description. |
+
+Each named type appears once in `definitions`, and every use of it is a `$ref`, so recursive input types don't expand indefinitely.
+
+### Nullability and `required`
+
+The server expresses nullability twice so that it survives client-side rewrites:
+
+- A nullable variable, input field, or list item is wrapped as `{"anyOf": [<type>, {"type": "null"}]}`. Non-nullable types appear bare.
+- `required` lists the variables and fields that are non-nullable **and** have no default value.
+
+A model can leave a nullable value unset either by omitting the property or by passing `null`. Both reach the GraphQL endpoint as `null`.
+
+The explicit `null` alternative matters for clients that rewrite tool schemas for strict function calling. Those rewrites move every property into `required`, which would otherwise remove the only way to leave a value unset. The union uses `anyOf` rather than `oneOf` because the strict-mode schema subsets of OpenAI and Anthropic accept `anyOf` and reject `oneOf`.
+
+### Default values
+
+A default value declared on a variable or input field is emitted as JSON Schema `default`. The literal is converted following GraphQL input coercion so that it satisfies the property's schema:
+
+- A single value declared for a list type becomes a one-element list: `$ids: [Int!] = 1` emits `"default": [1]`.
+- An `Int` literal declared for `ID` becomes a string: `$id: ID = 123` emits `"default": "123"`.
+- Fields of an input object literal are converted against their declared types.
+
+A non-nullable variable with a default, such as `$limit: Int! = 10` above, is optional and isn't listed in `required`. Omitting it applies the GraphQL default.
+
+<Note>
+
+GraphQL applies a default only when a value is omitted. An explicit `null` is passed through as `null` and doesn't trigger the default. For a nullable variable with a non-null default, omitting the variable and sending `null` therefore mean different things, and the schema lets a client express both.
+
+</Note>
+
+### Descriptions
+
+An input property's `description` comes from the first available source:
+
+1. A `#` comment placed directly above the variable definition in the operation, as on `$statuses` above.
+2. The description of the schema argument the variable is passed to, as on `$isActive` above.
+
+`overrides.descriptions` sets only the top-level tool description and never changes input property descriptions. For list-typed variables the description sits on the property itself, not on `items`. Enum and input object descriptions live on their `definitions` entry.
+
+### Output schema
+
+With `overrides.enable_output_schema: true`, the tool also carries an `outputSchema` describing the GraphQL response envelope: `data`, an optional `errors` array in the standard GraphQL error shape, and `extensions`. The `data` subtree follows the operation's selection set. For the example above, with `errors` and `extensions` omitted for brevity:
+
+```json title="GetThings outputSchema (errors and extensions omitted)"
+{
+  "type": "object",
+  "properties": {
+    "data": {
+      "type": "object",
+      "properties": {
+        "things": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ]
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "anyOf": [
+                  {
+                    "$ref": "#/definitions/Status"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          }
+        }
+      },
+      "required": [
+        "things"
+      ]
+    }
+  },
+  "definitions": {
+    "Status": {
+      "description": "Lifecycle state of a thing.",
+      "type": "string",
+      "enum": [
+        "OPEN",
+        "CLOSED"
+      ]
+    }
+  }
+}
+```
+
+The generated schema always includes all three envelope members. `errors` is an array of the standard GraphQL error shape (`message`, `locations`, `path`, `extensions`), and `extensions` is an unconstrained object.
+
+The output side follows the same conventions as the input side, with a few differences:
+
+- Nullable fields and lists are wrapped in `anyOf` with `null`. Object fields are `required` when their GraphQL type is non-nullable.
+- `ID` is `{"oneOf": [{"type": "string"}, {"type": "integer"}]}`, since servers may return either.
+- A union field with inline fragments becomes an `anyOf` of one object schema per fragment. For an interface field, fields from inline fragments are merged into a single object schema. `__typename`, when selected, is a plain string and isn't a discriminator.
+- Fields marked `@private` are omitted from the schema. See the [`@private` directive](/apollo-mcp-server/mcp-apps-reference#private-directive) for details.
+
+MCP clients that validate `structuredContent` against `outputSchema` reject responses that don't match. The schema aims to accept every response the operation can produce, but it is derived from the operation text and the GraphQL schema alone, so two kinds of valid response currently fail validation:
+
+- A non-nullable field under `@skip` or `@include` is still listed in `required`. When the directive removes the field from the response, a validating client rejects the result.
+- The `data` member is typed as an object and never `null`. When an error propagates to the root and the GraphQL endpoint returns `"data": null`, the server forwards the response as an error result with `structuredContent`, and clients that validate error results reject it.
+
+If your operations use these patterns with a validating client, leave `enable_output_schema` off for now.
 
 ## Introspection tools
 
