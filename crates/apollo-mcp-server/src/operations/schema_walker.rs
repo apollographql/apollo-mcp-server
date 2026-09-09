@@ -2,6 +2,9 @@
 //!
 //! The types in this module generate JSON schemas for GraphQL types by walking
 //! the types recursively.
+//!
+//! The mapping is documented for users in `docs/source/define-tools.mdx` under
+//! "Generated tool schemas". Keep that section in step with changes here.
 
 use apollo_compiler::{
     Schema as GraphQLSchema,
