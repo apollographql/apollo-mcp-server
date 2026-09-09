@@ -397,7 +397,7 @@ That validator only gates requests that reach your API. Requests the MCP server 
 
 The header only reaches your API if you also list it in [`forward_headers`](/apollo-mcp-server/config-file#forwarding-headers). If you do not, the header is dropped before the GraphQL request goes out, and nothing downstream can validate it: the middleware skips validation, and the upstream request looks like an ordinary anonymous call.
 
-If your clients run in a browser, the header must also appear in [`cors.allow_headers`](/apollo-mcp-server/cors#all-cors-options), or the preflight response omits it and the browser never sends it on the real request. That request then reaches the server with no header and no token, matches no list, and gets a `401` that looks unrelated to CORS.
+If your clients run in a browser, the header must also appear in [`cors.allow_headers`](/apollo-mcp-server/cors#all-cors-options), or the preflight response omits it and the browser never sends it on the real request. That request then reaches the server with no header and no token, matches no list, and gets a `401` that looks unrelated to CORS. Setting `cors.allow_headers` replaces the default list, so repeat the defaults alongside your header. See [adding a custom header](/apollo-mcp-server/cors#adding-a-custom-header).
 
 Never assume a header name. The upstream API decides it, which is why the list is configuration rather than a built-in name.
 
