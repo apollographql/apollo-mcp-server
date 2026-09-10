@@ -473,6 +473,12 @@ struct AuthState {
     /// Skip lists resolved at startup, with the deprecated
     /// `allow_anonymous_mcp_discovery` flag already folded in.
     skip_token_validation: Arc<SkipTokenValidation>,
+    /// Whether the streamable-HTTP transport serves the `GET` server-to-client
+    /// stream (`true`) or not (`false`, `stateful_mode: false`). A stateless
+    /// transport answers that `GET` with 405 regardless of a credential, so
+    /// gating it here would only add a 401 a client may read as "this server
+    /// requires authentication for everything".
+    stateful_mode: bool,
 }
 
 impl Config {
@@ -506,6 +512,7 @@ impl Config {
         &self,
         router: Router,
         required_scopes: HashMap<String, OperationRequiredScopes>,
+        stateful_mode: bool,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -589,6 +596,7 @@ impl Config {
             skip_token_validation: Arc::new(skip_token_validation),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            stateful_mode,
         };
 
         // Set up auth routes. NOTE: CORs needs to allow for get requests to the
@@ -738,6 +746,15 @@ async fn oauth_validate(
             }),
         )
     };
+
+    // See AuthState::stateful_mode's doc for why a stateless GET is exempt
+    // here. Stateful mode's GET carries real traffic and stays gated below
+    // like any other request.
+    if !auth_state.stateful_mode && request.method() == Method::GET {
+        let response = next.run(request).await;
+        tracing::Span::current().record("status_code", response.status().as_u16());
+        return Ok(response);
+    }
 
     // Every skip list applies only to a request that presents no token. A caller
     // that sends one always gets it validated, so an expired token is rejected
@@ -899,7 +916,7 @@ async fn oauth_validate(
 mod tests {
     use super::*;
     use axum::middleware::from_fn_with_state;
-    use axum::routing::get;
+    use axum::routing::{get, post};
     use axum::{
         Router,
         body::Body,
@@ -929,7 +946,14 @@ mod tests {
         }
     }
 
+    /// Builds `AuthState` in `stateful_mode: true`, the mode every existing
+    /// test assumes. Tests exercising the stateless GET bypass use
+    /// [`test_auth_state_with_mode`] instead.
     fn test_auth_state(config: Config) -> AuthState {
+        test_auth_state_with_mode(config, true)
+    }
+
+    fn test_auth_state_with_mode(config: Config, stateful_mode: bool) -> AuthState {
         let resource_metadata_url = build_resource_metadata_url(&config.resource);
         let auth_servers = config
             .servers
@@ -950,6 +974,7 @@ mod tests {
             skip_token_validation: Arc::new(skip_token_validation),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
             jwks_cache: Arc::new(RwLock::new(HashMap::new())),
+            stateful_mode,
         }
     }
 
@@ -957,6 +982,18 @@ mod tests {
         Router::new()
             .route("/test", get(|| async { "ok" }))
             .layer(from_fn_with_state(test_auth_state(config), oauth_validate))
+    }
+
+    /// Like [`test_router`], but the route only handles `POST`, so axum's own
+    /// 405 stands in for the real `GET` route (owned by rmcp's
+    /// `StreamableHttpService`) that a stateless transport doesn't serve.
+    fn test_router_get_unhandled(config: Config, stateful_mode: bool) -> Router {
+        Router::new()
+            .route("/test", post(|| async { "ok" }))
+            .layer(from_fn_with_state(
+                test_auth_state_with_mode(config, stateful_mode),
+                oauth_validate,
+            ))
     }
 
     fn test_router_with_required_scopes(
@@ -968,6 +1005,67 @@ mod tests {
         Router::new()
             .route("/test", get(|| async { "ok" }))
             .layer(from_fn_with_state(auth_state, oauth_validate))
+    }
+
+    // Covers the interaction between `stateful_mode` and the `GET` server-
+    // to-client stream: a stateless transport never serves that route
+    // (rmcp answers 405 regardless of a credential), so gating it with a 401
+    // only misleads a client into thinking the whole server needs auth.
+    mod stateless_get {
+        use super::*;
+
+        #[tokio::test]
+        async fn stateless_unauthenticated_get_bypasses_auth_and_gets_405() {
+            let config = test_config();
+            let app = test_router_get_unhandled(config, /* stateful_mode */ false);
+            let req = Request::builder()
+                .method("GET")
+                .uri("/test")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::METHOD_NOT_ALLOWED);
+        }
+
+        /// Regression guard: a stateful transport's `GET` carries real
+        /// server-to-client traffic and must stay gated. Named explicitly so
+        /// it fails loudly if the `stateful_mode` default ever changes.
+        #[tokio::test]
+        async fn stateful_unauthenticated_get_still_returns_401() {
+            let config = test_config();
+            let app = test_router_get_unhandled(config, /* stateful_mode */ true);
+            let req = Request::builder()
+                .method("GET")
+                .uri("/test")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        /// Confirms the bypass added in `oauth_validate` is scoped to `GET`:
+        /// an unauthenticated `POST` for a method absent from every skip list
+        /// is still rejected in stateless mode, not waved through because
+        /// `stateful_mode` is `false`.
+        #[tokio::test]
+        async fn stateless_mode_does_not_change_post_gating() {
+            let config = test_config();
+            let app = test_router_get_unhandled(config, /* stateful_mode */ false);
+            let body = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/list",
+            })
+            .to_string();
+            let req = Request::builder()
+                .method("POST")
+                .uri("/test")
+                .header("content-type", "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
     }
 
     mod oauth_validate {
@@ -1400,7 +1498,7 @@ mod tests {
 
             let router = Router::new();
             let err = config
-                .enable_middleware(router, HashMap::new())
+                .enable_middleware(router, HashMap::new(), true)
                 .unwrap_err();
 
             assert!(matches!(
@@ -1768,7 +1866,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("file:///some/path").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new())
+                .enable_middleware(Router::new(), HashMap::new(), true)
                 .unwrap_err();
 
             assert!(matches!(
@@ -1783,7 +1881,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new())
+                .enable_middleware(Router::new(), HashMap::new(), true)
                 .unwrap_err();
 
             assert!(matches!(
@@ -1797,7 +1895,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new(), HashMap::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new(), true);
 
             assert!(result.is_ok());
         }
@@ -1807,7 +1905,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new(), HashMap::new());
+            let result = config.enable_middleware(Router::new(), HashMap::new(), true);
 
             assert!(result.is_ok());
         }
@@ -1823,7 +1921,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new(), true)
                 .unwrap();
 
             let req = Request::builder()
@@ -1851,7 +1949,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new(), true)
                 .unwrap();
 
             let req = Request::builder()
@@ -1869,7 +1967,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new())
+                .enable_middleware(base_router, HashMap::new(), true)
                 .unwrap();
 
             let req = Request::builder()
@@ -2593,7 +2691,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.allow_anonymous_mcp_discovery = true;
                 config.skip_token_validation = skip(&["server/discover"], &[], &[]);
 
-                let result = config.enable_middleware(Router::new(), HashMap::new());
+                let result = config.enable_middleware(Router::new(), HashMap::new(), true);
 
                 assert!(
                     matches!(result, Err(TlsConfigError::AnonymousDiscoveryConflict)),
@@ -2647,7 +2745,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &["RestrictedOp"], &[]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope())
+                    .enable_middleware(Router::new(), required_read_scope(), true)
                     .unwrap();
 
                 assert!(logs_contain("RestrictedOp"));
@@ -2661,7 +2759,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &["PublicOp"], &[]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope())
+                    .enable_middleware(Router::new(), required_read_scope(), true)
                     .unwrap();
 
                 assert!(!logs_contain("skip_token_validation.tools"));
@@ -2674,7 +2772,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &[], &["x-api-key"]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope())
+                    .enable_middleware(Router::new(), required_read_scope(), true)
                     .unwrap();
 
                 assert!(logs_contain("x-api-key"));
@@ -2690,7 +2788,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &[], &["x-api-key"]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new())
+                    .enable_middleware(Router::new(), HashMap::new(), true)
                     .unwrap();
 
                 assert!(logs_contain("skips token validation for every tool"));
@@ -2707,7 +2805,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scope_mode = ScopeMode::Disabled;
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new())
+                    .enable_middleware(Router::new(), HashMap::new(), true)
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));
@@ -2721,7 +2819,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scopes = vec![];
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new())
+                    .enable_middleware(Router::new(), HashMap::new(), true)
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));

@@ -369,7 +369,14 @@ transport:
 
 An empty list is off, so there is no separate switch to turn the lists on.
 
-A stateful session needs both `initialize` and the `notifications/initialized` notification that follows it on its own POST; missing either one from `methods` still ends the handshake in a 401, one step after `initialize` succeeded. A stateful session also opens a GET request for the server-to-client stream, which carries no JSON-RPC body: only `headers` can match a GET, since `methods` and `tools` need a body to inspect. A session with no token and no listed header does not get that stream.
+A stateful session needs both `initialize` and the `notifications/initialized` notification that follows it on its own POST. Missing either one from `methods` still ends the handshake in a 401, one step after `initialize` succeeded.
+
+`transport.stateful_mode` changes how a `GET` on the MCP endpoint is treated, and this is not stateful-only:
+
+- **`stateful_mode: true`** opens a real GET for the server-to-client stream, which carries no JSON-RPC body. Only `headers` can match a GET, since `methods` and `tools` need a body to inspect. A session with no token and no listed header does not get that stream, and gets a 401.
+- **`stateful_mode: false`** never serves that stream at all. The endpoint answers a GET with 405, whether or not a credential is present. This GET is not gated by `skip_token_validation` (there is nothing to protect), so a stateless deployment needs no `headers` entry to reach it.
+
+The distinction matters beyond the wire, because some MCP clients treat any 401 from the server as "this server requires authentication," and hide every tool in response, including ones `skip_token_validation` was configured to expose without a token. Getting the stateless GET's status code right (405, not 401) keeps that from happening to an otherwise-public deployment.
 
 <Caution>
 
