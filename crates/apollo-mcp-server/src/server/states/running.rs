@@ -1116,6 +1116,46 @@ mod tests {
         service.cancel().await.unwrap();
     }
 
+    mod supported_protocol_versions {
+        use super::*;
+
+        fn supported() -> Cow<'static, [ProtocolVersion]> {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            test_running(Arc::new(RwLock::new(schema)))
+                .for_service()
+                .supported_protocol_versions()
+        }
+
+        #[test]
+        fn advertises_the_max_supported_version() {
+            let supported = supported();
+
+            assert!(
+                supported.contains(&MAX_SUPPORTED_PROTOCOL_VERSION),
+                "advertised versions {supported:?} must include the server's max"
+            );
+        }
+
+        #[test]
+        fn never_advertises_a_version_above_the_max_supported() {
+            let supported = supported();
+
+            let newer: Vec<_> = supported
+                .iter()
+                .filter(|version| **version > MAX_SUPPORTED_PROTOCOL_VERSION)
+                .collect();
+
+            assert!(
+                newer.is_empty(),
+                "advertised versions newer than {MAX_SUPPORTED_PROTOCOL_VERSION}: {newer:?}"
+            );
+        }
+    }
+
     mod update_operations {
         use super::*;
         use rmcp::model::Tool;
