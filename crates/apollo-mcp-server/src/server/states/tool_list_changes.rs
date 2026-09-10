@@ -1,11 +1,11 @@
 //! Application catalog invalidation, independent of MCP notification delivery.
 
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{future::Future, sync::Arc};
 
 use rmcp::{Peer, RoleServer, ServiceError};
 use tokio::sync::watch;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::error;
+use tracing::{debug, error};
 
 /// A coalescing signal to refetch the current tool catalog. No history is replayed.
 #[derive(Clone)]
@@ -76,8 +76,6 @@ impl LegacyToolNotifications {
     }
 }
 
-const NOTIFY_TIMEOUT: Duration = Duration::from_secs(5);
-
 async fn forward_changes<F: Future<Output = Result<(), ServiceError>>>(
     mut changes: watch::Receiver<()>,
     shutdown: CancellationToken,
@@ -97,22 +95,25 @@ async fn forward_changes<F: Future<Output = Result<(), ServiceError>>>(
         let result = tokio::select! {
             biased;
             _ = shutdown.cancelled() => return,
-            result = tokio::time::timeout(NOTIFY_TIMEOUT, notify()) => result,
+            result = notify() => result,
         };
         match result {
-            Ok(Ok(())) => {}
-            Ok(Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed)) => {
-                error!("Failed to notify client of tool list change - stopping legacy delivery");
-                return;
-            }
-            Ok(Err(error)) => {
-                error!(?error, "Failed to notify client of tool list change");
-            }
-            Err(_) => {
+            Ok(()) => {}
+            // Preserve the previous best-effort delivery policy for transport
+            // failures; TransportSend does not universally imply permanent closure.
+            Err(ServiceError::TransportSend(error)) => {
                 error!(
-                    "Timed out notifying client of tool list change after 5s - stopping legacy delivery"
+                    ?error,
+                    "Failed to notify client of tool list change - stopping legacy delivery"
                 );
                 return;
+            }
+            Err(ServiceError::TransportClosed) => {
+                debug!("Client transport closed - stopping legacy tool notifications");
+                return;
+            }
+            Err(error) => {
+                error!(?error, "Failed to notify client of tool list change");
             }
         }
     }
@@ -120,6 +121,8 @@ async fn forward_changes<F: Future<Output = Result<(), ServiceError>>>(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[derive(Clone, Copy, Debug)]
@@ -127,8 +130,17 @@ mod tests {
         Publish,
         Succeed,
         RecoverableFailure,
-        TerminalFailure,
+        TransportClosed,
+        TransportSend,
         Cancel,
+    }
+
+    fn transport_send_error() -> ServiceError {
+        ServiceError::TransportSend(rmcp::transport::DynamicTransportError::from_parts(
+            "test transport",
+            std::any::TypeId::of::<()>(),
+            Box::new(std::io::Error::from(std::io::ErrorKind::BrokenPipe)),
+        ))
     }
 
     #[derive(Clone, Copy)]
@@ -145,7 +157,8 @@ mod tests {
                 proptest::strategy::Just(Action::Publish),
                 proptest::strategy::Just(Action::Succeed),
                 proptest::strategy::Just(Action::RecoverableFailure),
-                proptest::strategy::Just(Action::TerminalFailure),
+                proptest::strategy::Just(Action::TransportClosed),
+                proptest::strategy::Just(Action::TransportSend),
                 proptest::strategy::Just(Action::Cancel),
             ], 1..64)
         ) {
@@ -194,11 +207,15 @@ mod tests {
                     shutdown.cancel();
                     model = Model::Stopped;
                 }
-                Action::Succeed | Action::RecoverableFailure | Action::TerminalFailure => {
+                Action::Succeed
+                | Action::RecoverableFailure
+                | Action::TransportClosed
+                | Action::TransportSend => {
                     if let Model::Sending { pending } = model {
                         let result = match action {
                             Action::Succeed => Ok(()),
                             Action::RecoverableFailure => Err(ServiceError::UnexpectedResponse),
+                            Action::TransportSend => Err(transport_send_error()),
                             _ => Err(ServiceError::TransportClosed),
                         };
                         completion
@@ -207,7 +224,8 @@ mod tests {
                             .unwrap()
                             .send(result)
                             .unwrap();
-                        model = if matches!(action, Action::TerminalFailure) {
+                        model = if matches!(action, Action::TransportClosed | Action::TransportSend)
+                        {
                             Model::Stopped
                         } else if pending {
                             expected += 1;
@@ -292,7 +310,9 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test]
     #[timeout(std::time::Duration::from_secs(10))]
-    async fn recoverable_send_errors_do_not_stop_delivery() {
+    async fn other_errors_defensively_allow_later_changes() {
+        // rmcp notification sends currently expose transport errors. Preserve
+        // the fallback policy if other ServiceError variants become possible.
         let changes = ToolListChanges::default();
         let receiver = changes.subscribe();
         let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
@@ -319,37 +339,65 @@ mod tests {
     #[rstest::rstest]
     #[tokio::test(start_paused = true)]
     #[timeout(std::time::Duration::from_secs(10))]
-    async fn slow_client_times_out_without_delaying_another_client() {
+    async fn slow_client_recovers_without_delaying_another_client() {
         let changes = ToolListChanges::default();
-        let slow = changes.subscribe();
-        let fast = changes.subscribe();
         let shutdown = CancellationToken::new();
-        let fast_shutdown = shutdown.clone();
-        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let slow_task = tokio::spawn(forward_changes(
-            slow,
-            CancellationToken::new(),
-            std::future::pending,
-        ));
-        let fast_task = tokio::spawn(async move {
-            forward_changes(fast, fast_shutdown, || {
-                sent.send(()).unwrap();
-                std::future::ready(Ok(()))
-            })
-            .await;
+        let (started, mut attempts) = tokio::sync::mpsc::unbounded_channel();
+        let slow = forward_changes(changes.subscribe(), shutdown.clone(), || {
+            let (complete, completed) = tokio::sync::oneshot::channel();
+            started.send(complete).unwrap();
+            async move { completed.await.unwrap() }
         });
-        let start = tokio::time::Instant::now();
+        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let fast = forward_changes(changes.subscribe(), shutdown.clone(), || {
+            sent.send(()).unwrap();
+            std::future::ready(Ok(()))
+        });
+        tokio::pin!(slow, fast);
         changes.publish();
-        received.recv().await.unwrap();
-        // A second update can be delivered while the first client's send is blocked.
-        changes.publish();
-        received.recv().await.unwrap();
-        assert_eq!(start.elapsed(), Duration::ZERO);
+        assert!(futures::poll!(&mut slow).is_pending());
+        let first_send = attempts.try_recv().unwrap();
+        assert!(futures::poll!(&mut fast).is_pending());
+        received.try_recv().unwrap();
+
+        // Cross the former cutoff while the first send is still outstanding.
+        tokio::time::advance(Duration::from_secs(6)).await;
+        assert!(futures::poll!(&mut slow).is_pending());
+        assert!(!first_send.is_closed());
+        for _ in 0..3 {
+            changes.publish();
+            assert!(futures::poll!(&mut slow).is_pending());
+            assert!(futures::poll!(&mut fast).is_pending());
+            received.try_recv().unwrap();
+        }
+        assert!(attempts.try_recv().is_err());
+        first_send.send(Ok(())).unwrap();
+        assert!(futures::poll!(&mut slow).is_pending());
+        // All changes during the stall become one subsequent send.
+        attempts.try_recv().unwrap().send(Ok(())).unwrap();
+        assert!(futures::poll!(&mut slow).is_pending());
+        assert!(attempts.try_recv().is_err());
         shutdown.cancel();
-        fast_task.await.unwrap();
-        slow_task.await.unwrap();
-        assert_eq!(start.elapsed(), NOTIFY_TIMEOUT);
-        changes.closed().await;
+        assert!(futures::poll!(&mut slow).is_ready());
+        assert!(futures::poll!(&mut fast).is_ready());
+        assert_eq!(changes.receiver_count(), 0);
+    }
+
+    #[rstest::rstest]
+    #[case::closed(ServiceError::TransportClosed)]
+    #[case::send(transport_send_error())]
+    #[tokio::test]
+    #[timeout(std::time::Duration::from_secs(10))]
+    async fn transport_failures_end_delivery(#[case] error: ServiceError) {
+        let changes = ToolListChanges::default();
+        let mut failure = Some(error);
+        let forwarding = forward_changes(changes.subscribe(), CancellationToken::new(), || {
+            std::future::ready(Err(failure.take().expect("only one send is attempted")))
+        });
+        changes.publish();
+        forwarding.await;
+        assert_eq!(changes.receiver_count(), 0);
+        changes.publish();
     }
 
     #[rstest::rstest]

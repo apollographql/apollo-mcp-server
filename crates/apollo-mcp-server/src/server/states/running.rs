@@ -4027,16 +4027,6 @@ mod integration_tests {
                 .unwrap()
         }
 
-        async fn wait_for_receivers(running: &Running, expected: usize) {
-            tokio::time::timeout(std::time::Duration::from_secs(2), async {
-                while running.tool_list_changes.receiver_count() != expected {
-                    tokio::task::yield_now().await;
-                }
-            })
-            .await
-            .expect("initialization must register a change receiver");
-        }
-
         async fn initialize_legacy_session(
             service: &StreamableHttpService<McpService, LocalSessionManager>,
             running: &Running,
@@ -4064,7 +4054,6 @@ mod integration_tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
-            wait_for_receivers(running, previous + 1).await;
             session
         }
 
@@ -4128,6 +4117,108 @@ mod integration_tests {
             })
             .await
             .expect("expected MCP message")
+        }
+
+        // Keep unread bytes across events so a frame containing multiple SSE
+        // events cannot discard the event following the one a test observes.
+        struct NotificationStream {
+            body: Body,
+            buffer: Vec<u8>,
+        }
+
+        impl NotificationStream {
+            fn new(body: Body) -> Self {
+                Self {
+                    body,
+                    buffer: Vec::new(),
+                }
+            }
+
+            async fn next_notification(&mut self) -> String {
+                use http_body_util::BodyExt as _;
+
+                tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    loop {
+                        let boundary = self
+                            .buffer
+                            .windows(2)
+                            .position(|bytes| bytes == b"\n\n")
+                            .map(|position| (position, 2))
+                            .into_iter()
+                            .chain(
+                                self.buffer
+                                    .windows(4)
+                                    .position(|bytes| bytes == b"\r\n\r\n")
+                                    .map(|position| (position, 4)),
+                            )
+                            .min_by_key(|(position, _)| *position);
+                        if let Some((position, delimiter_len)) = boundary {
+                            let event: Vec<_> =
+                                self.buffer.drain(..position + delimiter_len).collect();
+                            let event = std::str::from_utf8(&event).unwrap();
+                            let mut id = None;
+                            let mut data = Vec::new();
+                            for line in event.lines() {
+                                if let Some(value) = line.strip_prefix("id:") {
+                                    id = Some(value.strip_prefix(' ').unwrap_or(value).to_owned());
+                                } else if let Some(value) = line.strip_prefix("data:") {
+                                    data.push(value.strip_prefix(' ').unwrap_or(value));
+                                }
+                            }
+                            let data = data.join("\n");
+                            if data.is_empty() {
+                                continue; // Ignore keep-alive and retry-only events.
+                            }
+                            let message: Value = serde_json::from_str(&data).unwrap();
+                            assert_eq!(message["method"], "notifications/tools/list_changed");
+                            return id.expect("legacy notifications must have an SSE event ID");
+                        }
+                        let frame = self
+                            .body
+                            .frame()
+                            .await
+                            .expect("notification stream closed")
+                            .unwrap();
+                        if let Some(data) = frame.data_ref() {
+                            self.buffer.extend_from_slice(data);
+                        }
+                    }
+                })
+                .await
+                .expect("expected a complete tool-list notification")
+            }
+        }
+
+        proptest::proptest! {
+            #[test]
+            fn notification_stream_preserves_events_across_frame_boundaries(
+                chunk_sizes in proptest::collection::vec(1usize..128, 1..16),
+                crlf in proptest::bool::ANY,
+            ) {
+                // Framing must not affect event identity, including when several
+                // events share a frame or an event is split between frames.
+                let newline = if crlf { "\r\n" } else { "\n" };
+                let payload = format!(
+                    ": keep-alive{newline}{newline}data:{newline}{newline}id: first{newline}data: {{\"method\":\"notifications/tools/list_changed\"}}{newline}{newline}id: second{newline}data: {{\"method\":\"notifications/tools/list_changed\"}}{newline}{newline}"
+                );
+                let mut remaining = payload.as_bytes();
+                let mut chunks = Vec::new();
+                for size in chunk_sizes.into_iter().cycle() {
+                    if remaining.is_empty() {
+                        break;
+                    }
+                    let (chunk, rest) = remaining.split_at(size.min(remaining.len()));
+                    chunks.push(Ok::<_, std::convert::Infallible>(chunk.to_vec()));
+                    remaining = rest;
+                }
+                let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+                runtime.block_on(async {
+                    let body = Body::from_stream(futures::stream::iter(chunks));
+                    let mut stream = NotificationStream::new(body);
+                    assert_eq!(stream.next_notification().await, "first");
+                    assert_eq!(stream.next_notification().await, "second");
+                });
+            }
         }
 
         fn session_request(session: &str, method: http::Method, body: Value) -> Request<Body> {
@@ -4418,16 +4509,14 @@ mod integration_tests {
             for session in &sessions {
                 let response = service.clone().oneshot(session_get(session)).await.unwrap();
                 assert_eq!(response.status(), StatusCode::OK);
-                streams.push(response.into_body());
+                streams.push(NotificationStream::new(Body::new(response.into_body())));
             }
             running
                 .update_operations(vec![("query Hello { hello }".to_owned(), None).into()])
                 .await;
+            let mut last_event_ids = Vec::new();
             for stream in &mut streams {
-                assert_eq!(
-                    next_message(stream).await["method"],
-                    "notifications/tools/list_changed"
-                );
+                last_event_ids.push(stream.next_notification().await);
             }
             let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
             let mut response = service
@@ -4441,11 +4530,6 @@ mod integration_tests {
 
             // Closing a GET stream must not tear down a reconnectable legacy session.
             streams.clear();
-            for session in &sessions {
-                let response = service.clone().oneshot(session_get(session)).await.unwrap();
-                assert_eq!(response.status(), StatusCode::OK);
-                streams.push(response.into_body());
-            }
             running
                 .update_schema(
                     apollo_compiler::Schema::parse_and_validate(
@@ -4455,12 +4539,27 @@ mod integration_tests {
                     .unwrap(),
                 )
                 .await;
-            for stream in &mut streams {
-                assert_eq!(
-                    next_message(stream).await["method"],
-                    "notifications/tools/list_changed"
-                );
+            // Resume from the last observed event, rather than replaying all history.
+            for (session, last_event_id) in sessions.iter().zip(&last_event_ids) {
+                let mut request = session_get(session);
+                request
+                    .headers_mut()
+                    .insert("Last-Event-ID", last_event_id.parse().unwrap());
+                let response = service.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                streams.push(NotificationStream::new(Body::new(response.into_body())));
             }
+            for (stream, last_event_id) in streams.iter_mut().zip(&mut last_event_ids) {
+                let mut next_event_id = stream.next_notification().await;
+                // rmcp 3.2's in-memory cache replays the cursor event inclusively.
+                // That duplicate cannot establish delivery of the gap update.
+                if next_event_id == *last_event_id {
+                    next_event_id = stream.next_notification().await;
+                }
+                assert_ne!(next_event_id, *last_event_id);
+                *last_event_id = next_event_id;
+            }
+
             let mut response = service
                 .clone()
                 .oneshot(session_post(&sessions[0], list))
@@ -4472,6 +4571,11 @@ mod integration_tests {
                 before["result"]["tools"][0]["outputSchema"],
                 after["result"]["tools"][0]["outputSchema"]
             );
+            // Delivery must also continue after the streams have reconnected.
+            running.update_operations(vec![]).await;
+            for (stream, last_event_id) in streams.iter_mut().zip(&last_event_ids) {
+                assert_ne!(stream.next_notification().await, *last_event_id);
+            }
             for session in &sessions {
                 service
                     .clone()
@@ -4530,7 +4634,6 @@ mod integration_tests {
                 .write_all(format!("{initialized}\n").as_bytes())
                 .await
                 .unwrap();
-            wait_for_receivers(&running, 1).await;
             drop(intermediate_clone);
             running.update_operations(vec![]).await;
             line.clear();

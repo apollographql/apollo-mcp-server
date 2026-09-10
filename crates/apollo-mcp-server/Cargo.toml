@@ -77,8 +77,8 @@ chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
 mockito = "1.7.0"
-proptest = "1"
 opentelemetry_sdk = { version = "0.32.1", features = ["testing"] }
+proptest = "1"
 rstest.workspace = true
 secrecy.workspace = true
 serde_yaml = "0.9.34"
