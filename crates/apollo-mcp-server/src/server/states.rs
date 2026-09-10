@@ -33,7 +33,6 @@ pub(crate) mod telemetry;
 
 use configuring::Configuring;
 use operations_configured::OperationsConfigured;
-pub(crate) use running::MAX_SUPPORTED_PROTOCOL_VERSION;
 use running::Running;
 use schema_configured::SchemaConfigured;
 use starting::Starting;

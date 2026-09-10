@@ -9,8 +9,6 @@ use rmcp::model::{CacheScope, ProtocolVersion};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::server::states::MAX_SUPPORTED_PROTOCOL_VERSION;
-
 /// Caching behavior for MCP list/read responses.
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -33,8 +31,9 @@ impl Caching {
         &self,
         result: T,
         protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
     ) -> T {
-        if supports_cache_hints(protocol_version, &MAX_SUPPORTED_PROTOCOL_VERSION) {
+        if supports_cache_hints(protocol_version, server_max) {
             result.with_cache_hints(self.ttl_ms, CacheScope::Private)
         } else {
             result
@@ -105,6 +104,17 @@ mod tests {
         #[case] expected: bool,
     ) {
         assert_eq!(supports_cache_hints(peer.as_ref(), &server_max), expected);
+    }
+
+    #[test]
+    fn does_not_treat_an_unsupported_claim_as_a_negotiated_version() {
+        let peer = serde_json::from_value(serde_json::json!("2030-01-01")).unwrap();
+        let result = Caching::default().apply_to(
+            rmcp::model::ListToolsResult::with_all_items(vec![]),
+            Some(&peer),
+            &ProtocolVersion::V_2026_07_28,
+        );
+        assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
     }
 
     #[rstest]

@@ -307,6 +307,18 @@ impl Running {
         extensions: Extensions,
         peer: PeerContext<'_>,
     ) -> Result<ListToolsResult, McpError> {
+        self.list_tools_with_protocol_max(extensions, peer, &MAX_SUPPORTED_PROTOCOL_VERSION)
+            .await
+    }
+
+    // Keep the production cap fixed at the entry point while allowing the shared
+    // implementation to be tested against a future supported protocol revision.
+    async fn list_tools_with_protocol_max(
+        &self,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::ListToolsCount.as_str())
@@ -372,7 +384,9 @@ impl Running {
             }
         }
 
-        Ok(self.caching.apply_to(result, peer.protocol_version))
+        Ok(self
+            .caching
+            .apply_to(result, peer.protocol_version, server_max))
     }
 
     async fn call_tool_impl(
@@ -536,6 +550,19 @@ impl Running {
         extensions: &Extensions,
         protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ListResourcesResult, McpError> {
+        self.list_resources_with_protocol_max(
+            extensions,
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resources_with_protocol_max(
+        &self,
+        extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListResourcesResult, McpError> {
         let app_param = extract_app_param(extensions);
 
         let resources = if let Some(app_name) = app_param {
@@ -555,7 +582,7 @@ impl Running {
         };
 
         let result = ListResourcesResult::with_all_items(resources);
-        Ok(self.caching.apply_to(result, protocol_version))
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
     async fn read_resource_impl(
@@ -563,6 +590,22 @@ impl Running {
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
         peer: PeerContext<'_>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        self.read_resource_with_protocol_max(
+            request,
+            extensions,
+            peer,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+        .await
+    }
+
+    async fn read_resource_with_protocol_max(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -578,7 +621,8 @@ impl Running {
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
             let result = ReadResourceResult::new(vec![resource]);
             Ok(if origin.allows_cache_hints() {
-                self.caching.apply_to(result, peer.protocol_version)
+                self.caching
+                    .apply_to(result, peer.protocol_version, server_max)
             } else {
                 result
             })
@@ -594,10 +638,18 @@ impl Running {
         &self,
         protocol_version: Option<&ProtocolVersion>,
     ) -> Result<ListPromptsResult, McpError> {
+        self.list_prompts_with_protocol_max(protocol_version, &MAX_SUPPORTED_PROTOCOL_VERSION)
+    }
+
+    fn list_prompts_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListPromptsResult, McpError> {
         let result = ListPromptsResult::with_all_items(
             self.prompts.iter().map(|p| p.prompt.clone()).collect(),
         );
-        Ok(self.caching.apply_to(result, protocol_version))
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
     fn get_prompt_impl(
@@ -991,6 +1043,75 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
+    #[case::default(Caching::default())]
+    #[case::custom(Caching { ttl_ms: 60_000 })]
+    #[case::zero(Caching { ttl_ms: 0 })]
+    #[tokio::test]
+    async fn configured_cache_hints_reach_all_handlers_when_protocol_supported(
+        #[case] caching: Caching,
+    ) {
+        use crate::apps::app::AppResourceSource;
+        use rmcp::model::{Prompt, ReadResourceRequestParams};
+
+        let mut running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("content".into())),
+            None,
+            None,
+        );
+        running.caching = caching;
+        running.prompts = vec![crate::prompts::PromptFile {
+            prompt: Prompt::new("test", Some("description"), None),
+            template: "content".into(),
+        }];
+        let mut extensions = Extensions::new();
+        let (parts, _) = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap()
+            .into_parts();
+        extensions.insert(parts);
+        let version = ProtocolVersion::V_2026_07_28;
+        let peer = PeerContext::with_protocol_version(&version);
+
+        let tools = running
+            .list_tools_with_protocol_max(extensions.clone(), peer, &version)
+            .await
+            .unwrap();
+        let resources = running
+            .list_resources_with_protocol_max(&extensions, Some(&version), &version)
+            .unwrap();
+        let read = running
+            .read_resource_with_protocol_max(
+                ReadResourceRequestParams::new(RESOURCE_URI),
+                extensions,
+                peer,
+                &version,
+            )
+            .await
+            .unwrap();
+        let prompts = running
+            .list_prompts_with_protocol_max(Some(&version), &version)
+            .unwrap();
+
+        assert!(!tools.tools.is_empty());
+        assert!(!resources.resources.is_empty());
+        assert!(!read.contents.is_empty());
+        assert!(!prompts.prompts.is_empty());
+        for (method, ttl_ms, scope) in [
+            ("tools/list", tools.ttl_ms, tools.cache_scope),
+            ("resources/list", resources.ttl_ms, resources.cache_scope),
+            ("resources/read", read.ttl_ms, read.cache_scope),
+            ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+        ] {
+            assert_eq!(
+                (ttl_ms, scope),
+                (Some(caching.ttl_ms), Some(CacheScope::Private)),
+                "{method}"
+            );
+        }
+    }
+
     mod protocol_version_negotiation {
         use rstest::rstest;
 
@@ -1305,12 +1426,11 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000, None)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
-            #[case] expected_ttl_ms: Option<u64>,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
@@ -1323,13 +1443,7 @@ mod tests {
                 .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            assert_eq!(
-                (result.ttl_ms, result.cache_scope),
-                (
-                    expected_ttl_ms,
-                    expected_ttl_ms.map(|_| CacheScope::Private)
-                ),
-            );
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
         }
 
         #[tokio::test]
@@ -1449,13 +1563,12 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000, None)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
-            #[case] expected_ttl_ms: Option<u64>,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
@@ -1482,13 +1595,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(
-                (result.ttl_ms, result.cache_scope),
-                (
-                    expected_ttl_ms,
-                    expected_ttl_ms.map(|_| CacheScope::Private)
-                ),
-            );
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
         }
 
         #[tokio::test]
@@ -1583,8 +1690,12 @@ mod tests {
             assert!(result.is_err());
         }
 
+        #[rstest]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content() {
+        async fn fetch_remote_resource_downloads_content_without_cache_hints(
+            #[values(MAX_SUPPORTED_PROTOCOL_VERSION, ProtocolVersion::V_2026_07_28)]
+            server_max: ProtocolVersion,
+        ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
             let mock = server
@@ -1611,10 +1722,11 @@ mod tests {
             extensions.insert(parts);
 
             let mut resource = running
-                .read_resource_impl(
+                .read_resource_with_protocol_max(
                     ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
                     PeerContext::with_protocol_version(&ProtocolVersion::V_2026_07_28),
+                    &server_max,
                 )
                 .await
                 .expect("resource fetch failed");
@@ -1937,13 +2049,12 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 300_000, None)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000, None)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 300_000)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000)]
         #[tokio::test]
         async fn list_tools_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
-            #[case] expected_ttl_ms: Option<u64>,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),
@@ -1960,13 +2071,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!(
-                (result.ttl_ms, result.cache_scope),
-                (
-                    expected_ttl_ms,
-                    expected_ttl_ms.map(|_| CacheScope::Private)
-                ),
-            );
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
         }
 
         #[tokio::test]
@@ -2443,24 +2548,17 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000, None)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000, None)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
             #[case] ttl_ms: u64,
-            #[case] expected_ttl_ms: Option<u64>,
         ) {
             let mut running = running_with_prompts(vec![]);
             running.caching.ttl_ms = ttl_ms;
             let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            assert_eq!(
-                (result.ttl_ms, result.cache_scope),
-                (
-                    expected_ttl_ms,
-                    expected_ttl_ms.map(|_| CacheScope::Private)
-                ),
-            );
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
         }
 
         #[test]
@@ -2994,15 +3092,10 @@ mod integration_tests {
             assert!(result.get("cacheScope").is_none());
         }
 
-        #[rstest::rstest]
-        #[case::missing_metadata(false, -32602)]
-        #[case::unsupported_version(true, -32022)]
-        #[tokio::test]
-        async fn rejects_future_protocol_before_returning_cache_hints(
-            #[case] include_metadata: bool,
-            #[case] expected_error: i64,
-            #[values(true, false)] legacy_session_mode: bool,
-        ) {
+        async fn request_tools_with_future_protocol(
+            legacy_session_mode: bool,
+            metadata: Option<serde_json::Value>,
+        ) -> serde_json::Value {
             let running = create_running_with_output_schema();
             let service = StreamableHttpService::new(
                 move || Ok(running.clone()),
@@ -3010,12 +3103,8 @@ mod integration_tests {
                 StreamableHttpServerConfig::default().with_legacy_session_mode(legacy_session_mode),
             );
             let mut body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}});
-            if include_metadata {
-                body["params"]["_meta"] = json!({
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientCapabilities": {},
-                    "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
-                });
+            if let Some(metadata) = metadata {
+                body["params"]["_meta"] = metadata;
             }
             let request = Request::builder()
                 .method("POST")
@@ -3028,9 +3117,42 @@ mod integration_tests {
                 .body(Body::from(body.to_string()))
                 .unwrap();
             let response = service.oneshot(request).await.unwrap();
-            let body = extract_json_body(response).await;
+            extract_json_body(response).await
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn rejects_stateless_tools_request_without_required_metadata(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let body = request_tools_with_future_protocol(legacy_session_mode, None).await;
             assert_eq!(body["id"], 1);
-            assert_eq!(body["error"]["code"], expected_error);
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::INVALID_PARAMS.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn rejects_stateless_tools_request_with_unsupported_protocol(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let metadata = json!({
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
+            });
+            let body =
+                request_tools_with_future_protocol(legacy_session_mode, Some(metadata)).await;
+            assert_eq!(body["id"], 1);
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0,
+                "{body}"
+            );
             assert!(body.get("result").is_none());
         }
 
