@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use apollo_mcp_server::caching::Caching;
 use apollo_mcp_server::operations::{AnnotationOverrides, MutationMode};
 use apollo_mcp_server::scope_requirements::OperationRequiredScopes;
 use schemars::JsonSchema;
@@ -46,11 +45,6 @@ pub struct Overrides {
     /// with `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
     pub required_scopes: HashMap<String, OperationRequiredScopes>,
-
-    /// Caching behavior for MCP list/read response cache hints (SEP-2549: `ttlMs`/`cacheScope`
-    /// on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses).
-    #[serde(default)]
-    pub caching: Caching,
 }
 
 #[cfg(test)]
@@ -208,36 +202,6 @@ mod tests {
         let json = serde_json::json!({});
         let overrides: Overrides = serde_json::from_value(json).unwrap();
         assert!(overrides.annotations.is_empty());
-    }
-
-    #[test]
-    fn overrides_without_caching_defaults_ttl_ms() {
-        let json = serde_json::json!({});
-        let overrides: Overrides = serde_json::from_value(json).unwrap();
-        assert_eq!(overrides.caching.ttl_ms, 300_000);
-    }
-
-    #[test]
-    fn overrides_with_caching_parses_ttl_ms() {
-        let json = serde_json::json!({
-            "caching": {
-                "ttl_ms": 60_000
-            }
-        });
-        let overrides: Overrides = serde_json::from_value(json).unwrap();
-        assert_eq!(overrides.caching.ttl_ms, 60_000);
-    }
-
-    #[test]
-    fn caching_rejects_unknown_fields() {
-        let json = serde_json::json!({
-            "caching": {
-                "unknown_flag": true
-            }
-        });
-
-        let result = serde_json::from_value::<Overrides>(json);
-        assert!(result.is_err());
     }
 
     #[test]

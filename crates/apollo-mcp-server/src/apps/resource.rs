@@ -9,6 +9,22 @@ use super::App;
 
 const MCP_MIME_TYPE: &str = "text/html;profile=mcp-app";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResourceOrigin {
+    Local,
+    Remote,
+}
+
+impl ResourceOrigin {
+    pub(crate) fn allows_cache_hints(self) -> bool {
+        match self {
+            Self::Local => true,
+            // Remote content can change independently of server configuration.
+            Self::Remote => false,
+        }
+    }
+}
+
 pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
     resource.mime_type = Some(MCP_MIME_TYPE.to_string());
     resource
@@ -20,7 +36,7 @@ pub(crate) async fn get_app_resource(
     request_uri: Url,
     app_target: &AppTarget,
     app_name: &str,
-) -> Result<ResourceContents, ErrorData> {
+) -> Result<(ResourceContents, ResourceOrigin), ErrorData> {
     let Some(app) = apps
         .iter()
         .find(|app| app.uri.path() == request_uri.path() && app.name == app_name)
@@ -49,8 +65,8 @@ pub(crate) async fn get_app_resource(
         AppResource::Single(app_resource_source) => app_resource_source,
     };
 
-    let text = match resource_source {
-        AppResourceSource::Local(contents) => contents.clone(),
+    let (text, origin) = match resource_source {
+        AppResourceSource::Local(contents) => (contents.clone(), ResourceOrigin::Local),
         AppResourceSource::Remote(url) => {
             let response = reqwest::Client::new()
                 .get(url.clone())
@@ -74,12 +90,13 @@ pub(crate) async fn get_app_resource(
                 ));
             }
 
-            response.text().await.map_err(|err| {
+            let text = response.text().await.map_err(|err| {
                 ErrorData::resource_not_found(
                     format!("Failed to read resource body from {}: {err}", url),
                     None,
                 )
-            })?
+            })?;
+            (text, ResourceOrigin::Remote)
         }
     };
 
@@ -149,12 +166,15 @@ pub(crate) async fn get_app_resource(
     meta.get_or_insert_with(MetaObject::new)
         .insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
 
-    Ok(ResourceContents::TextResourceContents {
-        uri: request.uri,
-        mime_type: Some(MCP_MIME_TYPE.to_string()),
-        text,
-        meta,
-    })
+    Ok((
+        ResourceContents::TextResourceContents {
+            uri: request.uri,
+            mime_type: Some(MCP_MIME_TYPE.to_string()),
+            text,
+            meta,
+        },
+        origin,
+    ))
 }
 
 #[cfg(test)]
@@ -165,6 +185,84 @@ mod tests {
     use crate::apps::manifest::{CSPSettings, WidgetSettings};
 
     use super::*;
+
+    #[rstest::rstest]
+    #[case::single_local(false, AppTarget::AppsSDK, ResourceOrigin::Local)]
+    #[case::single_remote(false, AppTarget::MCPApps, ResourceOrigin::Remote)]
+    #[case::targeted_local(true, AppTarget::AppsSDK, ResourceOrigin::Local)]
+    #[case::targeted_remote(true, AppTarget::MCPApps, ResourceOrigin::Remote)]
+    #[tokio::test]
+    async fn reports_selected_resource_origin(
+        #[case] targeted: bool,
+        #[case] target: AppTarget,
+        #[case] expected: ResourceOrigin,
+    ) {
+        let mut server = mockito::Server::new_async().await;
+        let remote_request = server
+            .mock("GET", "/app")
+            .with_body("remote content")
+            .expect(if expected == ResourceOrigin::Remote {
+                1
+            } else {
+                0
+            })
+            .create_async()
+            .await;
+        let local = AppResourceSource::Local("local content".into());
+        let remote = AppResourceSource::Remote(format!("{}/app", server.url()).parse().unwrap());
+        let resource = if targeted {
+            AppResource::Targeted(TargetedAppResource {
+                openai: Some(local),
+                mcp: Some(remote),
+            })
+        } else {
+            AppResource::Single(match expected {
+                ResourceOrigin::Local => local,
+                ResourceOrigin::Remote => remote,
+            })
+        };
+        let app = App {
+            name: "TestApp".into(),
+            description: None,
+            resource,
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+        let (contents, origin) = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
+            "ui://widget/TestApp".parse().unwrap(),
+            &target,
+            "TestApp",
+        )
+        .await
+        .unwrap();
+        let ResourceContents::TextResourceContents { text, .. } = contents else {
+            panic!("expected text resource");
+        };
+        assert_eq!(origin, expected);
+        assert_eq!(
+            text,
+            match expected {
+                ResourceOrigin::Local => "local content",
+                ResourceOrigin::Remote => "remote content",
+            }
+        );
+        remote_request.assert_async().await;
+    }
+
+    #[rstest::rstest]
+    #[case::local(ResourceOrigin::Local, true)]
+    #[case::remote(ResourceOrigin::Remote, false)]
+    fn only_local_resources_allow_cache_hints(
+        #[case] origin: ResourceOrigin,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(origin.allows_cache_hints(), expected);
+    }
 
     #[test]
     fn attach_correct_mime_type() {
@@ -231,7 +329,7 @@ mod tests {
 
         let ResourceContents::TextResourceContents {
             mime_type, meta, ..
-        } = result
+        } = result.0
         else {
             unreachable!()
         };
@@ -292,7 +390,7 @@ mod tests {
 
         let ResourceContents::TextResourceContents {
             mime_type, meta, ..
-        } = result
+        } = result.0
         else {
             unreachable!()
         };
@@ -392,7 +490,7 @@ mod tests {
         .await
         .unwrap();
 
-        let ResourceContents::TextResourceContents { text, .. } = result else {
+        let ResourceContents::TextResourceContents { text, .. } = result.0 else {
             unreachable!()
         };
         assert_eq!(text, "openai content");
@@ -424,7 +522,7 @@ mod tests {
         .await
         .unwrap();
 
-        let ResourceContents::TextResourceContents { text, .. } = result else {
+        let ResourceContents::TextResourceContents { text, .. } = result.0 else {
             unreachable!()
         };
         assert_eq!(text, "mcp content");

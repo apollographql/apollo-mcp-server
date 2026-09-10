@@ -20,6 +20,9 @@ use super::{
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// Cache hints for MCP list/read responses.
+    pub caching: apollo_mcp_server::caching::Caching,
+
     /// CORS configuration
     pub cors: CorsConfig,
 
@@ -127,6 +130,38 @@ mod parsers {
 #[cfg(test)]
 mod test {
     use super::Config;
+
+    #[rstest::rstest]
+    #[case::omitted(serde_json::json!({}), 300_000)]
+    #[case::empty(serde_json::json!({"caching": {}}), 300_000)]
+    #[case::custom(serde_json::json!({"caching": {"ttl_ms": 60_000}}), 60_000)]
+    #[case::zero(serde_json::json!({"caching": {"ttl_ms": 0}}), 0)]
+    fn parses_caching(#[case] value: serde_json::Value, #[case] expected: u64) {
+        let config: Config = serde_json::from_value(value).unwrap();
+        assert_eq!(config.caching.ttl_ms, expected);
+    }
+
+    #[rstest::rstest]
+    #[case::unknown_field(serde_json::json!({"caching": {"unknown": true}}))]
+    #[case::old_location(serde_json::json!({"overrides": {"caching": {"ttl_ms": 60_000}}}))]
+    fn rejects_invalid_caching(#[case] value: serde_json::Value) {
+        assert!(serde_json::from_value::<Config>(value).is_err());
+    }
+
+    #[test]
+    fn caching_schema_matches_configuration() {
+        let schema = schemars::schema_for!(Config).to_value();
+        assert!(schema["properties"].get("caching").is_some());
+        assert!(
+            schema["$defs"]["Overrides"]["properties"]
+                .get("caching")
+                .is_none()
+        );
+        assert_eq!(
+            schema["$defs"]["Caching"]["properties"]["ttl_ms"]["default"],
+            300_000
+        );
+    }
 
     #[test]
     fn it_parses_a_minimal_config() {

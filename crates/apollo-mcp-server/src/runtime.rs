@@ -242,6 +242,9 @@ mod test {
 
             insta::assert_debug_snapshot!(config, @r#"
             Config {
+                caching: Caching {
+                    ttl_ms: 300000,
+                },
                 cors: CorsConfig {
                     enabled: false,
                     origins: [],
@@ -399,9 +402,6 @@ mod test {
                     descriptions: {},
                     annotations: {},
                     required_scopes: {},
-                    caching: Caching {
-                        ttl_ms: 300000,
-                    },
                 },
                 schema: Uplink,
                 transport: Stdio,
@@ -823,20 +823,21 @@ mod test {
     }
 
     #[test]
-    fn it_parses_overrides_caching() {
+    fn caching_environment_overrides_yaml() {
         figment::Jail::expect_with(move |jail| {
             let config = r#"
                 endpoint: http://localhost:4000/
-                overrides:
-                    caching:
-                        ttl_ms: 60000
+                caching:
+                    ttl_ms: 60000
             "#;
             let path = "config.yaml";
 
             jail.create_file(path, config)?;
 
             let config = read_config(path)?;
-            assert_eq!(config.overrides.caching.ttl_ms, 60_000);
+            assert_eq!(config.caching.ttl_ms, 60_000);
+            jail.set_env("APOLLO_MCP_CACHING__TTL_MS", "0");
+            assert_eq!(read_config(path)?.caching.ttl_ms, 0);
             Ok(())
         });
     }

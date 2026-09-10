@@ -258,6 +258,20 @@ Some MCP clients cache the tool list independently. If tools don't refresh after
 
 </Tip>
 
+### Caching
+
+These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL_MS` to override the TTL through an environment variable.
+
+| Option | Type | Default | Description |
+| :----- | :--- | :------ | :---------- |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Requires negotiation of MCP protocol version `2026-07-28` or newer; see the following availability note. |
+
+<Note>
+
+Cache hints are currently inactive: Apollo MCP Server negotiates MCP protocol versions up to `2025-11-25`. The `caching.ttl_ms` setting doesn't currently change client caching behavior because the required protocol revision isn't supported.
+
+</Note>
+
 ### Overrides
 
 These fields are under the top-level `overrides` key.
@@ -272,13 +286,6 @@ These fields are under the top-level `overrides` key.
 | `descriptions`               | `Map<String, String>`               | `{}`     | Top-level tool descriptions keyed by exact operation name. Overrides source-derived descriptions for matching operations but doesn't affect input descriptions or executable documents. Unmatched keys don't produce a warning. [Learn more about config-level descriptions](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
 | `required_scopes`            | `Map<String, List<String> \| List<List<String>>>` | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Unlisted tools receive no additional restriction. A flat list requires all scopes; nested lists define alternatives, where each inner list is AND and the outer list is OR. Requirements add to the global scope requirement. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more about per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements). |
-| `caching.ttl_ms`             | `u64`                               | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses. Cache scope is always `private`. Requires negotiation of MCP protocol version `2026-07-28` or newer; see the following availability note. |
-
-<Note>
-
-Cache hints are currently inactive: Apollo MCP Server negotiates MCP protocol versions up to `2025-11-25`. The `caching.ttl_ms` setting doesn't currently change client caching behavior because the required protocol revision isn't supported.
-
-</Note>
 
 #### Mutation modes
 
