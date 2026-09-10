@@ -1426,24 +1426,23 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] ttl_ms: u64,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
                 None,
             );
-            running.caching.ttl_ms = ttl_ms;
+            running.caching.ttl_ms = 60_000;
 
             let result = running
                 .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[tokio::test]
@@ -1563,19 +1562,18 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] ttl_ms: u64,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
                 None,
                 None,
             );
-            running.caching.ttl_ms = ttl_ms;
+            running.caching.ttl_ms = 60_000;
             let mut extensions = Extensions::new();
             let request = axum::http::Request::builder()
                 .uri("http://localhost?app=MyApp")
@@ -1595,7 +1593,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[tokio::test]
@@ -2049,19 +2047,18 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 300_000)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 300_000)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn list_tools_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] ttl_ms: u64,
         ) {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),
                 None,
                 None,
             );
-            running.caching.ttl_ms = ttl_ms;
+            running.caching.ttl_ms = 60_000;
 
             let result = running
                 .list_tools_impl(
@@ -2071,7 +2068,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[tokio::test]
@@ -2548,17 +2545,16 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28, 60_000)]
-        #[case::legacy(ProtocolVersion::V_2025_06_18, 60_000)]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
-            #[case] ttl_ms: u64,
         ) {
             let mut running = running_with_prompts(vec![]);
-            running.caching.ttl_ms = ttl_ms;
+            running.caching.ttl_ms = 60_000;
             let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None),);
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[test]
