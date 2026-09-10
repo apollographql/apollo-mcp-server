@@ -242,6 +242,9 @@ mod test {
 
             insta::assert_debug_snapshot!(config, @r#"
             Config {
+                caching: Caching {
+                    ttl_ms: 300000,
+                },
                 cors: CorsConfig {
                     enabled: false,
                     origins: [],
@@ -815,6 +818,26 @@ mod test {
                 create_user.title.as_deref(),
                 Some("Create a new user account")
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn caching_environment_overrides_yaml() {
+        figment::Jail::expect_with(move |jail| {
+            let config = r#"
+                endpoint: http://localhost:4000/
+                caching:
+                    ttl_ms: 60000
+            "#;
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+            assert_eq!(config.caching.ttl_ms, 60_000);
+            jail.set_env("APOLLO_MCP_CACHING__TTL_MS", "0");
+            assert_eq!(read_config(path)?.caching.ttl_ms, 0);
             Ok(())
         });
     }

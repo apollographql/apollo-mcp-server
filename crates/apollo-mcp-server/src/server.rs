@@ -11,6 +11,7 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::auth;
+use crate::caching::Caching;
 use crate::cors::CorsConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
@@ -79,6 +80,7 @@ pub struct Server {
     server_info: ServerInfoConfig,
     config_validator: Option<ConfigValidator>,
     instructions: Option<String>,
+    caching: Caching,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -174,6 +176,7 @@ impl Server {
         server_info: ServerInfoConfig,
         config_validator: Option<ConfigValidator>,
         instructions: Option<String>,
+        #[builder(default)] caching: Caching,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -216,6 +219,7 @@ impl Server {
             server_info,
             config_validator,
             instructions,
+            caching,
         }
     }
 

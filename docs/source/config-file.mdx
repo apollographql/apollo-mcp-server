@@ -258,6 +258,20 @@ Some MCP clients cache the tool list independently. If tools don't refresh after
 
 </Tip>
 
+### Caching
+
+These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL_MS` to override the TTL through an environment variable.
+
+| Option | Type | Default | Description |
+| :----- | :--- | :------ | :---------- |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Requires negotiation of MCP protocol version `2026-07-28` or newer; see the following availability note. |
+
+<Note>
+
+Cache hints are currently inactive: Apollo MCP Server negotiates MCP protocol versions up to `2025-11-25`. The `caching.ttl_ms` setting doesn't currently change client caching behavior because the required protocol revision isn't supported.
+
+</Note>
+
 ### Overrides
 
 These fields are under the top-level `overrides` key.

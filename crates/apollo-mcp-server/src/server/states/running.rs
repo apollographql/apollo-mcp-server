@@ -7,6 +7,8 @@ use opentelemetry::KeyValue;
 use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
+#[cfg(test)]
+use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
     GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
@@ -38,6 +40,7 @@ use crate::operations::{execute_operation, find_and_execute_operation};
 use crate::server::states::telemetry::get_parent_span;
 use crate::server_info::ServerInfoConfig;
 use crate::{
+    caching::Caching,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -82,6 +85,33 @@ pub(super) struct Running {
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
     pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) caching: Caching,
+}
+
+/// Client capabilities and negotiated protocol version derived from the peer's `initialize`
+/// info, bundled so handlers that need both (app-target resolution, output-schema stripping,
+/// cache hints) take one argument instead of two.
+#[derive(Debug, Clone, Copy, Default)]
+struct PeerContext<'a> {
+    client_capabilities: Option<&'a ClientCapabilities>,
+    protocol_version: Option<&'a ProtocolVersion>,
+}
+
+#[cfg(test)]
+impl<'a> PeerContext<'a> {
+    fn with_client_capabilities(client_capabilities: &'a ClientCapabilities) -> Self {
+        Self {
+            client_capabilities: Some(client_capabilities),
+            protocol_version: None,
+        }
+    }
+
+    fn with_protocol_version(protocol_version: &'a ProtocolVersion) -> Self {
+        Self {
+            client_capabilities: None,
+            protocol_version: Some(protocol_version),
+        }
+    }
 }
 
 impl Running {
@@ -275,8 +305,19 @@ impl Running {
     async fn list_tools_impl(
         &self,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
-        protocol_version: Option<&ProtocolVersion>,
+        peer: PeerContext<'_>,
+    ) -> Result<ListToolsResult, McpError> {
+        self.list_tools_with_protocol_max(extensions, peer, &MAX_SUPPORTED_PROTOCOL_VERSION)
+            .await
+    }
+
+    // Keep the production cap fixed at the entry point while allowing the shared
+    // implementation to be tested against a future supported protocol revision.
+    async fn list_tools_with_protocol_max(
+        &self,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
     ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
@@ -285,7 +326,7 @@ impl Running {
             .add(1, &[]);
 
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
@@ -337,13 +378,15 @@ impl Running {
             )
         };
 
-        if !self.client_supports_output_schema(protocol_version) {
+        if !self.client_supports_output_schema(peer.protocol_version) {
             for tool in &mut result.tools {
                 tool.output_schema = None;
             }
         }
 
-        Ok(result)
+        Ok(self
+            .caching
+            .apply_to(result, peer.protocol_version, server_max))
     }
 
     async fn call_tool_impl(
@@ -505,6 +548,20 @@ impl Running {
     fn list_resources_impl(
         &self,
         extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourcesResult, McpError> {
+        self.list_resources_with_protocol_max(
+            extensions,
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resources_with_protocol_max(
+        &self,
+        extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
     ) -> Result<ListResourcesResult, McpError> {
         let app_param = extract_app_param(extensions);
 
@@ -524,14 +581,31 @@ impl Running {
             vec![]
         };
 
-        Ok(ListResourcesResult::with_all_items(resources))
+        let result = ListResourcesResult::with_all_items(resources);
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
+        peer: PeerContext<'_>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        self.read_resource_with_protocol_max(
+            request,
+            extensions,
+            peer,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+        .await
+    }
+
+    async fn read_resource_with_protocol_max(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -540,12 +614,18 @@ impl Running {
             )
         })?;
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
         if let Some(app_name) = app_param {
-            let resource =
+            let (resource, origin) =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
-            Ok(ReadResourceResult::new(vec![resource]))
+            let result = ReadResourceResult::new(vec![resource]);
+            Ok(if origin.allows_cache_hints() {
+                self.caching
+                    .apply_to(result, peer.protocol_version, server_max)
+            } else {
+                result
+            })
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -554,10 +634,22 @@ impl Running {
         }
     }
 
-    fn list_prompts_impl(&self) -> Result<ListPromptsResult, McpError> {
-        Ok(ListPromptsResult::with_all_items(
+    fn list_prompts_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListPromptsResult, McpError> {
+        self.list_prompts_with_protocol_max(protocol_version, &MAX_SUPPORTED_PROTOCOL_VERSION)
+    }
+
+    fn list_prompts_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListPromptsResult, McpError> {
+        let result = ListPromptsResult::with_all_items(
             self.prompts.iter().map(|p| p.prompt.clone()).collect(),
-        ))
+        );
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
     fn get_prompt_impl(
@@ -725,11 +817,12 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let peer = PeerContext {
+            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
+            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+        };
 
-        self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
-            .await
+        self.list_tools_impl(context.extensions, peer).await
     }
 
     #[tracing::instrument(skip_all)]
@@ -738,7 +831,10 @@ impl ServerHandler for Running {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl(&context.extensions)
+        let peer_info = context.peer.peer_info();
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+
+        self.list_resources_impl(&context.extensions, protocol_version)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -748,9 +844,12 @@ impl ServerHandler for Running {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
         let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
+        let peer = PeerContext {
+            client_capabilities: peer_info.as_ref().map(|info| &info.capabilities),
+            protocol_version: peer_info.as_ref().map(|info| &info.protocol_version),
+        };
 
-        self.read_resource_impl(request, context.extensions, client_capabilities)
+        self.read_resource_impl(request, context.extensions, peer)
             .await
             .map(Into::into)
     }
@@ -759,9 +858,12 @@ impl ServerHandler for Running {
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        self.list_prompts_impl()
+        let peer_info = context.peer.peer_info();
+        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+
+        self.list_prompts_impl(protocol_version)
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
@@ -889,6 +991,7 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            caching: Caching::default(),
         }
     }
 
@@ -937,6 +1040,75 @@ mod tests {
         Running {
             apps: vec![app],
             ..test_running(Arc::new(RwLock::new(schema)))
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::default(Caching::default())]
+    #[case::custom(Caching { ttl_ms: 60_000 })]
+    #[case::zero(Caching { ttl_ms: 0 })]
+    #[tokio::test]
+    async fn configured_cache_hints_reach_all_handlers_when_protocol_supported(
+        #[case] caching: Caching,
+    ) {
+        use crate::apps::app::AppResourceSource;
+        use rmcp::model::{Prompt, ReadResourceRequestParams};
+
+        let mut running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("content".into())),
+            None,
+            None,
+        );
+        running.caching = caching;
+        running.prompts = vec![crate::prompts::PromptFile {
+            prompt: Prompt::new("test", Some("description"), None),
+            template: "content".into(),
+        }];
+        let mut extensions = Extensions::new();
+        let (parts, _) = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap()
+            .into_parts();
+        extensions.insert(parts);
+        let version = ProtocolVersion::V_2026_07_28;
+        let peer = PeerContext::with_protocol_version(&version);
+
+        let tools = running
+            .list_tools_with_protocol_max(extensions.clone(), peer, &version)
+            .await
+            .unwrap();
+        let resources = running
+            .list_resources_with_protocol_max(&extensions, Some(&version), &version)
+            .unwrap();
+        let read = running
+            .read_resource_with_protocol_max(
+                ReadResourceRequestParams::new(RESOURCE_URI),
+                extensions,
+                peer,
+                &version,
+            )
+            .await
+            .unwrap();
+        let prompts = running
+            .list_prompts_with_protocol_max(Some(&version), &version)
+            .unwrap();
+
+        assert!(!tools.tools.is_empty());
+        assert!(!resources.resources.is_empty());
+        assert!(!read.contents.is_empty());
+        assert!(!prompts.prompts.is_empty());
+        for (method, ttl_ms, scope) in [
+            ("tools/list", tools.ttl_ms, tools.cache_scope),
+            ("resources/list", resources.ttl_ms, resources.cache_scope),
+            ("resources/read", read.ttl_ms, read.cache_scope),
+            ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+        ] {
+            assert_eq!(
+                (ttl_ms, scope),
+                (Some(caching.ttl_ms), Some(CacheScope::Private)),
+                "{method}"
+            );
         }
     }
 
@@ -1224,6 +1396,8 @@ mod tests {
     }
 
     mod list_resources {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
@@ -1243,12 +1417,32 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
             assert_eq!(resources.len(), 1);
             assert_eq!(resources[0].uri, RESOURCE_URI);
+        }
+
+        #[rstest]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        fn resource_list_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+
+            let result = running
+                .list_resources_impl(&Extensions::new(), Some(&protocol_version))
+                .unwrap();
+
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[tokio::test]
@@ -1266,7 +1460,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
@@ -1284,7 +1478,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&Extensions::new())
+            .list_resources_impl(&Extensions::new(), None)
             .unwrap()
             .resources;
 
@@ -1306,7 +1500,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions);
+            .list_resources_impl(&extensions, None);
 
             assert!(result.is_err());
         }
@@ -1314,6 +1508,7 @@ mod tests {
 
     mod read_resource {
         use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+        use rstest::rstest;
 
         use crate::apps::{
             app::{AppResource, AppResourceSource},
@@ -1344,7 +1539,7 @@ mod tests {
                         "http://localhost:4000/resource#a_different_fragment",
                     ),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1366,6 +1561,41 @@ mod tests {
             assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
         }
 
+        #[rstest]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        #[tokio::test]
+        async fn read_resource_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams::new(
+                        "http://localhost:4000/resource#a_different_fragment",
+                    ),
+                    extensions,
+                    PeerContext::with_protocol_version(&protocol_version),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+        }
+
         #[tokio::test]
         async fn getting_resource_that_does_not_exist() {
             let running = running_with_apps(
@@ -1385,7 +1615,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/invalid_resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1410,7 +1640,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("not a uri"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1427,7 +1657,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     Extensions::new(),
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1452,14 +1682,18 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
         }
 
+        #[rstest]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content() {
+        async fn fetch_remote_resource_downloads_content_without_cache_hints(
+            #[values(MAX_SUPPORTED_PROTOCOL_VERSION, ProtocolVersion::V_2026_07_28)]
+            server_max: ProtocolVersion,
+        ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
             let mock = server
@@ -1486,15 +1720,17 @@ mod tests {
             extensions.insert(parts);
 
             let mut resource = running
-                .read_resource_impl(
+                .read_resource_with_protocol_max(
                     ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
-                    None,
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2026_07_28),
+                    &server_max,
                 )
                 .await
                 .expect("resource fetch failed");
 
             mock.assert();
+            assert_eq!((resource.ttl_ms, resource.cache_scope), (None, None));
             let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
             else {
                 panic!("unexpected resource contents");
@@ -1533,7 +1769,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1606,7 +1842,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1645,7 +1881,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1683,7 +1919,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1729,7 +1965,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1778,7 +2014,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
 
@@ -1787,6 +2023,8 @@ mod tests {
     }
 
     mod list_tools {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
@@ -1800,12 +2038,37 @@ mod tests {
             );
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, None)
+                .list_tools_impl(Extensions::new(), PeerContext::default())
                 .await
                 .unwrap();
 
             assert_eq!(result.tools.len(), 0);
             assert_eq!(result.next_cursor, None);
+        }
+
+        #[rstest]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        #[tokio::test]
+        async fn list_tools_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+
+            let result = running
+                .list_tools_impl(
+                    Extensions::new(),
+                    PeerContext::with_protocol_version(&protocol_version),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[tokio::test]
@@ -1825,7 +2088,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
 
@@ -1850,7 +2113,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -1872,7 +2137,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -1905,7 +2170,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -1943,7 +2208,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -1986,7 +2251,10 @@ mod tests {
             client_capabilities.extensions = Some(extension_capabilities);
 
             let result = running
-                .list_tools_impl(extensions, Some(&client_capabilities), None)
+                .list_tools_impl(
+                    extensions,
+                    PeerContext::with_client_capabilities(&client_capabilities),
+                )
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2023,7 +2291,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -2058,8 +2328,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_03_26),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_03_26),
                 )
                 .await
                 .unwrap();
@@ -2104,8 +2373,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_06_18),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_06_18),
                 )
                 .await
                 .unwrap();
@@ -2243,6 +2511,7 @@ mod tests {
     mod prompts {
         use super::*;
         use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, Role};
+        use rstest::rstest;
 
         fn running_with_prompts(prompts: Vec<crate::prompts::PromptFile>) -> Running {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -2258,7 +2527,7 @@ mod tests {
         #[test]
         fn list_prompts_empty() {
             let running = running_with_prompts(vec![]);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert!(result.prompts.is_empty());
         }
 
@@ -2269,10 +2538,23 @@ mod tests {
                 template: "Hello {{name}}!".to_string(),
             }];
             let running = running_with_prompts(prompts);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert_eq!(result.prompts.len(), 1);
             assert_eq!(result.prompts[0].name, "greeting");
             assert_eq!(result.prompts[0].description.as_deref(), Some("A greeting"));
+        }
+
+        #[rstest]
+        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        fn list_prompts_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_prompts(vec![]);
+            running.caching.ttl_ms = 60_000;
+            let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
+
+            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
         #[test]
@@ -2637,6 +2919,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -2726,6 +3009,10 @@ mod integration_tests {
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
             let body_str = String::from_utf8_lossy(&bytes);
 
+            if let Ok(value) = serde_json::from_str(&body_str) {
+                return value;
+            }
+
             for line in body_str.lines() {
                 if let Some(data) = line.strip_prefix("data: ")
                     && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
@@ -2774,6 +3061,95 @@ mod integration_tests {
                 .as_array()
                 .expect("tools/list should return a tools array")
                 .clone()
+        }
+
+        #[tokio::test]
+        async fn omits_cache_hints_after_initializing_supported_protocol() {
+            let mut running = create_running_with_output_schema();
+            running.caching.ttl_ms = 60_000;
+            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
+            let session_id = initialize_session(&running, &session_manager, "2025-11-25").await;
+
+            let service = create_service(running, session_manager);
+            let response = service
+                .oneshot(build_tools_list_request(&session_id))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = extract_json_body(response).await;
+            let result = &body["result"];
+            assert!(
+                !result["tools"]
+                    .as_array()
+                    .expect("tools/list should return a tools array")
+                    .is_empty()
+            );
+            assert!(result.get("ttlMs").is_none());
+            assert!(result.get("cacheScope").is_none());
+        }
+
+        async fn request_tools_with_future_protocol(
+            legacy_session_mode: bool,
+            metadata: Option<serde_json::Value>,
+        ) -> serde_json::Value {
+            let running = create_running_with_output_schema();
+            let service = StreamableHttpService::new(
+                move || Ok(running.clone()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(legacy_session_mode),
+            );
+            let mut body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}});
+            if let Some(metadata) = metadata {
+                body["params"]["_meta"] = metadata;
+            }
+            let request = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", "2026-07-28")
+                .header("Mcp-Method", "tools/list")
+                .body(Body::from(body.to_string()))
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            extract_json_body(response).await
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn rejects_stateless_tools_request_without_required_metadata(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let body = request_tools_with_future_protocol(legacy_session_mode, None).await;
+            assert_eq!(body["id"], 1);
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::INVALID_PARAMS.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn rejects_stateless_tools_request_with_unsupported_protocol(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let metadata = json!({
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
+            });
+            let body =
+                request_tools_with_future_protocol(legacy_session_mode, Some(metadata)).await;
+            assert_eq!(body["id"], 1);
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
         }
 
         #[tokio::test]
@@ -3145,6 +3521,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3377,6 +3754,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3697,6 +4075,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -3855,6 +4234,7 @@ mod integration_tests {
                 server_info: Default::default(),
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
@@ -4042,6 +4422,7 @@ mod integration_tests {
                 server_info,
                 instructions: None,
                 rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                caching: Caching::default(),
             }
         }
 
