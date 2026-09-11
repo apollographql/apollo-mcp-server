@@ -369,7 +369,7 @@ transport:
 
 An empty list is off, so there is no separate switch to turn the lists on.
 
-For requests declaring an SDK-known `MCP-Protocol-Version` of `2026-07-28` or later, the server checks `Mcp-Method` before reading the body. A matching method skips auth middleware buffering; a nonmatching method still requires a token unless a tool-name exception applies. For older versions, or requests without `Mcp-Method`, method and tool matching use a body peek limited to 16 KiB. Tool-name exceptions still require that peek even when the header is present.
+For requests declaring an SDK-known `MCP-Protocol-Version` of `2026-07-28` or later, the server checks `Mcp-Method` before reading the body. A matching method skips auth middleware buffering; a nonmatching method still requires a token unless a tool-name exception applies. This check uses the request's protocol header, including when a session exists, matching the transport's header validation. For older or unrecognized versions, or requests without `Mcp-Method`, method and tool matching use a body peek limited to 16 KiB. Tool-name exceptions still require that peek even when the header is present.
 
 This optimization does not change the server's advertised protocol versions, currently capped at `2025-11-25`. Clients using those versions continue to use the body fallback.
 
@@ -452,6 +452,7 @@ transport:
   auth:
     skip_token_validation:
       methods:
+        - initialize
         - server/discover
         - tools/list
         - resources/list
@@ -459,7 +460,7 @@ transport:
 
 The server logs a deprecation warning at startup. Setting both `allow_anonymous_mcp_discovery` and `skip_token_validation.methods` is an error, because the two would describe the same list twice. Remove the flag and list the methods you want.
 
-The deprecated flag no longer allows anonymous `initialize` requests. If legacy clients need to initialize without a token, explicitly include `initialize` in `skip_token_validation.methods`.
+The deprecated flag retains anonymous `initialize` access for compatibility with existing clients and also permits `server/discover`.
 
 <Note>
 

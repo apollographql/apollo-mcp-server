@@ -3451,6 +3451,11 @@ mod integration_tests {
             // - Otherwise, update this list to acknowledge the version
             //   remains capped, and confirm stateful transports (where rmcp
             //   negotiates over our heads) still behave acceptably.
+            // - Recheck auth::oauth_validate against rmcp's HTTP
+            //   validate_standard_headers: both currently gate on the raw
+            //   MCP-Protocol-Version header using string ordering, including
+            //   for sessions. Audit non-date identifiers and ordering changes;
+            //   keep the full-handshake forged-method regression passing.
             assert_eq!(
                 ProtocolVersion::KNOWN_VERSIONS,
                 &[
@@ -3460,7 +3465,7 @@ mod integration_tests {
                     ProtocolVersion::V_2025_11_25,
                     ProtocolVersion::V_2026_07_28,
                 ],
-                "rmcp's KNOWN_VERSIONS changed; audit whether MAX_SUPPORTED_PROTOCOL_VERSION should move"
+                "rmcp's KNOWN_VERSIONS changed; audit MAX_SUPPORTED_PROTOCOL_VERSION and auth's raw-header string-ordering gate against rmcp::validate_standard_headers"
             );
         }
     }

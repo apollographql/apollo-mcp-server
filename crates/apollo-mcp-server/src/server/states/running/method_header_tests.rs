@@ -214,3 +214,101 @@ async fn discovery_on_supported_version_preserves_legacy_fallback(#[case] header
     assert_eq!(response.status(), StatusCode::OK);
     assert!(json_response(response).await.get("result").is_some());
 }
+
+#[rstest]
+#[case::legacy_body(false)]
+#[case::per_request_metadata(true)]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(5))]
+async fn forged_method_is_rejected_after_full_stateful_handshake(#[case] metadata: bool) {
+    let running = create_test_running();
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+    let (app, sessions) = router(running.for_service(), true);
+    let response = app
+        .clone()
+        .oneshot(request("initialize", "2025-11-25", Some("initialize")))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = response.headers()["Mcp-Session-Id"].clone();
+    assert_eq!(
+        json_response(response).await["result"]["protocolVersion"],
+        "2025-11-25"
+    );
+    let session_id = session.to_str().unwrap().to_owned().into();
+    assert!(sessions.has_session(&session_id).await.unwrap());
+    assert_eq!(running.tool_list_changes.receiver_count(), 1);
+
+    // Legacy requests carry no per-request protocol metadata. Keep the session
+    // ID on every POST to reproduce a client with negotiated state.
+    let session_request = |method: &str, body: Value| {
+        let mut req = request(method, "2025-11-25", Some(method));
+        req.headers_mut().insert("Mcp-Session-Id", session.clone());
+        *req.body_mut() = Body::from(body.to_string());
+        req
+    };
+    let response = app
+        .clone()
+        .oneshot(session_request(
+            "notifications/initialized",
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+    // A successful request on the negotiated version proves readiness;
+    // an incomplete handshake or missing session cannot pass this test.
+    let response = app
+        .clone()
+        .oneshot(session_request(
+            "tools/list",
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(json_response(response).await["result"]["tools"].is_array());
+
+    // Claim a newer HTTP version than the negotiated one. Auth admits the
+    // discovery header. rmcp 3.3 rejects a legacy body for missing metadata;
+    // with valid metadata it rejects the method mismatch. Neither validation
+    // uses the older negotiated session version to exempt this request.
+    // is_legacy_request selects per-request handling for the newer version,
+    // even with Mcp-Session-Id present; merely having a session cannot force
+    // the request back onto the negotiated-version path.
+    let mut forged = request(
+        "tools/call",
+        ProtocolVersion::STANDARD_HEADERS.as_str(),
+        Some("tools/list"),
+    );
+    forged.headers_mut().insert("Mcp-Session-Id", session);
+    if !metadata {
+        *forged.body_mut() = Body::from(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "Protected"}})
+                .to_string(),
+        );
+    }
+    let response = app.oneshot(forged).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_response(response).await;
+    // A generic error (such as unknown tool) would not prove rejection before
+    // dispatch. Assert the specific transport validation failure in each case.
+    if metadata {
+        assert_eq!(body["error"]["code"], ErrorCode::HEADER_MISMATCH.0);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Mcp-Method")
+        );
+    } else {
+        assert_eq!(body["error"]["code"], ErrorCode::INVALID_PARAMS.0);
+        assert!(body["error"]["message"].as_str().unwrap().starts_with(
+            "Invalid params: request _meta is missing or has malformed required fields:"
+        ));
+    }
+    assert!(sessions.has_session(&session_id).await.unwrap());
+    sessions.close_session(&session_id).await.unwrap();
+    assert!(!sessions.has_session(&session_id).await.unwrap());
+}

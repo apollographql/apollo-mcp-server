@@ -376,13 +376,13 @@ pub struct Config {
 
     /// Deprecated. Use `skip_token_validation.methods` instead.
     ///
-    /// Enabling this is the same as listing `server/discover`, `tools/list`, and
-    /// `resources/list` in `skip_token_validation.methods`. Setting both is an
-    /// error, because the two would describe the same list twice.
+    /// Enabling this is the same as listing `initialize`, `server/discover`,
+    /// `tools/list`, and `resources/list` in `skip_token_validation.methods`.
+    /// Setting both is an error, because the two would describe the same list twice.
     #[serde(default)]
     #[deprecated(
         since = "1.18.0",
-        note = "use `skip_token_validation.methods: [\"server/discover\", \"tools/list\", \"resources/list\"]` instead"
+        note = "use `skip_token_validation.methods: [\"initialize\", \"server/discover\", \"tools/list\", \"resources/list\"]` instead"
     )]
     pub allow_anonymous_mcp_discovery: bool,
 
@@ -638,8 +638,13 @@ const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The methods the deprecated `allow_anonymous_mcp_discovery` flag allows,
 /// which it now expresses as `skip_token_validation.methods`.
-const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] =
-    &["server/discover", "tools/list", "resources/list"];
+/// Retain initialize for existing deployments using the deprecated flag.
+const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] = &[
+    "initialize",
+    "server/discover",
+    "tools/list",
+    "resources/list",
+];
 
 /// Maximum body size to buffer when peeking at the JSON-RPC method or tool
 /// name. A discovery request such as `tools/list` is under 100 bytes, but a
@@ -781,6 +786,10 @@ async fn oauth_validate(
     // at STANDARD_HEADERS and later. Match its version gate here; older clients
     // still need the body peek. rmcp also exempts initialize, so McpService's
     // initialize handler checks that header locally before doing any work.
+    // This intentionally mirrors validate_standard_headers' raw-header string
+    // comparison, not context.protocol_version() or KNOWN_VERSIONS positions.
+    // The allowlist fails closed for unknown versions; rmcp_known_versions_audit
+    // requires rechecking this contract when the SDK's known versions change.
     let method_header_applies = token.is_none()
         && request.method() == Method::POST
         && request.headers().contains_key(HEADER_MCP_METHOD)
@@ -2089,7 +2098,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         }
 
         #[tokio::test]
-        async fn initialize_without_token_rejected_when_discovery_enabled() {
+        async fn initialize_without_token_allowed_when_discovery_enabled() {
             let app = discovery_router(true);
             let req = Request::builder()
                 .method("POST")
@@ -2097,7 +2106,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 .body(initialize_body())
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
-            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(res.status(), StatusCode::OK);
         }
 
         #[tokio::test]
@@ -2413,7 +2422,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             #[case("server/discover", StatusCode::OK)]
             #[case("tools/list", StatusCode::OK)]
             #[case("resources/list", StatusCode::OK)]
-            #[case("initialize", StatusCode::UNAUTHORIZED)]
+            #[case("initialize", StatusCode::OK)]
             #[case("tools/call", StatusCode::UNAUTHORIZED)]
             #[case("Tools/List", StatusCode::UNAUTHORIZED)]
             #[case("", StatusCode::UNAUTHORIZED)]
@@ -2442,8 +2451,13 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             #[case(None)]
             #[case(Some("2025-11-25"))]
             #[case(Some("invalid"))]
+            #[case(Some("draft"))]
+            #[case(Some("dev"))]
+            #[case(Some("2099-01-01"))]
             #[tokio::test]
             async fn unvalidated_version_uses_body(#[case] version: Option<&str>) {
+                // The header names an allowed method, but the body names a
+                // protected tool call: 401 proves the header was not trusted.
                 let app = skip_router(skip(&["tools/list"], &[], &[]));
                 let mut req = request("tools/list", tool_call_body("Protected"));
                 req.headers_mut().remove(HEADER_MCP_PROTOCOL_VERSION);
@@ -2868,7 +2882,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 let resolved = config.resolve_skip_token_validation().unwrap();
                 assert_eq!(
                     resolved.methods,
-                    vec!["server/discover", "tools/list", "resources/list"]
+                    vec![
+                        "initialize",
+                        "server/discover",
+                        "tools/list",
+                        "resources/list"
+                    ]
                 );
             }
 
