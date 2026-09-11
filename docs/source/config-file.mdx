@@ -370,7 +370,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `stateful_mode`   | `bool`           | `true`      | Flag to enable or disable stateful mode and session management |
+| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions. When disabled, requests are sessionless and unsolicited tool-change notifications are unavailable. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
 <Note>

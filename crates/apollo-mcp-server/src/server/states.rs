@@ -30,6 +30,7 @@ mod running;
 mod schema_configured;
 mod starting;
 pub(crate) mod telemetry;
+mod tool_list_changes;
 
 use configuring::Configuring;
 use operations_configured::OperationsConfigured;
@@ -481,7 +482,7 @@ mod tests {
             explorer_tool: None,
             validate_tool: None,
             custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
+            tool_list_changes: Default::default(),
             cancellation_token: CancellationToken::new(),
             mutation_mode: MutationMode::None,
             disable_type_description: false,
