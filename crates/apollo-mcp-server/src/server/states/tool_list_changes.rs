@@ -99,8 +99,8 @@ async fn forward_changes<F: Future<Output = Result<(), ServiceError>>>(
         };
         match result {
             Ok(()) => {}
-            // Preserve the previous best-effort delivery policy for transport
-            // failures; TransportSend does not universally imply permanent closure.
+            // Preserve the existing application policy: stop delivery after a
+            // transport send error rather than retrying on later catalog changes.
             Err(ServiceError::TransportSend(error)) => {
                 error!(
                     ?error,

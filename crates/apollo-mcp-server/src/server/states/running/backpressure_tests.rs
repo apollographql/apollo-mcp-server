@@ -1,17 +1,30 @@
 //! Real-transport pressure tests. Observers report readiness without altering I/O.
-use super::*;
-use rmcp::{Peer, ServiceExt as _};
+
 use std::{
     pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
     task::{Context, Poll},
     time::Duration,
 };
+
+use axum::body::Body;
+use http::{Request, StatusCode};
+use rmcp::{
+    Peer, ServiceExt as _,
+    transport::{
+        StreamableHttpServerConfig, StreamableHttpService,
+        streamable_http_server::session::{SessionManager, local::LocalSessionManager},
+    },
+};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream},
     sync::mpsc,
 };
 use tokio_util::task::AbortOnDropHandle;
+use tower::ServiceExt as _;
+
+use super::test_support::{SseReader, create_test_running, next_message};
+use super::*;
 
 struct ObservedService {
     inner: McpService,
@@ -204,49 +217,6 @@ async fn stdio_full_disconnect_releases_a_blocked_write() {
     pending.await.unwrap();
     assert_delivery_released(&running).await;
 }
-fn create_test_running() -> Running {
-    let schema =
-        apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
-            .unwrap();
-    Running {
-        schema: Arc::new(RwLock::new(schema)),
-        operations: Arc::new(RwLock::new(vec![])),
-        apps: vec![],
-        prompts: vec![],
-        headers: http::HeaderMap::new(),
-        forward_headers: vec![],
-        endpoint: url::Url::parse("http://localhost:4000").unwrap(),
-        execute_tool: None,
-        introspect_tool: None,
-        search_tool: None,
-        explorer_tool: None,
-        validate_tool: None,
-        custom_scalar_map: None,
-        tool_list_changes: Default::default(),
-        cancellation_token: CancellationToken::new(),
-        mutation_mode: MutationMode::All,
-        disable_type_description: false,
-        disable_schema_description: false,
-        enable_output_schema: false,
-        disable_auth_token_passthrough: false,
-        descriptions: HashMap::new(),
-        annotations: HashMap::new(),
-        health_check: None,
-        server_info: Default::default(),
-        instructions: None,
-        rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
-        caching: Default::default(),
-    }
-}
-
-use super::test_support::{SseReader, next_message};
-use axum::body::Body;
-use http::{Request, StatusCode};
-use rmcp::transport::{
-    StreamableHttpServerConfig, StreamableHttpService,
-    streamable_http_server::session::{SessionManager, local::LocalSessionManager},
-};
-use tower::ServiceExt as _;
 
 struct HttpFixture {
     running: Running,

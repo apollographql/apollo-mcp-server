@@ -82,6 +82,7 @@ proptest = "1"
 rstest.workspace = true
 secrecy.workspace = true
 serde_yaml = "0.9.34"
+sse-stream = "0.2.5"
 tokio = { workspace = true, features = ["test-util"] }
 tower = "0.5.2"
 tracing-test = "0.2.5"

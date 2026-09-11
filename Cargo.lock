@@ -263,6 +263,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "shellexpand",
+ "sse-stream",
  "syn 2.0.114",
  "tempfile",
  "thiserror 2.0.18",

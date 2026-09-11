@@ -1,5 +1,44 @@
 use axum::body::Body;
+use futures::StreamExt as _;
 use serde_json::Value;
+use sse_stream::SseStream;
+
+use super::*;
+
+pub(super) fn create_test_running() -> Running {
+    let schema =
+        apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+            .unwrap();
+    Running {
+        schema: Arc::new(RwLock::new(schema)),
+        operations: Arc::new(RwLock::new(vec![])),
+        apps: vec![],
+        prompts: vec![],
+        headers: http::HeaderMap::new(),
+        forward_headers: vec![],
+        endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+        execute_tool: None,
+        introspect_tool: None,
+        search_tool: None,
+        explorer_tool: None,
+        validate_tool: None,
+        custom_scalar_map: None,
+        tool_list_changes: Default::default(),
+        cancellation_token: CancellationToken::new(),
+        mutation_mode: MutationMode::All,
+        disable_type_description: false,
+        disable_schema_description: false,
+        enable_output_schema: false,
+        disable_auth_token_passthrough: false,
+        descriptions: HashMap::new(),
+        annotations: HashMap::new(),
+        health_check: None,
+        server_info: Default::default(),
+        instructions: None,
+        rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+        caching: Default::default(),
+    }
+}
 
 pub(super) struct SseEvent {
     pub(super) id: Option<String>,
@@ -10,14 +49,17 @@ pub(super) async fn next_message(reader: &mut SseReader) -> Value {
     reader.next_event().await.message
 }
 
-// Keep unread bytes across events so a frame containing multiple SSE
-// events cannot discard the event following the one a test observes.
 pub(super) struct SseReader {
-    body: Body,
-    buffer: Vec<u8>,
+    stream: SseStream<Body>,
 }
 
 impl SseReader {
+    pub(super) fn new(body: Body) -> Self {
+        Self {
+            stream: SseStream::new(body),
+        }
+    }
+
     pub(super) async fn next_notification(&mut self) -> String {
         let event = self.next_event().await;
         assert_eq!(event.message["method"], "notifications/tools/list_changed");
@@ -26,63 +68,22 @@ impl SseReader {
             .expect("legacy notifications must have an SSE event ID")
     }
 
-    pub(super) fn new(body: Body) -> Self {
-        Self {
-            body,
-            buffer: Vec::new(),
-        }
-    }
-
     pub(super) async fn next_event(&mut self) -> SseEvent {
-        use http_body_util::BodyExt as _;
-
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            loop {
-                let boundary = self
-                    .buffer
-                    .windows(2)
-                    .position(|bytes| bytes == b"\n\n")
-                    .map(|position| (position, 2))
-                    .into_iter()
-                    .chain(
-                        self.buffer
-                            .windows(4)
-                            .position(|bytes| bytes == b"\r\n\r\n")
-                            .map(|position| (position, 4)),
-                    )
-                    .min_by_key(|(position, _)| *position);
-                if let Some((position, delimiter_len)) = boundary {
-                    let event: Vec<_> = self.buffer.drain(..position + delimiter_len).collect();
-                    let event = std::str::from_utf8(&event).unwrap();
-                    let mut id = None;
-                    let mut data = Vec::new();
-                    for line in event.lines() {
-                        if let Some(value) = line.strip_prefix("id:") {
-                            id = Some(value.strip_prefix(' ').unwrap_or(value).to_owned());
-                        } else if let Some(value) = line.strip_prefix("data:") {
-                            data.push(value.strip_prefix(' ').unwrap_or(value));
-                        }
-                    }
-                    let data = data.join("\n");
-                    if data.is_empty() {
-                        continue; // Ignore keep-alive and retry-only events.
-                    }
-                    let message: Value = serde_json::from_str(&data).unwrap();
-                    return SseEvent { id, message };
-                }
-                let frame = self
-                    .body
-                    .frame()
-                    .await
-                    .expect("notification stream closed")
-                    .unwrap();
-                if let Some(data) = frame.data_ref() {
-                    self.buffer.extend_from_slice(data);
-                }
-            }
-        })
-        .await
-        .expect("expected a complete tool-list notification")
+        loop {
+            let event = self
+                .stream
+                .next()
+                .await
+                .expect("SSE stream closed before the expected message")
+                .expect("invalid SSE event");
+            let Some(data) = event.data.filter(|data| !data.is_empty()) else {
+                continue; // Ignore keep-alive and retry-only events.
+            };
+            return SseEvent {
+                id: event.id,
+                message: serde_json::from_str(&data).expect("SSE data must contain a JSON message"),
+            };
+        }
     }
 }
 
