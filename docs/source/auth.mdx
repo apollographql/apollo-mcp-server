@@ -369,6 +369,10 @@ transport:
 
 An empty list is off, so there is no separate switch to turn the lists on.
 
+For requests declaring an SDK-known `MCP-Protocol-Version` of `2026-07-28` or later, the server checks `Mcp-Method` before reading the body. A matching method skips auth middleware buffering; a nonmatching method still requires a token unless a tool-name exception applies. For older versions, or requests without `Mcp-Method`, method and tool matching use a body peek limited to 16 KiB. Tool-name exceptions still require that peek even when the header is present.
+
+This optimization does not change the server's advertised protocol versions, currently capped at `2025-11-25`. Clients using those versions continue to use the body fallback.
+
 A stateful session needs both `initialize` and the `notifications/initialized` notification that follows it on its own POST. Missing either one from `methods` still ends the handshake in a 401, one step after `initialize` succeeded.
 
 `transport.stateful_mode` changes how a `GET` on the MCP endpoint is treated, and this is not stateful-only:
@@ -448,13 +452,14 @@ transport:
   auth:
     skip_token_validation:
       methods:
-        - initialize
         - server/discover
         - tools/list
         - resources/list
 ```
 
 The server logs a deprecation warning at startup. Setting both `allow_anonymous_mcp_discovery` and `skip_token_validation.methods` is an error, because the two would describe the same list twice. Remove the flag and list the methods you want.
+
+The deprecated flag no longer allows anonymous `initialize` requests. If legacy clients need to initialize without a token, explicitly include `initialize` in `skip_token_validation.methods`.
 
 <Note>
 

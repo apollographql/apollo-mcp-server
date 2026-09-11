@@ -663,6 +663,24 @@ impl ServerHandler for McpService {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
+        // rmcp 3.3 gap: validate_standard_headers exempts initialize, including
+        // requests declaring STANDARD_HEADERS or later. Auth can admit those
+        // requests using Mcp-Method without reading the body, so reject a forged
+        // discovery header here before initializing the application lifecycle.
+        if let Some(parts) = context.extensions.get::<http::request::Parts>() {
+            let mut values = parts
+                .headers
+                .get_all(rmcp::transport::common::http_header::HEADER_MCP_METHOD)
+                .iter();
+            if let Some(value) = values.next()
+                && (value != "initialize" || values.next().is_some())
+            {
+                return Err(ErrorData::header_mismatch(
+                    "Mcp-Method must be initialize when supplied for an initialize request",
+                    None,
+                ));
+            }
+        }
         let meter = &meter::METER;
         let attributes = vec![
             KeyValue::new(
@@ -4736,3 +4754,6 @@ mod backpressure_tests;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod method_header_tests;
