@@ -207,6 +207,8 @@ These fields are under the top-level `logging` key.
 | `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stdout`.      |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
 
+Logs written to a terminal use ANSI styling. Redirected output and configured log files use plain text. To disable ANSI styling in a terminal, set the `NO_COLOR` environment variable to a non-empty value. For details, see the [NO_COLOR website](https://no-color.org/).
+
 <Caution>
 
 At the `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary static header values, including values you populate through `${env.VAR}`, can appear in this output. The GraphOS key is redacted. Do not enable debug logging in production without protecting and restricting access to the resulting logs.
