@@ -26,8 +26,19 @@ fn router(handler: McpService, stateful: bool) -> (Router, Arc<LocalSessionManag
             .with_cancellation_token(cancel),
     );
     let auth: crate::auth::Config = serde_yaml::from_str(
-        "servers: [https://auth.example.com]\nresource: http://localhost/mcp\nskip_token_validation:\n  methods: [server/discover, tools/list, resources/list, initialize, notifications/initialized]",
-    ).unwrap();
+        r#"
+        servers: [https://auth.example.com]
+        resource: http://localhost/mcp
+        skip_token_validation:
+          methods:
+            - server/discover
+            - tools/list
+            - resources/list
+            - initialize
+            - notifications/initialized
+        "#,
+    )
+    .unwrap();
     let router = auth
         .enable_middleware(
             Router::new().nest_service("/mcp", service),
@@ -39,15 +50,18 @@ fn router(handler: McpService, stateful: bool) -> (Router, Arc<LocalSessionManag
 }
 
 fn request(method: &str, version: &str, header: Option<&str>) -> Request<Body> {
-    let params = if method == "initialize" {
+    let mut params = if method == "initialize" {
         json!({"protocolVersion": version, "capabilities": {}, "clientInfo": {"name": "header-test", "version": "1"}})
     } else {
-        json!({"name": "Protected", "_meta": {
+        json!({"_meta": {
             "io.modelcontextprotocol/protocolVersion": version,
             "io.modelcontextprotocol/clientCapabilities": {},
             "io.modelcontextprotocol/clientInfo": {"name": "header-test", "version": "1"}
         }})
     };
+    if method == "tools/call" {
+        params["name"] = json!("Protected");
+    }
     let mut builder = Request::builder()
         .method("POST")
         .uri("/mcp")
