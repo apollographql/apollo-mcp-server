@@ -663,6 +663,24 @@ impl ServerHandler for McpService {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
+        // rmcp 3.3 gap: validate_standard_headers exempts initialize, including
+        // requests declaring STANDARD_HEADERS or later. Auth can admit those
+        // requests using Mcp-Method without reading the body, so reject a forged
+        // discovery header here before initializing the application lifecycle.
+        if let Some(parts) = context.extensions.get::<http::request::Parts>() {
+            let mut values = parts
+                .headers
+                .get_all(rmcp::transport::common::http_header::HEADER_MCP_METHOD)
+                .iter();
+            if let Some(value) = values.next()
+                && (value != "initialize" || values.next().is_some())
+            {
+                return Err(ErrorData::header_mismatch(
+                    "Mcp-Method must be initialize when supplied for an initialize request",
+                    None,
+                ));
+            }
+        }
         let meter = &meter::METER;
         let attributes = vec![
             KeyValue::new(
@@ -3433,6 +3451,11 @@ mod integration_tests {
             // - Otherwise, update this list to acknowledge the version
             //   remains capped, and confirm stateful transports (where rmcp
             //   negotiates over our heads) still behave acceptably.
+            // - Recheck auth::oauth_validate against rmcp's HTTP
+            //   validate_standard_headers: both currently gate on the raw
+            //   MCP-Protocol-Version header using string ordering, including
+            //   for sessions. Audit non-date identifiers and ordering changes;
+            //   keep the full-handshake forged-method regression passing.
             assert_eq!(
                 ProtocolVersion::KNOWN_VERSIONS,
                 &[
@@ -3442,7 +3465,7 @@ mod integration_tests {
                     ProtocolVersion::V_2025_11_25,
                     ProtocolVersion::V_2026_07_28,
                 ],
-                "rmcp's KNOWN_VERSIONS changed; audit whether MAX_SUPPORTED_PROTOCOL_VERSION should move"
+                "rmcp's KNOWN_VERSIONS changed; audit MAX_SUPPORTED_PROTOCOL_VERSION and auth's raw-header string-ordering gate against rmcp::validate_standard_headers"
             );
         }
     }
@@ -4736,3 +4759,6 @@ mod backpressure_tests;
 
 #[cfg(test)]
 mod test_support;
+
+#[cfg(test)]
+mod method_header_tests;

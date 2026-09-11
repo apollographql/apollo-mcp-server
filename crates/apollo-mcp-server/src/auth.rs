@@ -18,6 +18,10 @@ use axum_extra::{
 use http::Method;
 use networked_key_resolver::{CachedJwks, InflightMap, IssuerFetchState, NetworkedKeyResolver};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use rmcp::{
+    model::ProtocolVersion,
+    transport::common::http_header::{HEADER_MCP_METHOD, HEADER_MCP_PROTOCOL_VERSION},
+};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tower_http::cors::{Any, CorsLayer};
@@ -285,9 +289,14 @@ impl SkipTokenValidation {
     }
 
     fn matches_body(&self, peek: &JsonRpcBodyPeek, app_qualified: bool) -> bool {
-        if self.methods.iter().any(|method| method == &peek.method) {
-            return true;
-        }
+        self.matches_method(&peek.method) || self.matches_tool(peek, app_qualified)
+    }
+
+    fn matches_method(&self, method: &str) -> bool {
+        self.methods.iter().any(|allowed| allowed == method)
+    }
+
+    fn matches_tool(&self, peek: &JsonRpcBodyPeek, app_qualified: bool) -> bool {
         if peek.method != TOOL_CALL_METHOD {
             return false;
         }
@@ -367,13 +376,13 @@ pub struct Config {
 
     /// Deprecated. Use `skip_token_validation.methods` instead.
     ///
-    /// Enabling this is the same as listing `initialize`, `tools/list`, and
-    /// `resources/list` in `skip_token_validation.methods`. Setting both is an
-    /// error, because the two would describe the same list twice.
+    /// Enabling this is the same as listing `initialize`, `server/discover`,
+    /// `tools/list`, and `resources/list` in `skip_token_validation.methods`.
+    /// Setting both is an error, because the two would describe the same list twice.
     #[serde(default)]
     #[deprecated(
         since = "1.18.0",
-        note = "use `skip_token_validation.methods: [\"initialize\", \"tools/list\", \"resources/list\"]` instead"
+        note = "use `skip_token_validation.methods: [\"initialize\", \"server/discover\", \"tools/list\", \"resources/list\"]` instead"
     )]
     pub allow_anonymous_mcp_discovery: bool,
 
@@ -629,6 +638,7 @@ const JWKS_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
 /// The methods the deprecated `allow_anonymous_mcp_discovery` flag allows,
 /// which it now expresses as `skip_token_validation.methods`.
+/// Retain initialize for existing deployments using the deprecated flag.
 const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] = &[
     "initialize",
     "server/discover",
@@ -772,6 +782,49 @@ async fn oauth_validate(
     // whether this request targets an app.
     let app_qualified = app_param_from_query(request.uri().query()).is_some();
 
+    // rmcp 3.3 gap: supplied Mcp-Method headers are checked against the body only
+    // at STANDARD_HEADERS and later. Match its version gate here; older clients
+    // still need the body peek. rmcp also exempts initialize, so McpService's
+    // initialize handler checks that header locally before doing any work.
+    // This intentionally mirrors validate_standard_headers' raw-header string
+    // comparison, not context.protocol_version() or KNOWN_VERSIONS positions.
+    // The allowlist fails closed for unknown versions; rmcp_known_versions_audit
+    // requires rechecking this contract when the SDK's known versions change.
+    let method_header_applies = token.is_none()
+        && request.method() == Method::POST
+        && request.headers().contains_key(HEADER_MCP_METHOD)
+        && request
+            .headers()
+            .get(HEADER_MCP_PROTOCOL_VERSION)
+            .and_then(|value| value.to_str().ok())
+            .filter(|version| {
+                ProtocolVersion::KNOWN_VERSIONS
+                    .iter()
+                    .any(|known| known.as_str() == *version)
+            })
+            .is_some_and(|version| version >= ProtocolVersion::STANDARD_HEADERS.as_str());
+    if method_header_applies {
+        let mut values = request.headers().get_all(HEADER_MCP_METHOD).iter();
+        let method = values.next().and_then(|value| value.to_str().ok());
+        let Some(method) = method.filter(|_| values.next().is_none()) else {
+            tracing::Span::current().record("reason", "invalid_method_header");
+            tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+            return Err(unauthorized_error());
+        };
+        if skip.matches_method(method) {
+            let response = next.run(request).await;
+            tracing::Span::current().record("status_code", response.status().as_u16());
+            return Ok(response);
+        }
+        // Only a tool-name exception can still match. A nonmatching header must
+        // not fall back to an allowed method in the body, or force a body read.
+        if method != TOOL_CALL_METHOD || skip.tools.is_empty() || app_qualified {
+            tracing::Span::current().record("reason", "missing_token");
+            tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+            return Err(unauthorized_error());
+        }
+    }
+
     // Extract the body once if we need to inspect the JSON-RPC method for either
     // the method and tool skip lists or per-operation scope checks.
     let peek_for_skip = token.is_none() && skip.needs_body();
@@ -807,9 +860,13 @@ async fn oauth_validate(
     };
 
     if peek_for_skip
-        && body_peek
-            .as_ref()
-            .is_some_and(|peek| skip.matches_body(peek, app_qualified))
+        && body_peek.as_ref().is_some_and(|peek| {
+            if method_header_applies {
+                skip.matches_tool(peek, app_qualified)
+            } else {
+                skip.matches_body(peek, app_qualified)
+            }
+        })
     {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
@@ -2041,7 +2098,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         }
 
         #[tokio::test]
-        async fn initialize_without_token_allowed_when_enabled() {
+        async fn initialize_without_token_allowed_when_discovery_enabled() {
             let app = discovery_router(true);
             let req = Request::builder()
                 .method("POST")
@@ -2290,6 +2347,16 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             use super::*;
 
             #[tokio::test]
+            async fn initialize_can_be_explicitly_allowed() {
+                let app = skip_router(skip(&["initialize"], &[], &[]));
+                let res = app
+                    .oneshot(post_request(method_body("initialize")))
+                    .await
+                    .unwrap();
+                assert_eq!(res.status(), StatusCode::OK);
+            }
+
+            #[tokio::test]
             async fn listed_method_without_token_passes() {
                 let app = skip_router(skip(&["server/discover"], &[], &[]));
                 let res = app
@@ -2331,6 +2398,176 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     .await
                     .unwrap();
                 assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        mod method_header {
+            use super::*;
+            use rstest::rstest;
+
+            fn request(method: &str, body: Body) -> Request<Body> {
+                Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(
+                        HEADER_MCP_PROTOCOL_VERSION,
+                        ProtocolVersion::STANDARD_HEADERS.as_str(),
+                    )
+                    .header(HEADER_MCP_METHOD, method)
+                    .body(body)
+                    .unwrap()
+            }
+
+            #[rstest]
+            #[case("server/discover", StatusCode::OK)]
+            #[case("tools/list", StatusCode::OK)]
+            #[case("resources/list", StatusCode::OK)]
+            #[case("initialize", StatusCode::OK)]
+            #[case("tools/call", StatusCode::UNAUTHORIZED)]
+            #[case("Tools/List", StatusCode::UNAUTHORIZED)]
+            #[case("", StatusCode::UNAUTHORIZED)]
+            #[tokio::test]
+            async fn method_decision_does_not_poll_body(
+                #[case] method: &str,
+                #[case] expected: StatusCode,
+            ) {
+                let app = skip_router_with_required_scopes(
+                    skip(DEPRECATED_ANONYMOUS_DISCOVERY_METHODS, &[], &[]),
+                    HashMap::from([(
+                        "Protected".into(),
+                        OperationRequiredScopes::new(vec![vec!["read".into()]]).unwrap(),
+                    )]),
+                );
+                let body = Body::from_stream(futures::stream::poll_fn(
+                    |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
+                        panic!("auth must decide from the header without polling the body")
+                    },
+                ));
+                let response = app.oneshot(request(method, body)).await.unwrap();
+                assert_eq!(response.status(), expected);
+            }
+
+            #[rstest]
+            #[case(None)]
+            #[case(Some("2025-11-25"))]
+            #[case(Some("invalid"))]
+            #[case(Some("draft"))]
+            #[case(Some("dev"))]
+            #[case(Some("2099-01-01"))]
+            #[tokio::test]
+            async fn unvalidated_version_uses_body(#[case] version: Option<&str>) {
+                // The header names an allowed method, but the body names a
+                // protected tool call: 401 proves the header was not trusted.
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let mut req = request("tools/list", tool_call_body("Protected"));
+                req.headers_mut().remove(HEADER_MCP_PROTOCOL_VERSION);
+                if let Some(version) = version {
+                    req.headers_mut()
+                        .insert(HEADER_MCP_PROTOCOL_VERSION, version.parse().unwrap());
+                }
+                let response = app.oneshot(req).await.unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            }
+
+            #[tokio::test]
+            async fn nonmatching_header_does_not_fall_back_to_body_method() {
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let response = app
+                    .oneshot(request("tools/call", method_body("tools/list")))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+            }
+
+            #[tokio::test]
+            async fn missing_method_header_keeps_body_fallback() {
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let mut req = request("tools/list", method_body("tools/list"));
+                req.headers_mut().remove(HEADER_MCP_METHOD);
+                assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
+            }
+
+            #[tokio::test]
+            async fn method_header_does_not_bypass_stateful_get_auth() {
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let mut req = request("tools/list", Body::empty());
+                *req.method_mut() = Method::GET;
+                assert_eq!(
+                    app.oneshot(req).await.unwrap().status(),
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+
+            #[rstest]
+            #[case("Public", "/mcp", StatusCode::OK)]
+            #[case("Protected", "/mcp", StatusCode::UNAUTHORIZED)]
+            #[case("Public", "/mcp?app=example", StatusCode::UNAUTHORIZED)]
+            #[tokio::test]
+            async fn tool_name_still_comes_from_body(
+                #[case] tool: &str,
+                #[case] uri: &str,
+                #[case] expected: StatusCode,
+            ) {
+                let app = skip_router(skip(&[], &["Public"], &[]));
+                let mut req = request("tools/call", tool_call_body(tool));
+                *req.uri_mut() = uri.parse().unwrap();
+                assert_eq!(app.oneshot(req).await.unwrap().status(), expected);
+            }
+
+            #[tokio::test]
+            async fn preserves_large_body_for_downstream() {
+                let mut config = test_config();
+                config.skip_token_validation = skip(&["tools/list"], &[], &[]);
+                let app = Router::new()
+                    .route("/mcp", post(|body: axum::body::Bytes| async move { body }))
+                    .layer(from_fn_with_state(test_auth_state(config), oauth_validate));
+                let bytes = format!(
+                    r#"{{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{{"cursor":"{}"}}}}"#,
+                    "x".repeat(PEEK_BODY_LIMIT)
+                );
+                let response = app
+                    .oneshot(request("tools/list", Body::from(bytes.clone())))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(
+                    axum::body::to_bytes(response.into_body(), bytes.len())
+                        .await
+                        .unwrap(),
+                    bytes
+                );
+            }
+
+            #[rstest]
+            #[case(false)]
+            #[case(true)]
+            #[tokio::test]
+            async fn malformed_or_duplicate_header_cannot_grant_access(#[case] duplicate: bool) {
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let mut req = request("tools/list", method_body("tools/list"));
+                if duplicate {
+                    req.headers_mut()
+                        .append(HEADER_MCP_METHOD, HeaderValue::from_static("tools/list"));
+                } else {
+                    req.headers_mut()
+                        .insert(HEADER_MCP_METHOD, HeaderValue::from_bytes(b"\xff").unwrap());
+                }
+                assert_eq!(
+                    app.oneshot(req).await.unwrap().status(),
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+
+            #[tokio::test]
+            async fn header_does_not_rescue_invalid_token() {
+                let app = skip_router(skip(&["tools/list"], &[], &[]));
+                let mut req = request("tools/list", method_body("tools/list"));
+                req.headers_mut()
+                    .insert(AUTHORIZATION, HeaderValue::from_static("Bearer invalid"));
+                assert_eq!(
+                    app.oneshot(req).await.unwrap().status(),
+                    StatusCode::UNAUTHORIZED
+                );
             }
         }
 
