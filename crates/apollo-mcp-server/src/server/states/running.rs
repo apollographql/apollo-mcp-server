@@ -823,7 +823,8 @@ impl ServerHandler for McpService {
     ) -> Result<ListPromptsResult, McpError> {
         let protocol_version = context.protocol_version();
 
-        self.application.list_prompts_impl(protocol_version.as_ref())
+        self.application
+            .list_prompts_impl(protocol_version.as_ref())
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
@@ -3088,19 +3089,11 @@ mod integration_tests {
             service.cancel().await.unwrap();
         }
         #[tokio::test]
-        async fn omits_cache_hints_after_initializing_supported_protocol() {
+        async fn omits_cache_hints_before_the_fields_were_supported() {
             let mut running = create_running_with_output_schema();
             running.caching.ttl_ms = 60_000;
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-11-25").await;
-
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_tools_list_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let body = extract_json_body(response).await;
+            let body =
+                super::stateless_request(running, "2025-11-25", "tools/list", json!({})).await;
             let result = &body["result"];
             assert!(
                 !result["tools"]
@@ -3118,7 +3111,7 @@ mod integration_tests {
         ) -> serde_json::Value {
             let running = create_running_with_output_schema();
             let service = StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 Arc::new(LocalSessionManager::default()),
                 StreamableHttpServerConfig::default().with_legacy_session_mode(legacy_session_mode),
             );

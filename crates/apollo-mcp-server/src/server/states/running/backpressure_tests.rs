@@ -235,6 +235,7 @@ fn create_test_running() -> Running {
         server_info: Default::default(),
         instructions: None,
         rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+        caching: Default::default(),
     }
 }
 
