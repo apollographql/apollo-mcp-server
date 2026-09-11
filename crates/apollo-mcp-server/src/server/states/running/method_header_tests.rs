@@ -89,8 +89,8 @@ async fn json_response(response: axum::response::Response) -> Value {
 }
 
 #[rstest]
-#[case(false)]
-#[case(true)]
+#[case::stateless(false)]
+#[case::stateful(true)]
 #[tokio::test]
 async fn forged_discovery_header_cannot_initialize(
     #[case] stateful: bool,
@@ -151,8 +151,8 @@ async fn legitimate_initialize_still_starts_lifecycle(
 }
 
 #[rstest]
-#[case(false)]
-#[case(true)]
+#[case::malformed(false)]
+#[case::duplicate(true)]
 #[tokio::test]
 async fn initialize_guard_rejects_malformed_and_duplicate_headers(#[case] duplicate: bool) {
     let running = create_test_running();
@@ -179,10 +179,13 @@ async fn initialize_guard_rejects_malformed_and_duplicate_headers(#[case] duplic
 }
 
 #[rstest]
-#[case(false)]
-#[case(true)]
+#[case::stateless(false)]
+#[case::stateful(true)]
 #[tokio::test]
-async fn sdk_rejects_forged_tool_call_after_header_bypass(#[case] stateful: bool) {
+async fn sdk_rejects_forged_tool_call_after_header_bypass(
+    #[case] stateful: bool,
+    #[values("tools/list", "initialize")] header: &str,
+) {
     let running = create_test_running();
     let _shutdown = running.cancellation_token.clone().drop_guard();
     let response = router(running.for_service(), stateful)
@@ -190,7 +193,7 @@ async fn sdk_rejects_forged_tool_call_after_header_bypass(#[case] stateful: bool
         .oneshot(request(
             "tools/call",
             ProtocolVersion::STANDARD_HEADERS.as_str(),
-            Some("tools/list"),
+            Some(header),
         ))
         .await
         .unwrap();
@@ -220,7 +223,10 @@ async fn discovery_on_supported_version_preserves_legacy_fallback(#[case] header
 #[case::per_request_metadata(true)]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(5))]
-async fn forged_method_is_rejected_after_full_stateful_handshake(#[case] metadata: bool) {
+async fn forged_method_is_rejected_after_full_stateful_handshake(
+    #[case] metadata: bool,
+    #[values("tools/list", "initialize")] header: &str,
+) {
     let running = create_test_running();
     let _shutdown = running.cancellation_token.clone().drop_guard();
     let (app, sessions) = router(running.for_service(), true);
@@ -270,6 +276,8 @@ async fn forged_method_is_rejected_after_full_stateful_handshake(#[case] metadat
     assert_eq!(response.status(), StatusCode::OK);
     assert!(json_response(response).await["result"]["tools"].is_array());
 
+    // The initialize exemption must key on the parsed body method, not the
+    // claimed header. Both allowed headers must reject a tools/call body.
     // Claim a newer HTTP version than the negotiated one. Auth admits the
     // discovery header. rmcp 3.3 rejects a legacy body for missing metadata;
     // with valid metadata it rejects the method mismatch. Neither validation
@@ -280,7 +288,7 @@ async fn forged_method_is_rejected_after_full_stateful_handshake(#[case] metadat
     let mut forged = request(
         "tools/call",
         ProtocolVersion::STANDARD_HEADERS.as_str(),
-        Some("tools/list"),
+        Some(header),
     );
     forged.headers_mut().insert("Mcp-Session-Id", session);
     if !metadata {
