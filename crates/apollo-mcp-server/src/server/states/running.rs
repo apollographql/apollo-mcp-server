@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
@@ -648,35 +648,6 @@ impl Running {
 /// than this server's capabilities.
 pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
 
-/// The protocol versions this server negotiates and advertises: every version
-/// rmcp knows, capped at [`MAX_SUPPORTED_PROTOCOL_VERSION`]. Single source of
-/// truth for that set.
-static SUPPORTED_PROTOCOL_VERSIONS: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
-    ProtocolVersion::KNOWN_VERSIONS
-        .iter()
-        .filter(|version| **version <= MAX_SUPPORTED_PROTOCOL_VERSION)
-        .cloned()
-        .collect()
-});
-
-/// Echoes the client-requested protocol version when it is in
-/// [`SUPPORTED_PROTOCOL_VERSIONS`], otherwise falls back to
-/// [`MAX_SUPPORTED_PROTOCOL_VERSION`].
-fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
-    if SUPPORTED_PROTOCOL_VERSIONS.contains(client_requested) {
-        client_requested.clone()
-    } else {
-        // debug rather than warn: falling back is expected, handled behavior,
-        // and a pinned client would emit this on every stateless initialize.
-        debug!(
-            client_requested = %client_requested,
-            server_fallback = %MAX_SUPPORTED_PROTOCOL_VERSION,
-            "client requested unsupported protocol version; falling back to server default"
-        );
-        MAX_SUPPORTED_PROTOCOL_VERSION
-    }
-}
-
 /// Transport handler with its own legacy lifecycle. Application clones cannot
 /// accidentally be served without constructing this owner.
 #[derive(Clone)]
@@ -707,13 +678,10 @@ impl ServerHandler for McpService {
             .u64_counter(TelemetryMetric::InitializeCount.as_str())
             .build()
             .add(1, &attributes);
-        // Echo the client's requested protocol version when supported,
-        // falling back to our max supported version otherwise (#794). rmcp's
-        // handshake re-negotiates this after `initialize` on every
-        // transport, but `supported_protocol_versions` below keeps that
-        // re-negotiation capped at the same version (closes #803).
-        let mut info = self.get_info();
-        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
+        // Negotiate rather than answering with `get_info` as-is (#794).
+        // `supported_protocol_versions` below bounds both this call and the
+        // re-negotiation rmcp runs afterwards on every transport (#803).
+        let info = self.negotiate_initialize(&request)?;
         self.notifications
             .initialize(&self.application.tool_list_changes);
         Ok(info)
@@ -724,13 +692,17 @@ impl ServerHandler for McpService {
             .on_initialized(context.peer, self.application.cancellation_token.clone());
     }
 
-    /// Narrows rmcp's re-negotiation (run on every transport after
-    /// `initialize`) to [`SUPPORTED_PROTOCOL_VERSIONS`], so it can't advertise
-    /// a newer version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s
-    /// SEP-2243 headers and `subscriptions/listen`, which this server doesn't
-    /// yet handle).
+    /// The protocol versions this server negotiates and advertises: every
+    /// version rmcp knows, capped at [`MAX_SUPPORTED_PROTOCOL_VERSION`].
+    ///
+    /// This also narrows rmcp's re-negotiation (run on every transport after
+    /// `initialize`), so it can't advertise a newer version from rmcp's
+    /// `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243 headers and
+    /// `subscriptions/listen`, which this server doesn't yet handle).
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Borrowed(&SUPPORTED_PROTOCOL_VERSIONS)
+        Cow::Borrowed(ProtocolVersion::known_up_to(
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        ))
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -870,9 +842,8 @@ impl ServerHandler for McpService {
         capabilities.prompts =
             (!self.application.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise the max supported version as the default. Our `initialize`
-        // handler negotiates the per-client value, echoing the client's requested
-        // version when supported and otherwise falling back to this one.
+        // Load-bearing: negotiation falls back to this when it cannot honor
+        // the version the client asked for.
         let protocol_version = MAX_SUPPORTED_PROTOCOL_VERSION;
 
         let mut impl_ = Implementation::new(
@@ -1144,43 +1115,43 @@ mod tests {
         }
         service.cancel().await.unwrap();
     }
-    mod protocol_version_negotiation {
-        use rstest::rstest;
 
+    mod supported_protocol_versions {
         use super::*;
 
-        /// Builds a version rmcp has no constant for; unknown versions are
-        /// only constructible through deserialization.
-        fn unknown_version(version: &str) -> ProtocolVersion {
-            serde_json::from_value(serde_json::json!(version)).unwrap()
-        }
+        fn supported() -> Cow<'static, [ProtocolVersion]> {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
 
-        #[rstest]
-        #[case::oldest_known(ProtocolVersion::V_2024_11_05)]
-        #[case::intermediate_known(ProtocolVersion::V_2025_06_18)]
-        #[case::max_supported(MAX_SUPPORTED_PROTOCOL_VERSION)]
-        fn echoes_known_version_at_or_below_cap(#[case] requested: ProtocolVersion) {
-            assert_eq!(negotiate_protocol_version(&requested), requested);
+            test_running(Arc::new(RwLock::new(schema)))
+                .for_service()
+                .supported_protocol_versions()
         }
 
         #[test]
-        fn caps_known_version_above_max_supported() {
-            // rmcp has a constant for 2026-07-28, but this server doesn't
-            // implement that revision.
-            assert_eq!(
-                negotiate_protocol_version(&ProtocolVersion::V_2026_07_28),
-                MAX_SUPPORTED_PROTOCOL_VERSION
+        fn advertises_the_max_supported_version() {
+            let supported = supported();
+
+            assert!(
+                supported.contains(&MAX_SUPPORTED_PROTOCOL_VERSION),
+                "advertised versions {supported:?} must include the server's max"
             );
         }
 
-        #[rstest]
-        #[case::future_date("2999-01-01")]
-        #[case::past_date("2020-01-01")]
-        #[case::not_a_date("not-a-version")]
-        fn falls_back_when_version_is_unknown(#[case] requested: &str) {
-            assert_eq!(
-                negotiate_protocol_version(&unknown_version(requested)),
-                MAX_SUPPORTED_PROTOCOL_VERSION
+        #[test]
+        fn never_advertises_a_version_above_the_max_supported() {
+            let supported = supported();
+
+            let newer: Vec<_> = supported
+                .iter()
+                .filter(|version| **version > MAX_SUPPORTED_PROTOCOL_VERSION)
+                .collect();
+
+            assert!(
+                newer.is_empty(),
+                "advertised versions newer than {MAX_SUPPORTED_PROTOCOL_VERSION}: {newer:?}"
             );
         }
     }
