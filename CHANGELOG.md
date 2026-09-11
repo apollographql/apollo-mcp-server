@@ -16,7 +16,11 @@ Hints require negotiated MCP protocol version `2026-07-28` or newer. The server 
 
 ### Fixes
 
-- Replace shared MCP peer tracking with service-owned tool-change notification tasks. Slow clients no longer delay catalog updates or other clients, and a slow send no longer permanently disables notifications after five seconds. Legacy session teardown releases notification resources. Existing sessionless HTTP behavior and supported protocol versions are preserved. Catalog invalidations registered during initialization are retained until the initialized notification starts delivery, preventing missed updates while callbacks are scheduled.
+#### Send tool-change notifications from service-owned tasks
+
+Replace shared MCP peer tracking with service-owned tool-change notification tasks. Slow clients no longer delay catalog updates or other clients, and a slow send no longer permanently disables notifications after five seconds. Legacy session teardown releases notification resources. Catalog invalidations registered during initialization are retained until the initialized notification starts delivery, preventing missed updates while callbacks are scheduled.
+
+Existing sessionless HTTP behavior and supported protocol versions are preserved.
 
 #### Don't reject an unauthenticated GET with 401 on a stateless streamable-HTTP transport
 
