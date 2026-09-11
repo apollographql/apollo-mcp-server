@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.19.0 (2026-09-11)
+
+### Features
+
+#### Prepare configurable cache hints for MCP list and read responses
+
+Add `caching.ttl_ms` (default: 300,000 milliseconds) to configure SEP-2549 cache hints for `tools/list`, `resources/list`, `resources/read`, and `prompts/list`. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided because response visibility can depend on authentication scope.
+
+Hints require negotiated MCP protocol version `2026-07-28` or newer. The server currently caps negotiation at `2025-11-25`, so this is preparatory support: clients will not receive cache hints until the server implements and negotiates the required protocol revision.
+
+### Fixes
+
+- Replace shared MCP peer tracking with service-owned tool-change notification tasks. Slow clients no longer delay catalog updates or other clients, and a slow send no longer permanently disables notifications after five seconds. Legacy session teardown releases notification resources. Existing sessionless HTTP behavior and supported protocol versions are preserved. Catalog invalidations registered during initialization are retained until the initialized notification starts delivery, preventing missed updates while callbacks are scheduled.
+
+#### Don't reject an unauthenticated GET with 401 on a stateless streamable-HTTP transport
+
+With `transport.auth` configured and `stateful_mode: false`, an unauthenticated `GET` on the MCP endpoint now returns 405, matching what it already returned once a credential skipped validation, instead of 401. That route was never served in stateless mode regardless of a credential, so the 401 protected nothing on the wire. It did have a client-visible effect: at least one MCP client reads a 401 on that GET as "this server requires authentication" and hides every tool, including tools `transport.auth.skip_token_validation` was configured to expose without a token.
+
+A stateful transport's GET is unaffected: it still returns 401 when unauthenticated, because that GET carries the real server-to-client stream and must stay protected.
+
 ## 1.18.0 (2026-09-09)
 
 ### Features
