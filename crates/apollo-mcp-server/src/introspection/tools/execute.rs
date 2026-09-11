@@ -5,7 +5,7 @@ use crate::{
     schema_from_type,
 };
 use reqwest::header::{HeaderMap, HeaderValue};
-use rmcp::model::Tool;
+use rmcp::model::{Tool, ToolAnnotations};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -44,9 +44,18 @@ impl Execute {
             "Execute a GraphQL operation. Use the `introspect` tool to get information about the GraphQL schema. Always use the schema to create operations - do not try arbitrary operations. If available, first use the `validate` tool to validate operations. DO NOT try to execute introspection queries.",
             description_hint,
         );
+        // Ad hoc mutations are only allowed in MutationMode::All.
+        let permits_mutation = mutation_mode == MutationMode::All;
+        let mut annotations = ToolAnnotations::new()
+            .read_only(!permits_mutation)
+            .destructive(permits_mutation);
+        annotations.idempotent_hint = Some(!permits_mutation);
+        annotations.open_world_hint = Some(true);
+
         Self {
             mutation_mode,
-            tool: Tool::new(EXECUTE_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: Tool::new(EXECUTE_TOOL_NAME, description, schema_from_type!(Input))
+                .annotate(annotations),
         }
     }
 }
@@ -265,5 +274,31 @@ mod tests {
 
         let result = Executable::variables(&execute, input);
         assert!(matches!(result, Err(ValidationError(msg)) if msg.contains("Invalid variables")));
+    }
+
+    #[test]
+    fn execute_annotations_when_mutations_disabled() {
+        for mode in [MutationMode::None, MutationMode::Explicit] {
+            let annotations = Execute::new(mode, None)
+                .tool
+                .annotations
+                .expect("execute tool must expose annotations");
+            assert_eq!(annotations.read_only_hint, Some(true));
+            assert_eq!(annotations.destructive_hint, Some(false));
+            assert_eq!(annotations.idempotent_hint, Some(true));
+            assert_eq!(annotations.open_world_hint, Some(true));
+        }
+    }
+
+    #[test]
+    fn execute_annotations_when_mutations_enabled() {
+        let annotations = Execute::new(MutationMode::All, None)
+            .tool
+            .annotations
+            .expect("execute tool must expose annotations");
+        assert_eq!(annotations.read_only_hint, Some(false));
+        assert_eq!(annotations.destructive_hint, Some(true));
+        assert_eq!(annotations.idempotent_hint, Some(false));
+        assert_eq!(annotations.open_world_hint, Some(true));
     }
 }
