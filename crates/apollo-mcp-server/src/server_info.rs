@@ -44,7 +44,7 @@ pub struct IconConfig {
     #[serde(default)]
     pub mime_type: Option<String>,
 
-    /// Icon size strings. Clients expect `WxH` (for example, `48x48`) or `any`
+    /// Icon size strings. Clients expect `<WIDTH>x<HEIGHT>` (for example, `48x48`) or `any`
     /// for scalable formats. The server does not enforce these formats.
     #[serde(default)]
     pub sizes: Option<Vec<String>>,
