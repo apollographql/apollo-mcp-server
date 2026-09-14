@@ -184,7 +184,7 @@ async fn initialize_guard_rejects_malformed_and_duplicate_headers(#[case] duplic
 #[tokio::test]
 async fn sdk_rejects_forged_tool_call_after_header_bypass(
     #[case] stateful: bool,
-    #[values("tools/list", "initialize")] header: &str,
+    #[values("tools/list", "initialize", "notifications/initialized")] header: &str,
 ) {
     let running = create_test_running();
     let _shutdown = running.cancellation_token.clone().drop_guard();
@@ -225,7 +225,7 @@ async fn discovery_on_supported_version_preserves_legacy_fallback(#[case] header
 #[timeout(std::time::Duration::from_secs(5))]
 async fn forged_method_is_rejected_after_full_stateful_handshake(
     #[case] metadata: bool,
-    #[values("tools/list", "initialize")] header: &str,
+    #[values("tools/list", "initialize", "notifications/initialized")] header: &str,
 ) {
     let running = create_test_running();
     let _shutdown = running.cancellation_token.clone().drop_guard();
