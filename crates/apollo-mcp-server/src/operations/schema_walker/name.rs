@@ -90,11 +90,15 @@ impl From<Name<'_>> for JSONSchema {
                             &Some(description),
                         ).into(),
                     );
-                    JSONSchema::new_ref(format!("#/definitions/{other}"))
+                    // Emit `type: "string"` alongside `$ref` so MCP clients
+                    // that do not dereference `$ref` before deciding how to
+                    // serialise the value still classify it as a string, not
+                    // stringify a structured payload.
+                    json_schema!({
+                        "type": "string",
+                        "$ref": format!("#/definitions/{other}"),
+                    })
                 }
-
-                // Input types need to be traversed over their fields to ensure that they copy over
-                // nested structure.
                 Some(ExtendedType::InputObject(input)) => {
                     // Insert temporary value into map so any recursive references will not try to also create it.
                     cache.insert(other.to_string(), Default::default());
@@ -141,7 +145,20 @@ impl From<Name<'_>> for JSONSchema {
                     }
 
                     cache.insert(other.to_string(), input_schema.into());
-                    JSONSchema::new_ref(format!("#/definitions/{other}"))
+                    // Emit `type: "object"` alongside `$ref` so MCP clients
+                    // that do not dereference `$ref` before deciding how to
+                    // serialise a variable value still classify it as an
+                    // object. Without the sibling, some clients (observed on
+                    // VS Code's Copilot MCP transport) fall through to
+                    // `JSON.stringify`, and the server then rejects the
+                    // stringified payload as `Expected type X to be an
+                    // object`. Sibling keys next to `$ref` are ignored in
+                    // strict JSON Schema draft-07, so correct dereferencing
+                    // clients keep their existing behaviour.
+                    json_schema!({
+                        "type": "object",
+                        "$ref": format!("#/definitions/{other}"),
+                    })
                 }
 
                 // Custom scalars need to be opaquely copied over as types with no further processing

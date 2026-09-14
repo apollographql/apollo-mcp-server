@@ -2002,6 +2002,7 @@ mod tests {
                     "id": Object {
                         "anyOf": Array [
                             Object {
+                                "type": String("object"),
                                 "$ref": String("#/definitions/RealInputObject"),
                             },
                             Object {
@@ -2161,6 +2162,7 @@ mod tests {
                 "type": String("object"),
                 "properties": Object {
                     "id": Object {
+                        "type": String("string"),
                         "$ref": String("#/definitions/RealEnum"),
                     },
                 },
@@ -3418,6 +3420,7 @@ mod tests {
                         "description": String("the filter argument"),
                         "anyOf": Array [
                             Object {
+                                "type": String("object"),
                                 "$ref": String("#/definitions/Filter"),
                             },
                             Object {
@@ -4233,6 +4236,7 @@ mod tests {
                                 "items": Object {
                                     "anyOf": Array [
                                         Object {
+                                            "type": String("object"),
                                             "$ref": String("#/definitions/RealInputObject"),
                                         },
                                         Object {
@@ -4399,7 +4403,8 @@ mod tests {
                   "items": {
                     "anyOf": [
                       {
-                        "$ref": "#/definitions/RealInputObject"
+                        "$ref": "#/definitions/RealInputObject",
+                        "type": "object"
                       },
                       {
                         "type": "null"
@@ -4454,6 +4459,7 @@ mod tests {
                     "objects": Object {
                         "type": String("array"),
                         "items": Object {
+                            "type": String("object"),
                             "$ref": String("#/definitions/RealInputObject"),
                         },
                     },
@@ -4609,7 +4615,8 @@ mod tests {
           "properties": {
             "objects": {
               "items": {
-                "$ref": "#/definitions/RealInputObject"
+                "$ref": "#/definitions/RealInputObject",
+                "type": "object"
               },
               "type": "array"
             }
