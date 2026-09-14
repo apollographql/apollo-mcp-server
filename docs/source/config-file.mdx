@@ -673,11 +673,9 @@ Each icon entry supports the fields defined by the [MCP `Icon` object](https://m
 | Option      | Type       | Description                                                                                   |
 | :---------- | :--------- | :-------------------------------------------------------------------------------------------- |
 | `src`       | `string`   | Parseable URI of the icon, such as an HTTP or HTTPS URL or a base64-encoded `data:` URI. Required. |
-| `mime_type` | `string`   | Explicit MIME type such as `image/png` or `image/svg+xml`. Optional.                          |
+| `mime_type` | `string`   | Explicit MIME type such as `image/png` or `image/svg+xml`. Use `mime_type` in YAML; `mimeType` is not accepted. Optional. |
 | `sizes`     | `string[]` | Icon size strings. Clients expect `<WIDTH>x<HEIGHT>` (for example, `48x48`) or `any` for scalable formats. The server does not enforce these formats. Optional. |
 | `theme`     | `string`   | Background theme the icon is designed for: `light` or `dark`. Omit this field to render with either theme. Optional. |
-
-The YAML key is `mime_type`, while the MCP field is `mimeType`. The server rejects `mimeType` in YAML as an unknown field.
 
 No icon is advertised by default. Clients that support icon metadata should select the most appropriate entry for their UI. Clients that do not support icons can ignore this optional field.
 
