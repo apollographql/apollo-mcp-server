@@ -859,7 +859,7 @@ impl ServerHandler for McpService {
         if let Some(u) = self.application.server_info.website_url() {
             impl_ = impl_.with_website_url(u);
         }
-        if let Some(icons) = self.server_info.icons() {
+        if let Some(icons) = self.application.server_info.icons() {
             impl_ = impl_.with_icons(icons);
         }
         let mut result = InitializeResult::new(capabilities)
@@ -2523,7 +2523,7 @@ mod tests {
 
             let running = test_running(Arc::new(RwLock::new(schema)));
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.server_info.icons, None);
         }
@@ -2562,6 +2562,7 @@ mod tests {
             };
 
             let icons = running
+                .for_service()
                 .get_info()
                 .server_info
                 .icons
