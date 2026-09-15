@@ -819,7 +819,7 @@ async fn oauth_validate(
         // Only a tool-name exception can still match. A nonmatching header must
         // not fall back to an allowed method in the body, or force a body read.
         if method != TOOL_CALL_METHOD || skip.tools.is_empty() || app_qualified {
-            tracing::Span::current().record("reason", "missing_token");
+            tracing::Span::current().record("reason", "method_header_not_permitted");
             tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
             return Err(unauthorized_error());
         }
@@ -2539,8 +2539,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             }
 
             #[rstest]
-            #[case(false)]
-            #[case(true)]
+            #[case::malformed(false)]
+            #[case::duplicate(true)]
             #[tokio::test]
             async fn malformed_or_duplicate_header_cannot_grant_access(#[case] duplicate: bool) {
                 let app = skip_router(skip(&["tools/list"], &[], &[]));
