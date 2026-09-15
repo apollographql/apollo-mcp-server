@@ -819,8 +819,8 @@ async fn oauth_validate(
         // Only a tool-name exception can still match. A nonmatching header must
         // not fall back to an allowed method in the body, or force a body read.
         if method != TOOL_CALL_METHOD || skip.tools.is_empty() || app_qualified {
-            // With no skip list configured at all, every tokenless request lands
-            // here, and the token is the only thing that was ever missing.
+            // `method_header_not_permitted` sends operators to their skip
+            // lists, so it only applies where those lists exist.
             let reason = if skip.needs_body() {
                 "method_header_not_permitted"
             } else {
