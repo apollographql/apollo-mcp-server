@@ -717,8 +717,8 @@ impl ServerHandler for McpService {
     ///
     /// This also narrows rmcp's re-negotiation (run on every transport after
     /// `initialize`), so it can't advertise a newer version from rmcp's
-    /// `KNOWN_VERSIONS`. Subscription support is
-    /// implemented in preparation for a separate `2026-07-28` rollout.
+    /// `KNOWN_VERSIONS`. Subscription handling is staged separately from
+    /// advertising full `2026-07-28` support.
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(ProtocolVersion::known_up_to(
             &MAX_SUPPORTED_PROTOCOL_VERSION,

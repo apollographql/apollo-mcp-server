@@ -22,9 +22,9 @@ use super::{
     *,
 };
 
-struct FutureProtocol(McpService);
+struct ModernProtocolService(McpService);
 
-impl ServerHandler for FutureProtocol {
+impl ServerHandler for ModernProtocolService {
     fn get_info(&self) -> ServerInfo {
         self.0
             .get_info()
@@ -107,10 +107,10 @@ fn request(id: u32, method: &str, params: Value) -> Request<Body> {
 fn service(
     running: &Running,
     legacy_sessions: bool,
-) -> StreamableHttpService<FutureProtocol, LocalSessionManager> {
+) -> StreamableHttpService<ModernProtocolService, LocalSessionManager> {
     let running = running.clone();
     StreamableHttpService::new(
-        move || Ok(FutureProtocol(running.for_service())),
+        move || Ok(ModernProtocolService(running.for_service())),
         Default::default(),
         StreamableHttpServerConfig::default()
             .with_legacy_session_mode(legacy_sessions)
@@ -300,7 +300,7 @@ async fn production_still_rejects_future_protocol_subscriptions() {
 #[timeout(std::time::Duration::from_secs(10))]
 async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
     struct ObservedListener {
-        inner: FutureProtocol,
+        inner: ModernProtocolService,
         cancelled_listener_dropped: CancellationToken,
     }
     impl ServerHandler for ObservedListener {
@@ -327,7 +327,7 @@ async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
     let running = create_test_running();
     let cancelled_listener_dropped = CancellationToken::new();
     let handler = ObservedListener {
-        inner: FutureProtocol(running.for_service()),
+        inner: ModernProtocolService(running.for_service()),
         cancelled_listener_dropped: cancelled_listener_dropped.clone(),
     };
     let (server_io, client_io) = tokio::io::duplex(8192);
@@ -380,7 +380,7 @@ async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
 #[timeout(std::time::Duration::from_secs(10))]
 async fn initial_refresh_covers_reload_after_acknowledgement_before_registration() {
     struct DelayedListener {
-        inner: FutureProtocol,
+        inner: ModernProtocolService,
         entered: Arc<tokio::sync::Notify>,
         release: Arc<tokio::sync::Notify>,
     }
@@ -413,7 +413,7 @@ async fn initial_refresh_covers_reload_after_acknowledgement_before_registration
         StreamableHttpService::new(
             move || {
                 Ok(DelayedListener {
-                    inner: FutureProtocol(application.for_service()),
+                    inner: ModernProtocolService(application.for_service()),
                     entered: listener_entered.clone(),
                     release: listener_release.clone(),
                 })
@@ -468,7 +468,7 @@ async fn blocked_stdio_delivery_does_not_block_reload_or_other_clients(
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let running = create_test_running();
-    let handler = FutureProtocol(running.for_service());
+    let handler = ModernProtocolService(running.for_service());
     let (server_input, mut input) = tokio::io::duplex(8192);
     let (server_output, output) = tokio::io::duplex(8);
     let armed = Arc::new(AtomicBool::new(false));
