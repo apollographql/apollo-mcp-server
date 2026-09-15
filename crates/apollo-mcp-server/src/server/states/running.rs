@@ -700,6 +700,8 @@ impl ServerHandler for McpService {
         // `supported_protocol_versions` below bounds both this call and the
         // re-negotiation rmcp runs afterwards on every transport (#803).
         let info = self.negotiate_initialize(&request)?;
+        // The modern branch becomes reachable when the production cap lifts;
+        // the subscription test wrapper does not exercise this negotiation.
         if info.protocol_version < ProtocolVersion::V_2026_07_28 {
             self.notifications
                 .initialize(&self.application.tool_list_changes);
@@ -737,10 +739,7 @@ impl ServerHandler for McpService {
         // The SDK also enforces the accepted filter in SubscriptionSink. Keep
         // our opt-in boundary explicit before allocating a catalog receiver.
         if context.accepted().tools_list_changed != Some(true) {
-            tokio::select! {
-                _ = context.cancelled() => {},
-                _ = shutdown.cancelled() => {},
-            }
+            // No supported notifications can arrive on this stream.
             return Ok(());
         }
 
@@ -772,7 +771,13 @@ impl ServerHandler for McpService {
                     SubscriptionSendError::SubscriptionClosed
                     | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
                 ) => return Ok(()),
+                Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(error))) => {
+                    error!(?error, "Failed to deliver tool list change on subscription");
+                    return Ok(());
+                }
                 Err(error) => {
+                    // Filter violations indicate a handler bug; end this
+                    // subscription instead of retrying on every catalog change.
                     error!(?error, "Failed to deliver tool list change on subscription");
                     return Err(McpError::internal_error(
                         "Failed to deliver tool list change notification",

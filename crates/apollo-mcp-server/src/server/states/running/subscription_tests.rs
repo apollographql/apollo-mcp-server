@@ -211,15 +211,13 @@ async fn reloads_reach_each_subscription_after_catalog_commit() {
 #[case::unsupported(json!({"promptsListChanged": true, "resourcesListChanged": true, "resourceSubscriptions": ["file:///test"]}))]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
-async fn empty_accepted_filter_has_no_receiver_or_notifications(#[case] filter: Value) {
+async fn empty_accepted_filter_completes_without_notifications(#[case] filter: Value) {
     let running = create_test_running();
     let mut reader = subscribe(&running, 1, filter).await;
-    assert_eq!(running.tool_list_changes.receiver_count(), 0);
-    running.update_operations(vec![]).await;
-    running.cancellation_token.cancel();
     let completion = next_message(&mut reader).await;
     assert_eq!(completion["id"], 1);
     assert_eq!(completion["result"]["resultType"], "complete");
+    assert_eq!(running.tool_list_changes.receiver_count(), 0);
 }
 
 #[rstest::rstest]
@@ -533,7 +531,10 @@ async fn blocked_stdio_delivery_does_not_block_reload_or_other_clients(
             drop(reader);
             running.tool_list_changes.closed().await;
             drop(input);
-            let _ = server.await.unwrap();
+            assert!(matches!(
+                server.await.unwrap().unwrap(),
+                rmcp::service::QuitReason::Closed
+            ));
             return;
         }
         BlockedDeliveryEnd::Recover => {
@@ -550,6 +551,9 @@ async fn blocked_stdio_delivery_does_not_block_reload_or_other_clients(
     }
     drop(reader);
     drop(input);
-    let _ = server.await.unwrap();
+    assert!(matches!(
+        server.await.unwrap().unwrap(),
+        rmcp::service::QuitReason::Closed
+    ));
     running.tool_list_changes.closed().await;
 }
