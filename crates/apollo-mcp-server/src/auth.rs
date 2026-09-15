@@ -819,7 +819,14 @@ async fn oauth_validate(
         // Only a tool-name exception can still match. A nonmatching header must
         // not fall back to an allowed method in the body, or force a body read.
         if method != TOOL_CALL_METHOD || skip.tools.is_empty() || app_qualified {
-            tracing::Span::current().record("reason", "method_header_not_permitted");
+            // With no skip list configured at all, every tokenless request lands
+            // here, and the token is the only thing that was ever missing.
+            let reason = if skip.needs_body() {
+                "method_header_not_permitted"
+            } else {
+                "missing_token"
+            };
+            tracing::Span::current().record("reason", reason);
             tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
             return Err(unauthorized_error());
         }
