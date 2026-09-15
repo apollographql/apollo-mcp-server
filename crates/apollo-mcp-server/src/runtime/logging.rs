@@ -11,6 +11,8 @@ mod trace_id_format;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::ffi::OsStr;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_appender::rolling::RollingFileAppender;
@@ -73,6 +75,7 @@ impl Logging {
     }
 
     pub fn logging_layer(logging: &Logging) -> Result<LoggingLayerResult, anyhow::Error> {
+        let no_color = std::env::var_os("NO_COLOR");
         let (writer, guard, with_ansi) = match logging.path.clone() {
             Some(path) => std::fs::create_dir_all(&path)
                 .map(|_| path)
@@ -97,9 +100,17 @@ impl Logging {
                 })
                 .unwrap_or_else(|| {
                     eprintln!("Log file setup failed - falling back to stderr");
-                    (BoxMakeWriter::new(std::io::stderr), None, true)
+                    (
+                        BoxMakeWriter::new(std::io::stderr),
+                        None,
+                        should_use_ansi(std::io::stderr().is_terminal(), no_color.as_deref()),
+                    )
                 }),
-            None => (BoxMakeWriter::new(std::io::stdout), None, true),
+            None => (
+                BoxMakeWriter::new(std::io::stdout),
+                None,
+                should_use_ansi(std::io::stdout().is_terminal(), no_color.as_deref()),
+            ),
         };
 
         let inner_format = tracing_subscriber::fmt::format::Format::default()
@@ -114,6 +125,10 @@ impl Logging {
             guard,
         ))
     }
+}
+
+fn should_use_ansi(is_terminal: bool, no_color: Option<&OsStr>) -> bool {
+    is_terminal && no_color.is_none_or(OsStr::is_empty)
 }
 
 fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -132,4 +147,30 @@ fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     }
 
     Level::json_schema(generator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn ansi_is_enabled_for_terminal_output() {
+        assert!(should_use_ansi(true, None));
+    }
+
+    #[test]
+    fn ansi_is_disabled_for_non_terminal_output() {
+        assert!(!should_use_ansi(false, None));
+    }
+
+    #[test]
+    fn ansi_is_disabled_when_no_color_is_set() {
+        assert!(!should_use_ansi(true, Some(OsStr::new("1"))));
+    }
+
+    #[test]
+    fn ansi_is_enabled_when_no_color_is_empty() {
+        assert!(should_use_ansi(true, Some(OsStr::new(""))));
+    }
 }
