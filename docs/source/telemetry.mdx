@@ -168,12 +168,30 @@ In addition to these metrics, the server also emits standard [HTTP server metric
 
 Spans are generated for the following actions:
 
-- **Incoming HTTP Requests**: A root span is created for every HTTP request to the MCP server.
+- **Incoming HTTP Requests**: The server creates a `SERVER` span for every HTTP request to the MCP endpoint. That span roots the trace unless the request carries a `traceparent` header. The server doesn't trace requests to the health check endpoint, so probes don't appear as service entry points.
 - **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
 - **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
 - **Downstream GraphQL Calls**: The `execute` tool in Apollo MCP Server and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is caller-controlled, request-scoped context, not identity. Don't put secrets or personally identifiable information in baggage, and never use it for authorization. If your GraphQL endpoint crosses a trust boundary, filter baggage before forwarding it. Apollo MCP Server doesn't automatically copy baggage onto exported span attributes.
 
 ### Span Attributes
+
+The inbound request span is named `{method} {route}`, for example `POST /mcp`. A request to a subpath of the MCP endpoint, such as `/mcp/anything`, matches no route, so the server names that span after its method alone. The span follows the OpenTelemetry [semantic conventions for HTTP server spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span):
+
+| Attribute                   | Description                                                                             |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| `http.request.method`       | The HTTP method, for example `POST`.                                                     |
+| `http.route`                | The matched route, for example `/mcp`. Omitted when the request matches no route.        |
+| `http.response.status_code` | The HTTP status code, as an integer.                                                     |
+| `url.path`                  | The request path.                                                                        |
+| `url.scheme`                | Always `http`: the server serves plaintext and doesn't infer a scheme from proxy headers. |
+| `server.address`            | The host from the `Host` header, without the port.                                       |
+| `server.port`               | The port from the `Host` header, when it carries one.                                    |
+| `user_agent.original`       | The `User-Agent` header.                                                                 |
+| `network.protocol.version`  | The HTTP version, for example `1.1`.                                                     |
+| `error.type`                | The status code, for a 5xx response.                                                     |
+| `apollo.mcp.session_id`     | The MCP session ID, from the response on `initialize` and from the request after that.   |
+
+The server sets the span status to error for a 5xx response and leaves it unset otherwise, which is what the conventions require. The span stays open until the response body finishes streaming, so its duration covers tool execution on a streamed response.
 
 The `call_tool` span includes the following attributes:
 

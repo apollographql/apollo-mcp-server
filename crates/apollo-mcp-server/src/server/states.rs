@@ -28,6 +28,8 @@ mod configuring;
 mod operations_configured;
 mod running;
 mod schema_configured;
+#[cfg(test)]
+mod server_span_tests;
 mod starting;
 pub(crate) mod telemetry;
 mod tool_list_changes;

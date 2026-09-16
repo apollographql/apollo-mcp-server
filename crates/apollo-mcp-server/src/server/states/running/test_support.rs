@@ -4,8 +4,9 @@ use serde_json::Value;
 use sse_stream::SseStream;
 
 use super::*;
+use crate::operations::RawOperation;
 
-pub(super) fn create_test_running() -> Running {
+pub(in crate::server::states) fn create_test_running() -> Running {
     let schema =
         apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
             .unwrap();
@@ -37,6 +38,30 @@ pub(super) fn create_test_running() -> Running {
         instructions: None,
         rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
         caching: Default::default(),
+    }
+}
+
+/// A server exposing one `Hello` tool that resolves against `endpoint`.
+pub(in crate::server::states) fn create_test_running_with_operation(endpoint: url::Url) -> Running {
+    let operation = RawOperation::from(("query Hello { hello }".to_string(), None))
+        .into_operation(
+            &apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                .unwrap(),
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .expect("operation should be valid");
+
+    Running {
+        operations: Arc::new(RwLock::new(vec![operation])),
+        endpoint,
+        ..create_test_running()
     }
 }
 
