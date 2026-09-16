@@ -39,6 +39,24 @@ impl AsyncWrite for ObservedWriter {
     }
 }
 
+#[tokio::test]
+async fn observed_writer_delegates_shutdown() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (output, mut peer) = tokio::io::duplex(8);
+    let (blocked, _observed) = mpsc::unbounded_channel();
+    let mut writer = ObservedWriter {
+        output,
+        armed: Arc::new(AtomicBool::new(false)),
+        blocked,
+    };
+
+    writer.shutdown().await.unwrap();
+
+    let mut byte = [0];
+    assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+}
+
 pub(super) fn create_test_running() -> Running {
     let schema =
         apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
