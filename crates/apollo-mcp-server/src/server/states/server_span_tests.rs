@@ -7,7 +7,7 @@
 
 use axum::Router;
 use axum::body::Body;
-use http::{Request, StatusCode};
+use http::{Method, Request, StatusCode};
 use opentelemetry::Value as OtelValue;
 use opentelemetry::trace::{SpanKind, Status, TracerProvider as _};
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData};
@@ -20,7 +20,8 @@ use tracing_subscriber::registry;
 use super::running::Running;
 use super::running::test_support::{create_test_running, create_test_running_with_operation};
 use super::starting::{build_http_service, with_telemetry_layers};
-use super::telemetry::{MCP_SESSION_ID, w3c_text_map_propagator};
+use super::telemetry::w3c_text_map_propagator;
+use crate::generated::telemetry::TelemetryAttribute;
 use crate::health::{HealthCheck, HealthCheckConfig};
 
 /// An inbound `traceparent` whose trace and span IDs the tests assert on.
@@ -90,6 +91,12 @@ fn mcp_request(uri: &str) -> Request<Body> {
             .to_string(),
         ))
         .expect("valid test request")
+}
+
+fn request_with_method(method: &str) -> Request<Body> {
+    let mut request = mcp_request("/mcp");
+    *request.method_mut() = Method::from_bytes(method.as_bytes()).expect("valid method token");
+    request
 }
 
 /// Run one request through the production router and return every exported span.
@@ -242,7 +249,7 @@ mod server_span {
         let span = server_span_for(mcp_request("/mcp")).await;
 
         assert!(
-            !attribute_or_panic(&span, MCP_SESSION_ID)
+            !attribute_or_panic(&span, TelemetryAttribute::SessionId.as_str())
                 .as_str()
                 .is_empty(),
             "session id should be recorded: {span:#?}"
@@ -252,18 +259,130 @@ mod server_span {
     #[tokio::test]
     async fn records_the_session_id_the_client_sent() {
         // Only `initialize` gets a session back in the response; every later
-        // request carries it inbound.
+        // request carries it inbound, and those are the spans worth grouping.
+        // Driven on the stateful transport the server ships with, so the id is
+        // one rmcp actually issued and looked up.
+        let spans = ExportedSpans::capture();
+        let router = production_router(create_test_running());
+
+        let initialized = router
+            .clone()
+            .oneshot(mcp_request("/mcp"))
+            .await
+            .expect("router responds");
+        assert_eq!(initialized.status(), StatusCode::OK);
+        let session = initialized.headers()["mcp-session-id"].clone();
+        http_body_util::BodyExt::collect(initialized.into_body())
+            .await
+            .expect("read response body");
+
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .header("Host", "localhost:8000")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .body(Body::from(
+                serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"})
+                    .to_string(),
+            ))
+            .expect("valid test request");
+        request
+            .headers_mut()
+            .insert("mcp-session-id", session.clone());
+        let in_session = router
+            .clone()
+            .oneshot(request)
+            .await
+            .expect("router responds");
+        assert_eq!(
+            in_session.status(),
+            StatusCode::ACCEPTED,
+            "the second request must reach the session, not an error path"
+        );
+        http_body_util::BodyExt::collect(in_session.into_body())
+            .await
+            .expect("read response body");
+
+        let issued = session.to_str().expect("an ASCII session id").to_owned();
+        let collected = spans.collect();
+        drop(router);
+        let second = collected
+            .into_iter()
+            .rfind(|span| span.span_kind == SpanKind::Server)
+            .expect("two SERVER spans");
+        assert_eq!(
+            attribute_or_panic(&second, TelemetryAttribute::SessionId.as_str()).as_str(),
+            issued
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_an_unknown_method_as_other() {
+        let span = server_span_for(request_with_method("CUSTOM_12345")).await;
+
+        assert_eq!(
+            attribute_or_panic(&span, "http.request.method").as_str(),
+            "_OTHER"
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_an_unknown_method_out_of_the_span_name() {
+        let span = server_span_for(request_with_method("CUSTOM_12345")).await;
+
+        assert_eq!(span.name, "HTTP /mcp");
+    }
+
+    #[tokio::test]
+    async fn keeps_the_original_of_an_unknown_method() {
+        let span = server_span_for(request_with_method("CUSTOM_12345")).await;
+
+        assert_eq!(
+            attribute_or_panic(&span, "http.request.method_original").as_str(),
+            "CUSTOM_12345"
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_no_original_for_a_known_method() {
+        let span = server_span_for(mcp_request("/mcp")).await;
+
+        assert_eq!(attribute(&span, "http.request.method_original"), None);
+    }
+
+    #[rstest::rstest]
+    // Absent headers: the conventions want the attribute omitted, not empty.
+    #[case::host("server.address")]
+    #[case::user_agent("user_agent.original")]
+    #[tokio::test]
+    async fn omits_the_attribute_of_an_absent_header(#[case] key: &str) {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/mcp")
+            .body(Body::empty())
+            .expect("valid test request");
+
+        let span = server_span_for(request).await;
+
+        assert_eq!(attribute(&span, key), None);
+    }
+
+    #[tokio::test]
+    async fn records_no_session_id_for_a_rejected_request() {
+        // The transport rejects an unknown session, so the id the caller sent
+        // names no session and must not reach the span.
         let mut request = mcp_request("/mcp");
         request.headers_mut().insert(
             "mcp-session-id",
-            "client-session".parse().expect("valid header value"),
+            "not-a-session".parse().expect("valid header value"),
         );
 
         let span = server_span_for(request).await;
 
         assert_eq!(
-            attribute_or_panic(&span, MCP_SESSION_ID).as_str(),
-            "client-session"
+            attribute(&span, TelemetryAttribute::SessionId.as_str()),
+            None
         );
     }
 
@@ -558,6 +677,156 @@ mod span_tree {
         assert_eq!(
             (load_tool.span_kind.clone(), load_tool.parent_span_id),
             (SpanKind::Internal, opentelemetry::trace::SpanId::INVALID)
+        );
+    }
+}
+
+mod body_lifetime {
+    use super::*;
+    use http_body_util::BodyExt as _;
+    use std::time::{Duration, SystemTime};
+
+    /// Send `method` to a route whose body completes after a delay, and report
+    /// how long after the response head the span ended.
+    async fn span_lifetime_beyond_the_head(method: &str) -> Duration {
+        const BODY_DELAY: Duration = Duration::from_millis(50);
+
+        let spans = ExportedSpans::capture();
+        let router = with_telemetry_layers(Router::new().route(
+            "/stream",
+            axum::routing::any(|| async {
+                axum::response::Response::new(Body::from_stream(futures::stream::once(
+                    async move {
+                        tokio::time::sleep(BODY_DELAY).await;
+                        Ok::<_, std::io::Error>("done")
+                    },
+                )))
+            }),
+        ));
+
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri("/stream")
+                    .body(Body::empty())
+                    .expect("valid test request"),
+            )
+            .await
+            .expect("router responds");
+        let head = SystemTime::now();
+        response
+            .into_body()
+            .collect()
+            .await
+            .expect("read response body");
+
+        let span = spans
+            .collect()
+            .into_iter()
+            .find(|span| span.span_kind == SpanKind::Server)
+            .expect("a SERVER span");
+        span.end_time.duration_since(head).unwrap_or(Duration::ZERO)
+    }
+
+    #[tokio::test]
+    async fn a_post_span_covers_the_streaming_body() {
+        // A streamable-HTTP POST runs the tool while its body streams, so the
+        // span has to stay open for it.
+        assert!(
+            span_lifetime_beyond_the_head("POST").await >= Duration::from_millis(40),
+            "the POST span ended at the response head"
+        );
+    }
+
+    /// Drive the session's standing `GET /mcp` stream on the real transport,
+    /// holding both the transport and the stream open, and report whether the
+    /// span was exported mid-stream and how long after the response head it
+    /// ended.
+    async fn live_get_stream() -> (bool, Duration) {
+        let spans = ExportedSpans::capture();
+        let router = production_router(create_test_running());
+
+        let initialized = router
+            .clone()
+            .oneshot(mcp_request("/mcp"))
+            .await
+            .expect("router responds");
+        let session = initialized.headers()["mcp-session-id"].clone();
+        http_body_util::BodyExt::collect(initialized.into_body())
+            .await
+            .expect("read response body");
+
+        let stream = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/mcp")
+                    .header("Host", "localhost:8000")
+                    .header("Accept", "text/event-stream")
+                    .header("mcp-session-id", session)
+                    .body(Body::empty())
+                    .expect("valid test request"),
+            )
+            .await
+            .expect("router responds");
+        assert_eq!(stream.status(), StatusCode::OK);
+        let head = SystemTime::now();
+
+        // Hold the stream open, as a real client does for the whole session.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let exported_while_open = spans
+            .exporter
+            .get_finished_spans()
+            .expect("read exported spans")
+            .iter()
+            .any(|span| span.name == "GET /mcp");
+        drop(stream);
+
+        let span = spans
+            .collect()
+            .into_iter()
+            .find(|span| span.name == "GET /mcp")
+            .expect("a span for the standing stream");
+        drop(router);
+        (
+            exported_while_open,
+            span.end_time.duration_since(head).unwrap_or(Duration::ZERO),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_live_get_stream_span_is_exported_while_the_stream_is_open() {
+        // The transport does not hold the span handle it is given in the
+        // request extensions past the response, so a session-long stream does
+        // not keep its span unexported.
+        let (exported_while_open, _) = live_get_stream().await;
+
+        assert!(exported_while_open);
+    }
+
+    #[tokio::test]
+    async fn a_live_get_stream_span_ends_at_the_response_head() {
+        // `tracing-opentelemetry` stamps `end_time` at the span's last exit,
+        // which is the response head as long as nothing carries the span
+        // across the body.
+        let (_, lifetime_beyond_head) = live_get_stream().await;
+
+        assert!(
+            lifetime_beyond_head < Duration::from_millis(40),
+            "the standing stream's span outlived the response head by {lifetime_beyond_head:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_get_span_ends_at_the_response_head() {
+        // `GET /mcp` is the session's standing server-to-client stream and
+        // lives as long as the session. Carrying the span on that body would
+        // report session lifetime as request latency.
+        assert!(
+            span_lifetime_beyond_the_head("GET").await < Duration::from_millis(40),
+            "the GET span waited for its body"
         );
     }
 }
