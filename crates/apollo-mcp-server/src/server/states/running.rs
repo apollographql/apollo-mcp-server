@@ -4901,7 +4901,7 @@ mod integration_tests {
 mod backpressure_tests;
 
 #[cfg(test)]
-mod test_support;
+pub(super) mod test_support;
 
 #[cfg(test)]
 mod method_header_tests;
