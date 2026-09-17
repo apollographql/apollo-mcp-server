@@ -650,6 +650,7 @@ mod test {
     #[tokio::test]
     async fn validate_metric_attributes_success_false() {
         // given
+        let _serialized = crate::GLOBAL_TELEMETRY.lock().await;
         let exporter = InMemoryMetricExporter::default();
         let meter_provider = MeterProviderBuilder::default()
             .with_reader(PeriodicReader::builder(exporter.clone()).build())

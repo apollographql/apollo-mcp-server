@@ -1,9 +1,10 @@
-//! Assertions on the spans the production router actually exports.
+//! Assertions on the telemetry the production router actually exports.
 //!
 //! These drive the real transport through the real layer stack and read the
-//! result back out of an `InMemorySpanExporter`, so they fail when the
-//! exported span kind, name, attributes or parentage drift — not just when the
-//! middleware's internals change.
+//! result back out of an in-memory exporter, so they fail when the exported
+//! span kind, name, attributes or parentage drift — not just when the
+//! middleware's internals change. The last module does the same for the HTTP
+//! server metrics the layer stack emits.
 
 use axum::Router;
 use axum::body::Body;
@@ -827,6 +828,114 @@ mod body_lifetime {
         assert!(
             span_lifetime_beyond_the_head("GET").await < Duration::from_millis(40),
             "the GET span waited for its body"
+        );
+    }
+}
+
+mod http_server_metrics {
+    use super::*;
+    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
+
+    /// Every metric one request leaves on the provider the server installs.
+    ///
+    /// Installing a meter provider is process-global, so this runs once and
+    /// every test here reads the same observation. Two tests each installing
+    /// their own provider would race, and whichever lost would see an empty
+    /// export — [`crate::GLOBAL_TELEMETRY`] holds off the ones in other
+    /// modules, `graphql.rs` among them.
+    async fn exported_metric_names() -> &'static [String] {
+        static NAMES: tokio::sync::OnceCell<Vec<String>> = tokio::sync::OnceCell::const_new();
+
+        NAMES
+            .get_or_init(|| async {
+                let _serialized = crate::GLOBAL_TELEMETRY.lock().await;
+                let exporter = InMemoryMetricExporter::default();
+                let provider = SdkMeterProvider::builder()
+                    .with_reader(PeriodicReader::builder(exporter.clone()).build())
+                    .build();
+                opentelemetry::global::set_meter_provider(provider.clone());
+
+                let response = production_router(create_test_running())
+                    .oneshot(mcp_request("/mcp"))
+                    .await
+                    .expect("router responds");
+                assert_eq!(response.status(), StatusCode::OK);
+                http_body_util::BodyExt::collect(response.into_body())
+                    .await
+                    .expect("read response body");
+
+                provider.force_flush().expect("flush metrics");
+                exporter
+                    .get_finished_metrics()
+                    .expect("read exported metrics")
+                    .iter()
+                    .flat_map(|resource| resource.scope_metrics())
+                    .flat_map(|scope| scope.metrics())
+                    .map(|metric| metric.name().to_string())
+                    .collect()
+            })
+            .await
+    }
+
+    /// The `http.server.*` metrics `docs/source/telemetry.mdx` documents.
+    ///
+    /// Three of the four are experimental in the semantic conventions, so
+    /// `axum-otel-metrics` can rename them under a version bump. That already
+    /// happened once — `http.server.duration` became
+    /// `http.server.request.duration` — and left the docs wrong until someone
+    /// read the crate. `documents_every_metric_the_server_emits` fails the
+    /// build instead.
+    const DOCUMENTED: [&str; 4] = [
+        "http.server.request.duration",
+        "http.server.active_requests",
+        "http.server.request.body.size",
+        "http.server.response.body.size",
+    ];
+
+    #[tokio::test]
+    async fn documents_every_metric_the_server_emits() {
+        let undocumented: Vec<&str> = exported_metric_names()
+            .await
+            .iter()
+            .map(String::as_str)
+            .filter(|name| name.starts_with("http.server."))
+            .filter(|name| !DOCUMENTED.contains(name))
+            .collect();
+
+        assert!(
+            undocumented.is_empty(),
+            "these metrics are emitted but missing from the telemetry docs: {undocumented:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn emits_every_metric_it_documents() {
+        // The other direction: an upstream rename shows up above as an
+        // undocumented metric, but an upstream *removal* would leave the docs
+        // promising something nothing emits.
+        let emitted = exported_metric_names().await;
+        let missing: Vec<&str> = DOCUMENTED
+            .into_iter()
+            .filter(|documented| !emitted.iter().any(|name| name == documented))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "the telemetry docs list these metrics but nothing emits them: {missing:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn reach_the_provider_the_server_installs() {
+        // `axum-otel-metrics` takes its meter from `opentelemetry::global`. A
+        // build of that crate against a different major version of
+        // `opentelemetry` reads a different global, so the layer records into
+        // a no-op provider and nothing is exported.
+        let names = exported_metric_names().await;
+
+        assert!(
+            names.iter().any(|name| name.starts_with("http.server.")),
+            "no http.server.* metric was exported: {names:?}"
         );
     }
 }
