@@ -40,9 +40,10 @@ impl ServerHandler for ModernProtocolService {
 
     fn accepted_subscription_filter(
         &self,
-        requested: &SubscriptionFilter,
+        _requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        self.0.accepted_subscription_filter(requested)
+        // Opt in alongside the future protocol version, bypassing the production gate.
+        Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
@@ -291,6 +292,49 @@ async fn production_still_rejects_future_protocol_subscriptions() {
     );
     assert!(response.get("result").is_none());
     assert_eq!(running.tool_list_changes.receiver_count(), 0);
+}
+
+#[rstest::rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(10))]
+async fn production_rejects_subscriptions_after_stdio_discovery() {
+    let running = create_test_running();
+    let handler = running.for_service();
+    let (server_io, client_io) = tokio::io::duplex(8192);
+    let server = AbortOnDropHandle::new(tokio::spawn(async move {
+        handler.serve(server_io).await.unwrap().waiting().await
+    }));
+    let (read, mut write) = tokio::io::split(client_io);
+    let mut reader = BufReader::new(read).lines();
+
+    // rmcp permits discovery with an older supported version. This selects
+    // the modern lifecycle even though the production version cap is unchanged.
+    let mut discover = message(1, "server/discover", json!({}));
+    discover["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("2025-11-25");
+    write_message(&mut write, discover).await;
+    let discovery = read_message(&mut reader).await;
+    assert_eq!(discovery["id"], 1);
+    assert!(discovery.get("result").is_some(), "{discovery}");
+
+    let mut listen = message(
+        2,
+        "subscriptions/listen",
+        json!({"notifications": {"toolsListChanged": true}}),
+    );
+    listen["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("2025-11-25");
+    write_message(&mut write, listen).await;
+    // The first message must reject the request, before any acknowledgement.
+    let response = read_message(&mut reader).await;
+    assert_eq!(response["id"], 2, "{response}");
+    assert_eq!(response["error"]["code"], ErrorCode::METHOD_NOT_FOUND.0);
+    assert_eq!(running.tool_list_changes.receiver_count(), 0);
+
+    drop(write);
+    drop(reader);
+    assert!(matches!(
+        server.await.unwrap().unwrap(),
+        rmcp::service::QuitReason::Closed
+    ));
 }
 
 #[rstest::rstest]

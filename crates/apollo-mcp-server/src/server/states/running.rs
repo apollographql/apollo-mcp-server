@@ -731,6 +731,11 @@ impl ServerHandler for McpService {
         &self,
         _requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
+        // rmcp permits the discovery lifecycle with older protocol versions,
+        // so version negotiation alone does not keep subscriptions staged.
+        if MAX_SUPPORTED_PROTOCOL_VERSION < ProtocolVersion::V_2026_07_28 {
+            return None;
+        }
         Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
