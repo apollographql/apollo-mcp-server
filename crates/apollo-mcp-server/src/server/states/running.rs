@@ -729,11 +729,12 @@ impl ServerHandler for McpService {
 
     fn accepted_subscription_filter(
         &self,
-        requested: &SubscriptionFilter,
+        _requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        Some(requested.intersection(&SubscriptionFilter::builder().tools_list_changed().build()))
+        Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
+    #[tracing::instrument(skip_all, parent = get_parent_span(context.request_context()), fields(apollo.mcp.request_id = %context.request_context().id))]
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
         let shutdown = &self.application.cancellation_token;
         // The SDK also enforces the accepted filter in SubscriptionSink. Keep
@@ -775,14 +776,22 @@ impl ServerHandler for McpService {
                     error!(?error, "Failed to deliver tool list change on subscription");
                     return Ok(());
                 }
-                Err(error) => {
-                    // Filter violations indicate a handler bug; end this
+                Err(
+                    error @ (SubscriptionSendError::NotificationNotAccepted(_)
+                    | SubscriptionSendError::UnsupportedNotification(_)),
+                ) => {
+                    // Invalid notifications indicate a handler bug; end this
                     // subscription instead of retrying on every catalog change.
                     error!(?error, "Failed to deliver tool list change on subscription");
                     return Err(McpError::internal_error(
                         "Failed to deliver tool list change notification",
                         None,
                     ));
+                }
+                Err(error) => {
+                    // Unknown errors may be recoverable. Keep listening so a
+                    // later catalog change can trigger another delivery attempt.
+                    error!(?error, "Failed to deliver tool list change on subscription");
                 }
             }
         }
