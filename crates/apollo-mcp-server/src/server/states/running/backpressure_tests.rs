@@ -1,9 +1,7 @@
 //! Real-transport pressure tests. Observers report readiness without altering I/O.
 
 use std::{
-    pin::Pin,
     sync::atomic::{AtomicBool, Ordering},
-    task::{Context, Poll},
     time::Duration,
 };
 
@@ -17,13 +15,13 @@ use rmcp::{
     },
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, DuplexStream},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream},
     sync::mpsc,
 };
 use tokio_util::task::AbortOnDropHandle;
 use tower::ServiceExt as _;
 
-use super::test_support::{SseReader, create_test_running, next_message};
+use super::test_support::{ObservedWriter, SseReader, create_test_running, next_message};
 use super::*;
 
 struct ObservedService {
@@ -52,31 +50,6 @@ impl ServerHandler for ObservedService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         self.inner.list_tools(request, context).await
-    }
-}
-
-struct ObservedWriter {
-    output: DuplexStream,
-    armed: Arc<AtomicBool>,
-    blocked: mpsc::UnboundedSender<()>,
-}
-impl AsyncWrite for ObservedWriter {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bytes: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        let result = Pin::new(&mut self.output).poll_write(cx, bytes);
-        if result.is_pending() && self.armed.swap(false, Ordering::SeqCst) {
-            self.blocked.send(()).unwrap();
-        }
-        result
-    }
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.output).poll_flush(cx)
-    }
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        Pin::new(&mut self.output).poll_shutdown(cx)
     }
 }
 

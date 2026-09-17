@@ -2,9 +2,61 @@ use axum::body::Body;
 use futures::StreamExt as _;
 use serde_json::Value;
 use sse_stream::SseStream;
+use std::{
+    pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
+    task::{Context, Poll},
+};
+use tokio::io::{AsyncWrite, DuplexStream};
+use tokio::sync::mpsc;
 
 use super::*;
 use crate::operations::RawOperation;
+
+/// Reports actual write backpressure once armed, without changing the I/O.
+pub(super) struct ObservedWriter {
+    pub(super) output: DuplexStream,
+    pub(super) armed: Arc<AtomicBool>,
+    pub(super) blocked: mpsc::UnboundedSender<()>,
+}
+
+impl AsyncWrite for ObservedWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let result = Pin::new(&mut self.output).poll_write(cx, bytes);
+        if result.is_pending() && self.armed.swap(false, Ordering::SeqCst) {
+            self.blocked.send(()).unwrap();
+        }
+        result
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.output).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.output).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn observed_writer_delegates_shutdown() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (output, mut peer) = tokio::io::duplex(8);
+    let (blocked, _observed) = mpsc::unbounded_channel();
+    let mut writer = ObservedWriter {
+        output,
+        armed: Arc::new(AtomicBool::new(false)),
+        blocked,
+    };
+
+    writer.shutdown().await.unwrap();
+
+    let mut byte = [0];
+    assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+}
 
 pub(in crate::server::states) fn create_test_running() -> Running {
     let schema =

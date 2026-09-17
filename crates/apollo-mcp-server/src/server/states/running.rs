@@ -13,7 +13,7 @@ use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
     GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
     PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
-    ToolsCapability,
+    SubscriptionFilter, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -22,7 +22,7 @@ use rmcp::{
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
         ServerCapabilities, ServerInfo,
     },
-    service::{NotificationContext, RequestContext},
+    service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
@@ -700,8 +700,12 @@ impl ServerHandler for McpService {
         // `supported_protocol_versions` below bounds both this call and the
         // re-negotiation rmcp runs afterwards on every transport (#803).
         let info = self.negotiate_initialize(&request)?;
-        self.notifications
-            .initialize(&self.application.tool_list_changes);
+        // The modern branch becomes reachable when the production cap lifts;
+        // the subscription test wrapper does not exercise this negotiation.
+        if info.protocol_version < ProtocolVersion::V_2026_07_28 {
+            self.notifications
+                .initialize(&self.application.tool_list_changes);
+        }
         Ok(info)
     }
 
@@ -715,12 +719,99 @@ impl ServerHandler for McpService {
     ///
     /// This also narrows rmcp's re-negotiation (run on every transport after
     /// `initialize`), so it can't advertise a newer version from rmcp's
-    /// `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243 headers and
-    /// `subscriptions/listen`, which this server doesn't yet handle).
+    /// `KNOWN_VERSIONS`. Subscription handling is staged separately from
+    /// advertising full `2026-07-28` support.
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(ProtocolVersion::known_up_to(
             &MAX_SUPPORTED_PROTOCOL_VERSION,
         ))
+    }
+
+    fn accepted_subscription_filter(
+        &self,
+        _requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        // rmcp permits the discovery lifecycle with older protocol versions,
+        // so version negotiation alone does not keep subscriptions staged.
+        if MAX_SUPPORTED_PROTOCOL_VERSION < ProtocolVersion::V_2026_07_28 {
+            return None;
+        }
+        Some(SubscriptionFilter::builder().tools_list_changed().build())
+    }
+
+    #[tracing::instrument(skip_all, parent = get_parent_span(context.request_context()), fields(apollo.mcp.request_id = %context.request_context().id))]
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
+        let shutdown = &self.application.cancellation_token;
+        // The SDK also enforces the accepted filter in SubscriptionSink. Keep
+        // our opt-in boundary explicit before allocating a catalog receiver.
+        if context.accepted().tools_list_changed != Some(true) {
+            // No supported notifications can arrive on this stream.
+            return Ok(());
+        }
+
+        let mut changes = self.application.tool_list_changes.subscribe();
+        // rmcp acknowledges before entering this handler. An initial refresh
+        // covers catalog updates during that setup window, without replaying
+        // history. Register first so updates during the send remain pending.
+        changes.mark_changed();
+        loop {
+            tokio::select! {
+                biased;
+                _ = context.cancelled() => return Ok(()),
+                _ = shutdown.cancelled() => return Ok(()),
+                changed = changes.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                }
+            }
+            let result = tokio::select! {
+                biased;
+                _ = context.cancelled() => return Ok(()),
+                _ = shutdown.cancelled() => return Ok(()),
+                result = context.sink().notify_tool_list_changed() => result,
+            };
+            match result {
+                Ok(()) => {}
+                Err(
+                    SubscriptionSendError::SubscriptionClosed
+                    | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
+                ) => return Ok(()),
+                Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(error))) => {
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - stopping subscription delivery"
+                    );
+                    return Ok(());
+                }
+                Err(
+                    error @ (SubscriptionSendError::NotificationNotAccepted(_)
+                    | SubscriptionSendError::UnsupportedNotification(_)),
+                ) => {
+                    // Invalid notifications indicate a handler bug; end this
+                    // subscription instead of retrying on every catalog change.
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - stopping subscription delivery"
+                    );
+                    return Err(McpError::internal_error(
+                        "Failed to deliver tool list change notification",
+                        None,
+                    ));
+                }
+                Err(error) => {
+                    // Unknown errors may be recoverable. Keep listening so a
+                    // later catalog change can trigger another delivery attempt.
+                    // rmcp 3.3.0's notification-send path only returns the transport
+                    // errors handled above, so real-context tests cannot reach
+                    // this fallback for future SDK errors.
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - keeping subscription open"
+                    );
+                }
+            }
+        }
     }
 
     #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
@@ -3461,8 +3552,8 @@ mod integration_tests {
 
         #[tokio::test]
         async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // rmcp has a constant for 2026-07-28, but this server doesn't
-            // implement that revision (SEP-2243 headers, subscriptions/listen).
+            // Subscription support is staged, but advertising 2026-07-28
+            // remains a separate rollout of the complete revision.
             // The stateless path must cap at the max supported version rather
             // than advertise a version whose follow-up requests we can't
             // handle.
@@ -4831,3 +4922,6 @@ pub(super) mod test_support;
 
 #[cfg(test)]
 mod method_header_tests;
+
+#[cfg(test)]
+mod subscription_tests;
