@@ -773,7 +773,10 @@ impl ServerHandler for McpService {
                     | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
                 ) => return Ok(()),
                 Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(error))) => {
-                    error!(?error, "Failed to deliver tool list change on subscription");
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - stopping subscription delivery"
+                    );
                     return Ok(());
                 }
                 Err(
@@ -782,7 +785,10 @@ impl ServerHandler for McpService {
                 ) => {
                     // Invalid notifications indicate a handler bug; end this
                     // subscription instead of retrying on every catalog change.
-                    error!(?error, "Failed to deliver tool list change on subscription");
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - stopping subscription delivery"
+                    );
                     return Err(McpError::internal_error(
                         "Failed to deliver tool list change notification",
                         None,
@@ -791,7 +797,13 @@ impl ServerHandler for McpService {
                 Err(error) => {
                     // Unknown errors may be recoverable. Keep listening so a
                     // later catalog change can trigger another delivery attempt.
-                    error!(?error, "Failed to deliver tool list change on subscription");
+                    // rmcp 3.3.0's notification-send path only returns the transport
+                    // errors handled above, so real-context tests cannot reach
+                    // this fallback for future SDK errors.
+                    error!(
+                        ?error,
+                        "Failed to deliver tool list change - keeping subscription open"
+                    );
                 }
             }
         }
