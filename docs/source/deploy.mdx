@@ -3,9 +3,23 @@ title: Deploy the MCP Server
 subtitle: Deployment using Docker containers, when to choose which option, and production considerations
 ---
 
-To deploy Apollo MCP Server in your production environment, use the recommended [Apollo Runtime Container](#apollo-runtime-container-recommended). You can also use a [standalone Apollo MCP Server container](#standalone-apollo-mcp-server-container) if needed.
+To deploy Apollo MCP Server in your production environment, use the [Apollo GraphOS Operator](#deploy-on-kubernetes-with-the-apollo-graphos-operator-recommended-for-kubernetes) if you're running on Kubernetes. Otherwise, use the [Apollo Runtime Container](#apollo-runtime-container-recommended-for-non-kubernetes-deployments). A [standalone Apollo MCP Server container](#standalone-apollo-mcp-server-container) is also available if you need to run it separately from your GraphQL API.
 
-## Apollo Runtime Container (Recommended)
+## Deploy on Kubernetes with the Apollo GraphOS Operator (Recommended for Kubernetes)
+
+If you run Apollo Router on Kubernetes using the [Apollo GraphOS Operator](/apollo-operator/), use it to deploy Apollo MCP Server too. The operator manages the Deployment, Service, ConfigMap, and ephemeral graph API key Secret for you, and can wire an MCP Server directly to an existing Router it also manages.
+
+<Note>
+
+Deploying Apollo MCP Server this way requires Apollo GraphOS Operator v1.5.0 or later.
+
+</Note>
+
+The operator forces `transport.stateful_mode: false`, so the session-affinity requirements described under [Load Balancing & Session Affinity](#load-balancing--session-affinity) don't apply to operator-managed deployments — its plain Kubernetes Service works without any special load balancer configuration.
+
+For setup instructions, see the [Apollo GraphOS Operator documentation](/apollo-operator/).
+
+## Apollo Runtime Container (Recommended for non-Kubernetes deployments)
 
 For most production deployments, use the all-in-one [Apollo Runtime Container](/graphos/routing/self-hosted/containerization/docker). It includes everything you need to serve both GraphQL and MCP requests in a single, optimized container.
 
@@ -80,13 +94,13 @@ docker run \
 
 ## When to choose which option?
 
-| Scenario                            | Recommended Option           | Why                                                                                                       |
-| ----------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| New GraphQL + MCP deployment        | Apollo Runtime Container     | Single container, easier to manage, optimized performance                                                 |
-| GraphOS-managed graph               | Apollo Runtime Container     | Automatic sync for schema and persisted queries, unified telemetry                                        |
-| Kubernetes/orchestrated environment | Apollo Runtime Container     | Fewer moving parts, simpler networking                                                                    |
-| Adding MCP to existing GraphQL API  | Standalone Apollo MCP Server | Connect to your existing GraphQL endpoint                                                                 |
-| Local development                   | `rover dev`                  | [Run `rover dev`](/apollo-mcp-server/run#with-the-rover-cli) to develop locally with both GraphQL and MCP |
+| Scenario                                      | Recommended Option           | Why                                                                                                       |
+|-----------------------------------------------|------------------------------|-----------------------------------------------------------------------------------------------------------|
+| Kubernetes environment                        | Apollo GraphOS Operator      | Manages the Deployment/Service/ConfigMap/Secret lifecycle for you                                         |
+| New GraphQL + MCP deployment (non-Kubernetes) | Apollo Runtime Container     | Single container, easier to manage, optimized performance                                                 |
+| GraphOS-managed graph (non-Kubernetes)        | Apollo Runtime Container     | Automatic sync for schema and persisted queries, unified telemetry                                        |
+| Adding MCP to existing GraphQL API            | Standalone Apollo MCP Server | Connect to your existing GraphQL endpoint                                                                 |
+| Local development                             | `rover dev`                  | [Run `rover dev`](/apollo-mcp-server/run#with-the-rover-cli) to develop locally with both GraphQL and MCP |
           
 ## Production Considerations
 
