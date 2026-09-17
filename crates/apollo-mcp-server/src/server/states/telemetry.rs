@@ -1,13 +1,28 @@
-use axum::extract::Request;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+use crate::generated::telemetry::TelemetryAttribute;
+use axum::body::Body;
+use axum::extract::{MatchedPath, Request};
 use axum::middleware::Next;
 use axum::response::Response;
+use axum_tracing_opentelemetry::tracing_opentelemetry_instrumentation_sdk::http::{
+    http_flavor, http_host, user_agent,
+};
 use http::HeaderValue;
+use http::Method;
+use http::uri::Authority;
+use http_body::{Body as HttpBody, Frame, SizeHint};
 use opentelemetry::Context as OtelContext;
 use opentelemetry::baggage::{BaggageExt, KeyValueMetadata};
 use opentelemetry::global;
 use opentelemetry::propagation::{Extractor, TextMapCompositePropagator};
-use opentelemetry::trace::{TraceContextExt, TraceId};
+use opentelemetry::trace::{SpanKind, TraceContextExt, TraceId};
 use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
+use opentelemetry_semantic_conventions::attribute::{
+    ERROR_TYPE, HTTP_REQUEST_METHOD_ORIGINAL, HTTP_RESPONSE_STATUS_CODE, HTTP_ROUTE,
+    OTEL_STATUS_CODE, SERVER_ADDRESS, SERVER_PORT, USER_AGENT_ORIGINAL,
+};
 use rmcp::RoleServer;
 use rmcp::service::RequestContext;
 use tracing::Instrument;
@@ -126,7 +141,8 @@ pub fn w3c_text_map_propagator() -> TextMapCompositePropagator {
     ])
 }
 
-// Middleware that extracts and stores OpenTelemetry context in request extensions
+/// Open the OpenTelemetry `SERVER` span that every inbound request runs in,
+/// and record the response on it once the request completes.
 pub async fn otel_context_middleware(mut request: Request, next: Next) -> Response {
     let parent_cx = global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderExtractor::new(request.headers()))
@@ -135,31 +151,172 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
 
     request.extensions_mut().insert(parent_cx.clone()); // Store the OtelContext directly in extensions
 
-    let span = tracing::info_span!(
-        "mcp_server",
-        method = %request.method(),
-        uri = %request.uri(),
-        session_id = tracing::field::Empty,
-        status_code = tracing::field::Empty,
-    );
+    // Only the `initialize` response assigns a session; every later request
+    // carries it inbound instead, so read both ends to label the whole session.
+    let inbound_session_id = session_id(request.headers()).map(str::to_owned);
+
+    // `GET /mcp` is the session's standing server-to-client stream: its body
+    // never ends while the session lives. Only a body that terminates with the
+    // request may carry the span.
+    let body_ends_with_the_request = request.method() != Method::GET;
+
+    let span = server_span(&request);
     let _ = span.set_parent(parent_cx);
 
     request.extensions_mut().insert(span.clone()); // Store the span in request extensions
 
     let response = next.run(request).instrument(span.clone()).await;
 
-    span.record("status_code", tracing::field::display(response.status()));
-
-    if let Some(session_id) = response
-        .headers()
-        .get("mcp-session-id")
-        .and_then(|v| v.to_str().ok())
-    {
-        span.record("session_id", tracing::field::display(session_id));
+    let status = response.status();
+    span.record(HTTP_RESPONSE_STATUS_CODE, i64::from(status.as_u16()));
+    if status.is_server_error() {
+        // The conventions leave a server span's status unset below 5xx, and ask
+        // for the status code as `error.type` when the status signals the error.
+        span.record(OTEL_STATUS_CODE, "ERROR");
+        span.record(ERROR_TYPE, status.as_str());
     }
 
-    response
+    // A rejected request never joined a session, so the id it carried is just
+    // client input: recording it would let any caller, authenticated or not,
+    // write an arbitrary value into this attribute.
+    let accepted_session_id = status
+        .is_success()
+        .then_some(inbound_session_id.as_deref())
+        .flatten();
+    if let Some(session_id) = session_id(response.headers()).or(accepted_session_id) {
+        span.record(TelemetryAttribute::SessionId.as_str(), session_id);
+    }
+
+    if body_ends_with_the_request {
+        response.map(|inner| Body::new(BodyWithSpan { inner, span }))
+    } else {
+        response
+    }
 }
+
+fn session_id(headers: &http::HeaderMap) -> Option<&str> {
+    headers
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+}
+
+/// Polls the response body inside the request span.
+///
+/// A streamable-HTTP POST returns its head as soon as the transport accepts the
+/// request, then runs the tool while the SSE body streams. `tracing` ends a span
+/// at its last exit, so a span left behind with the head would report a fraction
+/// of the request's duration and close before its own children.
+struct BodyWithSpan {
+    inner: Body,
+    span: tracing::Span,
+}
+
+impl HttpBody for BodyWithSpan {
+    type Data = <Body as HttpBody>::Data;
+    type Error = <Body as HttpBody>::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        let this = self.get_mut();
+        let _entered = this.span.enter();
+        Pin::new(&mut this.inner).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// Build the span for an inbound request, following the [HTTP server span
+/// conventions].
+///
+/// [HTTP server span conventions]: https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span
+fn server_span(request: &Request) -> tracing::Span {
+    // axum reports no `MatchedPath` for a nested catch-all match, so a subpath
+    // of the MCP endpoint has no route. The conventions want `http.route` left
+    // off entirely in that case, not set to an empty string.
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str);
+    // An extension method would otherwise reach both the span name and
+    // `http.request.method`, letting a caller inflate their cardinality.
+    let method = request.method();
+    let known_method = KNOWN_METHODS.contains(&method.as_str());
+    let (method_name, span_method) = if known_method {
+        (method.as_str(), method.as_str())
+    } else {
+        ("_OTHER", "HTTP")
+    };
+    let name = match route {
+        Some(route) => format!("{span_method} {route}"),
+        None => span_method.to_string(),
+    };
+    // The conventions keep the host and the port in separate attributes, but
+    // the `Host` header carries both.
+    let host = http_host(request);
+    let authority = host.parse::<Authority>().ok();
+    let (address, port) = match &authority {
+        Some(authority) => (authority.host(), authority.port_u16()),
+        None => (host, None),
+    };
+
+    // `url.query` is deliberately absent: it is opt-in, nothing in the MCP
+    // protocol uses it, and a client could put credentials there.
+    let span = tracing::info_span!(
+        "http_request",
+        otel.name = name.as_str(),
+        otel.kind = ?SpanKind::Server,
+        otel.status_code = tracing::field::Empty,
+        http.request.method = method_name,
+        http.request.method_original = tracing::field::Empty,
+        http.route = tracing::field::Empty,
+        http.response.status_code = tracing::field::Empty,
+        // This server never terminates TLS, so the scheme of the connection it
+        // served is always plaintext. A scheme in the request URI would
+        // describe the caller's side of a proxy, which belongs in a collector
+        // rule rather than here.
+        url.scheme = "http",
+        url.path = request.uri().path(),
+        network.protocol.version = %http_flavor(request.version()),
+        // Recorded below only when present: the conventions read an empty
+        // value as "measured, and empty" rather than "not reported".
+        server.address = tracing::field::Empty,
+        server.port = tracing::field::Empty,
+        user_agent.original = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+        apollo.mcp.session_id = tracing::field::Empty,
+    );
+    if !known_method {
+        span.record(HTTP_REQUEST_METHOD_ORIGINAL, method.as_str());
+    }
+    if let Some(route) = route {
+        span.record(HTTP_ROUTE, route);
+    }
+    if !address.is_empty() {
+        span.record(SERVER_ADDRESS, address);
+    }
+    if let Some(port) = port {
+        span.record(SERVER_PORT, i64::from(port));
+    }
+    let user_agent = user_agent(request);
+    if !user_agent.is_empty() {
+        span.record(USER_AGENT_ORIGINAL, user_agent);
+    }
+    span
+}
+
+/// The methods the OpenTelemetry HTTP conventions recognize. Anything else is
+/// reported as `_OTHER`, with the original in `http.request.method_original`.
+const KNOWN_METHODS: [&str; 9] = [
+    "CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE",
+];
 
 // Helper function to retrieve the parent span from the request context
 pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {

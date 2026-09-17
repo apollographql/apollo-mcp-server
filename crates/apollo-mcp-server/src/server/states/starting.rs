@@ -216,12 +216,7 @@ impl Starting {
                             error!("Failed to enable auth middleware: {}", e);
                         })?;
                 }
-                let mut router = with_cors(router, &self.config.cors)?
-                    .layer(HttpMetricsLayerBuilder::new().build())
-                    // include trace context as header into the response
-                    .layer(OtelInResponseLayer)
-                    // start OpenTelemetry trace on incoming request
-                    .layer(axum::middleware::from_fn(otel_context_middleware));
+                let mut router = with_telemetry_layers(with_cors(router, &self.config.cors)?);
 
                 // Add health check endpoint if configured
                 if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
@@ -254,6 +249,19 @@ impl Starting {
 
         Ok(running)
     }
+}
+
+/// Wrap every route registered so far in the telemetry layers.
+///
+/// Routes added after this call — the health check — stay untraced on purpose,
+/// so probes don't show up as service entry points.
+pub(super) fn with_telemetry_layers(router: axum::Router) -> axum::Router {
+    router
+        .layer(HttpMetricsLayerBuilder::new().build())
+        // include trace context as header into the response
+        .layer(OtelInResponseLayer)
+        // start OpenTelemetry trace on incoming request
+        .layer(axum::middleware::from_fn(otel_context_middleware))
 }
 
 /// Construct the production transport, including cancellation of open streams.
