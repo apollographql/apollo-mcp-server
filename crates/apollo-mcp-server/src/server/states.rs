@@ -460,7 +460,7 @@ mod tests {
     use crate::operations::{MutationMode, RawOperation};
     use crate::server::Transport;
     use crate::server_info::ServerInfoConfig;
-    use apollo_mcp_rhai::RhaiEngine;
+    use apollo_mcp_rhai::SharedRhaiEngine;
 
     use super::{Config, Configuring, Running, State, StateMachine};
 
@@ -496,7 +496,7 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            rhai_engine: SharedRhaiEngine::new("rhai"),
             caching: Caching::default(),
         }
     }

@@ -143,7 +143,7 @@ When you throw a non-map value, the actual error message isn't forwarded to the 
 
 ## Global state
 
-Variables defined at the top level of `main.rhai` persist across all hook calls for the lifetime of the server. This is useful for values that don't change between requests, like environment-based configuration:
+Variables defined at the top level of `main.rhai` are initialized when the server loads the script, and again after each successful reload. Hooks read the values captured at load time. This is useful for values that don't change between requests, like environment-based configuration:
 
 ```rhai
 let backend_url = Env::get("BACKEND_URL");
@@ -157,6 +157,10 @@ fn on_execute_graphql_operation(ctx) {
 
 <Caution>
 
-Global variables are shared across all hook invocations. Avoid relying on a mutable global state because the order in which concurrent requests execute hooks can vary.
+Keep top-level code free of side effects. Rhai re-executes the top-level statements before every hook call, so an HTTP request or any other side effect placed there runs once per request, even though hooks read the values captured at load time.
+
+Each hook invocation also gets its own copy of these variables so that hooks can run concurrently. A value a hook writes to one is discarded when the hook returns, so top-level variables can't carry state from one request to the next.
+
+Hooks for concurrent requests run in parallel, so their side effects interleave in any order. Don't write a hook that assumes it runs to completion before the next request's hook starts.
 
 </Caution>

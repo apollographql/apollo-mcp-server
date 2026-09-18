@@ -1,37 +1,19 @@
-use std::sync::Arc;
-
-use parking_lot::Mutex;
 use rhai::EvalAltResult;
 
-use crate::engine::RhaiEngine;
+use crate::shared_engine::SharedRhaiEngine;
 
-pub fn on_startup(engine: &Arc<Mutex<RhaiEngine>>) -> Result<(), Box<EvalAltResult>> {
-    let hook_name = "on_startup";
-    let mut engine_guard = engine.lock();
-
-    if !engine_guard.ast_has_function(hook_name) {
-        return Ok(());
-    }
-
-    engine_guard.execute_hook(hook_name, ())?;
+pub fn on_startup(engine: &SharedRhaiEngine) -> Result<(), Box<EvalAltResult>> {
+    engine.current().execute_hook("on_startup", ())?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use parking_lot::Mutex;
-
     use super::on_startup;
-    use crate::engine::RhaiEngine;
+    use crate::shared_engine::SharedRhaiEngine;
 
-    fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
-        let mut engine = RhaiEngine::new("rhai");
-        engine
-            .load_from_string(script)
-            .expect("Script should compile");
-        Arc::new(Mutex::new(engine))
+    fn create_engine(script: &str) -> SharedRhaiEngine {
+        SharedRhaiEngine::from_script("rhai", script).expect("Script should compile")
     }
 
     #[test]
