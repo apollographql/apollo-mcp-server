@@ -162,7 +162,16 @@ The server emits the following metrics, which are invaluable for monitoring and 
 | `apollo.mcp.operation.count`    | Counter   | Incremented for each downstream GraphQL operation executed by a tool.  | `operation.id`, `operation.type`, `success` (bool) |
 | `apollo.mcp.operation.duration` | Histogram | Measures the round-trip duration of each downstream GraphQL operation. | `operation.id`, `operation.type`, `success` (bool) |
 
-In addition to these metrics, the server also emits standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) (e.g., `http.server.duration`, `http.server.active_requests`) courtesy of the `axum-otel-metrics` library.
+In addition to these metrics, the server emits the standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) for every request to the MCP endpoint, courtesy of the `axum-otel-metrics` library.
+
+| Metric Name                      | Type      | Unit     | Stability    | Description                               |
+| -------------------------------- | --------- | -------- | ------------ | ----------------------------------------- |
+| `http.server.request.duration`   | Histogram | seconds  | Stable       | Duration of each HTTP server request.     |
+| `http.server.active_requests`    | UpDownCounter | requests | Experimental | Number of in-flight HTTP server requests. |
+| `http.server.request.body.size`  | Histogram | bytes    | Experimental | Size of each request body.                |
+| `http.server.response.body.size` | Histogram | bytes    | Experimental | Size of each response body.               |
+
+Stability is the status each metric carries in the OpenTelemetry semantic conventions. An experimental metric can be renamed by a future revision of the conventions, so pin a dashboard or an alert to one only if you're willing to update it.
 
 ## Emitted Traces
 
