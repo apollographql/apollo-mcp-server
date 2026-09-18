@@ -40,6 +40,12 @@ health_check:
   listen: 0.0.0.0:8088
 ```
 
+<Note>
+
+The separate health check listener doesn't apply the Host/Origin validation that protects the main MCP endpoint. Bind it to a private or loopback address reachable only by your infrastructure (for example, a Kubernetes pod IP used by kubelet probes), not a publicly routable one.
+
+</Note>
+
 ### Endpoints
 
 The health check provides different responses based on query parameters:
