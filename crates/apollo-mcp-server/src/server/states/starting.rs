@@ -23,7 +23,7 @@ use crate::{
     operations::{MutationMode, RawOperation},
     server::Transport,
 };
-use apollo_mcp_rhai::{RhaiEngine, checkpoints};
+use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
 use super::{Config, Running, shutdown_signal};
 
@@ -145,12 +145,10 @@ impl Starting {
             _ => None, // No health checks for Stdio or when disabled.
         };
 
-        let mut engine = RhaiEngine::new(&self.config.rhai_dir);
-        engine.load_from_path().map_err(|err| {
+        let engine = SharedRhaiEngine::load(&self.config.rhai_dir).map_err(|err| {
             error!("Error loading Rhai scripts: {err}");
             ServerError::RhaiError
         })?;
-        let engine = Arc::new(parking_lot::Mutex::new(engine));
 
         if cfg!(feature = "experimental_rhai") {
             checkpoints::on_startup(&engine).map_err(|err| {

@@ -67,10 +67,10 @@ fn on_execute_graphql_operation(ctx) {
 
 ## Global variables
 
-Variables defined at the top level of `main.rhai` persist across all hook invocations. Use it to store the configuration or state that your hooks need:
+Variables defined at the top level of `main.rhai` are available to every hook invocation. Use them to store the configuration your hooks need:
 
 ```rhai
-// Top-level variables persist across hook calls
+// Top-level variables are available to every hook call
 let api_key = Env::get("MY_API_KEY");
 
 fn on_execute_graphql_operation(ctx) {
