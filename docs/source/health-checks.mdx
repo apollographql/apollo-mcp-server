@@ -26,6 +26,26 @@ health_check:
       unready: 30s
 ```
 
+### Serving on a separate port
+
+By default, the health check is served on the same address and port as the rest of the server. Set `health_check.listen` to serve it on its own address/port instead — useful when the main endpoint sits behind authentication or host validation that you don't want to apply to health checks, or when your infrastructure (like a Kubernetes readiness probe) expects to reach health checks on a dedicated port.
+
+```yaml title="Example health check on a separate port"
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 8000
+health_check:
+  enabled: true
+  listen: 0.0.0.0:8088
+```
+
+<Note>
+
+The separate health check listener doesn't apply the Host/Origin validation that protects the main MCP endpoint. Bind it to a private or loopback address reachable only by your infrastructure (for example, a Kubernetes pod IP used by kubelet probes), not a publicly routable one.
+
+</Note>
+
 ### Endpoints
 
 The health check provides different responses based on query parameters:

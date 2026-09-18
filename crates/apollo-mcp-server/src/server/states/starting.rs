@@ -216,14 +216,34 @@ impl Starting {
                             error!("Failed to enable auth middleware: {}", e);
                         })?;
                 }
-                let mut router = with_telemetry_layers(with_cors(router, &self.config.cors)?);
+                let router = with_telemetry_layers(with_cors(router, &self.config.cors)?);
 
-                // Add health check endpoint if configured
-                if let Some(health_check) = health_check.filter(|h| h.config().enabled) {
-                    router = with_cors(health_check.enable_router(router), &self.config.cors)?;
-                }
+                // Add health check endpoint if configured. When `health_check.listen` is set,
+                // it's served on its own socket instead of being merged into the main router
+                // (below), mirroring how the Apollo Router exposes a separate health-check
+                // listen address.
+                let health_check = health_check.filter(|h| h.config().enabled);
+                let router = match &health_check {
+                    Some(health_check) if health_check.config().listen.is_none() => {
+                        with_cors(health_check.enable_router(router), &self.config.cors)?
+                    }
+                    _ => router,
+                };
 
+                // Do all fallible setup for both listeners — building each router and binding
+                // each socket — before spawning either serving task.
+                let health_listen_addr = health_check.as_ref().and_then(|h| h.config().listen);
                 let tcp_listener = tokio::net::TcpListener::bind(listen_address).await?;
+                let health = match (health_check, health_listen_addr) {
+                    (Some(health_check), Some(listen_addr)) => {
+                        let health_router = with_cors(health_check.router(), &self.config.cors)?;
+                        let health_listener = tokio::net::TcpListener::bind(listen_addr).await?;
+                        Some((health_listener, health_router))
+                    }
+                    _ => None,
+                };
+
+                let health_cancellation_token = cancellation_token.clone();
                 tokio::spawn(async move {
                     if let Err(e) =
                         serve_http(tcp_listener, router, cancellation_token, shutdown_signal())
@@ -232,6 +252,21 @@ impl Starting {
                         error!("Failed to start MCP server: {e:?}");
                     }
                 });
+
+                if let Some((health_listener, health_router)) = health {
+                    tokio::spawn(async move {
+                        if let Err(e) = serve_http(
+                            health_listener,
+                            health_router,
+                            health_cancellation_token,
+                            shutdown_signal(),
+                        )
+                        .await
+                        {
+                            error!("Failed to start MCP server health check listener: {e:?}");
+                        }
+                    });
+                }
             }
             Transport::Stdio {} => {
                 info!("Starting MCP server in stdio mode");
@@ -321,57 +356,89 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn start_basic_server() {
-        let starting = Starting {
-            config: Config {
-                rhai_dir: std::path::PathBuf::from("rhai"),
-                transport: Transport::StreamableHttp {
-                    auth: None,
-                    address: "127.0.0.1".parse().unwrap(),
-                    port: 7799,
-                    stateful_mode: false,
-                    host_validation: HostValidationConfig::default(),
-                },
-                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
-                mutation_mode: MutationMode::All,
-                execute_introspection: true,
-                headers: HeaderMap::new(),
-                forward_headers: vec![],
-                validate_introspection: true,
-                introspect_introspection: true,
-                search_introspection: true,
-                introspect_minify: false,
-                search_minify: false,
-                execute_tool_hint: None,
-                introspect_tool_hint: None,
-                search_tool_hint: None,
-                validate_tool_hint: None,
-                explorer_graph_ref: None,
-                custom_scalar_map: None,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: false,
-                disable_auth_token_passthrough: false,
-                descriptions: std::collections::HashMap::new(),
-                annotations: std::collections::HashMap::new(),
-                required_scopes: std::collections::HashMap::new(),
-                search_leaf_depth: 5,
-                index_memory_bytes: 1024 * 1024 * 1024,
-                health_check: HealthCheckConfig {
-                    enabled: true,
-                    ..Default::default()
-                },
-                cors: Default::default(),
-                server_info: Default::default(),
-                instructions: None,
-                caching: Default::default(),
+    fn config(port: u16, health_check: HealthCheckConfig) -> Config {
+        Config {
+            rhai_dir: std::path::PathBuf::from("rhai"),
+            transport: Transport::StreamableHttp {
+                auth: None,
+                address: "127.0.0.1".parse().unwrap(),
+                port,
+                stateful_mode: false,
+                host_validation: HostValidationConfig::default(),
             },
+            endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+            mutation_mode: MutationMode::All,
+            execute_introspection: true,
+            headers: HeaderMap::new(),
+            forward_headers: vec![],
+            validate_introspection: true,
+            introspect_introspection: true,
+            search_introspection: true,
+            introspect_minify: false,
+            search_minify: false,
+            execute_tool_hint: None,
+            introspect_tool_hint: None,
+            search_tool_hint: None,
+            validate_tool_hint: None,
+            explorer_graph_ref: None,
+            custom_scalar_map: None,
+            disable_type_description: false,
+            disable_schema_description: false,
+            enable_output_schema: false,
+            disable_auth_token_passthrough: false,
+            descriptions: std::collections::HashMap::new(),
+            annotations: std::collections::HashMap::new(),
+            required_scopes: std::collections::HashMap::new(),
+            search_leaf_depth: 5,
+            index_memory_bytes: 1024 * 1024 * 1024,
+            health_check,
+            cors: Default::default(),
+            server_info: Default::default(),
+            instructions: None,
+            caching: Default::default(),
+        }
+    }
+
+    fn starting(config: Config) -> Starting {
+        Starting {
+            config,
             schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
                 .expect("Valid schema"),
             operations: vec![],
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn start_basic_server() {
+        let starting = starting(config(
+            7799,
+            HealthCheckConfig {
+                enabled: true,
+                ..Default::default()
+            },
+        ));
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn health_check_bind_failure_leaves_no_listener_running() {
+        // Configuring the health check to listen on the same address as the main transport
+        // guarantees the second bind fails, once the first has already claimed the port.
+        let addr: SocketAddr = "127.0.0.1:7802".parse().unwrap();
+        let starting = starting(config(
+            7802,
+            HealthCheckConfig {
+                enabled: true,
+                listen: Some(addr),
+                ..Default::default()
+            },
+        ));
+
+        assert!(starting.start().await.is_err());
+
+        // If the main listener had been left running (the bug this guards against), binding a
+        // fresh listener on the same port here would fail with "address in use".
+        assert!(tokio::net::TcpListener::bind(addr).await.is_ok());
     }
 }
