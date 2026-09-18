@@ -88,7 +88,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
         health_check: None,
         server_info: Default::default(),
         instructions: None,
-        rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+        rhai_engine: SharedRhaiEngine::new("rhai"),
         caching: Default::default(),
     }
 }

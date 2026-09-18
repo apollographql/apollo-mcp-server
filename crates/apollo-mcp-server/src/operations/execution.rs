@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use http::HeaderMap;
 use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use parking_lot::Mutex;
 use rmcp::model::{CallToolResult, JsonObject};
 use serde_json::Value;
 use url::Url;
@@ -12,7 +9,7 @@ use url::Url;
 use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::server::states::telemetry::current_trace_id;
-use apollo_mcp_rhai::{RhaiEngine, checkpoints};
+use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
 use super::Operation;
 
@@ -25,7 +22,7 @@ pub(crate) async fn find_and_execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
-    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    rhai_engine: &SharedRhaiEngine,
     axum_parts: Option<&Parts>,
 ) -> Option<Result<CallToolResult, McpError>> {
     let operation = operations.iter().find(|op| op.as_ref().name == tool_name)?;
@@ -48,7 +45,7 @@ pub(crate) async fn execute_operation(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
-    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    rhai_engine: &SharedRhaiEngine,
     axum_parts: Option<&Parts>,
     tool_name: &str,
 ) -> Result<CallToolResult, McpError> {
@@ -109,7 +106,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &"http://localhost:4000".parse().unwrap(),
-            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await;
@@ -166,7 +163,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await;
