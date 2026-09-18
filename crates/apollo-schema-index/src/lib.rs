@@ -382,7 +382,7 @@ impl SchemaIndex {
         debug!("Index query: {:?}", query);
 
         // Get the top GraphQL schema types matching the search terms
-        let top_docs = searcher.search(&query, &TopDocs::with_limit(100))?;
+        let top_docs = searcher.search(&query, &TopDocs::with_limit(100).order_by_score())?;
 
         // Map each type name to its score
         for (score, doc_address) in top_docs {
@@ -424,7 +424,8 @@ impl SchemaIndex {
                 // Create a query to find the document for the current type
                 let term = Term::from_field_text(self.raw_type_name_field, current_type.as_str());
                 let type_query = TermQuery::new(term, IndexRecordOption::Basic);
-                let type_search = searcher.search(&type_query, &TopDocs::with_limit(1))?;
+                let type_search =
+                    searcher.search(&type_query, &TopDocs::with_limit(1).order_by_score())?;
                 let current_type_doc: Option<TantivyDocument> = type_search
                     .first()
                     .and_then(|(_, type_doc_address)| searcher.doc(*type_doc_address).ok());
