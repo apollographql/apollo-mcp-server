@@ -302,6 +302,8 @@ overrides:
 | `idempotent_hint`  | `bool`   | If `true`, calling the tool repeatedly has no additional effect      |
 | `open_world_hint`  | `bool`   | If `true`, the tool interacts with systems outside its own domain    |
 
+These overrides apply to tools generated from your GraphQL operations. The server's own built-in tools (`introspect`, `search`, `validate`, `execute`, and `explorer`) carry annotations that aren't configurable — an `annotations` entry named after one of them is ignored.
+
 For more details on MCP tool annotations, see the [MCP specification](https://modelcontextprotocol.io/specification/2025-11-25/server/tools).
 
 ## Generated tool schemas
@@ -588,6 +590,10 @@ You can enable the following introspection tools:
 - `execute`: Parses one ad hoc operation, applies the configured operation-type restrictions, and forwards it to the GraphQL endpoint.
 
 The MCP client can use these tools to provide schema information to the model and its context window, and allow the model to execute GraphQL operations based on that schema.
+
+One more built-in tool sits outside the `introspection` key:
+
+- `explorer`: returns a URL that opens a GraphQL operation in Apollo Explorer. It doesn't read the schema or call the GraphQL endpoint; it compresses the document, variables, and headers it is given into the link. Enable it with [`overrides.enable_explorer`](/apollo-mcp-server/config-file#overrides), which also requires a GraphOS graph reference.
 
 <Caution>
 

@@ -57,11 +57,8 @@ impl Introspect {
             schema,
             allow_mutations: root_mutation_type.is_some(),
             minify,
-            tool: super::annotate_schema_lookup_tool(Tool::new(
-                INTROSPECT_TOOL_NAME,
-                description,
-                schema_from_type!(Input),
-            )),
+            tool: Tool::new(INTROSPECT_TOOL_NAME, description, schema_from_type!(Input))
+                .annotate(super::schema_lookup_annotations()),
         }
     }
 

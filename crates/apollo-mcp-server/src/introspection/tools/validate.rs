@@ -39,11 +39,8 @@ impl Validate {
         let description = append_description_hint(default_description, description_hint);
         Self {
             schema,
-            tool: super::annotate_schema_lookup_tool(Tool::new(
-                VALIDATE_TOOL_NAME,
-                description,
-                schema_from_type!(Input),
-            )),
+            tool: Tool::new(VALIDATE_TOOL_NAME, description, schema_from_type!(Input))
+                .annotate(super::schema_lookup_annotations()),
         }
     }
 

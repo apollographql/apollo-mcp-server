@@ -6,12 +6,16 @@ pub(crate) mod introspect;
 pub(crate) mod search;
 pub(crate) mod validate;
 
-use rmcp::model::{Tool, ToolAnnotations};
+use rmcp::model::ToolAnnotations;
 
-/// Annotate built-in tools that only inspect local schema state.
-fn annotate_schema_lookup_tool(tool: Tool) -> Tool {
-    let mut annotations = ToolAnnotations::new().read_only(true).destructive(false);
-    annotations.idempotent_hint = Some(true);
-    annotations.open_world_hint = Some(false);
-    tool.annotate(annotations)
+/// Annotations for built-in tools that only inspect local schema state.
+///
+/// Their domain of interaction is closed: they read the in-memory schema and never reach the
+/// configured GraphQL endpoint, unlike `execute` and the operation tools.
+fn schema_lookup_annotations() -> ToolAnnotations {
+    ToolAnnotations::new()
+        .read_only(true)
+        .destructive(false)
+        .idempotent(true)
+        .open_world(false)
 }
