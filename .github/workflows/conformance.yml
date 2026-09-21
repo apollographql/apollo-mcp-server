@@ -1,0 +1,28 @@
+name: MCP conformance
+on:
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    name: MCP conformance (2025-11-25)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: e2e/conformance/package-lock.json
+      - name: Run production server conformance
+        run: bash e2e/conformance/run.sh
+      - name: Upload conformance results and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-conformance-2025-11-25
+          path: e2e/conformance/artifacts/
+          if-no-files-found: warn

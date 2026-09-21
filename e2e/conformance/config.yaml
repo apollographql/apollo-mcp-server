@@ -1,0 +1,18 @@
+endpoint: http://127.0.0.1:4101/graphql
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 4100
+schema:
+  source: local
+  path: schema.graphql
+operations:
+  source: local
+  paths:
+    - operations
+overrides:
+  descriptions:
+    test_simple_text: Return deterministic text from the local GraphQL fixture.
+    test_error_handling: Return a deliberate GraphQL execution error.
+health_check:
+  enabled: true

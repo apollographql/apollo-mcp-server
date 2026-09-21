@@ -1,0 +1,3 @@
+query test_simple_text {
+  text
+}

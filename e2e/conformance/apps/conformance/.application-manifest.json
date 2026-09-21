@@ -1,0 +1,8 @@
+{
+  "format": "apollo-ai-app-manifest",
+  "version": "1",
+  "name": "conformance",
+  "hash": "local-fixture-v1",
+  "resource": "index.html",
+  "operations": []
+}
