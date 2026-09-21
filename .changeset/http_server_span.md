@@ -21,4 +21,8 @@ The span also carries `server.address`, `server.port`, `user_agent.original`, `n
 
 Requests that stream a response — every tool call — now report the full request duration rather than the time to the response head, because the span stays open until the body finishes. This is the duration the span should always have carried, but it is several times larger than the old one, so alert thresholds and latency panels built on the previous number need re-baselining. A `GET` on the MCP endpoint is unaffected: it is the session's standing server-to-client stream, and its span still ends at the response head.
 
+If you applied the collector `transform` processor circulated as a stopgap for the span kind — the rule rewriting `mcp_server` from `Internal` to `Server` — remove it. It matches a span name that no longer exists, so it is inert rather than harmful, and upgrading with it still in place produces identical output. Left in, it is dead configuration that invites someone to repair it by widening the match, which would promote startup spans to service entries.
+
+On that workaround, the identity a backend derives from the span also changes, because the span now carries the HTTP attributes the backend keys on. In Datadog the metric `trace.server.request.*` becomes `trace.http.server.request.*` and the resource `mcp_server` becomes `POST /mcp`, so monitors, dashboards and SLOs built on the workaround's names stop reporting rather than fail. A server running without the transform had no such metrics to lose: its inbound span was never a service entry.
+
 Trace context propagation, baggage handling and the rest of the span tree are unchanged.
