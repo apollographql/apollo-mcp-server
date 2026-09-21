@@ -2186,8 +2186,7 @@ mod tests {
             assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
         }
 
-        #[tokio::test]
-        async fn builtin_tools_expose_annotations_in_tools_list() {
+        fn running_with_builtin_tools() -> Running {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
                 .unwrap()
                 .validate()
@@ -2207,46 +2206,47 @@ mod tests {
                 Search::new(schema, false, 1, 15_000_000, false, None)
                     .expect("search tool should index"),
             );
+            running.explorer_tool = Some(Explorer::new("mcp-example@mcp".to_string()));
+            running
+        }
+
+        // Per-tool unit tests pin the hint policy; this one proves the listing path keeps it.
+        // Only `execute` is open-world, because only `execute` calls the GraphQL endpoint.
+        #[tokio::test]
+        #[rstest]
+        #[case::introspect(INTROSPECT_TOOL_NAME, false)]
+        #[case::search(SEARCH_TOOL_NAME, false)]
+        #[case::validate(VALIDATE_TOOL_NAME, false)]
+        #[case::explorer(EXPLORER_TOOL_NAME, false)]
+        #[case::execute(EXECUTE_TOOL_NAME, true)]
+        async fn builtin_tools_expose_annotations_in_tools_list(
+            #[case] tool_name: &str,
+            #[case] open_world: bool,
+        ) {
+            let running = running_with_builtin_tools();
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, None)
+                .list_tools_impl(Extensions::new(), PeerContext::default())
                 .await
                 .unwrap();
 
-            let annotation_of = |name: &str| {
-                result
-                    .tools
-                    .iter()
-                    .find(|tool| tool.name == name)
-                    .and_then(|tool| tool.annotations.clone())
-                    .unwrap_or_else(|| {
-                        panic!("{name} should appear in tools/list with annotations")
-                    })
-            };
-
-            let introspect = annotation_of(INTROSPECT_TOOL_NAME);
-            assert_eq!(introspect.read_only_hint, Some(true));
-            assert_eq!(introspect.destructive_hint, Some(false));
-            assert_eq!(introspect.idempotent_hint, Some(true));
-            assert_eq!(introspect.open_world_hint, Some(false));
-
-            let search = annotation_of(SEARCH_TOOL_NAME);
-            assert_eq!(search.read_only_hint, Some(true));
-            assert_eq!(search.destructive_hint, Some(false));
-            assert_eq!(search.idempotent_hint, Some(true));
-            assert_eq!(search.open_world_hint, Some(false));
-
-            let validate = annotation_of(VALIDATE_TOOL_NAME);
-            assert_eq!(validate.read_only_hint, Some(true));
-            assert_eq!(validate.destructive_hint, Some(false));
-            assert_eq!(validate.idempotent_hint, Some(true));
-            assert_eq!(validate.open_world_hint, Some(false));
-
-            let execute = annotation_of(EXECUTE_TOOL_NAME);
-            assert_eq!(execute.read_only_hint, Some(true));
-            assert_eq!(execute.destructive_hint, Some(false));
-            assert_eq!(execute.idempotent_hint, Some(true));
-            assert_eq!(execute.open_world_hint, Some(true));
+            let annotations = result
+                .tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .and_then(|tool| tool.annotations.clone())
+                .unwrap_or_else(|| {
+                    panic!("{tool_name} should appear in tools/list with annotations")
+                });
+            assert_eq!(
+                (
+                    annotations.read_only_hint,
+                    annotations.destructive_hint,
+                    annotations.idempotent_hint,
+                    annotations.open_world_hint,
+                ),
+                (Some(true), Some(false), Some(true), Some(open_world))
+            );
         }
 
         #[tokio::test]

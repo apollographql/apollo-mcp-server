@@ -46,11 +46,12 @@ impl Execute {
         );
         // Ad hoc mutations are only allowed in MutationMode::All.
         let permits_mutation = mutation_mode == MutationMode::All;
-        let mut annotations = ToolAnnotations::new()
+        let annotations = ToolAnnotations::new()
             .read_only(!permits_mutation)
-            .destructive(permits_mutation);
-        annotations.idempotent_hint = Some(!permits_mutation);
-        annotations.open_world_hint = Some(true);
+            .destructive(permits_mutation)
+            .idempotent(!permits_mutation)
+            // Unlike the schema-only tools, this one calls the configured GraphQL endpoint.
+            .open_world(true);
 
         Self {
             mutation_mode,
@@ -111,6 +112,7 @@ mod tests {
     use crate::introspection::tools::execute::Execute;
     use crate::operations::MutationMode;
     use rmcp::serde_json::{Value, json};
+    use rstest::rstest;
 
     #[test]
     fn execute_query_with_variables_as_string() {
@@ -276,29 +278,34 @@ mod tests {
         assert!(matches!(result, Err(ValidationError(msg)) if msg.contains("Invalid variables")));
     }
 
-    #[test]
-    fn execute_annotations_when_mutations_disabled() {
-        for mode in [MutationMode::None, MutationMode::Explicit] {
-            let annotations = Execute::new(mode, None)
-                .tool
-                .annotations
-                .expect("execute tool must expose annotations");
-            assert_eq!(annotations.read_only_hint, Some(true));
-            assert_eq!(annotations.destructive_hint, Some(false));
-            assert_eq!(annotations.idempotent_hint, Some(true));
-            assert_eq!(annotations.open_world_hint, Some(true));
-        }
-    }
-
-    #[test]
-    fn execute_annotations_when_mutations_enabled() {
-        let annotations = Execute::new(MutationMode::All, None)
+    // Only `MutationMode::All` permits ad hoc mutations, so only it makes `execute` writable.
+    #[rstest]
+    #[case::mutations_blocked(MutationMode::None, true)]
+    #[case::predefined_mutations_only(MutationMode::Explicit, true)]
+    #[case::ad_hoc_mutations_allowed(MutationMode::All, false)]
+    fn execute_annotations_follow_mutation_mode(
+        #[case] mutation_mode: MutationMode,
+        #[case] read_only: bool,
+    ) {
+        let annotations = Execute::new(mutation_mode, None)
             .tool
             .annotations
             .expect("execute tool must expose annotations");
-        assert_eq!(annotations.read_only_hint, Some(false));
-        assert_eq!(annotations.destructive_hint, Some(true));
-        assert_eq!(annotations.idempotent_hint, Some(false));
-        assert_eq!(annotations.open_world_hint, Some(true));
+
+        assert_eq!(
+            (
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+                annotations.open_world_hint,
+            ),
+            (
+                Some(read_only),
+                Some(!read_only),
+                Some(read_only),
+                // Always open: the tool calls the configured GraphQL endpoint.
+                Some(true)
+            )
+        );
     }
 }
