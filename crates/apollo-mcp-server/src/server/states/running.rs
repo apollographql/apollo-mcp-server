@@ -2209,7 +2209,7 @@ mod tests {
             );
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, None)
+                .list_tools_impl(Extensions::new(), PeerContext::default())
                 .await
                 .unwrap();
 
