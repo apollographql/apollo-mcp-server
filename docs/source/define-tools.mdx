@@ -179,6 +179,31 @@ Hot-reloaded operation and schema sources can change tool names, descriptions, i
 
 Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates a tool description using the GraphQL schema's field and type descriptions.
 
+### Operation descriptions
+
+Add a description before the operation definition, as defined by the [GraphQL September 2025 specification](https://spec.graphql.org/September2025/). MCP Server uses it as the tool description.
+
+```graphql title="operations/GetAlerts.graphql" {1-3}
+"""
+Get active weather alerts for a US state
+"""
+query GetAlerts($state: String!) {
+  alerts(state: $state) {
+    severity
+    description
+    instruction
+  }
+}
+```
+
+Operation descriptions take priority over `#` comments. MCP Server removes descriptions from operations, fragments, and variables before sending an operation to your GraphQL endpoint, so the endpoint doesn't need to support this syntax.
+
+<Note>
+
+Your router parses persisted query manifests itself. Keep using `#` comments in manifest operations until your router supports descriptions on executable definitions.
+
+</Note>
+
 ### GraphQL comments in operation bodies
 
 Embed `#` comments before the operation definition. MCP Server extracts leading comments and uses them as the tool description.
@@ -245,7 +270,7 @@ overrides:
     GetForecast: "Get a detailed weather forecast for a geographic coordinate"
 ```
 
-Config-level descriptions take priority over comment-based and schema-generated tool descriptions when both are present for the same operation. Keys must exactly match operation names. An unmatched or renamed operation uses its source-derived description, and the server doesn't warn about unmatched description keys.
+Config-level descriptions take priority over operation descriptions, comment-based descriptions, and schema-generated tool descriptions for the same operation. Keys must exactly match operation names. An unmatched or renamed operation uses its source-derived description, and the server doesn't warn about unmatched description keys.
 
 `overrides.descriptions` controls only the top-level tool description. It doesn't change or pin the operation name, input property names, descriptions, annotations, or executable GraphQL document.
 
