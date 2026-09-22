@@ -23,7 +23,7 @@ use crate::{
 
 use super::{
     AnnotationOverrides, MutationMode, RawOperation,
-    executable_descriptions::{has_executable_descriptions, strip_executable_descriptions},
+    executable_descriptions::{non_blank_description, strip_executable_descriptions},
     private_fields::{
         PrivateFieldTree, collect_named_fragments, collect_private_fields, strip_private_directives,
     },
@@ -178,18 +178,14 @@ impl Operation {
                 None
             };
 
-            let stripped_source_text =
-                (has_private_fields || has_executable_descriptions(&document)).then(|| {
-                    let document = if has_private_fields {
-                        strip_private_directives(&document)
-                    } else {
-                        document.clone()
-                    };
-                    strip_executable_descriptions(document)
-                        .serialize()
-                        .no_indent()
-                        .to_string()
-                });
+            let mut outgoing = if has_private_fields {
+                strip_private_directives(&document)
+            } else {
+                document.clone()
+            };
+            let stripped_descriptions = strip_executable_descriptions(&mut outgoing);
+            let stripped_source_text = (has_private_fields || stripped_descriptions)
+                .then(|| outgoing.serialize().no_indent().to_string());
             let private_fields = has_private_fields.then_some(private_tree);
 
             let is_query = operation.operation_type != OperationType::Mutation;
@@ -244,12 +240,7 @@ impl Operation {
         disable_type_description: bool,
         disable_schema_description: bool,
     ) -> String {
-        let operation_description = operation_def
-            .description
-            .as_deref()
-            .map(str::trim)
-            .filter(|description| !description.is_empty())
-            .map(str::to_string);
+        let operation_description = non_blank_description(operation_def.description.as_ref());
 
         match operation_description.or_else(|| extract_and_format_comments(comments)) {
             Some(description) => description,
@@ -542,10 +533,14 @@ pub fn variable_description_overrides(
                 let comment = last_offset
                     .map(|start_offset| &source_text[start_offset..source_span.offset()]);
 
-                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#'))
-                    && let Some(description) =
-                        extract_and_format_comments(Some(description.to_string()))
-                {
+                let variable_description = non_blank_description(v.description.as_ref());
+                let comment_description = || {
+                    comment
+                        .filter(|d| !d.is_empty() && d.contains('#'))
+                        .and_then(|d| extract_and_format_comments(Some(d.to_string())))
+                };
+
+                if let Some(description) = variable_description.or_else(comment_description) {
                     argument_overrides_map.insert(v.name.to_string(), description);
                 }
 
@@ -3988,6 +3983,84 @@ mod tests {
           "type": "object"
         }
         "#);
+    }
+
+    #[test]
+    fn operation_variable_descriptions_override_schema_descriptions() {
+        let operation = RawOperation::from((
+            "query QueryName(\"\"\"Spec description\"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"],
+            "Spec description"
+        );
+    }
+
+    #[test]
+    fn operation_variable_descriptions_override_variable_comments() {
+        let operation = RawOperation::from((
+            "query QueryName(# id comment override\n\"\"\"Spec description\"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"], "Spec description",
+            "the variable description should take priority over its comment"
+        );
+    }
+
+    #[test]
+    fn blank_operation_variable_description_falls_back_to_variable_comment() {
+        let operation = RawOperation::from((
+            "query QueryName(# id comment override\n\"\"\"   \"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"],
+            "id comment override"
+        );
     }
 
     #[test]

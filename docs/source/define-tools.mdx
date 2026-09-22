@@ -204,6 +204,23 @@ Your router parses persisted query manifests itself. Keep using `#` comments in 
 
 </Note>
 
+### Variable descriptions
+
+Add a description before an operation variable to set its input property description:
+
+```graphql title="operations/GetAlerts.graphql" {2}
+query GetAlerts(
+  "Two-letter US state abbreviation"
+  $state: String!
+) {
+  alerts(state: $state) {
+    severity
+  }
+}
+```
+
+Variable descriptions take priority over `#` comments on the same variable and over descriptions derived from GraphQL schema arguments. A description applies to the variable as a whole, so it can't describe individual fields of an input object type. Like variable comments, variable descriptions aren't affected by `overrides.descriptions`.
+
 ### GraphQL comments in operation bodies
 
 Embed `#` comments before the operation definition. MCP Server extracts leading comments and uses them as the tool description.
