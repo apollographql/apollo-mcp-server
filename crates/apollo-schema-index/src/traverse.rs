@@ -102,7 +102,7 @@ impl SchemaExt for Schema {
                                         && obj
                                             .implements_interfaces
                                             .iter()
-                                            .any(|iface| iface.name == interface.name)
+                                            .any(|iface| **iface == interface.name)
                                     {
                                         return Some((
                                             &obj.name,
@@ -117,7 +117,7 @@ impl SchemaExt for Schema {
                                 }));
                             }
                             ExtendedType::Union(union) => {
-                                stack.extend(union.members.iter().map(|member| &member.name).map(
+                                stack.extend(union.members.iter().map(|member| &**member).map(
                                     |next_type| {
                                         (
                                             next_type,

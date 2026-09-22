@@ -67,6 +67,9 @@ pub enum ServerError {
     #[error("Could not parse GraphQL schema: {0}")]
     GraphQLSchema(Box<WithErrors<Schema>>),
 
+    #[error("Could not parse the API schema derived from the supergraph: {0}")]
+    ApiSchema(Box<WithErrors<Schema>>),
+
     #[error("Could not parse GraphQL schema: {0}")]
     GraphQLDocumentSchema(Box<WithErrors<Document>>),
 

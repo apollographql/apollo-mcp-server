@@ -266,9 +266,7 @@ impl Operation {
                                                 let name = name.to_string();
                                                 name == field_name
                                             })
-                                            .map(|(_, field_definition)| {
-                                                field_definition.node.clone()
-                                            });
+                                            .map(|(_, field_definition)| field_definition.clone());
 
                                         // Add the root field description to the tool description
                                         let field_description = field_definition

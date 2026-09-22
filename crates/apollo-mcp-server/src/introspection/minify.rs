@@ -107,7 +107,7 @@ fn minify_directives(directives: &apollo_compiler::ast::DirectiveList) -> String
 fn minify_fields(
     fields: &apollo_compiler::collections::IndexMap<
         apollo_compiler::Name,
-        apollo_compiler::schema::Component<apollo_compiler::ast::FieldDefinition>,
+        apollo_compiler::Node<apollo_compiler::ast::FieldDefinition>,
     >,
 ) -> String {
     let mut result = String::new();
@@ -147,7 +147,7 @@ fn minify_fields(
 fn minify_input_fields(
     fields: &apollo_compiler::collections::IndexMap<
         apollo_compiler::Name,
-        apollo_compiler::schema::Component<apollo_compiler::ast::InputValueDefinition>,
+        apollo_compiler::Node<apollo_compiler::ast::InputValueDefinition>,
     >,
 ) -> String {
     let mut result = String::new();
@@ -213,7 +213,9 @@ fn format_type_name_with_description(
 }
 
 fn format_interfaces(
-    interfaces: &apollo_compiler::collections::IndexSet<apollo_compiler::schema::ComponentName>,
+    interfaces: &apollo_compiler::collections::IndexSet<
+        apollo_compiler::Node<apollo_compiler::Name>,
+    >,
 ) -> String {
     interfaces
         .iter()

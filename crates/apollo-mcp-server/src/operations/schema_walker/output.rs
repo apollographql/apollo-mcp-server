@@ -522,8 +522,8 @@ fn get_field_definition(
     field_name: &str,
 ) -> Option<Node<apollo_compiler::schema::FieldDefinition>> {
     match parent_type {
-        ExtendedType::Object(obj) => obj.fields.get(field_name).map(|f| f.node.clone()),
-        ExtendedType::Interface(iface) => iface.fields.get(field_name).map(|f| f.node.clone()),
+        ExtendedType::Object(obj) => obj.fields.get(field_name).cloned(),
+        ExtendedType::Interface(iface) => iface.fields.get(field_name).cloned(),
         _ => None,
     }
 }
