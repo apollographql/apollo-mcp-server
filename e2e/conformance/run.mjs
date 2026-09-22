@@ -92,8 +92,8 @@ try {
   try { code = await suite.done; } finally { clearTimeout(timeout); }
   const log = await readFile(join(artifacts, 'conformance.log'), 'utf8');
   console.log(log.slice(Math.max(0, log.indexOf('=== SUMMARY ==='))));
-  await verifyResults(results, baseline);
   if (graphql.stopped || server.stopped) throw new Error('A fixture process exited during the suite');
+  await verifyResults(results, baseline);
   if (code !== 0) throw new Error(`Conformance suite exited with ${code}`);
   console.log('Conformance baseline and GraphQL fixture assertions passed.');
 } catch (error) {
