@@ -179,6 +179,19 @@ Hot-reloaded operation and schema sources can change tool names, descriptions, i
 
 Tool descriptions help AI models understand when and how to use each tool. If no custom description is provided, the MCP Server automatically generates a tool description using the GraphQL schema's field and type descriptions.
 
+Use [operation descriptions](#operation-descriptions) for operations you own and [config-level descriptions](#config-level-descriptions) for operations you can't edit.
+
+### Description precedence
+
+When more than one source is present, the first one in this order wins:
+
+1. [Config-level descriptions](#config-level-descriptions)
+2. [Operation descriptions](#operation-descriptions)
+3. [`#` comments](#graphql-comments-in-operation-bodies)
+4. Descriptions generated from the schema
+
+Variable descriptions follow the same order, except that config-level descriptions don't apply to them.
+
 ### Operation descriptions
 
 Add a description before the operation definition, as defined by the [GraphQL September 2025 specification](https://spec.graphql.org/September2025/). MCP Server uses it as the tool description.
