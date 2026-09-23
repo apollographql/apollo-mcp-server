@@ -1,0 +1,33 @@
+# Observed on 2026-09-18 with rmcp 3.3.0 and conformance 0.2.0-alpha.11.
+# These are unsupported fixture behaviors, not established spec violations.
+# Scope every exception to a check so wire-schema validation stays enforced.
+server:
+  # GraphQL tools return JSON as text, not these MCP content block types.
+  - tools-call-image:tools-call-image
+  - tools-call-audio:tools-call-audio
+  - tools-call-embedded-resource:tools-call-embedded-resource
+  - tools-call-mixed-content:tools-call-mixed-content
+
+  # No configured tool can emit these notifications or client requests.
+  - tools-call-with-logging:tools-call-with-logging
+  - tools-call-with-progress:tools-call-with-progress
+  - tools-call-sampling:tools-call-sampling
+  - tools-call-elicitation:tools-call-elicitation
+  - elicitation-sep1034-defaults:elicitation-sep1034-general
+  - elicitation-sep1330-enums:elicitation-sep1330-general
+
+  # Resource reads use Apollo app routing; generic test:// resources and
+  # resource subscriptions cannot be configured by this fixture.
+  - resources-read-text:resources-read-text
+  - resources-read-binary:resources-read-binary
+  - resources-templates-read:resources-templates-read
+  - resources-subscribe:resources-subscribe
+  - resources-unsubscribe:resources-unsubscribe
+
+  # Markdown prompt templates produce text, not images or embedded resources.
+  - prompts-get-embedded-resource:prompts-get-embedded-resource
+  - prompts-get-with-image:prompts-get-with-image
+
+# The requirements manifest also runs three unscored scenarios. Its pending
+# json-schema-2020-12 fixture tool is absent; that failure is reported by the
+# suite but does not affect its exit code and is not baselined here.
