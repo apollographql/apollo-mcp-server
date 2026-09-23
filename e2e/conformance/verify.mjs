@@ -3,9 +3,9 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 
-export async function verifyResults(results, baseline) {
+export async function verifyResults(results, baseline, revision) {
   const requirements = parse(await readFile(new URL(
-    './node_modules/@modelcontextprotocol/conformance/requirements/2025-11-25.yaml', import.meta.url,
+    `./node_modules/@modelcontextprotocol/conformance/requirements/${revision}.yaml`, import.meta.url,
   ), 'utf8'));
   const expected = [...requirements.server, ...requirements.not_scored
     .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
