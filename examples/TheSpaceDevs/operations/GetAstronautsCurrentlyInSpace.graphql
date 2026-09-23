@@ -1,3 +1,6 @@
+"""
+Get a list of astronauts currently in space with their name, nationality, and agency
+"""
 query GetAstronautsCurrentlyInSpace {
   astronauts(inSpace: true, search: "") {
     results {
