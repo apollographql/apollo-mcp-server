@@ -157,8 +157,9 @@ fn build_selection_set_schema(
 
                     properties.insert(response_key.clone(), field_schema.into());
 
-                    // Non-null fields are required in the response
-                    if field_def.ty.is_non_null() {
+                    // GraphQL permits repeated selections, but JSON Schema requires
+                    // unique entries in `required`. Preserve selection order.
+                    if field_def.ty.is_non_null() && !required.contains(&response_key) {
                         required.push(response_key);
                     }
                 } else {
