@@ -3,7 +3,7 @@
 //! This module generates JSON schemas from GraphQL operation selection sets,
 //! enabling MCP tools to declare their output schema.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use apollo_compiler::{
     Name as GraphQLName, Node, Schema as GraphQLSchema,
@@ -418,24 +418,36 @@ fn named_type_to_output_schema(
                 }
             }
 
-            // Union types - anyOf the possible types based on inline fragments. Member
+            // Union types - anyOf the possible types based on fragments. Member
             // schemas carry no discriminator and allow extra properties, so one response
             // object can match several members and `oneOf` would reject it.
-            Some(ExtendedType::Union(_union_def)) => {
+            Some(ExtendedType::Union(union_def)) => {
                 if selection_set.is_empty() {
                     json_schema!({})
                 } else {
-                    // Collect schemas for each possible type from inline fragments
+                    // Collect schemas for the selected type conditions.
                     let mut type_schemas = Vec::new();
+                    let mut covered_conditions = Vec::new();
 
                     for selection in selection_set {
-                        if let Selection::InlineFragment(fragment) = selection
-                            && let Some(type_condition) = &fragment.type_condition
+                        let fragment = match selection {
+                            Selection::InlineFragment(fragment) => fragment
+                                .type_condition
+                                .as_ref()
+                                .map(|condition| (condition, fragment.selection_set.as_slice())),
+                            Selection::FragmentSpread(spread) => named_fragments
+                                .get(spread.fragment_name.as_str())
+                                .map(|fragment| {
+                                    (&fragment.type_condition, fragment.selection_set.as_slice())
+                                }),
+                            Selection::Field(_) => None,
+                        };
+                        if let Some((type_condition, fragment_selections)) = fragment
                             && let Some(member_type) =
                                 graphql_schema.types.get(type_condition.as_str())
                         {
                             let member_schema = build_selection_set_schema(
-                                &fragment.selection_set,
+                                fragment_selections,
                                 member_type,
                                 graphql_schema,
                                 custom_scalar_map,
@@ -444,11 +456,58 @@ fn named_type_to_output_schema(
                                 private_tree,
                             );
                             type_schemas.push(member_schema);
+                            covered_conditions.push(type_condition.as_str());
                         }
                     }
 
-                    if type_schemas.is_empty() {
-                        // No inline fragments - just return empty schema
+                    // A member with no matching fragment still produces an object (possibly
+                    // empty). Keep validating selected fields on covered members by allowing
+                    // the fallback only when their fragment-specific response keys are absent.
+                    let has_uncovered_member = union_def.members.iter().any(|member| {
+                        !covered_conditions.iter().any(|condition| {
+                            *condition == member.as_str()
+                                || graphql_schema.is_subtype(condition, member.as_str())
+                        })
+                    });
+
+                    if has_uncovered_member {
+                        let common_keys: BTreeSet<_> = selection_set
+                            .iter()
+                            .filter_map(|selection| match selection {
+                                Selection::Field(field) => {
+                                    Some(field.alias.as_ref().unwrap_or(&field.name).to_string())
+                                }
+                                _ => None,
+                            })
+                            .collect();
+                        let mut fragment_keys = BTreeSet::new();
+                        for schema in &type_schemas {
+                            if let Some(properties) = schema
+                                .as_object()
+                                .and_then(|object| object.get("properties"))
+                                .and_then(Value::as_object)
+                            {
+                                fragment_keys.extend(
+                                    properties
+                                        .keys()
+                                        .filter(|key| !common_keys.contains(key.as_str()))
+                                        .cloned(),
+                                );
+                            }
+                        }
+                        let fallback = if fragment_keys.is_empty() {
+                            json_schema!({"type": "object"})
+                        } else {
+                            let selected_fields: Vec<_> = fragment_keys
+                                .into_iter()
+                                .map(|key| json_schema!({"required": [key]}))
+                                .collect();
+                            json_schema!({"type": "object", "not": {"anyOf": selected_fields}})
+                        };
+                        type_schemas.push(fallback);
+                        json_schema!({"anyOf": type_schemas})
+                    } else if type_schemas.is_empty() {
+                        // No fragment schemas were collected.
                         json_schema!({})
                     } else if type_schemas.len() == 1 {
                         type_schemas.remove(0)

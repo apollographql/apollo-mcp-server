@@ -97,6 +97,20 @@ fn check_tool(tool: &Value) {
     assert_eq!(tool["inputSchema"]["type"], "object");
     // GraphQL returns an object response envelope even when selected fields are lists/scalars.
     assert_eq!(tool["outputSchema"]["type"], "object");
+    assert_eq!(
+        tool["inputSchema"]["properties"]["filter"]["$ref"],
+        "#/definitions/Filter"
+    );
+    assert!(tool["inputSchema"]["properties"]["choice"]["anyOf"].is_array());
+    let conditional = &tool["inputSchema"]["definitions"]["Choice"]["allOf"][0];
+    for keyword in ["if", "then", "else"] {
+        assert!(conditional[keyword].is_object(), "missing {keyword}");
+    }
+    assert!(
+        tool["outputSchema"]["properties"]["data"]["properties"]["search"]["items"]["anyOf"]
+            .is_array()
+    );
+    assert!(tool["outputSchema"]["properties"]["errors"]["items"]["properties"]["path"]["items"]["oneOf"].is_array());
     let input = validator(&tool["inputSchema"]);
     let output = validator(&tool["outputSchema"]);
     let valid_input = json!({"filter": {"status": "OPEN", "matrix": [[1, 2], []],
@@ -152,8 +166,8 @@ fn check_tool(tool: &Value) {
     assert!(input.is_valid(&number_choice));
     number_choice["choice"]["value"] = json!("wrong");
     assert!(!input.is_valid(&number_choice));
-    let response = json!({"data": {"search": [{"name": "Ada"}, {"title": "Team"},
-        {"name": "Ada", "title": "Team"}], "node": {"id": "1", "name": "Ada"},
+    let response = json!({"data": {"search": [{"name": "Ada"}, {"title": "Team"}],
+        "node": {"id": "1", "name": "Ada"},
         "choice": {"kind": "number", "value": 3}}});
     assert!(output.is_valid(&response));
     for pointer in ["/data/search/0/name", "/data/node/id", "/data/choice/value"] {
@@ -249,4 +263,47 @@ fn repeated_non_null_selections_produce_valid_required_keywords() {
     let output = validator(&tool["outputSchema"]);
     assert!(output.is_valid(&json!({"data": {"node": {"id": "1"}}})));
     assert!(!output.is_valid(&json!({"data": {"node": {}}})));
+}
+
+#[test]
+fn union_schema_accepts_members_without_a_matching_fragment() {
+    let tool = wire_tool(&fixture_with_query(
+        "query PartialUnion { search(filter: {status: OPEN, matrix: []}, count: 1) { ... on User { name } } }",
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"name": "Ada"}]}})));
+    // Team has no selected fields, so its valid GraphQL result is an empty object.
+    assert!(output.is_valid(&json!({"data": {"search": [{}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [false]}})));
+}
+
+#[test]
+fn union_schema_validates_named_fragment_members() {
+    let tool = wire_tool(&fixture_with_query(
+        r#"
+        query NamedUnion {
+            search(filter: {status: OPEN, matrix: []}, count: 1) {
+                ...UserFields
+                ...TeamFields
+            }
+        }
+        fragment UserFields on User { name }
+        fragment TeamFields on Team { title }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"name": "Ada"}, {"title": "Team"}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"title": false}]}})));
+}
+
+#[test]
+fn union_schema_applies_interface_fragment_to_all_members() {
+    let tool = wire_tool(&fixture_with_query(
+        "query InterfaceUnion { search(filter: {status: OPEN, matrix: []}, count: 1) { ... on Node { id } } }",
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"id": "user"}, {"id": "team"}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{}]}})));
 }

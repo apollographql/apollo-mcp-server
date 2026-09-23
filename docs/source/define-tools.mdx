@@ -566,7 +566,7 @@ The output side follows the same conventions as the input side, with a few diffe
 
 - Nullable fields and lists are wrapped in `anyOf` with `null`. Object fields are `required` when their GraphQL type is non-nullable.
 - `ID` is `{"oneOf": [{"type": "string"}, {"type": "integer"}]}`, since servers may return either.
-- A union field with inline fragments becomes an `anyOf` of one object schema per fragment. For an interface field, fields from inline fragments are merged into a single object schema. `__typename`, when selected, is a plain string and isn't a discriminator.
+- A union field with inline or named fragments becomes an `anyOf` of object schemas for the selected type conditions. If some union members have no matching fragment, a fallback accepts their objects while excluding fields selected only by the other fragments. For an interface field, fields from inline fragments are merged into a single object schema. `__typename`, when selected, is a plain string and isn't a discriminator.
 - Fields marked `@private` are omitted from the schema. See the [`@private` directive](/apollo-mcp-server/mcp-apps-reference#private-directive) for details.
 
 MCP clients that validate `structuredContent` against `outputSchema` reject responses that don't match. The schema aims to accept every response the operation can produce, but it is derived from the operation text and the GraphQL schema alone, so two kinds of valid response currently fail validation:
