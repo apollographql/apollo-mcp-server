@@ -325,7 +325,7 @@ fn build_selection_set_schema(
         }
     }
     let mut branches = Vec::new();
-    for signature in groups {
+    for (signature, keys) in groups.into_iter().zip(&group_keys) {
         let selected: Vec<_> = signature
             .iter()
             .filter_map(|&index| conditional.get(index).copied())
@@ -349,7 +349,17 @@ fn build_selection_set_schema(
                 .collect();
             branch = json_schema!({"allOf": [branch, {"not": {"anyOf": forbidden}}]});
         }
-        branches.push(branch);
+        if keys.iter().any(|key| key_group_count.get(key) == Some(&1)) {
+            // The branch is used by both `anyOf` and a key implication. Store it
+            // once so nested abstract selections do not duplicate exponentially.
+            // `$` cannot start a GraphQL type name, so these keys cannot collide
+            // with enum definitions in the same map.
+            let name = format!("$selectionBranch{}", definitions.len());
+            definitions.insert(name.clone(), branch.into());
+            branches.push(JSONSchema::new_ref(format!("#/definitions/{name}")));
+        } else {
+            branches.push(branch);
+        }
     }
     let mut unique_key_patterns = Vec::new();
     let mut all_unique_keys = Vec::new();

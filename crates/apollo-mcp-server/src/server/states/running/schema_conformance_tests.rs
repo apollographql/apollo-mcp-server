@@ -21,7 +21,7 @@ const SCHEMA: &str = r#"
     scalar Choice
     interface Node { id: ID! }
     interface Named { name: String! }
-    type User implements Node & Named { id: ID!, name: String! }
+    type User implements Node & Named { id: ID!, name: String!, friends: [SearchResult!]! }
     type Team implements Node { id: ID!, title: String!, nickname: String }
     union SearchResult = User | Team
     type Query {
@@ -500,4 +500,40 @@ fn distinct_member_fragments_scale_with_selected_fields() {
         "output grew faster than selected fields: {small_size} -> {large_size}"
     );
     jsonschema::draft202012::meta::validate(&large).unwrap();
+}
+
+#[test]
+fn nested_union_schema_size_grows_with_depth() {
+    fn selection(depth: usize) -> String {
+        if depth == 0 {
+            "... on User { name } ... on Team { title }".to_string()
+        } else {
+            format!(
+                "... on User {{ name friends {{ {} }} }} ... on Team {{ title }}",
+                selection(depth - 1)
+            )
+        }
+    }
+    fn output_schema(depth: usize) -> Value {
+        let query = format!(
+            "query Deep {{ search(filter: {{status: OPEN, matrix: []}}, count: 1) {{ {} }} }}",
+            selection(depth)
+        );
+        wire_tool(&fixture_with_query(&query))["outputSchema"].clone()
+    }
+
+    let sizes: Vec<_> = (1..=4)
+        .map(|depth| serde_json::to_vec(&output_schema(depth)).unwrap().len())
+        .collect();
+    let first_growth = sizes[1] - sizes[0];
+    let last_growth = sizes[3] - sizes[2];
+    assert!(
+        last_growth < first_growth * 2,
+        "nested schema grew exponentially: {sizes:?}"
+    );
+    let deep = output_schema(4);
+    let output = validator(&deep);
+    assert!(output.is_valid(
+        &json!({"data": {"search": [{"name": "Ada", "friends": []}, {"title": "Team"}]}})
+    ));
 }
