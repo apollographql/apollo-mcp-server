@@ -4,6 +4,94 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.20.0 (2026-09-24)
+
+### Features
+
+#### Validate schemas with the GraphQL September 2025 rules
+
+MCP Server now parses schemas with apollo-compiler 2.0, pinned to `2.0.0-beta.1`, which follows the GraphQL September 2025 specification. Schemas you provide directly are validated against its stricter rules, so one that loaded before can now be rejected at startup or on hot reload. For example, `@deprecated` on a required argument, a default value that doesn't match its type, or one object type used for more than one root operation is now an error. Federation already validates the API schema it derives from a supergraph, so rule violations there are logged as warnings instead of preventing the server from starting.
+
+#### Use operation and variable descriptions in tool definitions
+
+Operations and their variables can now carry descriptions, as defined by the GraphQL September 2025 specification. An operation's description becomes the tool description, ahead of leading `#` comments; config-level `overrides.descriptions` still take priority over both. A variable's description becomes its input property description, ahead of a `#` comment on the variable and the schema's argument description. A variable description applies to the variable as a whole; describing individual fields of an input object isn't supported.
+
+Descriptions on operations, fragments, and variables are removed before an operation is sent to the GraphQL endpoint, so endpoints whose parsers predate the syntax, including the Apollo Router, keep working.
+
+#### Advertise a server icon in `initialize`
+
+Server operators can now configure `server_info.icons`, letting the MCP
+`initialize` response advertise one or more icons that clients render
+alongside the server's name. Each entry mirrors the fields of the MCP
+[`Icon`](https://modelcontextprotocol.io/specification/2025-11-25/schema#icon)
+object: `src`, `mime_type`, `sizes`, and `theme`. No icon is advertised
+by default.
+
+### Fixes
+
+#### Annotate built-in introspection tools
+
+The built-in `introspect`, `search`, `validate`, and `execute` tools now expose MCP `ToolAnnotations`. Schema-only tools are marked read-only, non-destructive, and idempotent. `execute` is read-only unless `mutation_mode` is `all`, and is always marked open-world because it calls the configured GraphQL endpoint.
+
+#### Annotate the built-in `explorer` tool
+
+The `explorer` tool now exposes MCP `ToolAnnotations` alongside the other built-ins: read-only, non-destructive, idempotent, and closed-world, since it only formats an Apollo Explorer URL and reaches nothing. Clients that gate auto-approval on `readOnlyHint` no longer prompt for it.
+
+The docs now describe the `explorer` tool itself, and note that `overrides.annotations` applies to operation tools only — an entry named after a built-in tool is ignored.
+
+#### Use method headers for anonymous discovery when the protocol validates them
+
+Anonymous method matching now prefers `Mcp-Method` for SDK-known protocol versions from `2026-07-28` onward, avoiding auth middleware body buffering when the header decides access. Older versions and requests without that header retain the 16 KiB body peek. Tool-name exceptions still inspect the body. The server's advertised protocol versions are unchanged.
+
+The deprecated `allow_anonymous_mcp_discovery` flag retains its existing method list; its documentation and deprecation guidance now also list the already-supported `server/discover`. A local initialization check rejects contradictory method headers to cover rmcp's handshake exemption.
+
+#### Delegate protocol version negotiation to rmcp
+
+This server negotiated the `initialize` protocol version itself, echoing the client's requested version when supported and otherwise falling back to the newest revision it implements. rmcp 3.3.0 exposes that same rule through `ServerHandler::negotiate_initialize`, so the local copy has been removed in favor of the SDK's, along with the hand-filtered list of supported versions that `ProtocolVersion::known_up_to` now derives.
+
+Negotiated versions are unchanged on every transport: a supported version is still echoed back, and anything newer or unrecognized still falls back to the newest revision this server implements.
+
+#### Export the standard HTTP server metrics again
+
+`axum-otel-metrics` supplies the server's `http.server.*` metrics, and it takes
+its meter from `opentelemetry::global`. It was pinned to a version built
+against OpenTelemetry 0.30 while the server runs 0.32, and each major version
+of that crate keeps its own global, so the layer recorded into a no-op provider
+and nothing reached the configured exporter. Every metric the telemetry docs
+attributed to that library was missing.
+
+Upgrading `axum-otel-metrics` to 0.14.1 collapses the two OpenTelemetry
+versions into one, and the metrics now reach the provider the server installs.
+The documented names change with it: the duration histogram follows the current
+conventions as `http.server.request.duration` rather than `http.server.duration`,
+and `http.server.request.body.size` and `http.server.response.body.size` are
+emitted alongside `http.server.active_requests`.
+
+#### Emit a standards-compliant HTTP `SERVER` span for inbound requests
+
+The span wrapping every request to the MCP endpoint was exported as `INTERNAL` and carried its HTTP data under names of this server's own invention, so backends that derive request and error metrics from span kind and status under-counted requests and missed server errors. That span is now a `SERVER` span named `{method} {route}`, with its status set to error on a 5xx response, following the OpenTelemetry [HTTP server span conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span).
+
+Collector rules, dashboards and monitors that match the old span need to change:
+
+| Before | After |
+| --- | --- |
+| span name `mcp_server` | `{method} {route}`, for example `POST /mcp` |
+| span kind `INTERNAL` | `SERVER` |
+| `method` | `http.request.method` |
+| `uri` | `url.path` |
+| `status_code`, a string such as `"200 OK"` | `http.response.status_code`, the integer `200` |
+| `session_id` | `apollo.mcp.session_id` |
+
+The span also carries `server.address`, `server.port`, `user_agent.original`, `network.protocol.version`, `error.type` on a 5xx response, and `http.request.method_original` for a method outside the conventions' set — such a request reports `http.request.method` as `_OTHER` and is named `HTTP {route}`.
+
+Requests that stream a response — every tool call — now report the full request duration rather than the time to the response head, because the span stays open until the body finishes. This is the duration the span should always have carried, but it is several times larger than the old one, so alert thresholds and latency panels built on the previous number need re-baselining. A `GET` on the MCP endpoint is unaffected: it is the session's standing server-to-client stream, and its span still ends at the response head.
+
+Trace context propagation, baggage handling and the rest of the span tree are unchanged.
+
+#### Prepare tool-change subscription streams
+
+Add request-scoped tool-list change subscriptions in preparation for MCP 2026-07-28 support. The supported protocol version and legacy notification behavior are unchanged.
+
 ## 1.19.0 (2026-09-11)
 
 ### Features
