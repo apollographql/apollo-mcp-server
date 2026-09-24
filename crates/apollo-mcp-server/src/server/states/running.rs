@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
-use parking_lot::Mutex;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 #[cfg(test)]
@@ -54,7 +53,7 @@ use crate::{
     },
     operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
 };
-use apollo_mcp_rhai::RhaiEngine;
+use apollo_mcp_rhai::SharedRhaiEngine;
 
 use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 
@@ -86,7 +85,7 @@ pub(super) struct Running {
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
-    pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) rhai_engine: SharedRhaiEngine,
     pub(super) caching: Caching,
 }
 
@@ -235,8 +234,7 @@ impl Running {
     /// Reload Rhai scripts from the configured Rhai directory.
     /// On failure, logs the error and keeps the previous scripts.
     pub(super) fn reload_rhai_scripts(&self) {
-        let mut engine = self.rhai_engine.lock();
-        match engine.reload() {
+        match self.rhai_engine.reload() {
             Ok(()) => {
                 info!("Rhai scripts reloaded successfully");
             }
@@ -1036,7 +1034,7 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            rhai_engine: SharedRhaiEngine::new("rhai"),
             caching: Caching::default(),
         }
     }
@@ -3207,7 +3205,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -3748,7 +3746,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -4725,7 +4723,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -4797,7 +4795,7 @@ mod integration_tests {
                 health_check: None,
                 server_info,
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
