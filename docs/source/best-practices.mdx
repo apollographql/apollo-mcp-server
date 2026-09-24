@@ -7,7 +7,7 @@ subtitle: Guidelines for using Apollo MCP Server
 
 The schema is required for:
 
-- **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding comments to your operation files.
+- **Tool Descriptions**: The schema provides type information used to generate tool descriptions. You can override these descriptions by adding descriptions or comments to your operation files.
 - **Input Schemas**: Use the schema to translate GraphQL input types into JSON Schema that your MCP clients and AI models can use when constructing tool arguments. Apollo MCP Server doesn't independently enforce this generated JSON Schema for predefined operation tools.
 - **Introspection Support**: If you enable the `introspection` option, the schema is used to provide information about available types and operations to AI models.
 

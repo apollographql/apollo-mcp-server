@@ -23,6 +23,7 @@ use crate::{
 
 use super::{
     AnnotationOverrides, MutationMode, RawOperation,
+    executable_descriptions::{non_blank_description, strip_executable_descriptions},
     private_fields::{
         PrivateFieldTree, collect_named_fragments, collect_private_fields, strip_private_directives,
     },
@@ -39,8 +40,8 @@ pub struct Operation {
     pub(crate) tool: Tool,
     pub(crate) inner: RawOperation,
     operation_name: String,
-    /// Query text with `@private` directives stripped, sent downstream instead of `source_text`.
-    /// `None` when the operation has no `@private` directives.
+    /// Query text with `@private` directives and executable descriptions stripped, sent
+    /// downstream instead of `source_text`. `None` when the operation has neither.
     stripped_source_text: Option<String>,
     /// Tree of field paths marked `@private`, used for response filtering.
     /// `None` when the operation has no `@private` directives.
@@ -177,15 +178,15 @@ impl Operation {
                 None
             };
 
-            let (stripped_source_text, private_fields) = if has_private_fields {
-                let stripped_doc = strip_private_directives(&document);
-                (
-                    Some(stripped_doc.serialize().no_indent().to_string()),
-                    Some(private_tree),
-                )
+            let mut outgoing = if has_private_fields {
+                strip_private_directives(&document)
             } else {
-                (None, None)
+                document.clone()
             };
+            let stripped_descriptions = strip_executable_descriptions(&mut outgoing);
+            let stripped_source_text = (has_private_fields || stripped_descriptions)
+                .then(|| outgoing.serialize().no_indent().to_string());
+            let private_fields = has_private_fields.then_some(private_tree);
 
             let is_query = operation.operation_type != OperationType::Mutation;
             let mut annotations = ToolAnnotations::new()
@@ -228,7 +229,8 @@ impl Operation {
         }
     }
 
-    /// Generate a description for an operation based on documentation in the schema
+    /// Generate a tool description from the operation's description, its leading comments,
+    /// or documentation in the schema, in that order
     #[tracing::instrument(skip(comments, tree_shaker, graphql_schema, operation_def), fields(operation_type = ?operation_def.operation_type, operation_id = ?operation_def.name))]
     fn tool_description(
         comments: Option<String>,
@@ -238,9 +240,9 @@ impl Operation {
         disable_type_description: bool,
         disable_schema_description: bool,
     ) -> String {
-        let comment_description = extract_and_format_comments(comments);
+        let operation_description = non_blank_description(operation_def.description.as_ref());
 
-        match comment_description {
+        match operation_description.or_else(|| extract_and_format_comments(comments)) {
             Some(description) => description,
             None => {
                 // Add the tree-shaken types to the end of the tool description
@@ -266,9 +268,7 @@ impl Operation {
                                                 let name = name.to_string();
                                                 name == field_name
                                             })
-                                            .map(|(_, field_definition)| {
-                                                field_definition.node.clone()
-                                            });
+                                            .map(|(_, field_definition)| field_definition.clone());
 
                                         // Add the root field description to the tool description
                                         let field_description = field_definition
@@ -533,10 +533,14 @@ pub fn variable_description_overrides(
                 let comment = last_offset
                     .map(|start_offset| &source_text[start_offset..source_span.offset()]);
 
-                if let Some(description) = comment.filter(|d| !d.is_empty() && d.contains('#'))
-                    && let Some(description) =
-                        extract_and_format_comments(Some(description.to_string()))
-                {
+                let variable_description = non_blank_description(v.description.as_ref());
+                let comment_description = || {
+                    comment
+                        .filter(|d| !d.is_empty() && d.contains('#'))
+                        .and_then(|d| extract_and_format_comments(Some(d.to_string())))
+                };
+
+                if let Some(description) = variable_description.or_else(comment_description) {
                     argument_overrides_map.insert(v.name.to_string(), description);
                 }
 
@@ -3982,6 +3986,84 @@ mod tests {
     }
 
     #[test]
+    fn operation_variable_descriptions_override_schema_descriptions() {
+        let operation = RawOperation::from((
+            "query QueryName(\"\"\"Spec description\"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"],
+            "Spec description"
+        );
+    }
+
+    #[test]
+    fn operation_variable_descriptions_override_variable_comments() {
+        let operation = RawOperation::from((
+            "query QueryName(# id comment override\n\"\"\"Spec description\"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"], "Spec description",
+            "the variable description should take priority over its comment"
+        );
+    }
+
+    #[test]
+    fn blank_operation_variable_description_falls_back_to_variable_comment() {
+        let operation = RawOperation::from((
+            "query QueryName(# id comment override\n\"\"\"   \"\"\" $idArg: ID) { customQuery(id: $idArg) { id } }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+        let tool = Tool::from(operation);
+
+        assert_eq!(
+            tool.input_schema["properties"]["idArg"]["description"],
+            "id comment override"
+        );
+    }
+
+    #[test]
     fn comment_with_parens_has_comments_extracted_correctly() {
         let operation = Operation::from_raw(
             RawOperation {
@@ -5264,6 +5346,197 @@ mod tests {
             operation.tool.description.as_deref(),
             Some(explicit_desc),
             "explicit description should take priority over comment-based description"
+        );
+    }
+
+    #[test]
+    fn operation_description_becomes_tool_description() {
+        let operation = RawOperation::from((
+            "\"\"\"Look up a thing by ID\"\"\"\nquery QueryName($id: ID) { id }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some("Look up a thing by ID")
+        );
+    }
+
+    #[test]
+    fn multiline_operation_description_is_dedented() {
+        let operation = RawOperation::from((
+            "\"\"\"\n    Look up a thing\n    by its ID\n\"\"\"\nquery QueryName($id: ID) { id }"
+                .to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some("Look up a thing\nby its ID")
+        );
+    }
+
+    #[test]
+    fn operation_description_overrides_comments() {
+        let operation = RawOperation::from((
+            "# Comment-based description\n\"\"\"Spec description\"\"\"\nquery QueryName($id: ID) { id }"
+                .to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some("Spec description"),
+            "the operation description should take priority over comment-based description"
+        );
+    }
+
+    #[test]
+    fn explicit_description_overrides_operation_description() {
+        let explicit_desc = "Override from manifest";
+        let description_overrides =
+            HashMap::from([("QueryName".to_string(), explicit_desc.to_string())]);
+        let operation = RawOperation::from((
+            "\"\"\"Spec description\"\"\"\nquery QueryName($id: ID) { id }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &description_overrides,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some(explicit_desc),
+            "explicit description should take priority over the operation description"
+        );
+    }
+
+    #[test]
+    fn blank_operation_description_falls_back_to_comments() {
+        let operation = RawOperation::from((
+            "# Comment-based description\n\"\"\"   \"\"\"\nquery QueryName($id: ID) { id }"
+                .to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            operation.tool.description.as_deref(),
+            Some("Comment-based description")
+        );
+    }
+
+    #[test]
+    fn operation_with_descriptions_sends_text_without_them() {
+        let operation = RawOperation::from((
+            "\"\"\"Look up a thing\"\"\"\nquery QueryName(\"\"\"The ID\"\"\" $id: ID) { id }"
+                .to_string(),
+            None,
+        ))
+        .into_operation(
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.stripped_source_text.unwrap(),
+            @"query QueryName($id: ID) { id }"
+        );
+    }
+
+    #[test]
+    fn operation_with_private_field_and_description_sends_text_without_either() {
+        let schema = Schema::parse(
+            "type Query { fieldA: String, fieldB: String }",
+            "schema.graphql",
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+        let operation = RawOperation::from((
+            "\"\"\"Look up fields\"\"\"\nquery TestOp { fieldA fieldB @private }".to_string(),
+            None,
+        ))
+        .into_operation(
+            &schema,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            true,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap();
+
+        insta::assert_snapshot!(
+            operation.stripped_source_text.unwrap(),
+            @"query TestOp { fieldA fieldB }"
         );
     }
 

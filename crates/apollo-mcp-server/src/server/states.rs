@@ -7,7 +7,7 @@ use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
-use tracing::info;
+use tracing::{info, warn};
 use url::Url;
 
 use crate::{
@@ -264,11 +264,24 @@ impl StateMachine {
     #[allow(clippy::result_large_err)]
     fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
         match Supergraph::new_with_router_specs(&schema_state.sdl) {
-            Ok(supergraph) => Ok(supergraph
-                .to_api_schema(ApiSchemaOptions::default())
-                .map_err(|e| ServerError::Federation(Box::new(e)))?
-                .schema()
-                .clone()),
+            // apollo-federation is still on apollo-compiler 1.x, so re-parse its API schema
+            Ok(supergraph) => {
+                let api_schema = supergraph
+                    .to_api_schema(ApiSchemaOptions::default())
+                    .map_err(|e| ServerError::Federation(Box::new(e)))?
+                    .schema()
+                    .to_string();
+                let schema = Schema::parse(api_schema, "<API schema derived from supergraph>")
+                    .map_err(|e| ServerError::ApiSchema(e.into()))?;
+                // Federation already validated this schema, so only warn about newer rules
+                Ok(schema.validate().unwrap_or_else(|invalid| {
+                    warn!(
+                        "The API schema derived from the supergraph breaks GraphQL September 2025 validation rules:\n{}",
+                        invalid.errors
+                    );
+                    Valid::assume_valid(invalid.partial)
+                }))
+            }
             Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
                 .map_err(|e| ServerError::GraphQLSchema(e.into())),
         }
@@ -444,16 +457,20 @@ impl From<ServerError> for State {
 mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
+    use std::str::FromStr;
     use std::sync::Arc;
 
     use apollo_compiler::Schema;
     use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
+    use apollo_mcp_registry::uplink::schema::SchemaState;
     use reqwest::header::HeaderMap;
     use tokio::sync::RwLock;
     use tokio_util::sync::CancellationToken;
+    use tracing_test::traced_test;
 
     use crate::caching::Caching;
     use crate::cors::CorsConfig;
+    use crate::errors::ServerError;
     use crate::event::Event as ServerEvent;
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
@@ -869,6 +886,117 @@ mod tests {
         assert!(
             matches!(new_state, State::Stopping),
             "expected Configuring to transition to Stopping after Shutdown"
+        );
+    }
+
+    const MINIMAL_SUPERGRAPH: &str = include_str!("testdata/minimal_supergraph.graphql");
+
+    const RICH_SUPERGRAPH: &str = include_str!("testdata/rich_supergraph.graphql");
+
+    fn schema_state(sdl: &str) -> SchemaState {
+        SchemaState::from_str(sdl).unwrap()
+    }
+
+    #[test]
+    fn sdl_to_api_schema_strips_join_types_from_supergraph() {
+        let schema = StateMachine::sdl_to_api_schema(schema_state(MINIMAL_SUPERGRAPH)).unwrap();
+
+        assert!(
+            !schema.types.contains_key("join__Graph"),
+            "expected the API schema to drop federation's join__Graph enum"
+        );
+    }
+
+    #[test]
+    fn sdl_to_api_schema_keeps_root_fields_of_supergraph() {
+        let schema = StateMachine::sdl_to_api_schema(schema_state(MINIMAL_SUPERGRAPH)).unwrap();
+
+        assert!(
+            schema.type_field("Query", "me").is_ok(),
+            "expected Query.me to survive the API schema re-parse"
+        );
+    }
+
+    #[test]
+    fn sdl_to_api_schema_keeps_rich_supergraph_constructs() {
+        let schema = StateMachine::sdl_to_api_schema(schema_state(RICH_SUPERGRAPH)).unwrap();
+
+        insta::assert_snapshot!("rich_supergraph_api_schema", schema.to_string());
+    }
+
+    #[traced_test]
+    #[test]
+    fn sdl_to_api_schema_validates_rich_supergraph_without_warnings() {
+        StateMachine::sdl_to_api_schema(schema_state(RICH_SUPERGRAPH)).unwrap();
+
+        assert!(!logs_contain(
+            "breaks GraphQL September 2025 validation rules"
+        ));
+    }
+
+    /// A supergraph federation accepts, but whose `@deprecated` on a required argument breaks a
+    /// September 2025 validation rule
+    fn supergraph_breaking_newer_rules() -> String {
+        MINIMAL_SUPERGRAPH.replace(
+            "me: String @join__field",
+            "me(id: ID! @deprecated(reason: \"unused\")): String @join__field",
+        )
+    }
+
+    #[test]
+    fn sdl_to_api_schema_loads_derived_api_schema_that_breaks_newer_rules() {
+        let result =
+            StateMachine::sdl_to_api_schema(schema_state(&supergraph_breaking_newer_rules()));
+
+        assert!(
+            result.is_ok(),
+            "expected the derived API schema to load, got {:?}",
+            result.err()
+        );
+    }
+
+    #[traced_test]
+    #[test]
+    fn sdl_to_api_schema_warns_when_derived_api_schema_breaks_newer_rules() {
+        StateMachine::sdl_to_api_schema(schema_state(&supergraph_breaking_newer_rules())).unwrap();
+
+        assert!(logs_contain(
+            "breaks GraphQL September 2025 validation rules"
+        ));
+    }
+
+    #[test]
+    fn sdl_to_api_schema_rejects_plain_sdl_that_breaks_newer_rules() {
+        let error = StateMachine::sdl_to_api_schema(schema_state(
+            r#"type Query { me(id: ID! @deprecated(reason: "unused")): String }"#,
+        ))
+        .unwrap_err();
+
+        assert!(
+            matches!(error, ServerError::GraphQLSchema(_)),
+            "expected a GraphQLSchema error, got {error}"
+        );
+    }
+
+    #[test]
+    fn sdl_to_api_schema_parses_plain_sdl() {
+        let schema =
+            StateMachine::sdl_to_api_schema(schema_state("type Query { id: String }")).unwrap();
+
+        assert!(
+            schema.type_field("Query", "id").is_ok(),
+            "expected Query.id in the parsed schema"
+        );
+    }
+
+    #[test]
+    fn sdl_to_api_schema_returns_schema_error_for_invalid_sdl() {
+        let error = StateMachine::sdl_to_api_schema(schema_state("type Query { id: Missing }"))
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ServerError::GraphQLSchema(_)),
+            "expected a GraphQLSchema error, got {error}"
         );
     }
 }

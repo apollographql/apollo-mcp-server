@@ -110,7 +110,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e0b71d829a6eec7900cab1ef14791290a3b2edf201dbc7c56cae5ef001475d"
 dependencies = [
  "ahash",
- "apollo-parser",
+ "apollo-parser 0.8.4",
+ "ariadne",
+ "futures",
+ "indexmap",
+ "rowan",
+ "serde",
+ "serde_json_bytes",
+ "thiserror 2.0.18",
+ "triomphe",
+ "typed-arena",
+]
+
+[[package]]
+name = "apollo-compiler"
+version = "2.0.0-beta.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "031ad1ba5d073dc231b63bfac51cea2f180f4280c41b766f4d6db0f57474841f"
+dependencies = [
+ "ahash",
+ "apollo-parser 0.9.0-beta.0",
  "ariadne",
  "futures",
  "indexmap",
@@ -128,7 +147,7 @@ version = "2.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eca9a79b988aa51410fcfbf6cc56aad6c2d7ef72d4d0121952140df77610ba80"
 dependencies = [
- "apollo-compiler",
+ "apollo-compiler 1.31.1",
  "derive_more",
  "either",
  "encoding_rs",
@@ -215,7 +234,7 @@ name = "apollo-mcp-server"
 version = "1.19.0"
 dependencies = [
  "anyhow",
- "apollo-compiler",
+ "apollo-compiler 2.0.0-beta.1",
  "apollo-federation",
  "apollo-mcp-registry",
  "apollo-mcp-rhai",
@@ -294,10 +313,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "apollo-parser"
+version = "0.9.0-beta.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c72cf951e113a1a27378bdddb82ccf08bbe2f49436cf597eb851ae8cb012ea3"
+dependencies = [
+ "memchr",
+ "rowan",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "apollo-schema-index"
 version = "1.19.0"
 dependencies = [
- "apollo-compiler",
+ "apollo-compiler 2.0.0-beta.1",
  "enumset",
  "heck 0.5.0",
  "insta",
@@ -4410,7 +4440,7 @@ version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e68f64918904ec44a5574808ffa986a2a1abf14738ebfc8479eed64d2882b0b1"
 dependencies = [
- "apollo-compiler",
+ "apollo-compiler 1.31.1",
  "indexmap",
  "serde_json",
  "serde_json_bytes",
