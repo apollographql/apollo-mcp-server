@@ -3,12 +3,16 @@
 //! This module generates JSON schemas from GraphQL operation selection sets,
 //! enabling MCP tools to declare their output schema.
 
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    collections::{BTreeSet, HashMap, HashSet},
+    rc::Rc,
+};
 
 use apollo_compiler::{
     Name as GraphQLName, Node, Schema as GraphQLSchema,
     ast::{Field, Selection, Type as GraphQLType},
-    schema::ExtendedType,
+    collections::{HashMap as CompilerHashMap, IndexMap as CompilerIndexMap},
+    schema::{ExtendedType, Implementers},
 };
 use schemars::{Schema as JSONSchema, json_schema};
 use serde_json::{Map, Value};
@@ -30,11 +34,13 @@ pub fn selection_set_to_schema(
     private_tree: Option<&PrivateFieldTree>,
 ) -> JSONSchema {
     let mut definitions = Map::new();
+    let implementers = graphql_schema.implementers_map();
 
     let schema = build_selection_set_schema(
         selection_set,
         parent_type,
         graphql_schema,
+        &implementers,
         custom_scalar_map,
         named_fragments,
         &mut definitions,
@@ -90,160 +96,377 @@ pub fn selection_set_to_schema(
     response_schema
 }
 
-/// Build a schema for a selection set (object fields)
+/// A field and the concrete members on which its enclosing fragments apply.
+struct SelectedField<'a> {
+    field: &'a Node<Field>,
+    declared_on: &'a ExtendedType,
+    members: Rc<[usize]>,
+}
+
+/// Expand the fragment graph once per selection set. The visited key includes the
+/// applicable members because the same named fragment can occur under different
+/// type conditions. Validated GraphQL documents do not contain fragment cycles.
 #[allow(clippy::too_many_arguments)]
-fn build_selection_set_schema(
-    selection_set: &[Selection],
-    parent_type: &ExtendedType,
-    graphql_schema: &GraphQLSchema,
-    custom_scalar_map: Option<&CustomScalarMap>,
-    named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
-    definitions: &mut Map<String, Value>,
-    private_tree: &PrivateFieldTree,
-) -> JSONSchema {
-    let mut properties = Map::new();
-    let mut required = Vec::new();
-
-    // Always include __typename if it could be useful
-    let type_name = parent_type.name().to_string();
-
+fn collect_selected_fields<'a>(
+    selection_set: &'a [Selection],
+    declared_on: &'a ExtendedType,
+    member_names: &[String],
+    member_index: &HashMap<&str, usize>,
+    applicable: Rc<[usize]>,
+    graphql_schema: &'a GraphQLSchema,
+    named_fragments: &'a HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
+    visited: &mut HashSet<(String, Vec<usize>)>,
+    fields: &mut Vec<SelectedField<'a>>,
+) {
     for selection in selection_set {
         match selection {
-            Selection::Field(field) => {
-                let field_name = field.name.to_string();
-                let response_key = field
-                    .alias
+            Selection::Field(field) => fields.push(SelectedField {
+                field,
+                declared_on,
+                members: applicable.clone(),
+            }),
+            Selection::InlineFragment(fragment) => {
+                let target = fragment
+                    .type_condition
                     .as_ref()
-                    .map(|a| a.to_string())
-                    .unwrap_or_else(|| field_name.clone());
-
-                // Skip fields marked @private from the output schema
-                if private_tree
-                    .children
-                    .get(&response_key)
-                    .is_some_and(|child| child.is_private)
-                {
+                    .and_then(|name| graphql_schema.types.get(name.as_str()));
+                if fragment.type_condition.is_some() && target.is_none() {
                     continue;
                 }
-
-                // Skip __typename - it's always a string
-                if field_name == "__typename" {
-                    properties.insert(
-                        response_key,
-                        json_schema!({"type": "string", "description": "The typename of this object"}).into(),
-                    );
-                    continue;
-                }
-
-                // Get the child private tree for nested fields
-                let child_private_tree = private_tree
-                    .children
-                    .get(&response_key)
-                    .cloned()
-                    .unwrap_or_default();
-
-                // Get field definition from parent type
-                if let Some(field_def) = get_field_definition(parent_type, &field_name) {
-                    let field_schema = build_field_schema(
-                        field,
-                        &field_def.ty,
+                let next = target.unwrap_or(declared_on);
+                let matching = matching_members(
+                    &applicable,
+                    member_names,
+                    member_index,
+                    next,
+                    graphql_schema,
+                );
+                if !matching.is_empty() {
+                    collect_selected_fields(
+                        &fragment.selection_set,
+                        next,
+                        member_names,
+                        member_index,
+                        Rc::from(matching),
                         graphql_schema,
-                        custom_scalar_map,
                         named_fragments,
-                        definitions,
-                        field_def.description.as_ref().map(|n| n.to_string()),
-                        &child_private_tree,
-                    );
-
-                    properties.insert(response_key.clone(), field_schema.into());
-
-                    // GraphQL permits repeated selections, but JSON Schema requires
-                    // unique entries in `required`. Preserve selection order.
-                    if field_def.ty.is_non_null() && !required.contains(&response_key) {
-                        required.push(response_key);
-                    }
-                } else {
-                    warn!(
-                        field = field_name,
-                        parent_type = type_name,
-                        "Field not found in parent type"
+                        visited,
+                        fields,
                     );
                 }
             }
-            Selection::FragmentSpread(fragment_spread) => {
-                // Merge fields from named fragment
-                if let Some(fragment_def) =
-                    named_fragments.get(fragment_spread.fragment_name.as_str())
-                    && let Some(target_type) = graphql_schema
-                        .types
-                        .get(fragment_def.type_condition.as_str())
+            Selection::FragmentSpread(spread) => {
+                if let Some(fragment) = named_fragments.get(spread.fragment_name.as_str())
+                    && let Some(next) = graphql_schema.types.get(fragment.type_condition.as_str())
                 {
-                    let fragment_schema = build_selection_set_schema(
-                        &fragment_def.selection_set,
-                        target_type,
+                    let matching = matching_members(
+                        &applicable,
+                        member_names,
+                        member_index,
+                        next,
                         graphql_schema,
-                        custom_scalar_map,
-                        named_fragments,
-                        definitions,
-                        private_tree,
                     );
-
-                    // Merge properties from fragment
-                    if let Some(props) = fragment_schema
-                        .as_object()
-                        .and_then(|o| o.get("properties"))
-                        .and_then(|v| v.as_object())
+                    if !matching.is_empty()
+                        && visited.insert((spread.fragment_name.to_string(), matching.clone()))
                     {
-                        for (key, value) in props {
-                            properties.insert(key.clone(), value.clone());
-                        }
-                    }
-                }
-            }
-            Selection::InlineFragment(inline_fragment) => {
-                // For inline fragments, we need to handle type conditions
-                let target_type = if let Some(type_condition) = &inline_fragment.type_condition {
-                    graphql_schema.types.get(type_condition.as_str())
-                } else {
-                    Some(parent_type)
-                };
-
-                if let Some(target_type) = target_type {
-                    let fragment_schema = build_selection_set_schema(
-                        &inline_fragment.selection_set,
-                        target_type,
-                        graphql_schema,
-                        custom_scalar_map,
-                        named_fragments,
-                        definitions,
-                        private_tree,
-                    );
-
-                    // Merge properties from inline fragment
-                    if let Some(props) = fragment_schema
-                        .as_object()
-                        .and_then(|o| o.get("properties"))
-                        .and_then(|v| v.as_object())
-                    {
-                        for (key, value) in props {
-                            properties.insert(key.clone(), value.clone());
-                        }
+                        collect_selected_fields(
+                            &fragment.selection_set,
+                            next,
+                            member_names,
+                            member_index,
+                            Rc::from(matching),
+                            graphql_schema,
+                            named_fragments,
+                            visited,
+                            fields,
+                        );
                     }
                 }
             }
         }
     }
+}
 
-    let mut schema = json_schema!({"type": "object"});
-    let obj = schema.ensure_object();
+fn matching_members(
+    applicable: &[usize],
+    member_names: &[String],
+    member_index: &HashMap<&str, usize>,
+    condition: &ExtendedType,
+    graphql_schema: &GraphQLSchema,
+) -> Vec<usize> {
+    if matches!(condition, ExtendedType::Object(_)) {
+        return member_index
+            .get(condition.name().as_str())
+            .copied()
+            .filter(|index| applicable.binary_search(index).is_ok())
+            .into_iter()
+            .collect();
+    }
+    // `applicable` starts in member order; filtering preserves the sorted indices
+    // used by binary_search when grouping selection patterns.
+    applicable
+        .iter()
+        .copied()
+        .filter(|&index| {
+            member_names.get(index).is_some_and(|member| {
+                condition.name().as_str() == member
+                    || graphql_schema.is_subtype(condition.name().as_str(), member)
+            })
+        })
+        .collect()
+}
 
-    if !properties.is_empty() {
-        obj.insert("properties".to_string(), properties.into());
+/// Build one schema per distinct fragment applicability pattern, not per member.
+#[allow(clippy::too_many_arguments)]
+fn build_selection_set_schema(
+    selection_set: &[Selection],
+    parent_type: &ExtendedType,
+    graphql_schema: &GraphQLSchema,
+    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    custom_scalar_map: Option<&CustomScalarMap>,
+    named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
+    definitions: &mut Map<String, Value>,
+    private_tree: &PrivateFieldTree,
+) -> JSONSchema {
+    let member_names: Vec<String> = match parent_type {
+        ExtendedType::Union(union) => union.members.iter().map(ToString::to_string).collect(),
+        ExtendedType::Interface(interface) => implementers
+            .get(&interface.name)
+            .map(|types| types.objects.iter().map(ToString::to_string).collect())
+            .unwrap_or_default(),
+        _ => vec![parent_type.name().to_string()],
+    };
+    // An interface with no implementers has no concrete response; retain a
+    // useful schema for its declared fields without emitting an empty anyOf.
+    let member_names = if member_names.is_empty() {
+        vec![parent_type.name().to_string()]
+    } else {
+        member_names
+    };
+    let all_members: Vec<usize> = (0..member_names.len()).collect();
+    let member_index: HashMap<_, _> = member_names
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (name.as_str(), index))
+        .collect();
+    let mut fields = Vec::new();
+    collect_selected_fields(
+        selection_set,
+        parent_type,
+        &member_names,
+        &member_index,
+        Rc::from(all_members),
+        graphql_schema,
+        named_fragments,
+        &mut HashSet::new(),
+        &mut fields,
+    );
+
+    let common: Vec<_> = fields
+        .iter()
+        .filter(|field| field.members.len() == member_names.len())
+        .collect();
+    let common_schema = build_fields_schema(
+        &common,
+        graphql_schema,
+        implementers,
+        custom_scalar_map,
+        named_fragments,
+        definitions,
+        private_tree,
+    );
+    let conditional: Vec<_> = fields
+        .iter()
+        .filter(|field| field.members.len() != member_names.len())
+        .collect();
+    if conditional.is_empty() {
+        return common_schema;
     }
 
+    let mut signatures = vec![Vec::new(); member_names.len()];
+    for (field_index, field) in conditional.iter().enumerate() {
+        for &member in field.members.iter() {
+            if let Some(signature) = signatures.get_mut(member) {
+                signature.push(field_index);
+            }
+        }
+    }
+    let groups: BTreeSet<_> = signatures.into_iter().collect();
+    let common_keys: BTreeSet<_> = common
+        .iter()
+        .map(|field| response_key(field.field))
+        .collect();
+    let fallback_exclusions: BTreeSet<_> = conditional
+        .iter()
+        .map(|field| response_key(field.field))
+        .filter(|key| {
+            !common_keys.contains(key)
+                && !private_tree
+                    .children
+                    .get(key)
+                    .is_some_and(|child| child.is_private)
+        })
+        .collect();
+    let group_keys: Vec<BTreeSet<_>> = groups
+        .iter()
+        .map(|signature| {
+            signature
+                .iter()
+                .filter_map(|&index| conditional.get(index))
+                .map(|field| response_key(field.field))
+                .filter(|key| fallback_exclusions.contains(key))
+                .collect()
+        })
+        .collect();
+    let mut key_group_count = HashMap::new();
+    for keys in &group_keys {
+        for key in keys {
+            *key_group_count.entry(key.clone()).or_insert(0usize) += 1;
+        }
+    }
+    let mut branches = Vec::new();
+    for signature in groups {
+        let selected: Vec<_> = signature
+            .iter()
+            .filter_map(|&index| conditional.get(index).copied())
+            .collect();
+        let mut branch = build_fields_schema(
+            &selected,
+            graphql_schema,
+            implementers,
+            custom_scalar_map,
+            named_fragments,
+            definitions,
+            private_tree,
+        );
+        if signature.is_empty() && !fallback_exclusions.is_empty() {
+            // An uncovered member has none of the fragment-only response keys.
+            // Constrain this one branch without copying an exclusion list into
+            // every covered member's schema.
+            let forbidden: Vec<_> = fallback_exclusions
+                .iter()
+                .map(|key| json_schema!({"required": [key]}))
+                .collect();
+            branch = json_schema!({"allOf": [branch, {"not": {"anyOf": forbidden}}]});
+        }
+        branches.push(branch);
+    }
+    let mut unique_key_patterns = Vec::new();
+    let mut all_unique_keys = Vec::new();
+    let mut key_implications = Vec::new();
+    for (keys, branch) in group_keys.into_iter().zip(&branches) {
+        let unique: Vec<_> = keys
+            .into_iter()
+            .filter(|key| key_group_count.get(key) == Some(&1))
+            .collect();
+        if !unique.is_empty() {
+            let present: Vec<_> = unique
+                .iter()
+                .map(|key| json_schema!({"required": [key]}))
+                .collect();
+            let present = json_schema!({"anyOf": present});
+            key_implications.push(json_schema!({"if": present, "then": branch}));
+            unique_key_patterns.push(present);
+            all_unique_keys.extend(unique);
+        }
+    }
+    let alternatives = if branches.len() == 1 {
+        branches.remove(0)
+    } else {
+        json_schema!({"anyOf": branches})
+    };
+    let mut constraints = vec![common_schema, alternatives];
+    constraints.extend(key_implications);
+    if unique_key_patterns.len() > 1 {
+        // A concrete member cannot return keys selected only for two different
+        // fragment patterns. One shared constraint avoids per-branch exclusions.
+        let no_unique_key: Vec<_> = all_unique_keys
+            .into_iter()
+            .map(|key| json_schema!({"required": [key]}))
+            .collect();
+        unique_key_patterns.push(json_schema!({"not": {"anyOf": no_unique_key}}));
+        constraints.push(json_schema!({"oneOf": unique_key_patterns}));
+    }
+    json_schema!({"allOf": constraints})
+}
+
+fn response_key(field: &Field) -> String {
+    field.alias.as_ref().unwrap_or(&field.name).to_string()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_fields_schema(
+    selected: &[&SelectedField<'_>],
+    graphql_schema: &GraphQLSchema,
+    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    custom_scalar_map: Option<&CustomScalarMap>,
+    named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
+    definitions: &mut Map<String, Value>,
+    private_tree: &PrivateFieldTree,
+) -> JSONSchema {
+    let mut field_schemas: CompilerIndexMap<String, Vec<Value>> = CompilerIndexMap::default();
+    let mut required = Vec::new();
+    let mut required_seen = HashSet::new();
+    for selected_field in selected {
+        let field = selected_field.field;
+        let key = response_key(field);
+        if private_tree
+            .children
+            .get(&key)
+            .is_some_and(|child| child.is_private)
+        {
+            continue;
+        }
+        let schema = if field.name.as_str() == "__typename" {
+            json_schema!({"type": "string", "description": "The typename of this object"})
+        } else if let Some(definition) =
+            get_field_definition(selected_field.declared_on, field.name.as_str())
+        {
+            if definition.ty.is_non_null() && required_seen.insert(key.clone()) {
+                required.push(key.clone());
+            }
+            let child_private_tree = private_tree.children.get(&key).cloned().unwrap_or_default();
+            build_field_schema(
+                field,
+                &definition.ty,
+                graphql_schema,
+                implementers,
+                custom_scalar_map,
+                named_fragments,
+                definitions,
+                definition.description.as_ref().map(ToString::to_string),
+                &child_private_tree,
+            )
+        } else {
+            warn!(field = %field.name, parent_type = %selected_field.declared_on.name(), "Field not found in parent type");
+            continue;
+        };
+        let value: Value = schema.into();
+        let schemas = field_schemas.entry(key).or_default();
+        if schemas.last() != Some(&value) {
+            schemas.push(value);
+        }
+    }
+    let properties: Map<_, _> = field_schemas
+        .into_iter()
+        .map(|(key, mut schemas)| {
+            let schema = if schemas.len() == 1 {
+                schemas.remove(0)
+            } else {
+                json_schema!({"allOf": schemas}).into()
+            };
+            (key, schema)
+        })
+        .collect();
+    let mut schema = json_schema!({"type": "object"});
+    if !properties.is_empty() {
+        schema
+            .ensure_object()
+            .insert("properties".into(), properties.into());
+    }
     if !required.is_empty() {
-        obj.insert(
-            "required".to_string(),
+        schema.ensure_object().insert(
+            "required".into(),
             required
                 .into_iter()
                 .map(Value::String)
@@ -251,7 +474,6 @@ fn build_selection_set_schema(
                 .into(),
         );
     }
-
     schema
 }
 
@@ -261,6 +483,7 @@ fn build_field_schema(
     field: &Node<Field>,
     field_type: &GraphQLType,
     graphql_schema: &GraphQLSchema,
+    implementers: &CompilerHashMap<GraphQLName, Implementers>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -271,6 +494,7 @@ fn build_field_schema(
         field_type,
         &field.selection_set,
         graphql_schema,
+        implementers,
         custom_scalar_map,
         named_fragments,
         definitions,
@@ -281,10 +505,12 @@ fn build_field_schema(
 }
 
 /// Convert a GraphQL type to a JSON Schema for output
+#[allow(clippy::too_many_arguments)]
 fn type_to_output_schema(
     graphql_type: &GraphQLType,
     selection_set: &[Selection],
     graphql_schema: &GraphQLSchema,
+    implementers: &CompilerHashMap<GraphQLName, Implementers>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -296,6 +522,7 @@ fn type_to_output_schema(
             name,
             selection_set,
             graphql_schema,
+            implementers,
             custom_scalar_map,
             named_fragments,
             definitions,
@@ -306,6 +533,7 @@ fn type_to_output_schema(
                 inner.as_ref(),
                 selection_set,
                 graphql_schema,
+                implementers,
                 custom_scalar_map,
                 named_fragments,
                 definitions,
@@ -324,6 +552,7 @@ fn type_to_output_schema(
                 name,
                 selection_set,
                 graphql_schema,
+                implementers,
                 custom_scalar_map,
                 named_fragments,
                 definitions,
@@ -338,6 +567,7 @@ fn type_to_output_schema(
                 inner.as_ref(),
                 selection_set,
                 graphql_schema,
+                implementers,
                 custom_scalar_map,
                 named_fragments,
                 definitions,
@@ -354,10 +584,12 @@ fn type_to_output_schema(
 }
 
 /// Convert a named GraphQL type to JSON Schema
+#[allow(clippy::too_many_arguments)]
 fn named_type_to_output_schema(
     name: &GraphQLName,
     selection_set: &[Selection],
     graphql_schema: &GraphQLSchema,
+    implementers: &CompilerHashMap<GraphQLName, Implementers>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -393,6 +625,7 @@ fn named_type_to_output_schema(
                         selection_set,
                         &ExtendedType::Object(obj.clone()),
                         graphql_schema,
+                        implementers,
                         custom_scalar_map,
                         named_fragments,
                         definitions,
@@ -410,6 +643,7 @@ fn named_type_to_output_schema(
                         selection_set,
                         &ExtendedType::Interface(iface.clone()),
                         graphql_schema,
+                        implementers,
                         custom_scalar_map,
                         named_fragments,
                         definitions,
@@ -418,102 +652,21 @@ fn named_type_to_output_schema(
                 }
             }
 
-            // Union types - anyOf the possible types based on fragments. Member
-            // schemas carry no discriminator and allow extra properties, so one response
-            // object can match several members and `oneOf` would reject it.
-            Some(ExtendedType::Union(union_def)) => {
+            // Resolve fragment applicability for each concrete union member.
+            Some(ExtendedType::Union(union)) => {
                 if selection_set.is_empty() {
                     json_schema!({})
                 } else {
-                    // Collect schemas for the selected type conditions.
-                    let mut type_schemas = Vec::new();
-                    let mut covered_conditions = Vec::new();
-
-                    for selection in selection_set {
-                        let fragment = match selection {
-                            Selection::InlineFragment(fragment) => fragment
-                                .type_condition
-                                .as_ref()
-                                .map(|condition| (condition, fragment.selection_set.as_slice())),
-                            Selection::FragmentSpread(spread) => named_fragments
-                                .get(spread.fragment_name.as_str())
-                                .map(|fragment| {
-                                    (&fragment.type_condition, fragment.selection_set.as_slice())
-                                }),
-                            Selection::Field(_) => None,
-                        };
-                        if let Some((type_condition, fragment_selections)) = fragment
-                            && let Some(member_type) =
-                                graphql_schema.types.get(type_condition.as_str())
-                        {
-                            let member_schema = build_selection_set_schema(
-                                fragment_selections,
-                                member_type,
-                                graphql_schema,
-                                custom_scalar_map,
-                                named_fragments,
-                                definitions,
-                                private_tree,
-                            );
-                            type_schemas.push(member_schema);
-                            covered_conditions.push(type_condition.as_str());
-                        }
-                    }
-
-                    // A member with no matching fragment still produces an object (possibly
-                    // empty). Keep validating selected fields on covered members by allowing
-                    // the fallback only when their fragment-specific response keys are absent.
-                    let has_uncovered_member = union_def.members.iter().any(|member| {
-                        !covered_conditions.iter().any(|condition| {
-                            *condition == member.as_str()
-                                || graphql_schema.is_subtype(condition, member.as_str())
-                        })
-                    });
-
-                    if has_uncovered_member {
-                        let common_keys: BTreeSet<_> = selection_set
-                            .iter()
-                            .filter_map(|selection| match selection {
-                                Selection::Field(field) => {
-                                    Some(field.alias.as_ref().unwrap_or(&field.name).to_string())
-                                }
-                                _ => None,
-                            })
-                            .collect();
-                        let mut fragment_keys = BTreeSet::new();
-                        for schema in &type_schemas {
-                            if let Some(properties) = schema
-                                .as_object()
-                                .and_then(|object| object.get("properties"))
-                                .and_then(Value::as_object)
-                            {
-                                fragment_keys.extend(
-                                    properties
-                                        .keys()
-                                        .filter(|key| !common_keys.contains(key.as_str()))
-                                        .cloned(),
-                                );
-                            }
-                        }
-                        let fallback = if fragment_keys.is_empty() {
-                            json_schema!({"type": "object"})
-                        } else {
-                            let selected_fields: Vec<_> = fragment_keys
-                                .into_iter()
-                                .map(|key| json_schema!({"required": [key]}))
-                                .collect();
-                            json_schema!({"type": "object", "not": {"anyOf": selected_fields}})
-                        };
-                        type_schemas.push(fallback);
-                        json_schema!({"anyOf": type_schemas})
-                    } else if type_schemas.is_empty() {
-                        // No fragment schemas were collected.
-                        json_schema!({})
-                    } else if type_schemas.len() == 1 {
-                        type_schemas.remove(0)
-                    } else {
-                        json_schema!({"anyOf": type_schemas})
-                    }
+                    build_selection_set_schema(
+                        selection_set,
+                        &ExtendedType::Union(union.clone()),
+                        graphql_schema,
+                        implementers,
+                        custom_scalar_map,
+                        named_fragments,
+                        definitions,
+                        private_tree,
+                    )
                 }
             }
 

@@ -2,17 +2,11 @@
 default: patch
 ---
 
-# Keep generated output schemas valid for repeated GraphQL selections
+# Validate generated GraphQL tool schemas against JSON Schema 2020-12
 
-Repeated non-null field selections (for example, `node { id id }`) no longer
-produce duplicate entries in JSON Schema's `required` array. Duplicate entries
-made the generated output schema invalid even though the GraphQL operation was valid.
-Union output schemas also accept members for which the operation selects no
-matching fragment fields while validating fields selected for other members.
-Named fragments and interface type conditions participate in union schemas.
-
-Regression coverage validates generated tool schemas against JSON Schema 2020-12,
-including nested inputs, unions, interfaces, and custom scalar compositions, and
-checks schemas retrieved through MCP `tools/list`. GraphQL output schemas continue
-to describe the object response envelope; array and primitive output roots are
-covered separately as SDK serialization compatibility checks.
+Repeated non-null selections no longer create duplicate `required` entries.
+Output schemas now validate fields selected through nested, named, and inline
+fragments on unions and interfaces together, while accepting members with no
+matching fragment and rejecting fields unique to conflicting member patterns.
+Regression tests check generated input and output schemas against Draft 2020-12
+and through MCP `tools/list`.

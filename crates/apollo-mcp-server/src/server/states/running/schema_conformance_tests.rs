@@ -1,5 +1,5 @@
 //! SEP-2106 coverage of generated GraphQL schemas and their MCP wire representation.
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Write as _, sync::Arc, time::Duration};
 
 use proptest::prelude::*;
 use rmcp::{
@@ -20,12 +20,14 @@ const SCHEMA: &str = r#"
     input Filter { status: Status!, children: [Filter!], matrix: [[Int!]!]!, limit: Int! = 10 }
     scalar Choice
     interface Node { id: ID! }
-    type User implements Node { id: ID!, name: String! }
-    type Team implements Node { id: ID!, title: String! }
+    interface Named { name: String! }
+    type User implements Node & Named { id: ID!, name: String! }
+    type Team implements Node { id: ID!, title: String!, nickname: String }
     union SearchResult = User | Team
     type Query {
         search(filter: Filter!, choice: Choice, count: Int!): [SearchResult!]!
         node: Node!
+        user: User!
         choice: Choice
     }
 "#;
@@ -45,7 +47,12 @@ fn fixture() -> Running {
 }
 
 fn fixture_with_query(query: &str) -> Running {
-    let schema = apollo_compiler::Schema::parse_and_validate(SCHEMA, "schema.graphql").unwrap();
+    fixture_with_schema(SCHEMA, query)
+}
+
+fn fixture_with_schema(schema_source: &str, query: &str) -> Running {
+    let schema =
+        apollo_compiler::Schema::parse_and_validate(schema_source, "schema.graphql").unwrap();
     // Validate the fixture's operation independently of our schema generator.
     apollo_compiler::ExecutableDocument::parse_and_validate(&schema, query, "query.graphql")
         .unwrap();
@@ -101,22 +108,25 @@ fn check_tool(tool: &Value) {
         tool["inputSchema"]["properties"]["filter"]["$ref"],
         "#/definitions/Filter"
     );
-    assert!(tool["inputSchema"]["properties"]["choice"]["anyOf"].is_array());
+    assert!(
+        tool["inputSchema"]["properties"]["choice"]["anyOf"].is_array(),
+        "nullable custom scalar needs anyOf"
+    );
     let conditional = &tool["inputSchema"]["definitions"]["Choice"]["allOf"][0];
     for keyword in ["if", "then", "else"] {
         assert!(conditional[keyword].is_object(), "missing {keyword}");
     }
     assert!(
-        tool["outputSchema"]["properties"]["data"]["properties"]["search"]["items"]["anyOf"]
-            .is_array()
+        tool["outputSchema"]["properties"]["data"]["properties"]["search"]["items"]["allOf"][1]["anyOf"]
+            .is_array(), "union members need alternatives"
     );
-    assert!(tool["outputSchema"]["properties"]["errors"]["items"]["properties"]["path"]["items"]["oneOf"].is_array());
+    assert!(tool["outputSchema"]["properties"]["errors"]["items"]["properties"]["path"]["items"]["oneOf"].is_array(), "error paths accept string or integer segments");
     let input = validator(&tool["inputSchema"]);
     let output = validator(&tool["outputSchema"]);
     let valid_input = json!({"filter": {"status": "OPEN", "matrix": [[1, 2], []],
         "children": [{"status": "CLOSED", "matrix": []}]},
         "choice": {"kind": "text", "value": "hello"}});
-    assert!(input.is_valid(&valid_input));
+    assert!(input.is_valid(&valid_input), "valid nested input rejected");
     for pointer in [
         "/filter/status",
         "/filter/matrix/0/0",
@@ -127,10 +137,10 @@ fn check_tool(tool: &Value) {
         *invalid.pointer_mut(pointer).unwrap() = json!(false);
         assert!(!input.is_valid(&invalid), "accepted invalid {pointer}");
     }
-    assert!(!input.is_valid(&json!({})));
+    assert!(!input.is_valid(&json!({})), "required filter omitted");
     let mut invalid_enum = valid_input.clone();
     invalid_enum["filter"]["status"] = json!("UNKNOWN");
-    assert!(!input.is_valid(&invalid_enum));
+    assert!(!input.is_valid(&invalid_enum), "unknown enum accepted");
     // Defaults allow omission, but explicit null still violates the non-null type.
     assert_eq!(tool["inputSchema"]["properties"]["count"]["default"], 1);
     assert_eq!(
@@ -144,32 +154,47 @@ fn check_tool(tool: &Value) {
         } else {
             explicit_default["filter"]["limit"] = json!(10);
         }
-        assert!(input.is_valid(&explicit_default));
+        assert!(
+            input.is_valid(&explicit_default),
+            "explicit default rejected at {pointer}"
+        );
         *explicit_default.pointer_mut(pointer).unwrap() = Value::Null;
-        assert!(!input.is_valid(&explicit_default));
+        assert!(
+            !input.is_valid(&explicit_default),
+            "null accepted at {pointer}"
+        );
     }
     let mut recursive = valid_input.clone();
     recursive["filter"]["children"][0]["children"] = json!([{
         "status": "OPEN", "matrix": [], "children": [{"status": "CLOSED", "matrix": []}]
     }]);
-    assert!(input.is_valid(&recursive));
+    assert!(input.is_valid(&recursive), "valid recursive input rejected");
     recursive["filter"]["children"][0]["children"][0]["children"][0]["status"] = json!("UNKNOWN");
-    assert!(!input.is_valid(&recursive));
+    assert!(!input.is_valid(&recursive), "invalid nested enum accepted");
     let mut nullable = valid_input.clone();
     nullable["filter"]["children"] = Value::Null;
     nullable["choice"] = Value::Null;
-    assert!(input.is_valid(&nullable));
+    assert!(input.is_valid(&nullable), "nullable fields rejected");
     nullable["filter"]["children"] = json!([null]);
-    assert!(!input.is_valid(&nullable));
+    assert!(!input.is_valid(&nullable), "null list member accepted");
     let mut number_choice = valid_input.clone();
     number_choice["choice"] = json!({"kind": "number", "value": 7});
-    assert!(input.is_valid(&number_choice));
+    assert!(
+        input.is_valid(&number_choice),
+        "integer scalar variant rejected"
+    );
     number_choice["choice"]["value"] = json!("wrong");
-    assert!(!input.is_valid(&number_choice));
+    assert!(
+        !input.is_valid(&number_choice),
+        "wrong scalar variant accepted"
+    );
     let response = json!({"data": {"search": [{"name": "Ada"}, {"title": "Team"}],
         "node": {"id": "1", "name": "Ada"},
         "choice": {"kind": "number", "value": 3}}});
-    assert!(output.is_valid(&response));
+    assert!(
+        output.is_valid(&response),
+        "valid GraphQL response rejected"
+    );
     for pointer in ["/data/search/0/name", "/data/node/id", "/data/choice/value"] {
         let mut invalid = response.clone();
         *invalid.pointer_mut(pointer).unwrap() = json!(false);
@@ -206,7 +231,6 @@ async fn tools_list_preserves_generated_2020_12_schemas() {
         let actual = serde_json::to_value(&tools[0]).unwrap();
         assert_eq!(actual["inputSchema"], expected["inputSchema"]);
         assert_eq!(actual["outputSchema"], expected["outputSchema"]);
-        check_tool(&actual);
         client.cancel().await.unwrap();
         server.await.unwrap();
     })
@@ -296,6 +320,20 @@ fn union_schema_validates_named_fragment_members() {
     assert!(output.is_valid(&json!({"data": {"search": [{"name": "Ada"}, {"title": "Team"}]}})));
     assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
     assert!(!output.is_valid(&json!({"data": {"search": [{"title": false}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": "Ada", "title": "Team"}]}})));
+}
+
+#[test]
+fn unique_member_key_enforces_its_own_field_schema() {
+    let tool = wire_tool(&fixture_with_query(
+        "query NullableAlternative { search(filter: {status: OPEN, matrix: []}, count: 1) { ... on User { name } ... on Team { nickname } } }",
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(
+        output.is_valid(&json!({"data": {"search": [{"name": "Ada"}, {"nickname": "T"}, {}]}}))
+    );
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"nickname": false}]}})));
 }
 
 #[test]
@@ -306,4 +344,160 @@ fn union_schema_applies_interface_fragment_to_all_members() {
     let output = validator(&tool["outputSchema"]);
     assert!(output.is_valid(&json!({"data": {"search": [{"id": "user"}, {"id": "team"}]}})));
     assert!(!output.is_valid(&json!({"data": {"search": [{}]}})));
+}
+
+#[test]
+fn union_interface_fragment_applies_to_only_matching_members() {
+    let tool = wire_tool(&fixture_with_query(
+        "query NamedSubset { search(filter: {status: OPEN, matrix: []}, count: 1) { ... on Named { name } } }",
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"name": "Ada"}, {}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
+}
+
+#[test]
+fn multiple_fragments_on_one_member_constrain_every_selected_field() {
+    let tool = wire_tool(&fixture_with_query(
+        r#"
+        query Combined {
+            search(filter: {status: OPEN, matrix: []}, count: 1) {
+                ...UserId
+                ... on User { name }
+            }
+        }
+        fragment UserId on User { id }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"id": "1", "name": "Ada"}, {}]}})));
+    for invalid in [
+        json!({"name": "Ada"}),
+        json!({"id": "1"}),
+        json!({"id": false, "name": "Ada"}),
+        json!({"id": "1", "name": false}),
+    ] {
+        assert!(
+            !output.is_valid(&json!({"data": {"search": [invalid.clone()]}})),
+            "accepted {invalid}"
+        );
+    }
+}
+
+#[test]
+fn type_less_inline_fragment_reaches_nested_named_spread() {
+    let tool = wire_tool(&fixture_with_query(
+        r#"
+        query Nested {
+            search(filter: {status: OPEN, matrix: []}, count: 1) {
+                ... { ...UserFields }
+            }
+        }
+        fragment UserFields on User { name }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"name": "Ada"}, {}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"name": false}]}})));
+}
+
+#[test]
+fn nested_spreads_preserve_non_null_required_fields() {
+    let tool = wire_tool(&fixture_with_query(
+        r#"
+        query NestedObject { user { ...UserFields } }
+        fragment UserFields on User { name ...UserId }
+        fragment UserId on User { id }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"user": {"name": "Ada", "id": "1"}}})));
+    assert!(!output.is_valid(&json!({"data": {"user": {"name": "Ada"}}})));
+    assert!(!output.is_valid(&json!({"data": {"user": {"id": "1"}}})));
+}
+
+#[test]
+fn interface_schema_applies_member_fragments_and_direct_fields() {
+    let tool = wire_tool(&fixture_with_query(
+        r#"
+        query InterfaceMembers {
+            node { id ... on User { name } ... on Team { title } }
+        }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"node": {"id": "1", "name": "Ada"}}})));
+    assert!(output.is_valid(&json!({"data": {"node": {"id": "2", "title": "Team"}}})));
+    assert!(!output.is_valid(&json!({"data": {"node": {"id": false, "name": "Ada"}}})));
+    assert!(!output.is_valid(&json!({"data": {"node": {"id": "1", "name": false}}})));
+    assert!(!output.is_valid(&json!({"data": {"node": {"id": "2", "title": false}}})));
+}
+
+#[test]
+fn union_common_typename_is_validated_for_uncovered_members() {
+    let tool = wire_tool(&fixture_with_query(
+        "query Common { search(filter: {status: OPEN, matrix: []}, count: 1) { __typename ... on User { name } } }",
+    ));
+    let output = validator(&tool["outputSchema"]);
+    assert!(output.is_valid(&json!({"data": {"search": [{"__typename": "Team"}]}})));
+    assert!(!output.is_valid(&json!({"data": {"search": [{"__typename": false}]}})));
+}
+
+#[test]
+fn large_interface_groups_identical_fragment_patterns() {
+    fn generated_schema(member_count: usize) -> Value {
+        let mut source = String::from(
+            "interface Node { id: ID! } interface Special { special: String! } type Query { node: Node! }\n",
+        );
+        for index in 0..member_count {
+            let implements = if index == 0 { "Node" } else { "Node & Special" };
+            writeln!(
+                source,
+                "type Member{index} implements {implements} {{ id: ID!, special: String! }}"
+            )
+            .unwrap();
+        }
+        let query = "query Scale { node { id ... on Special { special } } }";
+        wire_tool(&fixture_with_schema(&source, query))["outputSchema"].clone()
+    }
+
+    let small = generated_schema(20);
+    let large = generated_schema(1_000);
+    let small_size = serde_json::to_vec(&small).unwrap().len();
+    let large_size = serde_json::to_vec(&large).unwrap().len();
+    assert_eq!(
+        large_size, small_size,
+        "schema size grew with identical implementers"
+    );
+    let output = validator(&large);
+    assert!(output.is_valid(&json!({"data": {"node": {"id": "2"}}})));
+    assert!(!output.is_valid(&json!({"data": {"node": {"id": "1", "special": false}}})));
+}
+
+#[test]
+fn distinct_member_fragments_scale_with_selected_fields() {
+    fn generated_schema(member_count: usize) -> Value {
+        let mut source = String::from("interface Node { id: ID! } type Query { node: Node! }\n");
+        let mut query = String::from("query Scale { node { id ");
+        for index in 0..member_count {
+            writeln!(
+                source,
+                "type Member{index} implements Node {{ id: ID!, field{index}: String! }}"
+            )
+            .unwrap();
+            write!(query, "... on Member{index} {{ field{index} }} ").unwrap();
+        }
+        query.push_str("} }");
+        wire_tool(&fixture_with_schema(&source, &query))["outputSchema"].clone()
+    }
+
+    let small = generated_schema(20);
+    let large = generated_schema(200);
+    let small_size = serde_json::to_vec(&small).unwrap().len();
+    let large_size = serde_json::to_vec(&large).unwrap().len();
+    assert!(
+        large_size < small_size * 15,
+        "output grew faster than selected fields: {small_size} -> {large_size}"
+    );
+    jsonschema::draft202012::meta::validate(&large).unwrap();
 }
