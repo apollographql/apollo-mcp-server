@@ -272,17 +272,24 @@ impl Running {
         let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
+        let mut operation_tools: Vec<_> = self
+            .operations
+            .read()
+            .await
+            .iter()
+            .map(|op| op.as_ref().clone())
+            .collect();
+        // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
+        operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
+
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
                 Some(app) => ListToolsResult::with_all_items(
-                    self.operations
-                        .read()
-                        .await
-                        .iter()
-                        .map(|op| op.as_ref().clone())
+                    operation_tools
+                        .into_iter()
                         .chain(
                             self.execute_tool
                                 .as_ref()
@@ -308,11 +315,8 @@ impl Running {
             }
         } else {
             ListToolsResult::with_all_items(
-                self.operations
-                    .read()
-                    .await
-                    .iter()
-                    .map(|op| op.as_ref().clone())
+                operation_tools
+                    .into_iter()
                     .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
@@ -2144,6 +2148,82 @@ mod tests {
 
         use super::*;
 
+        #[rstest::rstest]
+        #[case::normal("/mcp", false)]
+        #[case::app("/mcp?app=MyApp", true)]
+        #[tokio::test]
+        async fn tool_order_is_stable_across_calls_and_reloads(
+            #[case] uri: &str,
+            #[case] app_mode: bool,
+        ) {
+            use crate::server::states::running::integration_tests::stateless_request_at_uri;
+            use serde_json::json;
+
+            let mut running = running_with_builtin_tools();
+            running.apps = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_owned())),
+                None,
+                None,
+            )
+            .apps;
+            let operations = |names: &[&str]| {
+                names
+                    .iter()
+                    .map(|name| (format!("query {name} {{ id }}"), None).into())
+                    .collect()
+            };
+            running
+                .update_operations(operations(&["alpha", "Zulu", "Alpha"]))
+                .await;
+            let mut expected = vec!["Alpha", "Zulu", "alpha", EXECUTE_TOOL_NAME];
+            if app_mode {
+                expected.push("GetId");
+            } else {
+                expected.extend([
+                    INTROSPECT_TOOL_NAME,
+                    SEARCH_TOOL_NAME,
+                    EXPLORER_TOOL_NAME,
+                    VALIDATE_TOOL_NAME,
+                ]);
+            }
+
+            async fn assert_order(running: &Running, uri: &str, expected: &[&str]) {
+                for _ in 0..3 {
+                    let response = stateless_request_at_uri(
+                        running.clone(),
+                        "2025-11-25",
+                        "tools/list",
+                        json!({}),
+                        uri,
+                    )
+                    .await;
+                    let names: Vec<_> = response["result"]["tools"]
+                        .as_array()
+                        .expect("tools/list must return tools")
+                        .iter()
+                        .map(|tool| tool["name"].as_str().unwrap())
+                        .collect();
+                    assert_eq!(names, expected);
+                }
+            }
+
+            assert_order(&running, uri, &expected).await;
+
+            let schema = Schema::parse_and_validate(
+                "type Query { id: Int, added: String }",
+                "reloaded.graphql",
+            )
+            .unwrap();
+            running.update_schema(schema.clone()).await;
+            assert_eq!(*running.schema.read().await, schema);
+            assert_order(&running, uri, &expected).await;
+
+            running
+                .update_operations(operations(&["Zulu", "Alpha", "alpha"]))
+                .await;
+            assert_order(&running, uri, &expected).await;
+        }
+
         #[tokio::test]
         async fn list_tools_without_app_parameter() {
             let running = running_with_apps(
@@ -3108,6 +3188,16 @@ mod integration_tests {
         method: &str,
         params: Value,
     ) -> Value {
+        stateless_request_at_uri(running, version, method, params, "/mcp").await
+    }
+
+    pub(super) async fn stateless_request_at_uri(
+        running: Running,
+        version: &str,
+        method: &str,
+        params: Value,
+        uri: &str,
+    ) -> Value {
         use axum::body::Body;
         use http_body_util::BodyExt as _;
         use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -3124,7 +3214,7 @@ mod integration_tests {
         );
         let request = http::Request::builder()
             .method("POST")
-            .uri("/mcp")
+            .uri(uri)
             .header("Host", "localhost")
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
