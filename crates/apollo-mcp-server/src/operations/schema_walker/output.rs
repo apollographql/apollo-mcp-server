@@ -320,12 +320,19 @@ fn build_selection_set_schema(
                 .collect()
         })
         .collect();
-    let mut key_group_count = HashMap::new();
-    for keys in &group_keys {
-        for key in keys {
-            *key_group_count.entry(key.clone()).or_insert(0usize) += 1;
-        }
-    }
+    let other_keys = if fallback_exclusions.is_empty() {
+        None
+    } else {
+        // Share the set of conditional keys across branches. Each branch may
+        // contain only its own conditional keys, but remains open to unrelated
+        // response keys just like an ordinary object schema.
+        let name = format!("$otherResponseKeys{}", definitions.len());
+        definitions.insert(
+            name.clone(),
+            json_schema!({"not": {"enum": fallback_exclusions}}).into(),
+        );
+        Some(JSONSchema::new_ref(format!("#/definitions/{name}")))
+    };
     let mut branches = Vec::new();
     for (signature, keys) in groups.into_iter().zip(&group_keys) {
         let selected: Vec<_> = signature
@@ -341,65 +348,20 @@ fn build_selection_set_schema(
             definitions,
             private_tree,
         );
-        if signature.is_empty() && !fallback_exclusions.is_empty() {
-            // An uncovered member has none of the fragment-only response keys.
-            // Constrain this one branch without copying an exclusion list into
-            // every covered member's schema.
-            let forbidden: Vec<_> = fallback_exclusions
-                .iter()
-                .map(|key| json_schema!({"required": [key]}))
-                .collect();
-            branch = json_schema!({"allOf": [branch, {"not": {"anyOf": forbidden}}]});
-        }
-        if keys.iter().any(|key| key_group_count.get(key) == Some(&1)) {
-            // The branch is used by both `anyOf` and a key implication. Store it
-            // once so nested abstract selections do not duplicate exponentially.
-            // `$` cannot start a GraphQL type name, so these keys cannot collide
-            // with enum definitions in the same map.
-            let name = format!("$selectionBranch{}", definitions.len());
-            definitions.insert(name.clone(), branch.into());
-            branches.push(JSONSchema::new_ref(format!("#/definitions/{name}")));
-        } else {
-            branches.push(branch);
-        }
-    }
-    let mut unique_key_patterns = Vec::new();
-    let mut all_unique_keys = Vec::new();
-    let mut key_implications = Vec::new();
-    for (keys, branch) in group_keys.into_iter().zip(&branches) {
-        let unique: Vec<_> = keys
-            .into_iter()
-            .filter(|key| key_group_count.get(key) == Some(&1))
-            .collect();
-        if !unique.is_empty() {
-            let mut present: Vec<_> = unique
-                .iter()
-                .map(|key| json_schema!({"required": [key]}))
-                .collect();
-            let present = if present.len() == 1 {
-                present.remove(0)
+        if let Some(other_keys) = &other_keys {
+            let allowed = if keys.is_empty() {
+                other_keys.clone()
             } else {
-                json_schema!({"anyOf": present})
+                json_schema!({"anyOf": [{"enum": keys}, other_keys]})
             };
-            key_implications.push(json_schema!({"if": present, "then": branch}));
-            unique_key_patterns.push(present);
-            all_unique_keys.extend(unique);
+            branch
+                .ensure_object()
+                .insert("propertyNames".into(), allowed.into());
         }
+        branches.push(branch);
     }
     let alternatives = json_schema!({"anyOf": branches});
-    let mut constraints = vec![common_schema, alternatives];
-    constraints.extend(key_implications);
-    if unique_key_patterns.len() > 1 {
-        // A concrete member cannot return keys selected only for two different
-        // fragment patterns. One shared constraint avoids per-branch exclusions.
-        let no_unique_key: Vec<_> = all_unique_keys
-            .into_iter()
-            .map(|key| json_schema!({"required": [key]}))
-            .collect();
-        unique_key_patterns.push(json_schema!({"not": {"anyOf": no_unique_key}}));
-        constraints.push(json_schema!({"oneOf": unique_key_patterns}));
-    }
-    json_schema!({"allOf": constraints})
+    json_schema!({"allOf": [common_schema, alternatives]})
 }
 
 fn response_key(field: &Field) -> String {

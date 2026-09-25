@@ -385,6 +385,43 @@ fn multiple_fragments_on_one_member_constrain_every_selected_field() {
 }
 
 #[test]
+fn overlapping_member_keys_constrain_every_present_field() {
+    let tool = wire_tool(&fixture_with_schema(
+        r#"
+        type First { a: String!, b: String! }
+        type Second { a: String!, c: String! }
+        type Third { b: String!, c: String! }
+        union Result = First | Second | Third
+        type Query { result: Result! }
+        "#,
+        r#"
+        query Overlap {
+            result {
+                ... on First { a b }
+                ... on Second { a c }
+                ... on Third { b c }
+            }
+        }
+        "#,
+    ));
+    let output = validator(&tool["outputSchema"]);
+    for response in [
+        json!({"a": "ok", "b": "ok"}),
+        json!({"a": "ok", "c": "ok"}),
+        json!({"b": "ok", "c": "ok"}),
+        json!({"a": "ok", "b": "ok", "extra": true}),
+    ] {
+        assert!(output.is_valid(&json!({"data": {"result": response}})));
+    }
+    assert!(!output.is_valid(&json!({"data": {"result": {
+        "a": false, "b": "ok", "c": "ok"
+    }}})));
+    assert!(!output.is_valid(&json!({"data": {"result": {
+        "a": "ok", "b": "ok", "c": "ok"
+    }}})));
+}
+
+#[test]
 fn type_less_inline_fragment_reaches_nested_named_spread() {
     let tool = wire_tool(&fixture_with_query(
         r#"
