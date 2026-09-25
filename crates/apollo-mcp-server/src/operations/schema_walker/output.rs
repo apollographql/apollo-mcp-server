@@ -4,6 +4,7 @@
 //! enabling MCP tools to declare their output schema.
 
 use std::{
+    cell::OnceCell,
     collections::{BTreeSet, HashMap, HashSet},
     rc::Rc,
 };
@@ -34,7 +35,7 @@ pub fn selection_set_to_schema(
     private_tree: Option<&PrivateFieldTree>,
 ) -> JSONSchema {
     let mut definitions = Map::new();
-    let implementers = graphql_schema.implementers_map();
+    let implementers = OnceCell::new();
 
     let schema = build_selection_set_schema(
         selection_set,
@@ -110,7 +111,7 @@ struct SelectedField<'a> {
 fn collect_selected_fields<'a>(
     selection_set: &'a [Selection],
     declared_on: &'a ExtendedType,
-    member_names: &[String],
+    member_names: &[&str],
     member_index: &HashMap<&str, usize>,
     applicable: Rc<[usize]>,
     graphql_schema: &'a GraphQLSchema,
@@ -189,7 +190,7 @@ fn collect_selected_fields<'a>(
 
 fn matching_members(
     applicable: &[usize],
-    member_names: &[String],
+    member_names: &[&str],
     member_index: &HashMap<&str, usize>,
     condition: &ExtendedType,
     graphql_schema: &GraphQLSchema,
@@ -209,7 +210,7 @@ fn matching_members(
         .copied()
         .filter(|&index| {
             member_names.get(index).is_some_and(|member| {
-                condition.name().as_str() == member
+                condition.name().as_str() == *member
                     || graphql_schema.is_subtype(condition.name().as_str(), member)
             })
         })
@@ -222,24 +223,25 @@ fn build_selection_set_schema(
     selection_set: &[Selection],
     parent_type: &ExtendedType,
     graphql_schema: &GraphQLSchema,
-    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    implementers: &OnceCell<CompilerHashMap<GraphQLName, Implementers>>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     private_tree: &PrivateFieldTree,
 ) -> JSONSchema {
-    let member_names: Vec<String> = match parent_type {
-        ExtendedType::Union(union) => union.members.iter().map(ToString::to_string).collect(),
+    let member_names: Vec<&str> = match parent_type {
+        ExtendedType::Union(union) => union.members.iter().map(|m| m.as_str()).collect(),
         ExtendedType::Interface(interface) => implementers
+            .get_or_init(|| graphql_schema.implementers_map())
             .get(&interface.name)
-            .map(|types| types.objects.iter().map(ToString::to_string).collect())
+            .map(|types| types.objects.iter().map(|m| m.as_str()).collect())
             .unwrap_or_default(),
-        _ => vec![parent_type.name().to_string()],
+        _ => vec![parent_type.name().as_str()],
     };
     // An interface with no implementers has no concrete response; retain a
     // useful schema for its declared fields without emitting an empty anyOf.
     let member_names = if member_names.is_empty() {
-        vec![parent_type.name().to_string()]
+        vec![parent_type.name().as_str()]
     } else {
         member_names
     };
@@ -247,7 +249,7 @@ fn build_selection_set_schema(
     let member_index: HashMap<_, _> = member_names
         .iter()
         .enumerate()
-        .map(|(index, name)| (name.as_str(), index))
+        .map(|(index, name)| (*name, index))
         .collect();
     let mut fields = Vec::new();
     collect_selected_fields(
@@ -370,21 +372,21 @@ fn build_selection_set_schema(
             .filter(|key| key_group_count.get(key) == Some(&1))
             .collect();
         if !unique.is_empty() {
-            let present: Vec<_> = unique
+            let mut present: Vec<_> = unique
                 .iter()
                 .map(|key| json_schema!({"required": [key]}))
                 .collect();
-            let present = json_schema!({"anyOf": present});
+            let present = if present.len() == 1 {
+                present.remove(0)
+            } else {
+                json_schema!({"anyOf": present})
+            };
             key_implications.push(json_schema!({"if": present, "then": branch}));
             unique_key_patterns.push(present);
             all_unique_keys.extend(unique);
         }
     }
-    let alternatives = if branches.len() == 1 {
-        branches.remove(0)
-    } else {
-        json_schema!({"anyOf": branches})
-    };
+    let alternatives = json_schema!({"anyOf": branches});
     let mut constraints = vec![common_schema, alternatives];
     constraints.extend(key_implications);
     if unique_key_patterns.len() > 1 {
@@ -408,7 +410,7 @@ fn response_key(field: &Field) -> String {
 fn build_fields_schema(
     selected: &[&SelectedField<'_>],
     graphql_schema: &GraphQLSchema,
-    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    implementers: &OnceCell<CompilerHashMap<GraphQLName, Implementers>>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -493,7 +495,7 @@ fn build_field_schema(
     field: &Node<Field>,
     field_type: &GraphQLType,
     graphql_schema: &GraphQLSchema,
-    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    implementers: &OnceCell<CompilerHashMap<GraphQLName, Implementers>>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -520,7 +522,7 @@ fn type_to_output_schema(
     graphql_type: &GraphQLType,
     selection_set: &[Selection],
     graphql_schema: &GraphQLSchema,
-    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    implementers: &OnceCell<CompilerHashMap<GraphQLName, Implementers>>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
@@ -599,7 +601,7 @@ fn named_type_to_output_schema(
     name: &GraphQLName,
     selection_set: &[Selection],
     graphql_schema: &GraphQLSchema,
-    implementers: &CompilerHashMap<GraphQLName, Implementers>,
+    implementers: &OnceCell<CompilerHashMap<GraphQLName, Implementers>>,
     custom_scalar_map: Option<&CustomScalarMap>,
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
