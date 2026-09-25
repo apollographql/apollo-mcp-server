@@ -42,7 +42,18 @@ impl From<Name<'_>> for JSONSchema {
 
             // If we've already cached it, then return the reference immediately
             cached if cache.contains_key(cached) => {
-                JSONSchema::new_ref(format!("#/definitions/{cached}"))
+                let reference = format!("#/definitions/{cached}");
+                match schema.types.get(cached) {
+                    Some(ExtendedType::Enum(_)) => json_schema!({
+                        "type": "string",
+                        "$ref": reference,
+                    }),
+                    Some(ExtendedType::InputObject(_)) => json_schema!({
+                        "type": "object",
+                        "$ref": reference,
+                    }),
+                    _ => JSONSchema::new_ref(reference),
+                }
             }
 
             // Otherwise generate the dependent type
@@ -237,6 +248,26 @@ mod tests {
         .into()
     }
 
+    fn cached_type_schema(type_name: &str, type_definition: &str) -> JSONSchema {
+        let schema = GraphQLSchema::parse_and_validate(
+            &format!("type Query {{ dummy: String }} {type_definition}"),
+            "schema.graphql",
+        )
+        .unwrap()
+        .into_inner();
+        let name = GraphQLName::new(type_name).unwrap();
+        let mut cache = Map::new();
+        cache.insert(type_name.to_string(), json!({}));
+
+        Name {
+            cache: &mut cache,
+            custom_scalar_map: None,
+            name: &name,
+            schema: &schema,
+        }
+        .into()
+    }
+
     #[test]
     fn int_maps_to_integer() {
         let schema = builtin_type_schema("Int");
@@ -247,5 +278,23 @@ mod tests {
     fn float_maps_to_number() {
         let schema = builtin_type_schema("Float");
         assert_eq!(json!(schema), json!({"type": "number"}));
+    }
+
+    #[test]
+    fn cached_enum_reference_carries_type_string() {
+        let schema = cached_type_schema("Status", "enum Status { ACTIVE }");
+        assert_eq!(
+            json!(schema),
+            json!({"type": "string", "$ref": "#/definitions/Status"})
+        );
+    }
+
+    #[test]
+    fn cached_input_object_reference_carries_type_object() {
+        let schema = cached_type_schema("Filter", "input Filter { query: String }");
+        assert_eq!(
+            json!(schema),
+            json!({"type": "object", "$ref": "#/definitions/Filter"})
+        );
     }
 }
