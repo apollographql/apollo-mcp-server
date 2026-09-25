@@ -333,11 +333,50 @@ fn build_selection_set_schema(
         );
         Some(JSONSchema::new_ref(format!("#/definitions/{name}")))
     };
+    let mut group_counts = vec![0; conditional.len()];
+    for signature in &groups {
+        for &index in signature {
+            if let Some(count) = group_counts.get_mut(index) {
+                *count += 1;
+            }
+        }
+    }
+    let mut shared_fields = HashMap::new();
+    for (index, field) in conditional.iter().enumerate() {
+        if group_counts.get(index).copied().unwrap_or_default() < 2
+            || private_tree
+                .children
+                .get(&response_key(field.field))
+                .is_some_and(|child| child.is_private)
+        {
+            continue;
+        }
+        // A nested field may apply to several member patterns. Build its schema
+        // once so its subtree does not multiply at each level of nesting.
+        let schema = build_fields_schema(
+            std::slice::from_ref(field),
+            graphql_schema,
+            implementers,
+            custom_scalar_map,
+            named_fragments,
+            definitions,
+            private_tree,
+        );
+        let name = format!("$sharedField{}", definitions.len());
+        definitions.insert(name.clone(), schema.into());
+        shared_fields.insert(index, JSONSchema::new_ref(format!("#/definitions/{name}")));
+    }
     let mut branches = Vec::new();
     for (signature, keys) in groups.into_iter().zip(&group_keys) {
         let selected: Vec<_> = signature
             .iter()
-            .filter_map(|&index| conditional.get(index).copied())
+            .filter_map(|&index| {
+                if shared_fields.contains_key(&index) {
+                    None
+                } else {
+                    conditional.get(index).copied()
+                }
+            })
             .collect();
         let mut branch = build_fields_schema(
             &selected,
@@ -348,6 +387,16 @@ fn build_selection_set_schema(
             definitions,
             private_tree,
         );
+        let shared: Vec<_> = signature
+            .iter()
+            .filter_map(|index| shared_fields.get(index).cloned())
+            .collect();
+        if !shared.is_empty() {
+            let mut constraints = Vec::with_capacity(shared.len() + 1);
+            constraints.push(branch);
+            constraints.extend(shared);
+            branch = json_schema!({"allOf": constraints});
+        }
         if let Some(other_keys) = &other_keys {
             let allowed = if keys.is_empty() {
                 other_keys.clone()

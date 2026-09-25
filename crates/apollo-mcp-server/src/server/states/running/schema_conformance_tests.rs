@@ -574,3 +574,46 @@ fn nested_union_schema_size_grows_with_depth() {
         &json!({"data": {"search": [{"name": "Ada", "friends": []}, {"title": "Team"}]}})
     ));
 }
+
+#[test]
+fn nested_field_shared_by_member_patterns_grows_with_depth() {
+    const SCHEMA: &str = r#"
+        interface Node { id: ID! }
+        interface Shared { children: [Node!]! }
+        type A implements Node & Shared { id: ID!, children: [Node!]!, a: String! }
+        type B implements Node & Shared { id: ID!, children: [Node!]! }
+        type C implements Node { id: ID! }
+        type Query { node: Node! }
+    "#;
+
+    fn selection(depth: usize) -> String {
+        if depth == 0 {
+            "... on A { a }".to_string()
+        } else {
+            format!(
+                "... on Shared {{ children {{ {} }} }} ... on A {{ a }}",
+                selection(depth - 1)
+            )
+        }
+    }
+
+    fn output_schema(depth: usize) -> Value {
+        let query = format!("query DeepShared {{ node {{ {} }} }}", selection(depth));
+        wire_tool(&fixture_with_schema(SCHEMA, &query))["outputSchema"].clone()
+    }
+
+    let sizes: Vec<_> = (1..=4)
+        .map(|depth| serde_json::to_vec(&output_schema(depth)).unwrap().len())
+        .collect();
+    let first_growth = sizes[1] - sizes[0];
+    let last_growth = sizes[3] - sizes[2];
+    assert!(
+        last_growth < first_growth * 2,
+        "shared nested field grew exponentially: {sizes:?}"
+    );
+    let output = validator(&output_schema(4));
+    assert!(output.is_valid(&json!({"data": {"node": {"children": [], "a": "ok"}}})));
+    assert!(output.is_valid(&json!({"data": {"node": {"children": []}}})));
+    assert!(output.is_valid(&json!({"data": {"node": {}}})));
+    assert!(!output.is_valid(&json!({"data": {"node": {"children": false}}})));
+}
