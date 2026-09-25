@@ -280,7 +280,53 @@ mod tests {
 
         assert_eq!(
             schema,
-            json!({"anyOf": [{"$ref": "#/definitions/Status"}, {"type": "null"}]})
+            json!({
+                "anyOf": [
+                    {"type": "string", "$ref": "#/definitions/Status"},
+                    {"type": "null"},
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn non_null_enum_reference_carries_type_string_next_to_ref() {
+        // The bare enum reference emits `type: "string"` alongside `$ref` so
+        // MCP clients that do not dereference `$ref` before serialising the
+        // variable value still classify it correctly. Draft-07 clients that
+        // do dereference ignore the sibling and use the definition.
+        let (schema, _) = convert("$v: Status!", None);
+
+        assert_eq!(
+            schema,
+            json!({"type": "string", "$ref": "#/definitions/Status"})
+        );
+    }
+
+    #[test]
+    fn non_null_input_object_reference_carries_type_object_next_to_ref() {
+        // Same rationale as the enum case: `type: "object"` next to `$ref`
+        // lets non-dereferencing clients avoid stringifying the payload.
+        let (schema, _) = convert("$v: Filter!", None);
+
+        assert_eq!(
+            schema,
+            json!({"type": "object", "$ref": "#/definitions/Filter"})
+        );
+    }
+
+    #[test]
+    fn nullable_input_object_reference_carries_type_object_inside_any_of() {
+        let (schema, _) = convert("$v: Filter", None);
+
+        assert_eq!(
+            schema,
+            json!({
+                "anyOf": [
+                    {"type": "object", "$ref": "#/definitions/Filter"},
+                    {"type": "null"},
+                ]
+            })
         );
     }
 
