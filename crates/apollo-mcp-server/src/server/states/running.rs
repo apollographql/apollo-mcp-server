@@ -4988,3 +4988,6 @@ mod method_header_tests;
 
 #[cfg(test)]
 mod subscription_tests;
+
+#[cfg(test)]
+mod schema_conformance_tests;
