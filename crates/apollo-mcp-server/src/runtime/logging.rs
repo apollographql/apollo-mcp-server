@@ -152,7 +152,6 @@ fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::OsStr;
 
     #[test]
     fn ansi_is_enabled_for_terminal_output() {
