@@ -322,6 +322,7 @@ mod test {
                     ),
                     path: None,
                     rotation: Hourly,
+                    ansi: Auto,
                 },
                 telemetry: Telemetry {
                     exporters: None,

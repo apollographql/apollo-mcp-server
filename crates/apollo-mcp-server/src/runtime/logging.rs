@@ -20,6 +20,22 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::Layer;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
+/// ANSI styling mode for log output.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnsiMode {
+    /// Enable ANSI styling only when the output stream is a terminal, unless
+    /// overridden by `NO_COLOR`, `FORCE_COLOR`, or `CLICOLOR_FORCE`.
+    #[default]
+    Auto,
+    /// Always enable ANSI styling, regardless of terminal detection or
+    /// environment variables.
+    Always,
+    /// Never enable ANSI styling, regardless of terminal detection or
+    /// environment variables.
+    Never,
+}
+
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +56,10 @@ pub struct Logging {
     /// [default: Hourly]
     #[serde(default = "defaults::default_rotation")]
     pub rotation: LogRotationKind,
+
+    /// ANSI styling mode for log output [default: auto]
+    #[serde(default)]
+    pub ansi: AnsiMode,
 }
 
 impl Default for Logging {
@@ -48,6 +68,7 @@ impl Default for Logging {
             level: defaults::log_level(),
             path: None,
             rotation: defaults::default_rotation(),
+            ansi: AnsiMode::default(),
         }
     }
 }
@@ -76,6 +97,13 @@ impl Logging {
 
     pub fn logging_layer(logging: &Logging) -> Result<LoggingLayerResult, anyhow::Error> {
         let no_color = std::env::var_os("NO_COLOR");
+        let force_color = std::env::var_os("FORCE_COLOR");
+        let clicolor_force = std::env::var_os("CLICOLOR_FORCE");
+        let ansi_env = AnsiEnv {
+            no_color: no_color.as_deref(),
+            force_color: force_color.as_deref(),
+            clicolor_force: clicolor_force.as_deref(),
+        };
         let (writer, guard, with_ansi) = match logging.path.clone() {
             Some(path) => std::fs::create_dir_all(&path)
                 .map(|_| path)
@@ -103,13 +131,13 @@ impl Logging {
                     (
                         BoxMakeWriter::new(std::io::stderr),
                         None,
-                        should_use_ansi(std::io::stderr().is_terminal(), no_color.as_deref()),
+                        should_use_ansi(logging.ansi, std::io::stderr().is_terminal(), ansi_env),
                     )
                 }),
             None => (
                 BoxMakeWriter::new(std::io::stdout),
                 None,
-                should_use_ansi(std::io::stdout().is_terminal(), no_color.as_deref()),
+                should_use_ansi(logging.ansi, std::io::stdout().is_terminal(), ansi_env),
             ),
         };
 
@@ -127,8 +155,35 @@ impl Logging {
     }
 }
 
-fn should_use_ansi(is_terminal: bool, no_color: Option<&OsStr>) -> bool {
-    is_terminal && no_color.is_none_or(OsStr::is_empty)
+/// Environment variables consulted when `logging.ansi` is `auto`.
+#[derive(Clone, Copy, Debug, Default)]
+struct AnsiEnv<'a> {
+    no_color: Option<&'a OsStr>,
+    force_color: Option<&'a OsStr>,
+    clicolor_force: Option<&'a OsStr>,
+}
+
+fn should_use_ansi(mode: AnsiMode, is_terminal: bool, env: AnsiEnv<'_>) -> bool {
+    match mode {
+        AnsiMode::Always => true,
+        AnsiMode::Never => false,
+        AnsiMode::Auto => {
+            if env.no_color.is_some_and(|value| !value.is_empty()) {
+                false
+            } else if is_force_flag_set(env.force_color) || is_force_flag_set(env.clicolor_force) {
+                true
+            } else {
+                is_terminal
+            }
+        }
+    }
+}
+
+/// True when a "force color" variable (`FORCE_COLOR`, `CLICOLOR_FORCE`) is
+/// present with a value other than empty or `"0"`, both of which mean "not
+/// forcing" by widespread convention.
+fn is_force_flag_set(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty() && value != OsStr::new("0"))
 }
 
 fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -153,23 +208,90 @@ fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
 mod tests {
     use super::*;
 
+    fn env(no_color: Option<&'static str>) -> AnsiEnv<'static> {
+        AnsiEnv {
+            no_color: no_color.map(OsStr::new),
+            ..AnsiEnv::default()
+        }
+    }
+
     #[test]
     fn ansi_is_enabled_for_terminal_output() {
-        assert!(should_use_ansi(true, None));
+        assert!(should_use_ansi(AnsiMode::Auto, true, env(None)));
     }
 
     #[test]
     fn ansi_is_disabled_for_non_terminal_output() {
-        assert!(!should_use_ansi(false, None));
+        assert!(!should_use_ansi(AnsiMode::Auto, false, env(None)));
     }
 
     #[test]
     fn ansi_is_disabled_when_no_color_is_set() {
-        assert!(!should_use_ansi(true, Some(OsStr::new("1"))));
+        assert!(!should_use_ansi(AnsiMode::Auto, true, env(Some("1"))));
     }
 
     #[test]
     fn ansi_is_enabled_when_no_color_is_empty() {
-        assert!(should_use_ansi(true, Some(OsStr::new(""))));
+        assert!(should_use_ansi(AnsiMode::Auto, true, env(Some(""))));
+    }
+
+    #[test]
+    fn ansi_is_enabled_for_non_terminal_when_force_color_is_set() {
+        let env = AnsiEnv {
+            force_color: Some(OsStr::new("1")),
+            ..AnsiEnv::default()
+        };
+        assert!(should_use_ansi(AnsiMode::Auto, false, env));
+    }
+
+    #[test]
+    fn ansi_is_enabled_for_non_terminal_when_clicolor_force_is_set() {
+        let env = AnsiEnv {
+            clicolor_force: Some(OsStr::new("1")),
+            ..AnsiEnv::default()
+        };
+        assert!(should_use_ansi(AnsiMode::Auto, false, env));
+    }
+
+    #[test]
+    fn force_color_of_zero_does_not_force_ansi_on() {
+        let env = AnsiEnv {
+            force_color: Some(OsStr::new("0")),
+            ..AnsiEnv::default()
+        };
+        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
+    }
+
+    #[test]
+    fn force_color_of_empty_string_does_not_force_ansi_on() {
+        let env = AnsiEnv {
+            force_color: Some(OsStr::new("")),
+            ..AnsiEnv::default()
+        };
+        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
+    }
+
+    #[test]
+    fn no_color_takes_precedence_over_force_color() {
+        let env = AnsiEnv {
+            no_color: Some(OsStr::new("1")),
+            force_color: Some(OsStr::new("1")),
+            ..AnsiEnv::default()
+        };
+        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
+    }
+
+    #[test]
+    fn always_mode_ignores_terminal_detection_and_no_color() {
+        assert!(should_use_ansi(AnsiMode::Always, false, env(Some("1"))));
+    }
+
+    #[test]
+    fn never_mode_ignores_terminal_detection_and_force_color() {
+        let env = AnsiEnv {
+            force_color: Some(OsStr::new("1")),
+            ..AnsiEnv::default()
+        };
+        assert!(!should_use_ansi(AnsiMode::Never, true, env));
     }
 }
