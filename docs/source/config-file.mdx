@@ -143,15 +143,16 @@ These fields are under the top-level `cors` key and configure Cross-Origin Resou
 
 These fields are under the top-level `health_check` key. Learn more about [health checks](/apollo-mcp-server/health-checks).
 
-| Option                        | Type       | Default     | Description                                                                        |
-| :---------------------------- | :--------- | :---------- | :--------------------------------------------------------------------------------- |
-| `enabled`                     | `bool`     | `false`     | Enable health check endpoints                                                      |
-| `path`                        | `string`   | `"/health"` | Custom health check endpoint path                                                  |
-| `readiness`                   | `object`   |             | Readiness check configuration                                                      |
-| `readiness.allowed`           | `number`   | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
-| `readiness.interval`          | `object`   |             | Readiness check interval configuration                                             |
-| `readiness.interval.sampling` | `duration` | `"5s"`      | How often to check the rejection count                                             |
-| `readiness.interval.unready`  | `duration` | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
+| Option                        | Type             | Default     | Description                                                                        |
+|:------------------------------|:-----------------|:------------|:-----------------------------------------------------------------------------------|
+| `enabled`                     | `bool`           | `false`     | Enable health check endpoints                                                      |
+| `path`                        | `string`         | `"/health"` | Custom health check endpoint path                                                  |
+| `listen`                      | `socket address` |             | Serve health checks on a separate address/port instead of the main listener        |
+| `readiness`                   | `object`         |             | Readiness check configuration                                                      |
+| `readiness.allowed`           | `number`         | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
+| `readiness.interval`          | `object`         |             | Readiness check interval configuration                                             |
+| `readiness.interval.sampling` | `duration`       | `"5s"`      | How often to check the rejection count                                             |
+| `readiness.interval.unready`  | `duration`       | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
 
 <Note>
 

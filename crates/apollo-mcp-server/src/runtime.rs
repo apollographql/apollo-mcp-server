@@ -348,6 +348,7 @@ mod test {
                 health_check: HealthCheckConfig {
                     enabled: false,
                     path: "/health",
+                    listen: None,
                     readiness: ReadinessConfig {
                         interval: ReadinessIntervalConfig {
                             sampling: 5s,
