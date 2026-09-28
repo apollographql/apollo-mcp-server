@@ -70,6 +70,7 @@ url.workspace = true
 parking_lot = "0.12.5"
 
 [dev-dependencies]
+rmcp = { workspace = true, features = ["client"] }
 assert_fs = "1"
 base64 = "0.22"
 http-body-util = "0.1"
