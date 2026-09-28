@@ -648,7 +648,7 @@ impl Running {
 /// deliberately when the server adopts a new spec revision — not derived
 /// from rmcp, whose `KNOWN_VERSIONS`/`LATEST` track SDK constants rather
 /// than this server's capabilities.
-pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// Transport handler with its own legacy lifecycle. Application clones cannot
 /// accidentally be served without constructing this owner.
@@ -684,8 +684,6 @@ impl ServerHandler for McpService {
         // `supported_protocol_versions` below bounds both this call and the
         // re-negotiation rmcp runs afterwards on every transport (#803).
         let info = self.negotiate_initialize(&request)?;
-        // The modern branch becomes reachable when the production cap lifts;
-        // the subscription test wrapper does not exercise this negotiation.
         if info.protocol_version < ProtocolVersion::V_2026_07_28 {
             self.notifications
                 .initialize(&self.application.tool_list_changes);
@@ -703,8 +701,7 @@ impl ServerHandler for McpService {
     ///
     /// This also narrows rmcp's re-negotiation (run on every transport after
     /// `initialize`), so it can't advertise a newer version from rmcp's
-    /// `KNOWN_VERSIONS`. Subscription handling is staged separately from
-    /// advertising full `2026-07-28` support.
+    /// `KNOWN_VERSIONS`.
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(ProtocolVersion::known_up_to(
             &MAX_SUPPORTED_PROTOCOL_VERSION,
@@ -1079,6 +1076,172 @@ mod tests {
         Running {
             apps: vec![app],
             ..test_running(Arc::new(RwLock::new(schema)))
+        }
+    }
+
+    mod protocol_2026_07_28 {
+        use super::*;
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tower::ServiceExt as _;
+
+        async fn request(
+            version: &str,
+            method: &str,
+            mut params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/protocolVersion": version,
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "regression-test", "version": "1"}
+            });
+            let request = http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", version);
+            let request = match method_header {
+                Some(value) => request.header("Mcp-Method", value),
+                None => request,
+            };
+            let request = if method == "resources/read" {
+                request.header("Mcp-Name", params["uri"].as_str().unwrap())
+            } else {
+                request
+            };
+            let request = request
+                .body(Body::from(
+                    json!({
+                        "jsonrpc": "2.0", "id": 42, "method": method, "params": params
+                    })
+                    .to_string(),
+                ))
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = if response.headers()[http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/event-stream")
+            {
+                let mut reader =
+                    super::super::test_support::SseReader::new(Body::new(response.into_body()));
+                super::super::test_support::next_message(&mut reader).await
+            } else {
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                serde_json::from_slice(&bytes).unwrap()
+            };
+            (status, body)
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", -32602)]
+        #[case::legacy("2025-11-25", -32002)]
+        #[tokio::test]
+        async fn missing_resource_is_an_error_without_contents(
+            #[case] version: &str,
+            #[case] code: i32,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (_, body) = request(
+                version,
+                "resources/read",
+                json!({"uri": "ui://missing/does-not-exist"}),
+                uri,
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], code, "{body}");
+            assert!(
+                body.get("result").is_none(),
+                "missing resources must never return contents: {body}"
+            );
+        }
+
+        #[rstest::rstest]
+        #[case::discovery("server/discover", json!({}))]
+        #[case::tools("tools/list", json!({}))]
+        #[case::resources("resources/list", json!({}))]
+        #[case::prompts("prompts/list", json!({}))]
+        #[case::read("resources/read", json!({"uri": RESOURCE_URI}))]
+        #[tokio::test]
+        async fn successful_results_are_complete(
+            #[case] method: &str,
+            #[case] params: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                "2026-07-28",
+                method,
+                params,
+                "/mcp?app=MyApp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            if method == "resources/read" {
+                assert_eq!(body["result"]["contents"][0]["text"], "content");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_method_returns_http_not_found(#[values(false, true)] json_response: bool) {
+            let (status, body) = request(
+                "2026-07-28",
+                "unknown/method",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("unknown/method"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+        #[rstest::rstest]
+        #[case::missing(None)]
+        #[case::mismatched(Some("resources/list"))]
+        #[tokio::test]
+        async fn modern_requests_enforce_standard_method_header(#[case] header: Option<&str>) {
+            let (status, body) =
+                request("2026-07-28", "tools/list", json!({}), "/mcp", true, header).await;
+            assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::HEADER_MISMATCH.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
         }
     }
 
@@ -1534,7 +1697,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
@@ -1550,7 +1713,12 @@ mod tests {
                 .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1670,7 +1838,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
@@ -1701,7 +1869,12 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1799,7 +1972,7 @@ mod tests {
         #[rstest]
         #[tokio::test]
         async fn fetch_remote_resource_downloads_content_without_cache_hints(
-            #[values(MAX_SUPPORTED_PROTOCOL_VERSION, ProtocolVersion::V_2026_07_28)]
+            #[values(ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2026_07_28)]
             server_max: ProtocolVersion,
         ) {
             let mut server = mockito::Server::new_async().await;
@@ -2231,7 +2404,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn list_tools_cache_hints_gated_by_protocol_version(
@@ -2252,7 +2425,12 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         fn running_with_builtin_tools() -> Running {
@@ -2858,7 +3036,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
@@ -2867,7 +3045,12 @@ mod tests {
             running.caching.ttl_ms = 60_000;
             let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[test]
@@ -3396,7 +3579,7 @@ mod integration_tests {
             assert!(result.get("cacheScope").is_none());
         }
 
-        async fn request_tools_with_future_protocol(
+        async fn request_tools_with_modern_protocol(
             legacy_session_mode: bool,
             metadata: Option<serde_json::Value>,
         ) -> serde_json::Value {
@@ -3429,7 +3612,7 @@ mod integration_tests {
         async fn rejects_stateless_tools_request_without_required_metadata(
             #[values(true, false)] legacy_session_mode: bool,
         ) {
-            let body = request_tools_with_future_protocol(legacy_session_mode, None).await;
+            let body = request_tools_with_modern_protocol(legacy_session_mode, None).await;
             assert_eq!(body["id"], 1);
             assert_eq!(
                 body["error"]["code"],
@@ -3441,7 +3624,7 @@ mod integration_tests {
 
         #[rstest::rstest]
         #[tokio::test]
-        async fn rejects_stateless_tools_request_with_unsupported_protocol(
+        async fn accepts_stateless_tools_request_with_modern_protocol(
             #[values(true, false)] legacy_session_mode: bool,
         ) {
             let metadata = json!({
@@ -3450,14 +3633,13 @@ mod integration_tests {
                 "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
             });
             let body =
-                request_tools_with_future_protocol(legacy_session_mode, Some(metadata)).await;
+                request_tools_with_modern_protocol(legacy_session_mode, Some(metadata)).await;
             assert_eq!(body["id"], 1);
-            assert_eq!(
-                body["error"]["code"],
-                rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0,
-                "{body}"
-            );
-            assert!(body.get("result").is_none());
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete");
+            assert_eq!(body["result"]["ttlMs"], 300_000);
+            assert_eq!(body["result"]["cacheScope"], "private");
+            assert!(!body["result"]["tools"].as_array().unwrap().is_empty());
         }
 
         #[tokio::test]
@@ -3498,7 +3680,7 @@ mod integration_tests {
         async fn negotiates_down_when_client_requests_newer_version() {
             // Regression for AMS-525: a client offering a protocol version newer
             // than any rmcp implements over streamable_http must be downgraded to
-            // the max supported version rather than refused.
+            // the newest version with an initialize handshake rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
@@ -3512,7 +3694,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::V_2025_11_25.as_str()
             );
         }
 
@@ -3591,13 +3773,9 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn stdio_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // Mirrors `stateless_caps_at_max_supported_when_client_requests_newer_known_version`
-            // for the stdio transport: rmcp's generic `serve()` negotiates through
-            // the same `supported_protocol_versions` hook (service/server.rs), a
-            // different code path from `StreamableHttpService`'s tower layer. This
-            // proves the cap holds there too, closing the one transport #803's fix
-            // didn't yet have a regression test for.
+        async fn stdio_initialize_falls_back_to_legacy_protocol() {
+            // rmcp limits initialize to revisions that support that handshake.
+            // Modern clients use discovery and per-request metadata instead.
             use rmcp::ServiceExt as _;
             use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
@@ -3636,7 +3814,7 @@ mod integration_tests {
             let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::V_2025_11_25.as_str()
             );
 
             drop(reader);
@@ -3675,7 +3853,7 @@ mod integration_tests {
         #[tokio::test]
         async fn stateless_negotiates_down_when_client_requests_unknown_version() {
             // A client offering a version rmcp doesn't know must fall back to
-            // our max supported version rather than having it echoed back.
+            // the newest version with an initialize handshake rather than being echoed back.
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3688,17 +3866,12 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::V_2025_11_25.as_str()
             );
         }
 
         #[tokio::test]
-        async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // Subscription support is staged, but advertising 2026-07-28
-            // remains a separate rollout of the complete revision.
-            // The stateless path must cap at the max supported version rather
-            // than advertise a version whose follow-up requests we can't
-            // handle.
+        async fn stateless_initialize_falls_back_to_legacy_protocol() {
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3711,23 +3884,13 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::V_2025_11_25.as_str()
             );
         }
 
         #[tokio::test]
-        async fn legacy_session_mode_enabled_still_caps_at_max_supported_when_client_requests_newer_known_version()
-         {
-            // Requesting protocol version 2026-07-28 always uses the
-            // stateless/discover lifecycle regardless of `legacy_session_mode`
-            // (SEP-2567), so this exercises the same `NegotiatingStatelessHttpService`
-            // path as `stateless_caps_at_max_supported_when_client_requests_newer_known_version`,
-            // not a distinct legacy-session handshake. This pins that enabling
-            // `legacy_session_mode` doesn't accidentally exempt that request from
-            // the cap (closes #803);
-            // `stdio_caps_at_max_supported_when_client_requests_newer_known_version`
-            // covers the one code path (rmcp's generic `serve()`) that isn't
-            // routed through `StreamableHttpService`.
+        async fn legacy_session_mode_enabled_initialize_falls_back_to_legacy_protocol() {
+            // Enabling legacy sessions does not let initialize negotiate a discovery-only revision.
             let running = create_running_with_output_schema();
             let service = create_service(running, LocalSessionManager::default().into());
 
@@ -3740,7 +3903,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::V_2025_11_25.as_str()
             );
         }
 
@@ -4831,29 +4994,6 @@ mod integration_tests {
             assert_eq!(body["result"], json!({}));
         }
 
-        // Exercise the real handler and rmcp transport before production enables
-        // the new protocol. This wrapper only changes the advertised versions.
-        struct ModernLoggingService(McpService);
-
-        impl ServerHandler for ModernLoggingService {
-            fn get_info(&self) -> ServerConfig {
-                self.0.get_info()
-            }
-
-            fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-                Cow::Borrowed(ProtocolVersion::known_up_to(&ProtocolVersion::V_2026_07_28))
-            }
-
-            #[allow(deprecated)]
-            async fn set_level(
-                &self,
-                request: rmcp::model::SetLevelRequestParams,
-                context: RequestContext<RoleServer>,
-            ) -> Result<(), McpError> {
-                self.0.set_level(request, context).await
-            }
-        }
-
         fn modern_request() -> http::Request<Body> {
             http::Request::builder()
                 .method("POST")
@@ -4887,7 +5027,7 @@ mod integration_tests {
                 serde_json::to_value(running.for_service().get_info().capabilities).unwrap();
             assert!(capabilities.get("logging").is_none());
             let service = StreamableHttpService::new(
-                move || Ok(ModernLoggingService(running.for_service())),
+                move || Ok(running.for_service()),
                 Arc::new(LocalSessionManager::default()),
                 StreamableHttpServerConfig::default()
                     .with_legacy_session_mode(false)
@@ -4900,25 +5040,6 @@ mod integration_tests {
             assert_eq!(body["id"], 42);
             assert_eq!(body["error"]["code"], -32601);
             assert!(body.get("result").is_none());
-        }
-
-        #[tokio::test]
-        async fn production_cap_rejects_modern_version_before_dispatch() {
-            let running = create_test_running();
-            let service = StreamableHttpService::new(
-                move || Ok(running.for_service()),
-                Arc::new(LocalSessionManager::default()),
-                StreamableHttpServerConfig::default().with_legacy_session_mode(false),
-            );
-            let response = service.oneshot(modern_request()).await.unwrap();
-            assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body: Value = serde_json::from_slice(&bytes).unwrap();
-            assert_eq!(body["id"], 42);
-            assert_eq!(
-                body["error"]["code"],
-                ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0
-            );
         }
 
         #[rstest::rstest]
@@ -5145,8 +5266,8 @@ mod integration_tests {
                 .collect();
 
             assert!(
-                versions.contains(&"2025-11-25"),
-                "must advertise 2025-11-25 for backward compat: {versions:?}"
+                versions.contains(&"2025-11-25") && versions.contains(&"2026-07-28"),
+                "must advertise modern and backward compatible versions: {versions:?}"
             );
             // rmcp reuses this list as the ceiling on `initialize`
             // negotiation, so advertising a version promises we can serve it.

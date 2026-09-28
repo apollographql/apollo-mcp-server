@@ -1,4 +1,4 @@
-//! Exercise the future protocol through rmcp without lifting the production cap.
+//! Exercise production subscriptions through the rmcp transport lifecycle.
 
 use axum::body::Body;
 use http::{Request, StatusCode};
@@ -21,43 +21,6 @@ use super::{
     test_support::{SseReader, create_test_running, next_message},
     *,
 };
-
-struct ModernProtocolService(McpService);
-
-impl ServerHandler for ModernProtocolService {
-    fn get_info(&self) -> ServerConfig {
-        self.0
-            .get_info()
-            .with_protocol_version(ProtocolVersion::V_2026_07_28)
-    }
-
-    fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        Cow::Owned(vec![
-            ProtocolVersion::V_2026_07_28,
-            ProtocolVersion::V_2025_11_25,
-        ])
-    }
-
-    fn accepted_subscription_filter(
-        &self,
-        _requested: &SubscriptionFilter,
-    ) -> Option<SubscriptionFilter> {
-        // Opt in alongside the future protocol version, bypassing the production gate.
-        Some(SubscriptionFilter::builder().tools_list_changed().build())
-    }
-
-    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
-        self.0.listen(context).await
-    }
-
-    async fn list_tools(
-        &self,
-        request: Option<PaginatedRequestParams>,
-        context: RequestContext<RoleServer>,
-    ) -> Result<ListToolsResult, McpError> {
-        self.0.list_tools(request, context).await
-    }
-}
 
 fn message(id: u32, method: &str, mut params: Value) -> Value {
     params["_meta"] = json!({
@@ -108,10 +71,10 @@ fn request(id: u32, method: &str, params: Value) -> Request<Body> {
 fn service(
     running: &Running,
     legacy_sessions: bool,
-) -> StreamableHttpService<ModernProtocolService, LocalSessionManager> {
+) -> StreamableHttpService<McpService, LocalSessionManager> {
     let running = running.clone();
     StreamableHttpService::new(
-        move || Ok(ModernProtocolService(running.for_service())),
+        move || Ok(running.for_service()),
         Default::default(),
         StreamableHttpServerConfig::default()
             .with_legacy_session_mode(legacy_sessions)
@@ -265,39 +228,7 @@ async fn modern_get_cannot_open_a_notification_stream(#[case] legacy_sessions: b
 #[rstest::rstest]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
-async fn production_still_rejects_future_protocol_subscriptions() {
-    let running = create_test_running();
-    let application = running.clone();
-    let service: StreamableHttpService<McpService, LocalSessionManager> =
-        StreamableHttpService::new(
-            move || Ok(application.for_service()),
-            Default::default(),
-            StreamableHttpServerConfig::default(),
-        );
-    let response = service
-        .oneshot(request(
-            1,
-            "subscriptions/listen",
-            json!({"notifications": {"toolsListChanged": true}}),
-        ))
-        .await
-        .unwrap();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let response: Value = serde_json::from_slice(&bytes).unwrap();
-    assert_eq!(response["id"], 1);
-    assert_eq!(
-        response["error"]["code"],
-        ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0,
-        "{response}"
-    );
-    assert!(response.get("result").is_none());
-    assert_eq!(running.tool_list_changes.receiver_count(), 0);
-}
-
-#[rstest::rstest]
-#[tokio::test]
-#[timeout(std::time::Duration::from_secs(10))]
-async fn production_rejects_subscriptions_after_stdio_discovery() {
+async fn subscriptions_after_legacy_stdio_discovery_follow_the_discovery_lifecycle() {
     let running = create_test_running();
     let handler = running.for_service();
     let (server_io, client_io) = tokio::io::duplex(8192);
@@ -307,8 +238,7 @@ async fn production_rejects_subscriptions_after_stdio_discovery() {
     let (read, mut write) = tokio::io::split(client_io);
     let mut reader = BufReader::new(read).lines();
 
-    // rmcp permits discovery with an older supported version. This selects
-    // the modern lifecycle even though the production version cap is unchanged.
+    // Discovery selects the subscription lifecycle even with an older supported version.
     let mut discover = message(1, "server/discover", json!({}));
     discover["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("2025-11-25");
     write_message(&mut write, discover).await;
@@ -323,11 +253,13 @@ async fn production_rejects_subscriptions_after_stdio_discovery() {
     );
     listen["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] = json!("2025-11-25");
     write_message(&mut write, listen).await;
-    // The first message must reject the request, before any acknowledgement.
     let response = read_message(&mut reader).await;
-    assert_eq!(response["id"], 2, "{response}");
-    assert_eq!(response["error"]["code"], ErrorCode::METHOD_NOT_FOUND.0);
-    assert_eq!(running.tool_list_changes.receiver_count(), 0);
+    assert_eq!(
+        response["method"],
+        "notifications/subscriptions/acknowledged"
+    );
+    assert_change(&read_message(&mut reader).await, 2);
+    assert_eq!(running.tool_list_changes.receiver_count(), 1);
 
     drop(write);
     drop(reader);
@@ -342,7 +274,7 @@ async fn production_rejects_subscriptions_after_stdio_discovery() {
 #[timeout(std::time::Duration::from_secs(10))]
 async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
     struct ObservedListener {
-        inner: ModernProtocolService,
+        inner: McpService,
         cancelled_listener_dropped: CancellationToken,
     }
     impl ServerHandler for ObservedListener {
@@ -369,7 +301,7 @@ async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
     let running = create_test_running();
     let cancelled_listener_dropped = CancellationToken::new();
     let handler = ObservedListener {
-        inner: ModernProtocolService(running.for_service()),
+        inner: running.for_service(),
         cancelled_listener_dropped: cancelled_listener_dropped.clone(),
     };
     let (server_io, client_io) = tokio::io::duplex(8192);
@@ -422,7 +354,7 @@ async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
 #[timeout(std::time::Duration::from_secs(10))]
 async fn initial_refresh_covers_reload_after_acknowledgement_before_registration() {
     struct DelayedListener {
-        inner: ModernProtocolService,
+        inner: McpService,
         entered: Arc<tokio::sync::Notify>,
         release: Arc<tokio::sync::Notify>,
     }
@@ -455,7 +387,7 @@ async fn initial_refresh_covers_reload_after_acknowledgement_before_registration
         StreamableHttpService::new(
             move || {
                 Ok(DelayedListener {
-                    inner: ModernProtocolService(application.for_service()),
+                    inner: application.for_service(),
                     entered: listener_entered.clone(),
                     release: listener_release.clone(),
                 })
@@ -510,7 +442,7 @@ async fn blocked_stdio_delivery_does_not_block_reload_or_other_clients(
     use std::sync::atomic::{AtomicBool, Ordering};
 
     let running = create_test_running();
-    let handler = ModernProtocolService(running.for_service());
+    let handler = running.for_service();
     let (server_input, mut input) = tokio::io::duplex(8192);
     let (server_output, output) = tokio::io::duplex(8);
     let armed = Arc::new(AtomicBool::new(false));
