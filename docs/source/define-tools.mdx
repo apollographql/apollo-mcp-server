@@ -29,6 +29,10 @@ The optional [`validate` tool](#introspection-tools) validates an agent-supplied
 
 ## Define GraphQL operations for tools
 
+In `tools/list`, predefined GraphQL operation tools appear first, alphabetically by operation name using case-sensitive lexicographic ordering (for example, `Alpha`, `Zulu`, `alpha`). With unique operation names, the same operation set retains this order across repeated calls, schema reloads, and operation reloads, regardless of source order. Operations with equal names retain their source order. Built-in and app tools follow in their existing order.
+
+Deterministic ordering supports client-side tool-list caching and LLM prompt cache reuse. Schema reloads can still change tool descriptions or generated schemas; the guarantee applies to ordering.
+
 ### From operation files
 
 An operation file is a `.graphql` file containing a single GraphQL operation.
