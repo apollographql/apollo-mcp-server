@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::introspection::tools::search::IndexingError;
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
@@ -84,6 +86,9 @@ pub enum ServerError {
 
     #[error("Could not open file: {0}")]
     ReadFile(#[from] std::io::Error),
+
+    #[error("Failed to bind listener on {0}: {1}")]
+    Bind(SocketAddr, #[source] std::io::Error),
 
     #[error("invalid header value: {0}")]
     HeaderValue(#[from] InvalidHeaderValue),
