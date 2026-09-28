@@ -4834,13 +4834,14 @@ mod integration_tests {
         #[rstest::rstest]
         #[tokio::test]
         #[timeout(std::time::Duration::from_secs(10))]
-        #[allow(deprecated)]
         async fn legacy_negotiated_request_returns_empty_success() {
             use rmcp::ServiceExt as _;
-            use rmcp::model::{ClientInfo, LoggingLevel, SetLevelRequestParams};
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
             let running = create_test_running();
             let (server_io, client_io) = tokio::io::duplex(4096);
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
             let server = tokio::spawn(async move {
                 running
                     .for_service()
@@ -4851,20 +4852,46 @@ mod integration_tests {
                     .await
                     .unwrap();
             });
-            let info: ClientInfo = serde_json::from_value(json!({
-                "protocolVersion": "2025-11-25", "capabilities": {},
-                "clientInfo": {"name": "test", "version": "1"}
-            }))
-            .unwrap();
-            let client = info.serve(client_io).await.unwrap();
-            let server_info = client.peer_info().unwrap();
-            assert_eq!(server_info.protocol_version, ProtocolVersion::V_2025_11_25);
-            assert!(server_info.capabilities.logging.is_none());
-            client
-                .set_level(SetLevelRequestParams::new(LoggingLevel::Debug))
+            let initialize = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"}
+                }
+            });
+            writer
+                .write_all(format!("{initialize}\n").as_bytes())
                 .await
                 .unwrap();
-            client.cancel().await.unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 1);
+            assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+            assert!(response["result"]["capabilities"].get("logging").is_none());
+
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            let set_level = json!({
+                "jsonrpc": "2.0", "id": 2, "method": "logging/setLevel",
+                "params": {"level": "debug"}
+            });
+            writer
+                .write_all(format!("{set_level}\n").as_bytes())
+                .await
+                .unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 2);
+            assert_eq!(response["result"], json!({}));
+            assert!(response.get("error").is_none());
+
+            drop(reader);
+            drop(writer);
             server.await.unwrap();
         }
     }
