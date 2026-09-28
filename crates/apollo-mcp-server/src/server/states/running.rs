@@ -906,7 +906,7 @@ impl ServerHandler for McpService {
         request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        // rmcp 3.3 dispatches this method for every version; its modern HTTP
+        // rmcp 3.5 dispatches this method for every version; its modern HTTP
         // transport maps this method-not-found error to HTTP 404.
         if context
             .protocol_version()
@@ -4746,7 +4746,7 @@ mod integration_tests {
         struct ModernLoggingService(McpService);
 
         impl ServerHandler for ModernLoggingService {
-            fn get_info(&self) -> ServerInfo {
+            fn get_info(&self) -> ServerConfig {
                 self.0.get_info()
             }
 
