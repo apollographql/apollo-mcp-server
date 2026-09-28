@@ -159,7 +159,7 @@ fn on_execute_graphql_operation(ctx) {
 
 Keep top-level code free of side effects. Rhai re-executes the top-level statements before every hook call, so an HTTP request or any other side effect placed there runs once per request, even though hooks read the values captured at load time.
 
-Each hook invocation also gets its own copy of these variables so that hooks can run concurrently. A value a hook writes to one is discarded when the hook returns, so top-level variables can't carry state from one request to the next.
+Each hook invocation also gets its own copy of these variables so that hooks can run concurrently. A value a hook writes to one is discarded when the hook returns, so top-level variables can't carry state from one request to the next. This includes variables a top-level closure captured: the closure keeps the value from load time and doesn't see writes a hook makes.
 
 Hooks for concurrent requests run in parallel, so their side effects interleave in any order. Don't write a hook that assumes it runs to completion before the next request's hook starts.
 

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rhai::module_resolvers::FileModuleResolver;
-use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
+use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, FnPtr, FuncArgs, Map, Position, Scope};
 use tracing::info;
 
 use crate::checkpoints::OnExecuteGraphqlOperationContext;
@@ -76,16 +76,7 @@ impl RhaiEngine {
             return Ok(());
         }
 
-        self.ast = self
-            .engine
-            .compile_file(self.main_file.clone())
-            .map_err(|err| format!("in Rhai script {}: {}", self.main_file.display(), err))?;
-
-        // Run the AST with our scope to put any global variables
-        // defined in scripts into scope.
-        self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
-
-        Ok(())
+        self.compile_and_run()
     }
 
     /// Compiles the scripts in `script_dir` into a new engine.
@@ -95,13 +86,39 @@ impl RhaiEngine {
         script_dir: impl AsRef<Path>,
     ) -> Result<Self, Box<EvalAltResult>> {
         let mut engine = Self::new(script_dir);
-
-        if !engine.main_file.exists() {
-            return Err(format!("Rhai script {} not found", engine.main_file.display()).into());
-        }
-
-        engine.load_from_path()?;
+        engine.compile_and_run()?;
         Ok(engine)
+    }
+
+    fn compile_and_run(&mut self) -> Result<(), Box<EvalAltResult>> {
+        self.ast = self
+            .engine
+            .compile_file(self.main_file.clone())
+            .map_err(|err| format!("in Rhai script {}: {}", self.main_file.display(), err))?;
+
+        // Run the AST with our scope to put any global variables
+        // defined in scripts into scope.
+        self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
+        self.detach_shared_values();
+
+        Ok(())
+    }
+
+    /// A closure that captures a top-level variable turns it into a shared cell, and cloning a
+    /// `Scope` copies the pointer to that cell rather than its contents. Replacing every shared
+    /// value with a plain copy keeps the per-invocation scope in [`Self::execute_hook`] from
+    /// leaking one call's writes into another.
+    fn detach_shared_values(&mut self) {
+        let mut detached = Self::create_scope();
+        for (name, is_constant, value) in self.scope.iter_raw() {
+            let value = detach(value.clone());
+            if is_constant {
+                detached.push_constant_dynamic(name, value);
+            } else {
+                detached.push_dynamic(name, value);
+            }
+        }
+        self.scope = detached;
     }
 
     pub(crate) fn execute_hook(
@@ -113,7 +130,8 @@ impl RhaiEngine {
             // CONCURRENCY: a per-invocation copy of the top-level scope keeps hook execution
             // off an exclusive lock, which would deadlock a script that blocks on HTTP. The copy
             // is what makes top-level values visible: `call_fn` re-runs the top-level statements
-            // but discards their bindings. Neither half can go away, see the tests below.
+            // but discards their bindings. Neither half can go away, see the tests below. The
+            // copy is independent only because `detach_shared_values` ran at load.
             let mut scope = self.scope.clone();
 
             return Ok(Some(
@@ -133,7 +151,37 @@ impl RhaiEngine {
     pub(crate) fn load_from_string(&mut self, script: &str) -> Result<(), Box<EvalAltResult>> {
         self.ast = self.engine.compile(script)?;
         self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
+        self.detach_shared_values();
         Ok(())
+    }
+}
+
+/// Deep-copies `value` so that no part of it is shared, including values nested in arrays and
+/// maps and values a closure captured.
+fn detach(value: Dynamic) -> Dynamic {
+    let value = match value.flatten().try_cast_result::<Array>() {
+        Ok(array) => return Dynamic::from_array(array.into_iter().map(detach).collect()),
+        Err(value) => value,
+    };
+
+    let value = match value.try_cast_result::<Map>() {
+        Ok(map) => {
+            return Dynamic::from_map(
+                map.into_iter()
+                    .map(|(key, item)| (key, detach(item)))
+                    .collect(),
+            );
+        }
+        Err(value) => value,
+    };
+
+    match value.try_cast_result::<FnPtr>() {
+        Ok(mut fn_ptr) => {
+            let curry: Vec<Dynamic> = fn_ptr.iter_curry().cloned().map(detach).collect();
+            fn_ptr.set_curry(curry);
+            Dynamic::from(fn_ptr)
+        }
+        Err(value) => value,
     }
 }
 
@@ -316,5 +364,40 @@ mod tests {
                 )),
             }
         });
+    }
+
+    #[test]
+    fn should_isolate_direct_writes_to_captured_values_between_invocations() {
+        let engine = create_engine(
+            "let m = #{ v: 0 };\nlet get = || m.v;\nfn write() { m.v = 5; }\nfn read() { m.v }",
+        );
+
+        engine.execute_hook("write", ()).expect("Should not error");
+        let result = engine.execute_hook("read", ()).expect("Should not error");
+
+        assert_eq!(result.unwrap().as_int().unwrap(), 0);
+    }
+
+    #[test]
+    fn should_isolate_writes_through_a_closure_between_invocations() {
+        let engine = create_engine(
+            "let m = #{ v: 0 };\nlet set = |x| m.v = x;\nlet get = || m.v;\nfn write() { set.call(5); }\nfn read() { get.call() }",
+        );
+
+        engine.execute_hook("write", ()).expect("Should not error");
+        let result = engine.execute_hook("read", ()).expect("Should not error");
+
+        assert_eq!(result.unwrap().as_int().unwrap(), 0);
+    }
+
+    #[test]
+    fn should_let_closures_read_the_values_they_captured() {
+        let engine = create_engine(
+            "let prefix = \"p-\";\nlet add = |s| prefix + s;\nfn run() { add.call(\"x\") }",
+        );
+
+        let result = engine.execute_hook("run", ()).expect("Should not error");
+
+        assert_eq!(result.unwrap().into_string().unwrap(), "p-x");
     }
 }
