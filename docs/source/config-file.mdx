@@ -206,6 +206,11 @@ These fields are under the top-level `logging` key.
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
 | `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stdout`.      |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
+| `ansi`     | `oneOf ["auto", "always", "never"]`                 | `"auto"`   | ANSI styling mode for log output                                                   |
+
+With `ansi: auto` (the default), logs written to a terminal use ANSI styling and redirected output or configured log files use plain text. A non-empty `NO_COLOR` environment variable disables ANSI styling even on a terminal. A non-empty `FORCE_COLOR` or `CLICOLOR_FORCE` environment variable (other than `"0"`) enables ANSI styling even when the output isn't a terminal, useful for CI log viewers (like GitHub Actions) that render ANSI from piped output. `NO_COLOR` takes precedence over `FORCE_COLOR` and `CLICOLOR_FORCE` when both are set. For details, see the [NO_COLOR website](https://no-color.org/).
+
+Set `ansi: always` or `ansi: never` to override terminal detection and all of the environment variables above.
 
 <Caution>
 
