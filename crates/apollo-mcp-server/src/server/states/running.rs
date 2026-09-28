@@ -901,16 +901,25 @@ impl ServerHandler for McpService {
         self.application.get_prompt_impl(request).map(Into::into)
     }
 
-    // `logging` is deprecated by SEP-2577, but we still override this handler so
-    // clients that send `logging/setLevel` without checking capabilities get an
-    // empty success instead of `-32601`.
+    // SEP-2575 removes this RPC in 2026-07-28, independently of SEP-2577's
+    // deprecation of Logging. Older clients retain the compatibility no-op.
     #[allow(deprecated)]
     #[tracing::instrument(skip_all)]
     async fn set_level(
         &self,
         request: rmcp::model::SetLevelRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
+        // rmcp 3.5 dispatches this method for every version; its modern HTTP
+        // transport maps this method-not-found error to HTTP 404.
+        if context
+            .protocol_version()
+            .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+        {
+            return Err(McpError::method_not_found::<
+                rmcp::model::SetLevelRequestMethod,
+            >());
+        }
         // We do not advertise the `logging` capability and do not emit
         // `notifications/message`. This override exists only to accept
         // `logging/setLevel` from clients that send it without checking
@@ -4760,8 +4769,13 @@ mod integration_tests {
     mod logging_setlevel {
         use std::sync::Arc;
 
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
+        use tower::ServiceExt as _;
 
         use super::*;
 
@@ -4801,7 +4815,7 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn returns_empty_success_for_any_level() {
+        async fn legacy_sessionless_request_returns_empty_success() {
             let running = create_test_running();
             let body = super::stateless_request(
                 running,
@@ -4815,6 +4829,160 @@ mod integration_tests {
                 "set_level should not return an error: {body}"
             );
             assert_eq!(body["result"], json!({}));
+        }
+
+        // Exercise the real handler and rmcp transport before production enables
+        // the new protocol. This wrapper only changes the advertised versions.
+        struct ModernLoggingService(McpService);
+
+        impl ServerHandler for ModernLoggingService {
+            fn get_info(&self) -> ServerConfig {
+                self.0.get_info()
+            }
+
+            fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
+                Cow::Borrowed(ProtocolVersion::known_up_to(&ProtocolVersion::V_2026_07_28))
+            }
+
+            #[allow(deprecated)]
+            async fn set_level(
+                &self,
+                request: rmcp::model::SetLevelRequestParams,
+                context: RequestContext<RoleServer>,
+            ) -> Result<(), McpError> {
+                self.0.set_level(request, context).await
+            }
+        }
+
+        fn modern_request() -> http::Request<Body> {
+            http::Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .header("Mcp-Method", "logging/setLevel")
+                .body(Body::from(json!({
+                    "jsonrpc": "2.0", "id": 42, "method": "logging/setLevel",
+                    "params": {
+                        "level": "debug",
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                            "io.modelcontextprotocol/clientCapabilities": {},
+                            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"}
+                        }
+                    }
+                }).to_string()))
+                .unwrap()
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_request_returns_http_method_not_found(
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running = create_test_running();
+            let capabilities =
+                serde_json::to_value(running.for_service().get_info().capabilities).unwrap();
+            assert!(capabilities.get("logging").is_none());
+            let service = StreamableHttpService::new(
+                move || Ok(ModernLoggingService(running.for_service())),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            let response = service.oneshot(modern_request()).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+
+        #[tokio::test]
+        async fn production_cap_rejects_modern_version_before_dispatch() {
+            let running = create_test_running();
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(false),
+            );
+            let response = service.oneshot(modern_request()).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::BAD_REQUEST);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["id"], 42);
+            assert_eq!(
+                body["error"]["code"],
+                ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0
+            );
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn legacy_negotiated_request_returns_empty_success() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let running = create_test_running();
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
+            let server = tokio::spawn(async move {
+                running
+                    .for_service()
+                    .serve(server_io)
+                    .await
+                    .unwrap()
+                    .waiting()
+                    .await
+                    .unwrap();
+            });
+            let initialize = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"}
+                }
+            });
+            writer
+                .write_all(format!("{initialize}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 1);
+            assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+            assert!(response["result"]["capabilities"].get("logging").is_none());
+
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            let set_level = json!({
+                "jsonrpc": "2.0", "id": 2, "method": "logging/setLevel",
+                "params": {"level": "debug"}
+            });
+            writer
+                .write_all(format!("{set_level}\n").as_bytes())
+                .await
+                .unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 2);
+            assert_eq!(response["result"], json!({}));
+            assert!(response.get("error").is_none());
+
+            drop(reader);
+            drop(writer);
+            server.await.unwrap();
         }
     }
 
