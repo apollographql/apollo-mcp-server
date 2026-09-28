@@ -20,7 +20,7 @@ use rmcp::{
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
@@ -663,24 +663,6 @@ impl ServerHandler for McpService {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        // rmcp 3.3 gap: validate_standard_headers exempts initialize, including
-        // requests declaring STANDARD_HEADERS or later. Auth can admit those
-        // requests using Mcp-Method without reading the body, so reject a forged
-        // discovery header here before initializing the application lifecycle.
-        if let Some(parts) = context.extensions.get::<http::request::Parts>() {
-            let mut values = parts
-                .headers
-                .get_all(rmcp::transport::common::http_header::HEADER_MCP_METHOD)
-                .iter();
-            if let Some(value) = values.next()
-                && (value != "initialize" || values.next().is_some())
-            {
-                return Err(ErrorData::header_mismatch(
-                    "Mcp-Method must be initialize when supplied for an initialize request",
-                    None,
-                ));
-            }
-        }
         let meter = &meter::METER;
         let attributes = vec![
             KeyValue::new(
@@ -935,7 +917,7 @@ impl ServerHandler for McpService {
         Ok(())
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::GetInfoCount.as_str())
@@ -4321,7 +4303,7 @@ mod integration_tests {
                 entered: tokio::sync::mpsc::UnboundedSender<()>,
             }
             impl ServerHandler for DelayedService {
-                fn get_info(&self) -> ServerInfo {
+                fn get_info(&self) -> ServerConfig {
                     self.service.get_info()
                 }
                 async fn initialize(
@@ -4442,7 +4424,7 @@ mod integration_tests {
                 completed: tokio::sync::mpsc::UnboundedSender<()>,
             }
             impl ServerHandler for ObservedService {
-                fn get_info(&self) -> ServerInfo {
+                fn get_info(&self) -> ServerConfig {
                     self.running.get_info()
                 }
 

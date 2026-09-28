@@ -25,7 +25,7 @@ use super::{
 struct ModernProtocolService(McpService);
 
 impl ServerHandler for ModernProtocolService {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         self.0
             .get_info()
             .with_protocol_version(ProtocolVersion::V_2026_07_28)
@@ -346,7 +346,7 @@ async fn stdio_cancellation_targets_one_of_multiple_subscriptions() {
         cancelled_listener_dropped: CancellationToken,
     }
     impl ServerHandler for ObservedListener {
-        fn get_info(&self) -> ServerInfo {
+        fn get_info(&self) -> ServerConfig {
             self.inner.get_info()
         }
         fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -427,7 +427,7 @@ async fn initial_refresh_covers_reload_after_acknowledgement_before_registration
         release: Arc<tokio::sync::Notify>,
     }
     impl ServerHandler for DelayedListener {
-        fn get_info(&self) -> ServerInfo {
+        fn get_info(&self) -> ServerConfig {
             self.inner.get_info()
         }
         fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
