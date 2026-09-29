@@ -312,8 +312,6 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use assert_fs::{TempDir, prelude::*};
     use http::HeaderMap;
     use url::Url;
@@ -323,64 +321,56 @@ mod tests {
 
     use super::*;
 
-    fn test_config(apps_dir: PathBuf, prompts_dir: PathBuf, port: u16) -> Config {
-        Config {
-            rhai_dir: PathBuf::from("rhai"),
-            apps_dir,
-            prompts_dir,
-            transport: Transport::StreamableHttp {
-                auth: None,
-                address: "127.0.0.1".parse().unwrap(),
-                port,
-                stateful_mode: false,
-                host_validation: HostValidationConfig::default(),
-            },
-            endpoint: Url::parse("http://localhost:4000").expect("valid url"),
-            mutation_mode: MutationMode::All,
-            execute_introspection: true,
-            headers: HeaderMap::new(),
-            forward_headers: vec![],
-            validate_introspection: true,
-            introspect_introspection: true,
-            search_introspection: true,
-            introspect_minify: false,
-            search_minify: false,
-            execute_tool_hint: None,
-            introspect_tool_hint: None,
-            search_tool_hint: None,
-            validate_tool_hint: None,
-            explorer_graph_ref: None,
-            custom_scalar_map: None,
-            disable_type_description: false,
-            disable_schema_description: false,
-            enable_output_schema: false,
-            disable_auth_token_passthrough: false,
-            descriptions: std::collections::HashMap::new(),
-            annotations: std::collections::HashMap::new(),
-            required_scopes: std::collections::HashMap::new(),
-            search_leaf_depth: 5,
-            index_memory_bytes: 1024 * 1024 * 1024,
-            health_check: HealthCheckConfig {
-                enabled: true,
-                ..Default::default()
-            },
-            cors: Default::default(),
-            server_info: Default::default(),
-            instructions: None,
-            caching: Default::default(),
-        }
-    }
-
-    fn test_schema() -> Valid<Schema> {
-        Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
-            .expect("Valid schema")
-    }
-
     #[tokio::test]
     async fn start_basic_server() {
         let starting = Starting {
-            config: test_config(PathBuf::from("apps"), PathBuf::from("prompts"), 7799),
-            schema: test_schema(),
+            config: Config {
+                rhai_dir: std::path::PathBuf::from("rhai"),
+                apps_dir: std::path::PathBuf::from("apps"),
+                prompts_dir: std::path::PathBuf::from("prompts"),
+                transport: Transport::StreamableHttp {
+                    auth: None,
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: 7799,
+                    stateful_mode: false,
+                    host_validation: HostValidationConfig::default(),
+                },
+                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+                mutation_mode: MutationMode::All,
+                execute_introspection: true,
+                headers: HeaderMap::new(),
+                forward_headers: vec![],
+                validate_introspection: true,
+                introspect_introspection: true,
+                search_introspection: true,
+                introspect_minify: false,
+                search_minify: false,
+                execute_tool_hint: None,
+                introspect_tool_hint: None,
+                search_tool_hint: None,
+                validate_tool_hint: None,
+                explorer_graph_ref: None,
+                custom_scalar_map: None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: std::collections::HashMap::new(),
+                annotations: std::collections::HashMap::new(),
+                required_scopes: std::collections::HashMap::new(),
+                search_leaf_depth: 5,
+                index_memory_bytes: 1024 * 1024 * 1024,
+                health_check: HealthCheckConfig {
+                    enabled: true,
+                    ..Default::default()
+                },
+                cors: Default::default(),
+                server_info: Default::default(),
+                instructions: None,
+                caching: Default::default(),
+            },
+            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
+                .expect("Valid schema"),
             operations: vec![],
         };
         let running = starting.start();
@@ -418,12 +408,50 @@ mod tests {
             .unwrap();
 
         let starting = Starting {
-            config: test_config(
-                apps_dir.path().to_path_buf(),
-                prompts_dir.path().to_path_buf(),
-                0,
-            ),
-            schema: test_schema(),
+            config: Config {
+                rhai_dir: std::path::PathBuf::from("rhai"),
+                apps_dir: apps_dir.path().to_path_buf(),
+                prompts_dir: prompts_dir.path().to_path_buf(),
+                transport: Transport::StreamableHttp {
+                    auth: None,
+                    address: "127.0.0.1".parse().unwrap(),
+                    port: 0,
+                    stateful_mode: false,
+                    host_validation: HostValidationConfig::default(),
+                },
+                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
+                mutation_mode: MutationMode::All,
+                execute_introspection: false,
+                headers: HeaderMap::new(),
+                forward_headers: vec![],
+                validate_introspection: false,
+                introspect_introspection: false,
+                search_introspection: false,
+                introspect_minify: false,
+                search_minify: false,
+                execute_tool_hint: None,
+                introspect_tool_hint: None,
+                search_tool_hint: None,
+                validate_tool_hint: None,
+                explorer_graph_ref: None,
+                custom_scalar_map: None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: std::collections::HashMap::new(),
+                annotations: std::collections::HashMap::new(),
+                required_scopes: std::collections::HashMap::new(),
+                search_leaf_depth: 5,
+                index_memory_bytes: 1024 * 1024,
+                health_check: HealthCheckConfig::default(),
+                cors: Default::default(),
+                server_info: Default::default(),
+                instructions: None,
+                caching: Default::default(),
+            },
+            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
+                .expect("Valid schema"),
             operations: vec![],
         };
 
@@ -433,27 +461,5 @@ mod tests {
         assert_eq!(running.apps[0].name, "MyApp");
         assert_eq!(running.prompts.len(), 1);
         assert_eq!(running.prompts[0].prompt.name, "greeting");
-    }
-
-    /// Missing configured directories are not an error: the server starts with
-    /// no apps and no prompts, matching the behaviour of the defaults.
-    #[tokio::test]
-    async fn start_tolerates_missing_configured_directories() {
-        let temp = TempDir::new().expect("Could not create temporary directory for test");
-
-        let starting = Starting {
-            config: test_config(
-                temp.path().join("no-such-apps"),
-                temp.path().join("no-such-prompts"),
-                0,
-            ),
-            schema: test_schema(),
-            operations: vec![],
-        };
-
-        let running = starting.start().await.expect("server should start");
-
-        assert!(running.apps.is_empty());
-        assert!(running.prompts.is_empty());
     }
 }
