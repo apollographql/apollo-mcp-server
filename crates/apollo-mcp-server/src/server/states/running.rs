@@ -10,9 +10,9 @@ use rmcp::ErrorData;
 use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
-    GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
-    PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
-    SubscriptionFilter, ToolsCapability,
+    GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -853,6 +853,22 @@ impl ServerHandler for McpService {
             .list_resources_impl(&context.extensions, protocol_version.as_ref())
     }
 
+    #[tracing::instrument(skip_all)]
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // We expose no templates, but even an empty modern list requires cache hints.
+        // rmcp's default handler returns the empty list without those hints.
+        let protocol_version = context.protocol_version();
+        Ok(self.application.caching.apply_to(
+            ListResourceTemplatesResult::default(),
+            protocol_version.as_ref(),
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        ))
+    }
+
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
     async fn read_resource(
         &self,
@@ -1091,11 +1107,12 @@ mod tests {
             json_response: bool,
             method_header: Option<&str>,
         ) -> (http::StatusCode, Value) {
-            let running = running_with_apps(
+            let mut running = running_with_apps(
                 AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
                 None,
                 None,
             );
+            running.caching.ttl_ms = 60_000;
             let service = StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 Arc::new(LocalSessionManager::default()),
@@ -1174,6 +1191,36 @@ mod tests {
                 body.get("result").is_none(),
                 "missing resources must never return contents: {body}"
             );
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", json!({
+            "resourceTemplates": [], "resultType": "complete",
+            "ttlMs": 60_000, "cacheScope": "private"
+        }))]
+        #[case::legacy("2025-11-25", json!({"resourceTemplates": []}))]
+        #[tokio::test]
+        async fn empty_template_list_uses_protocol_appropriate_cache_hints(
+            #[case] version: &str,
+            #[case] expected: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/templates/list",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("resources/templates/list"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            let mut result = body["result"].clone();
+            // rmcp attaches server metadata separately from the result's protocol fields.
+            result.as_object_mut().unwrap().remove("_meta");
+            assert_eq!(result, expected);
         }
 
         #[rstest::rstest]

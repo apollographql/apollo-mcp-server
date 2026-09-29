@@ -1,9 +1,9 @@
 //! Cache-hint configuration for MCP list/read responses.
 //!
 //! Governs the `ttlMs`/`cacheScope` cache hints (SEP-2549) attached to `tools/list`,
-//! `resources/list`, `resources/read`, and `prompts/list` responses. These hints are only sent
-//! to peers that negotiate MCP protocol version `2026-07-28` or later; older peers see no
-//! change in behavior.
+//! `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses.
+//! These hints are only sent to peers using MCP protocol version `2026-07-28` or later;
+//! older peers see no change in behavior.
 
 use rmcp::model::{CacheScope, ProtocolVersion};
 use schemars::JsonSchema;
@@ -13,8 +13,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Copy, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Caching {
-    /// Time, in milliseconds, that `tools/list`, `resources/list`, `resources/read`, and
-    /// `prompts/list` responses may be treated as fresh by clients.
+    /// Time, in milliseconds, that `tools/list`, `resources/list`, `resources/templates/list`,
+    /// `resources/read`, and `prompts/list` responses may be treated as fresh by clients.
     #[schemars(default = "Caching::default_ttl_ms")]
     pub ttl_ms: u64,
 }
@@ -72,6 +72,7 @@ macro_rules! impl_cache_hints {
 impl_cache_hints!(
     rmcp::model::ListToolsResult,
     rmcp::model::ListResourcesResult,
+    rmcp::model::ListResourceTemplatesResult,
     rmcp::model::ListPromptsResult,
     rmcp::model::ReadResourceResult,
 );
@@ -146,6 +147,7 @@ mod tests {
             ListResourcesResult::with_all_items(vec![Resource::new("ui://test", "test")]),
             ttl_ms,
         );
+        check(ListResourceTemplatesResult::default(), ttl_ms);
         check(
             ListPromptsResult::with_all_items(vec![Prompt::new("test", Some("description"), None)]),
             ttl_ms,

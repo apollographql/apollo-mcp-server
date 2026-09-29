@@ -1,0 +1,155 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { test } from 'node:test';
+import { parse, stringify } from 'yaml';
+import { verifyResults } from './verify.mjs';
+
+const revision = '2026-07-28';
+const requirements = parse(await readFile(new URL(
+  './node_modules/@modelcontextprotocol/conformance/requirements/2026-07-28.yaml', import.meta.url,
+), 'utf8'));
+const baseline = parse(await readFile(new URL('./expected-failures-2026-07-28.yaml', import.meta.url), 'utf8'));
+const warningEntries = new Set([
+  'server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription',
+  'sep-2164-resource-not-found:sep-2164-data-uri',
+  'input-required-result-missing-input-response:sep-2322-missing-response-rerequests',
+  'input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params',
+]);
+const scenarios = [...requirements.server, ...requirements.not_scored
+  .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
+const noWire = new Set(['server-stateless', 'server-sse-multiple-streams',
+  'dns-rebinding-protection', 'tasks-status-notifications']);
+
+async function fixture(t) {
+  const root = await mkdtemp(join(tmpdir(), 'conformance-verify-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const results = join(root, 'results');
+  await mkdir(results);
+  const files = new Map();
+  for (const scenario of scenarios) {
+    const directory = join(results, `server-${scenario}-2026-09-29T00-00-00Z`);
+    await mkdir(directory);
+    const checks = scenario === 'tasks-status-notifications'
+      ? [{ id: scenario, status: 'SKIPPED' }]
+      : [{ id: scenario, status: 'SUCCESS' }];
+    if (!noWire.has(scenario)) checks.push({
+      id: 'wire-schema-valid', status: 'SUCCESS', details: { messagesValidated: 1 },
+    });
+    files.set(scenario, { directory, checks });
+  }
+  const textResult = { content: [{ type: 'text', text: JSON.stringify({
+    data: { text: 'This is a simple text response for testing.' },
+  }) }], isError: false };
+  files.get('tools-call-simple-text').checks[0].details = { result: textResult };
+  files.get('tools-call-error').checks[0].details = { result: {
+    isError: true, content: [{ type: 'text', text: JSON.stringify({
+      data: { intentionalError: null },
+      errors: [{ message: 'This tool intentionally returns an error for testing', path: ['intentionalError'] }],
+    }) }],
+  } };
+  files.get('prompts-get-with-args').checks[0].details = { messages: [{
+    role: 'user', content: { type: 'text', text: "Prompt with arguments: arg1='testValue1', arg2='testValue2'" },
+  }] };
+  const header = files.get('http-header-validation').checks;
+  for (const [id, count] of [
+    ['sep-2243-server-reject-invalid-headers', 5],
+    ['sep-2243-server-reject-error-code', 5],
+    ['sep-2243-header-name-case-insensitive', 2],
+    ['sep-2243-server-accepts-whitespace-header-value', 1],
+  ]) {
+    for (let i = 0; i < count; i++) header.push({ id, name: `${id}-${i}`, status: 'SUCCESS' });
+  }
+  for (const entry of baseline.server) {
+    const [scenario, id] = entry.split(':');
+    const checks = files.get(scenario).checks;
+    const existing = checks.find((check) => check.id === id);
+    const status = warningEntries.has(entry) ? 'WARNING' : 'FAILURE';
+    if (existing) existing.status = status;
+    else checks.push({ id, status });
+  }
+  const baselinePath = join(root, 'baseline.yaml');
+  await writeFile(baselinePath, stringify(baseline));
+  async function save() {
+    for (const { directory, checks } of files.values()) {
+      await writeFile(join(directory, 'checks.json'), JSON.stringify(checks));
+    }
+  }
+  function verify() { return verifyResults(results, baselinePath, revision); }
+  await save();
+  return { files, save, verify, baselinePath };
+}
+
+test('modern verifier accepts complete fixture', async (t) => {
+  const f = await fixture(t);
+  await f.verify();
+});
+
+test('modern verifier rejects a later repeated header failure', async (t) => {
+  const f = await fixture(t);
+  const checks = f.files.get('http-header-validation').checks;
+  checks.filter((check) => check.id === 'sep-2243-server-reject-invalid-headers')[4].status = 'FAILURE';
+  await f.save();
+  await assert.rejects(f.verify(), /Header validation failed/);
+});
+
+test('modern verifier rejects a missing repeated header occurrence', async (t) => {
+  const f = await fixture(t);
+  const checks = f.files.get('http-header-validation').checks;
+  checks.splice(checks.findLastIndex((check) => check.id === 'sep-2243-server-reject-error-code'), 1);
+  await f.save();
+  await assert.rejects(f.verify(), /Missing header check occurrence/);
+});
+
+test('modern verifier rejects a missing scenario', async (t) => {
+  const f = await fixture(t);
+  await rm(f.files.get('completion-complete').directory, { recursive: true });
+  await assert.rejects(f.verify(), /Missing scenario results/);
+});
+
+test('modern verifier rejects failed wire checks', async (t) => {
+  const f = await fixture(t);
+  f.files.get('tools-list').checks.find((check) => check.id === 'wire-schema-valid').status = 'FAILURE';
+  await f.save();
+  await assert.rejects(f.verify(), /Wire-schema failure/);
+});
+
+test('modern verifier rejects absent and stale baseline checks', async (t) => {
+  const f = await fixture(t);
+  const absent = { server: [...baseline.server, 'tools-list:no-such-check'] };
+  await writeFile(f.baselinePath, stringify(absent));
+  await assert.rejects(f.verify(), /Absent baseline check/);
+  await writeFile(f.baselinePath, stringify(baseline));
+  const [scenario, id] = baseline.server[0].split(':');
+  f.files.get(scenario).checks.find((check) => check.id === id).status = 'SUCCESS';
+  await f.save();
+  await assert.rejects(f.verify(), /Baseline status changed/);
+});
+
+test('modern verifier rejects warning promotion to failure or success', async (t) => {
+  const f = await fixture(t);
+  const entry = [...warningEntries][0];
+  const [scenario, id] = entry.split(':');
+  const check = f.files.get(scenario).checks.find((item) => item.id === id);
+  for (const status of ['FAILURE', 'SUCCESS']) {
+    check.status = status;
+    await f.save();
+    await assert.rejects(f.verify(), /Baseline status changed/);
+  }
+});
+
+test('runner rejects unsupported or ambiguous arguments before setup', () => {
+  for (const args of [
+    ['--revision', '2024-11-05'],
+    ['--revision'],
+    ['--revision', revision, '--revision', revision],
+    ['first.yaml', 'second.yaml'],
+  ]) {
+    const result = spawnSync(process.execPath, [new URL('./run.mjs', import.meta.url).pathname,
+      ...args], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /Conformance artifacts:/);
+  }
+});
