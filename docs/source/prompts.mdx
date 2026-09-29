@@ -8,11 +8,18 @@ Apollo MCP Server supports [MCP prompts](https://modelcontextprotocol.io/docs/co
 
 Each prompt is a Markdown file with YAML frontmatter that defines its name, description, and arguments. The file body is the prompt template, which includes `{{argument}}` placeholders that the AI client substitutes with values at runtime.
 
-When the server starts, it loads all `.md` files from a `prompts/` directory, which is in the working directory. If that directory contains valid prompt files, the server advertises prompt support to MCP clients with the `prompts` feature.
+When the server starts, it loads all `.md` files from the prompts directory. By default this is a `prompts/` directory in the working directory; set [`prompts.path`](/apollo-mcp-server/config-file#prompts) in the config file to load from somewhere else. If that directory contains valid prompt files, the server advertises prompt support to MCP clients with the `prompts` feature.
 
 ## Define your prompts
 
-Store your prompt files in a `prompts/` directory in your server's working directory. Each `.md` file in this directory becomes an MCP prompt.
+Store your prompt files in a `prompts/` directory in your server's working directory, or point the server at another directory:
+
+```yaml title="mcp.yaml"
+prompts:
+  path: path/to/prompts
+```
+
+Each `.md` file in this directory becomes an MCP prompt.
 
 ### Prompt file format
 

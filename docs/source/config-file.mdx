@@ -25,6 +25,7 @@ All fields are optional.
 
 | Option            | Type                  | Default                  | Description                                                      |
 | :---------------- | :-------------------- | :----------------------- | :--------------------------------------------------------------- |
+| `apps`            | `Apps`                |                          | [MCP Apps](/apollo-mcp-server/mcp-apps) configuration            |
 | `cors`            | `Cors`                |                          | CORS configuration                                               |
 | `custom_scalars`  | `FilePath`            |                          | Path to a [custom scalar map](/apollo-mcp-server/custom-scalars) |
 | `endpoint`        | `URL`                 | `http://localhost:4000/` | The target GraphQL endpoint                                      |
@@ -37,6 +38,7 @@ All fields are optional.
 | `logging`         | `Logging`             |                          | Logging configuration                                            |
 | `operations`      | `OperationSource`     |                          | Operations configuration                                         |
 | `overrides`       | `Overrides`           |                          | Overrides for server behavior                                    |
+| `prompts`         | `Prompts`             |                          | [MCP prompts](/apollo-mcp-server/prompts) configuration          |
 | `rhai`            | `Rhai`                |                          | Rhai scripting configuration                                     |
 | `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
 | `server_info`     | `ServerInfo`          |                          | Server metadata configuration                                    |
@@ -123,6 +125,21 @@ Apollo MCP Server supports OAuth 2.1 authentication that follows best practices 
 
 </Caution>
 
+### Apps
+
+These fields are under the top-level `apps` key and configure where Apollo MCP Server loads [MCP Apps](/apollo-mcp-server/mcp-apps) from.
+
+| Option | Type       | Default | Description                                                                                                        |
+| :----- | :--------- | :------ | :----------------------------------------------------------------------------------------------------------------- |
+| `path` | `FilePath` | `apps`  | Directory containing MCP Apps. Each subdirectory holding an `.application-manifest.json` file is loaded as an app. |
+
+```yaml title="mcp.yaml"
+apps:
+  path: /config/apps
+```
+
+The path can be absolute or relative to the process working directory. If the directory doesn't exist, the server starts normally without apps.
+
 ### CORS
 
 These fields are under the top-level `cors` key and configure Cross-Origin Resource Sharing (CORS) for browser-based MCP clients.
@@ -173,6 +190,21 @@ rhai:
 ```
 
 The path can be absolute or relative to the process working directory. If `main.rhai` doesn't exist, the server starts normally without scripting.
+
+### Prompts
+
+These fields are under the top-level `prompts` key and configure where Apollo MCP Server loads [MCP prompts](/apollo-mcp-server/prompts) from.
+
+| Option | Type       | Default   | Description                                                                              |
+| :----- | :--------- | :-------- | :--------------------------------------------------------------------------------------- |
+| `path` | `FilePath` | `prompts` | Directory containing MCP prompt files. Every `.md` file in this directory is loaded as a prompt. |
+
+```yaml title="mcp.yaml"
+prompts:
+  path: /config/prompts
+```
+
+The path can be absolute or relative to the process working directory. If the directory doesn't exist, the server starts normally without prompts.
 
 ### Introspection
 

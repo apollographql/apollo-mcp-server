@@ -11,15 +11,18 @@ use url::Url;
 use apollo_mcp_server::server_info::ServerInfoConfig;
 
 use super::{
-    OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
-    introspection::Introspection, logging::Logging, overrides::Overrides, rhai::RhaiConfig,
-    telemetry::Telemetry,
+    OperationSource, SchemaSource, apps::AppsConfig, endpoint::Endpoint, graphos::GraphOSConfig,
+    introspection::Introspection, logging::Logging, overrides::Overrides, prompts::PromptsConfig,
+    rhai::RhaiConfig, telemetry::Telemetry,
 };
 
 /// Configuration for the MCP server
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// MCP Apps configuration
+    pub apps: AppsConfig,
+
     /// Cache hints for MCP list/read responses.
     pub caching: apollo_mcp_server::caching::Caching,
 
@@ -76,6 +79,9 @@ pub struct Config {
 
     /// Overrides for server behaviour
     pub overrides: Overrides,
+
+    /// MCP prompts configuration
+    pub prompts: PromptsConfig,
 
     /// The schema to load for operations
     pub schema: SchemaSource,
@@ -166,6 +172,28 @@ mod test {
     #[test]
     fn it_parses_a_minimal_config() {
         serde_json::from_str::<Config>("{}").unwrap();
+    }
+
+    #[test]
+    fn apps_and_prompts_default_to_working_directory_subdirectories() {
+        let config = serde_json::from_str::<Config>("{}").unwrap();
+        assert_eq!(config.apps.path, std::path::PathBuf::from("apps"));
+        assert_eq!(config.prompts.path, std::path::PathBuf::from("prompts"));
+    }
+
+    #[test]
+    fn apps_and_prompts_schema_expose_path() {
+        let schema = schemars::schema_for!(Config).to_value();
+        assert!(schema["properties"].get("apps").is_some());
+        assert!(schema["properties"].get("prompts").is_some());
+        assert_eq!(
+            schema["$defs"]["AppsConfig"]["properties"]["path"]["default"],
+            "apps"
+        );
+        assert_eq!(
+            schema["$defs"]["PromptsConfig"]["properties"]["path"]["default"],
+            "prompts"
+        );
     }
 
     #[test]

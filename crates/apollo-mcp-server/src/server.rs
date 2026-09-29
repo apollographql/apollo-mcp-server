@@ -47,6 +47,8 @@ pub type ConfigValidator =
 pub struct Server {
     config_path: Option<PathBuf>,
     rhai_dir: PathBuf,
+    apps_dir: PathBuf,
+    prompts_dir: PathBuf,
     transport: Transport,
     schema_source: SchemaSource,
     operation_source: OperationSource,
@@ -143,6 +145,8 @@ impl Server {
     pub fn new(
         config_path: Option<PathBuf>,
         rhai_dir: PathBuf,
+        apps_dir: PathBuf,
+        prompts_dir: PathBuf,
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,
@@ -186,6 +190,8 @@ impl Server {
         Self {
             config_path,
             rhai_dir,
+            apps_dir,
+            prompts_dir,
             transport,
             schema_source,
             operation_source,

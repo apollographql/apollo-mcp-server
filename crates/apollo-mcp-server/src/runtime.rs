@@ -3,6 +3,7 @@
 //! This module is only used by the main binary and provides helper code
 //! related to runtime configuration.
 
+mod apps;
 mod config;
 mod endpoint;
 mod filtering_exporter;
@@ -11,6 +12,7 @@ mod introspection;
 pub mod logging;
 mod operation_source;
 mod overrides;
+mod prompts;
 mod rhai;
 mod schema_source;
 mod schemas;
@@ -199,6 +201,57 @@ mod test {
     }
 
     #[test]
+    fn it_extracts_apps_path_from_nested_env() {
+        figment::Jail::expect_with(move |jail| {
+            jail.set_env("APOLLO_MCP_APPS__PATH", "/config/apps");
+
+            let config = super::read_config_from_env()?;
+
+            assert_eq!(config.apps.path, std::path::PathBuf::from("/config/apps"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_extracts_prompts_path_from_nested_env() {
+        figment::Jail::expect_with(move |jail| {
+            jail.set_env("APOLLO_MCP_PROMPTS__PATH", "/config/prompts");
+
+            let config = super::read_config_from_env()?;
+
+            assert_eq!(
+                config.prompts.path,
+                std::path::PathBuf::from("/config/prompts")
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn it_reads_apps_and_prompts_paths_from_file() {
+        let config = "
+            apps:
+              path: build/mcp/apps
+            prompts:
+              path: build/mcp/prompts
+        ";
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+            jail.create_file(path, config)?;
+
+            let config = read_config(path)?;
+
+            assert_eq!(config.apps.path, std::path::PathBuf::from("build/mcp/apps"));
+            assert_eq!(
+                config.prompts.path,
+                std::path::PathBuf::from("build/mcp/prompts")
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn it_merges_env_and_file() {
         let config = "
             endpoint: http://from_file:4000/
@@ -242,6 +295,9 @@ mod test {
 
             insta::assert_debug_snapshot!(config, @r#"
             Config {
+                apps: AppsConfig {
+                    path: "apps",
+                },
                 caching: Caching {
                     ttl_ms: 300000,
                 },
@@ -403,6 +459,9 @@ mod test {
                     descriptions: {},
                     annotations: {},
                     required_scopes: {},
+                },
+                prompts: PromptsConfig {
+                    path: "prompts",
                 },
                 schema: Uplink,
                 transport: Stdio,

@@ -580,7 +580,12 @@ export default defineConfig({
 });
 ```
 
-The `appsOutDir` option controls where build artifacts (including the manifest file and built resources) are written. That directory must be named `apps`, and it should point to the directory that Apollo MCP Server reads from.
+The `appsOutDir` option controls where build artifacts (including the manifest file and built resources) are written. It should point to the directory that Apollo MCP Server reads from. By default the server reads an `apps/` directory in its working directory; to read from somewhere else, set [`apps.path`](/apollo-mcp-server/config-file#apps) in the server's config file:
+
+```yaml title="mcp.yaml"
+apps:
+  path: path/to/apps
+```
 
 <Tip>
 
