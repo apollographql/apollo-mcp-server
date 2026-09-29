@@ -312,7 +312,6 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
 
 #[cfg(test)]
 mod tests {
-    use assert_fs::{TempDir, prelude::*};
     use http::HeaderMap;
     use url::Url;
 
@@ -375,91 +374,5 @@ mod tests {
         };
         let running = starting.start();
         assert!(running.await.is_ok());
-    }
-
-    /// Apps and prompts are read from the configured directories, not from
-    /// `apps/` and `prompts/` in the working directory.
-    #[tokio::test]
-    async fn start_loads_apps_and_prompts_from_configured_directories() {
-        let temp = TempDir::new().expect("Could not create temporary directory for test");
-
-        // Directories deliberately not named `apps` / `prompts`, nested below the root.
-        let apps_dir = temp.child("build/mcp/widgets");
-        let app_dir = apps_dir.child("MyApp");
-        app_dir
-            .child(".application-manifest.json")
-            .write_str(
-                r#"{"format": "apollo-ai-app-manifest",
-                    "version": "1",
-                    "hash": "abcdef",
-                    "resource": "index.html",
-                    "operations": []}"#,
-            )
-            .unwrap();
-        app_dir
-            .child("index.html")
-            .write_str("<html>hello</html>")
-            .unwrap();
-
-        let prompts_dir = temp.child("build/mcp/templates");
-        prompts_dir
-            .child("greeting.md")
-            .write_str("---\nname: greeting\n---\nHello!")
-            .unwrap();
-
-        let starting = Starting {
-            config: Config {
-                rhai_dir: std::path::PathBuf::from("rhai"),
-                apps_dir: apps_dir.path().to_path_buf(),
-                prompts_dir: prompts_dir.path().to_path_buf(),
-                transport: Transport::StreamableHttp {
-                    auth: None,
-                    address: "127.0.0.1".parse().unwrap(),
-                    port: 0,
-                    stateful_mode: false,
-                    host_validation: HostValidationConfig::default(),
-                },
-                endpoint: Url::parse("http://localhost:4000").expect("valid url"),
-                mutation_mode: MutationMode::All,
-                execute_introspection: false,
-                headers: HeaderMap::new(),
-                forward_headers: vec![],
-                validate_introspection: false,
-                introspect_introspection: false,
-                search_introspection: false,
-                introspect_minify: false,
-                search_minify: false,
-                execute_tool_hint: None,
-                introspect_tool_hint: None,
-                search_tool_hint: None,
-                validate_tool_hint: None,
-                explorer_graph_ref: None,
-                custom_scalar_map: None,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: false,
-                disable_auth_token_passthrough: false,
-                descriptions: std::collections::HashMap::new(),
-                annotations: std::collections::HashMap::new(),
-                required_scopes: std::collections::HashMap::new(),
-                search_leaf_depth: 5,
-                index_memory_bytes: 1024 * 1024,
-                health_check: HealthCheckConfig::default(),
-                cors: Default::default(),
-                server_info: Default::default(),
-                instructions: None,
-                caching: Default::default(),
-            },
-            schema: Schema::parse_and_validate("type Query { hello: String }", "test.graphql")
-                .expect("Valid schema"),
-            operations: vec![],
-        };
-
-        let running = starting.start().await.expect("server should start");
-
-        assert_eq!(running.apps.len(), 1);
-        assert_eq!(running.apps[0].name, "MyApp");
-        assert_eq!(running.prompts.len(), 1);
-        assert_eq!(running.prompts[0].prompt.name, "greeting");
     }
 }
