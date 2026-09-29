@@ -1,5 +1,5 @@
 ---
-default: patch
+default: minor
 ---
 
 # Support MCP protocol 2026-07-28
