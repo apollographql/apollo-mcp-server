@@ -127,18 +127,18 @@ Apollo MCP Server supports OAuth 2.1 authentication that follows best practices 
 
 ### Apps
 
-These fields are under the top-level `apps` key and configure where Apollo MCP Server loads [MCP Apps](/apollo-mcp-server/mcp-apps) from.
+Set these fields under the top-level `apps` key to tell Apollo MCP Server where to load MCP Apps from. Learn more about [MCP Apps](/apollo-mcp-server/mcp-apps).
 
-| Option | Type       | Default | Description                                                                                                        |
-| :----- | :--------- | :------ | :----------------------------------------------------------------------------------------------------------------- |
-| `path` | `FilePath` | `apps`  | Directory containing MCP Apps. Each subdirectory holding an `.application-manifest.json` file is loaded as an app. |
+| Option | Type       | Default | Description                                                                                                                         |
+| :----- | :--------- | :------ | :---------------------------------------------------------------------------------------------------------------------------------- |
+| `path` | `FilePath` | `apps`  | Directory containing MCP Apps. Apollo MCP Server loads each subdirectory that holds an `.application-manifest.json` file as an app. |
 
 ```yaml title="mcp.yaml"
 apps:
   path: /config/apps
 ```
 
-The path can be absolute or relative to the process working directory. If the directory doesn't exist, the server starts normally without apps.
+Use an absolute path, or a path relative to your server's working directory. If the directory doesn't exist, the server starts without apps.
 
 ### CORS
 
@@ -193,18 +193,18 @@ The path can be absolute or relative to the process working directory. If `main.
 
 ### Prompts
 
-These fields are under the top-level `prompts` key and configure where Apollo MCP Server loads [MCP prompts](/apollo-mcp-server/prompts) from.
+Set these fields under the top-level `prompts` key to tell Apollo MCP Server where to load prompts from. Learn more about [MCP prompts](/apollo-mcp-server/prompts).
 
-| Option | Type       | Default   | Description                                                                              |
-| :----- | :--------- | :-------- | :--------------------------------------------------------------------------------------- |
-| `path` | `FilePath` | `prompts` | Directory containing MCP prompt files. Every `.md` file in this directory is loaded as a prompt. |
+| Option | Type       | Default   | Description                                                                                       |
+| :----- | :--------- | :-------- | :------------------------------------------------------------------------------------------------ |
+| `path` | `FilePath` | `prompts` | Directory containing prompt files. Apollo MCP Server loads every `.md` file in this directory as a prompt. |
 
 ```yaml title="mcp.yaml"
 prompts:
   path: /config/prompts
 ```
 
-The path can be absolute or relative to the process working directory. If the directory doesn't exist, the server starts normally without prompts.
+Use an absolute path, or a path relative to your server's working directory. If the directory doesn't exist, the server starts without prompts.
 
 ### Introspection
 
