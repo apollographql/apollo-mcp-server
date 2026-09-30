@@ -684,10 +684,10 @@ impl ServerHandler for McpService {
         // `supported_protocol_versions` below bounds both this call and the
         // re-negotiation rmcp runs afterwards on every transport (#803).
         let info = self.negotiate_initialize(&request)?;
-        if info.protocol_version < ProtocolVersion::V_2026_07_28 {
-            self.notifications
-                .initialize(&self.application.tool_list_changes);
-        }
+        // rmcp's negotiate_initialize only selects versions with the legacy
+        // handshake; modern clients use discovery and per-request metadata.
+        self.notifications
+            .initialize(&self.application.tool_list_changes);
         Ok(info)
     }
 
@@ -712,11 +712,6 @@ impl ServerHandler for McpService {
         &self,
         _requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        // rmcp permits the discovery lifecycle with older protocol versions,
-        // so version negotiation alone does not keep subscriptions staged.
-        if MAX_SUPPORTED_PROTOCOL_VERSION < ProtocolVersion::V_2026_07_28 {
-            return None;
-        }
         Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
@@ -3694,7 +3689,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                ProtocolVersion::V_2025_11_25.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3814,7 +3809,7 @@ mod integration_tests {
             let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
             assert_eq!(
                 body["result"]["protocolVersion"],
-                ProtocolVersion::V_2025_11_25.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
 
             drop(reader);
@@ -3866,7 +3861,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                ProtocolVersion::V_2025_11_25.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3884,7 +3879,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                ProtocolVersion::V_2025_11_25.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3903,7 +3898,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                ProtocolVersion::V_2025_11_25.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
