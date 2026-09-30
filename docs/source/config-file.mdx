@@ -434,6 +434,7 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
 | `scopes`                          | `List<string>`        | `[]`          | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`. Empty imposes no global scope requirement.                        |
 | `scope_mode`                      | `string`              | `require_all` | Global scope enforcement mode: `disabled`, `require_all`, or `require_any`. Per-operation requirements always use all-of semantics.                                                                              |
+| `implied_scopes`                  | `Map<string, List<string>>` | `{}`    | Scopes that a broader scope includes, keyed by the broader scope. A token with a key also counts as having every listed scope, transitively, for global and per-operation checks. See [scope hierarchies](/apollo-mcp-server/auth#scope-hierarchies). |
 | `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. When passthrough is disabled, headers forwarded via `forward_headers` are left untouched; when passthrough is active, the validated token replaces a forwarded `Authorization` header. |
 | `skip_token_validation.methods`   | `List<string>`        | `[]`          | JSON-RPC method names that skip token validation when the request carries no `Authorization` header. Methods that name one of many items, such as `tools/call` and `resources/read`, are rejected. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation). |
 | `skip_token_validation.tools`     | `List<string>`        | `[]`          | Tool names that skip token validation when the request carries no `Authorization` header. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation).                                    |
@@ -486,6 +487,11 @@ transport:
       - mcp
       - profile
     scope_mode: require_all
+
+    # Scopes that a broader scope includes. A token with `admin` also
+    # counts as having `read` for scope checks.
+    implied_scopes:
+      admin: [read]
 
     # Timeout for authorization server metadata discovery (default: 5s)
     discovery_timeout: 5s
