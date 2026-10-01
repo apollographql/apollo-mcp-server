@@ -67,6 +67,9 @@ The current workflow deliberately runs the production binary.
   also unscored and has five failures because its fixture is unavailable.
   The repeated standard-header checks are enforced locally, including all
   five invalid-header and five error-code instances.
+- Only the three known modern skips are allowed: resource-read cache hints,
+  task status notifications, and prompt-list-change notifications. Any other
+  skipped check fails verification in either revision.
 - Modern resource-read caching is skipped by the pinned suite, and the fixture
   cannot trigger a tool-list-change notification. The error response `data.uri`
   check is a SHOULD-level warning, not a scored failure.

@@ -16,6 +16,13 @@ export async function verifyResults(results, baseline, revision) {
       'server-session-lifecycle', 'server-sse-polling']
     : ['server-stateless', 'server-sse-multiple-streams', 'dns-rebinding-protection',
       'tasks-status-notifications']);
+  // These skips are fixture limitations in the pinned suite. Any new skip
+  // must be reviewed rather than silently reducing the coverage of a green run.
+  const allowedSkips = new Set(revision === '2026-07-28' ? [
+    'caching:sep-2549-resources-read-caching-hints',
+    'tasks-status-notifications:tasks-status-notifications',
+    'server-stateless:sep-2575-server-sends-prompts-list-changed-on-subscription',
+  ] : []);
   const scenarios = new Map();
   for (const entry of await readdir(results, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -28,6 +35,10 @@ export async function verifyResults(results, baseline, revision) {
       assert.deepEqual(checks.map(({ id, status }) => ({ id, status })),
         [{ id: name, status: 'SKIPPED' }],
         'Unexpected tasks-status-notifications result; review the upstream scenario');
+    }
+    for (const check of checks.filter((check) => check.status === 'SKIPPED')) {
+      assert(allowedSkips.has(`${name}:${check.id}`),
+        `Unexpected skipped check: ${name}:${check.id}`);
     }
     // Enforce these even in the manifest's unscored scenarios, whose failures
     // are otherwise excluded from the conformance CLI's exit status.

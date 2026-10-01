@@ -87,6 +87,25 @@ test('modern verifier accepts complete fixture', async (t) => {
   await f.verify();
 });
 
+test('modern verifier accepts the documented fixture skips', async (t) => {
+  const f = await fixture(t);
+  f.files.get('caching').checks.push({
+    id: 'sep-2549-resources-read-caching-hints', status: 'SKIPPED',
+  });
+  f.files.get('server-stateless').checks.push({
+    id: 'sep-2575-server-sends-prompts-list-changed-on-subscription', status: 'SKIPPED',
+  });
+  await f.save();
+  await f.verify();
+});
+
+test('modern verifier rejects unexpected skips even with successful wire validation', async (t) => {
+  const f = await fixture(t);
+  f.files.get('completion-complete').checks[0].status = 'SKIPPED';
+  await f.save();
+  await assert.rejects(f.verify(), /Unexpected skipped check: completion-complete:completion-complete/);
+});
+
 test('modern verifier rejects a later repeated header failure', async (t) => {
   const f = await fixture(t);
   const checks = f.files.get('http-header-validation').checks;
