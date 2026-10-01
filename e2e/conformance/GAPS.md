@@ -70,7 +70,10 @@ The current workflow deliberately runs the production binary.
 - Only the three known modern skips are allowed: resource-read cache hints,
   task status notifications, and prompt-list-change notifications. Any other
   skipped check fails verification in either revision.
-- Modern resource-read caching is skipped by the pinned suite, and the fixture
+- Modern resource-read caching is skipped by the pinned suite. Rust HTTP transport
+  tests separately cover actual Apollo app resource listing and exact HTML/MIME
+  reads, local cache hints, and omission of remote cache hints, for modern and
+  legacy revisions in JSON and SSE modes. The conformance fixture
   cannot trigger a tool-list-change notification. The error response `data.uri`
   check is a SHOULD-level warning, not a scored failure.
 

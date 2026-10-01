@@ -1102,7 +1102,7 @@ mod tests {
         async fn request(
             version: &str,
             method: &str,
-            mut params: Value,
+            params: Value,
             uri: &str,
             json_response: bool,
             method_header: Option<&str>,
@@ -1113,6 +1113,27 @@ mod tests {
                 None,
             );
             running.caching.ttl_ms = 60_000;
+            request_with_running(
+                running,
+                version,
+                method,
+                params,
+                uri,
+                json_response,
+                method_header,
+            )
+            .await
+        }
+
+        async fn request_with_running(
+            running: Running,
+            version: &str,
+            method: &str,
+            mut params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
             let service = StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 Arc::new(LocalSessionManager::default()),
@@ -1164,6 +1185,115 @@ mod tests {
                 serde_json::from_slice(&bytes).unwrap()
             };
             (status, body)
+        }
+
+        const APP_URI: &str = "ui://widget/transport-fixture#v1";
+        const APP_HTML: &str = "<html><body>transport fixture</body></html>";
+
+        fn resource_fixture(source: crate::apps::app::AppResourceSource) -> Running {
+            let mut running = running_with_apps(AppResource::Single(source), None, None);
+            running.apps[0].uri = APP_URI.parse().unwrap();
+            running.caching.ttl_ms = 60_000;
+            running
+        }
+
+        fn assert_resource_response(status: http::StatusCode, body: &Value, version: &str) {
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            if version == "2026-07-28" {
+                assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            } else {
+                assert!(body["result"].get("resultType").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn local_app_resources_preserve_content_and_protocol_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("resources/list", "resources/read")] method: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running =
+                resource_fixture(crate::apps::app::AppResourceSource::Local(APP_HTML.into()));
+            let params = if method == "resources/read" {
+                json!({"uri": APP_URI})
+            } else {
+                json!({})
+            };
+            let (status, body) = request_with_running(
+                running,
+                version,
+                method,
+                params,
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let items = result[if method == "resources/list" {
+                "resources"
+            } else {
+                "contents"
+            }]
+            .as_array()
+            .unwrap();
+            assert_eq!(items.len(), 1, "{body}");
+            assert_eq!(items[0]["uri"], APP_URI);
+            assert_eq!(items[0]["mimeType"], "text/html;profile=mcp-app");
+            if method == "resources/read" {
+                assert_eq!(items[0]["text"], APP_HTML);
+            }
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 60_000);
+                assert_eq!(result["cacheScope"], "private");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn remote_app_resources_preserve_content_without_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/widget")
+                .with_status(200)
+                .with_body(APP_HTML)
+                .expect(1)
+                .create_async()
+                .await;
+            let running = resource_fixture(crate::apps::app::AppResourceSource::Remote(
+                format!("{}/widget", server.url()).parse().unwrap(),
+            ));
+            let (status, body) = request_with_running(
+                running,
+                version,
+                "resources/read",
+                json!({"uri": APP_URI}),
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            mock.assert_async().await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let contents = result["contents"].as_array().unwrap();
+            assert_eq!(contents.len(), 1, "{body}");
+            assert_eq!(contents[0]["uri"], APP_URI);
+            assert_eq!(contents[0]["mimeType"], "text/html;profile=mcp-app");
+            assert_eq!(contents[0]["text"], APP_HTML);
+            // Remote content is controlled outside the server configuration.
+            assert!(result.get("ttlMs").is_none(), "{body}");
+            assert!(result.get("cacheScope").is_none(), "{body}");
         }
 
         #[rstest::rstest]
