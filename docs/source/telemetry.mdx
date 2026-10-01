@@ -30,6 +30,11 @@ metadata that cannot form an HTTP header are omitted. These optional tracing
 keys work with the server's currently supported protocol versions and require
 no additional configuration.
 
+Request context stays active while a handler runs even if logging filters
+disable its tracing span. Enabled downstream spans and Rhai `trace_id` values
+continue to use the selected request trace. If the HTTP span is also filtered,
+HTTP tracing headers still provide the fallback context.
+
 Explicit HTTP headers supplied through `headers`, `forward_headers`, operation
 headers, or execution hooks keep their existing behavior. Automatic context
 injection regenerates `traceparent` and `tracestate` from the active span, but

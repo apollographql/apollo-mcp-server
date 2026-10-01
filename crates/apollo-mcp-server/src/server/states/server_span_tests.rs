@@ -44,12 +44,18 @@ struct ExportedSpans {
 
 impl ExportedSpans {
     fn capture() -> Self {
+        Self::capture_with_filter(tracing_subscriber::EnvFilter::new("trace"))
+    }
+
+    fn capture_with_filter(filter: tracing_subscriber::EnvFilter) -> Self {
         opentelemetry::global::set_text_map_propagator(w3c_text_map_propagator());
         let exporter = InMemorySpanExporter::default();
         let provider = SdkTracerProvider::builder()
             .with_simple_exporter(exporter.clone())
             .build();
-        let subscriber = registry().with(OpenTelemetryLayer::new(provider.tracer("test")));
+        let subscriber = registry()
+            .with(filter)
+            .with(OpenTelemetryLayer::new(provider.tracer("test")));
         Self {
             exporter,
             provider,

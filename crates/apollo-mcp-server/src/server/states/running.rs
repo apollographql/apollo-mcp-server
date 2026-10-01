@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
+use opentelemetry::trace::FutureExt as _;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 #[cfg(test)]
@@ -664,7 +665,7 @@ impl ServerHandler for McpService {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
             &context,
         );
@@ -695,6 +696,7 @@ impl ServerHandler for McpService {
             Ok(info)
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -723,7 +725,7 @@ impl ServerHandler for McpService {
     }
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "listen", apollo.mcp.request_id = %context.request_context().id),
             context.request_context(),
         );
@@ -803,6 +805,7 @@ impl ServerHandler for McpService {
             }
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -811,7 +814,7 @@ impl ServerHandler for McpService {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
             &context,
         );
@@ -843,6 +846,7 @@ impl ServerHandler for McpService {
             result.map(Into::into)
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -851,7 +855,8 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let span = with_request_context(tracing::info_span!(parent: None, "list_tools"), &context);
+        let (span, parent_context) =
+            with_request_context(tracing::info_span!(parent: None, "list_tools"), &context);
         async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
@@ -865,6 +870,7 @@ impl ServerHandler for McpService {
                 .await
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -873,7 +879,7 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "list_resources"),
             &context,
         );
@@ -884,6 +890,7 @@ impl ServerHandler for McpService {
                 .list_resources_impl(&context.extensions, protocol_version.as_ref())
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -892,7 +899,7 @@ impl ServerHandler for McpService {
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
             &context,
         );
@@ -910,6 +917,7 @@ impl ServerHandler for McpService {
                 .map(Into::into)
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -918,7 +926,7 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let span =
+        let (span, parent_context) =
             with_request_context(tracing::info_span!(parent: None, "list_prompts"), &context);
         async {
             let protocol_version = context.protocol_version();
@@ -927,6 +935,7 @@ impl ServerHandler for McpService {
                 .list_prompts_impl(protocol_version.as_ref())
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
@@ -935,12 +944,13 @@ impl ServerHandler for McpService {
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        let span = with_request_context(
+        let (span, parent_context) = with_request_context(
             tracing::info_span!(parent: None, "get_prompt", apollo.mcp.prompt_name = request.name),
             &context,
         );
         async { self.application.get_prompt_impl(request).map(Into::into) }
             .instrument(span)
+            .with_context(parent_context)
             .await
     }
 
@@ -952,7 +962,8 @@ impl ServerHandler for McpService {
         request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let span = with_request_context(tracing::info_span!(parent: None, "set_level"), &context);
+        let (span, parent_context) =
+            with_request_context(tracing::info_span!(parent: None, "set_level"), &context);
         async {
             // rmcp 3.5 dispatches this method for every version; its modern HTTP
             // transport maps this method-not-found error to HTTP 404.
@@ -972,6 +983,7 @@ impl ServerHandler for McpService {
             Ok(())
         }
         .instrument(span)
+        .with_context(parent_context)
         .await
     }
 
