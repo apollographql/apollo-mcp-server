@@ -11,6 +11,21 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use tracing::instrument::WithSubscriber as _;
 
+const HANDLER_OFF: &str = "info,apollo_mcp_server::server::states::running=off";
+const STATES_OFF: &str = "info,apollo_mcp_server::server::states=off";
+
+#[derive(Clone, Copy)]
+enum HttpSpan {
+    Enabled,
+    Filtered,
+}
+
+#[derive(Clone, Copy)]
+enum HandlerSpans {
+    Enabled,
+    Filtered,
+}
+
 const HTTP_TRACEPARENT: &str = "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01";
 
 fn named<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
@@ -216,10 +231,14 @@ async fn http_metadata_context_reaches_graphql(
 }
 
 #[rstest::rstest]
-#[case::metadata(json!({"traceparent": TRACEPARENT, "tracestate": "meta=one", "baggage": "source=meta"}), true, Some("source=meta"))]
-#[case::absent(json!({}), false, Some("source=http"))]
-#[case::invalid(json!({"traceparent": "invalid", "tracestate": "meta=one"}), false, Some("source=http"))]
-#[case::clear_baggage(json!({"traceparent": TRACEPARENT, "baggage": ""}), true, None)]
+#[case::metadata_handler_filtered(json!({"traceparent": TRACEPARENT, "tracestate": "meta=one", "baggage": "source=meta"}), true, Some("source=meta"), HANDLER_OFF, HttpSpan::Enabled)]
+#[case::metadata_all_filtered(json!({"traceparent": TRACEPARENT, "tracestate": "meta=one", "baggage": "source=meta"}), true, Some("source=meta"), STATES_OFF, HttpSpan::Filtered)]
+#[case::absent_handler_filtered(json!({}), false, Some("source=http"), HANDLER_OFF, HttpSpan::Enabled)]
+#[case::absent_all_filtered(json!({}), false, Some("source=http"), STATES_OFF, HttpSpan::Filtered)]
+#[case::invalid_handler_filtered(json!({"traceparent": "invalid", "tracestate": "meta=one"}), false, Some("source=http"), HANDLER_OFF, HttpSpan::Enabled)]
+#[case::invalid_all_filtered(json!({"traceparent": "invalid", "tracestate": "meta=one"}), false, Some("source=http"), STATES_OFF, HttpSpan::Filtered)]
+#[case::clear_baggage_handler_filtered(json!({"traceparent": TRACEPARENT, "baggage": ""}), true, None, HANDLER_OFF, HttpSpan::Enabled)]
+#[case::clear_baggage_all_filtered(json!({"traceparent": TRACEPARENT, "baggage": ""}), true, None, STATES_OFF, HttpSpan::Filtered)]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
 async fn filtered_handler_preserves_request_context(
@@ -227,11 +246,8 @@ async fn filtered_handler_preserves_request_context(
     #[case] metadata_parent: bool,
     #[case] expected_baggage: Option<&str>,
     #[values("2025-11-25", "2026-07-28")] version: &str,
-    #[values(
-        "info,apollo_mcp_server::server::states::running=off",
-        "info,apollo_mcp_server::server::states=off"
-    )]
-    filter: &str,
+    #[case] filter: &str,
+    #[case] http_span: HttpSpan,
 ) {
     let (spans, headers) = http_tool_call_with_filter(meta, vec![], version, filter).await;
     assert!(!spans.iter().any(|span| span.name == "call_tool"));
@@ -245,13 +261,14 @@ async fn filtered_handler_preserves_request_context(
     assert_eq!(execute.span_context.trace_id().to_string(), trace_id);
     let expected_parent = if metadata_parent {
         REMOTE_SPAN_ID.to_owned()
-    } else if filter.ends_with("::states=off") {
-        "bbbbbbbbbbbbbbbb".to_owned()
     } else {
-        named(&spans, "POST /mcp")
-            .span_context
-            .span_id()
-            .to_string()
+        match http_span {
+            HttpSpan::Enabled => named(&spans, "POST /mcp")
+                .span_context
+                .span_id()
+                .to_string(),
+            HttpSpan::Filtered => "bbbbbbbbbbbbbbbb".to_owned(),
+        }
     };
     assert_eq!(execute.parent_span_id.to_string(), expected_parent);
     assert_eq!(client.parent_span_id, execute.span_context.span_id());
@@ -270,8 +287,13 @@ async fn filtered_handler_preserves_request_context(
     );
     assert_eq!(headers.get("baggage").map(String::as_str), expected_baggage);
     assert_eq!(headers["x-hook-trace-id"], trace_id);
-    if filter.ends_with("::states=off") {
-        assert!(!spans.iter().any(|span| span.span_kind == SpanKind::Server));
+    match http_span {
+        HttpSpan::Enabled => {
+            named(&spans, "POST /mcp");
+        }
+        HttpSpan::Filtered => {
+            assert!(!spans.iter().any(|span| span.span_kind == SpanKind::Server));
+        }
     }
 }
 
@@ -329,10 +351,13 @@ fn tool_request(traceparent: &str, baggage: &str) -> CallToolRequestParams {
 }
 
 #[rstest::rstest]
+#[case::handler_spans_enabled("trace", HandlerSpans::Enabled)]
+#[case::handler_spans_filtered(HANDLER_OFF, HandlerSpans::Filtered)]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
 async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
-    #[values("trace", "info,apollo_mcp_server::server::states::running=off")] filter: &str,
+    #[case] filter: &str,
+    #[case] handler_spans: HandlerSpans,
 ) {
     let spans = ExportedSpans::capture_with_filter(tracing_subscriber::EnvFilter::new(filter));
     let mut graphql = mockito::Server::new_async().await;
@@ -381,10 +406,9 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
     endpoint.assert_async().await;
     let headers: Vec<_> = (0..3).map(|_| rx.try_recv().unwrap()).collect();
     let spans = spans.collect();
-    let handler_name = if filter == "trace" {
-        "call_tool"
-    } else {
-        "execute"
+    let handler_name = match handler_spans {
+        HandlerSpans::Enabled => "call_tool",
+        HandlerSpans::Filtered => "execute",
     };
     let handlers: Vec<_> = spans
         .iter()
@@ -416,15 +440,16 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
             .cloned()
             .collect();
         // list_resources shares the first remote trace, but is not a tool span.
-        if filter == "trace" {
-            assert_downstream_context(&trace_spans, headers);
-        } else {
-            let client_span = named(&trace_spans, "mcp-graphql-client");
-            assert_eq!(client_span.parent_span_id, handler.span_context.span_id());
-            assert_eq!(
-                outgoing.span().span_context().span_id(),
-                client_span.span_context.span_id()
-            );
+        match handler_spans {
+            HandlerSpans::Enabled => assert_downstream_context(&trace_spans, headers),
+            HandlerSpans::Filtered => {
+                let client_span = named(&trace_spans, "mcp-graphql-client");
+                assert_eq!(client_span.parent_span_id, handler.span_context.span_id());
+                assert_eq!(
+                    outgoing.span().span_context().span_id(),
+                    client_span.span_context.span_id()
+                );
+            }
         }
     }
     let root = handlers
@@ -437,18 +462,21 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
         .unwrap();
     assert!(!root_headers.contains_key("baggage"));
     assert_eq!(root.span_context.trace_state().header(), "");
-    if filter != "trace" {
-        assert!(
-            !spans
-                .iter()
-                .any(|span| span.name == "call_tool" || span.name == "list_resources")
-        );
-        return;
+    match handler_spans {
+        HandlerSpans::Filtered => {
+            assert!(
+                !spans
+                    .iter()
+                    .any(|span| span.name == "call_tool" || span.name == "list_resources")
+            );
+        }
+        HandlerSpans::Enabled => {
+            let resource = named(&spans, "list_resources");
+            assert_eq!(resource.parent_span_id.to_string(), REMOTE_SPAN_ID);
+            assert_eq!(
+                resource.span_context.trace_id().to_string(),
+                REMOTE_TRACE_ID
+            );
+        }
     }
-    let resource = named(&spans, "list_resources");
-    assert_eq!(resource.parent_span_id.to_string(), REMOTE_SPAN_ID);
-    assert_eq!(
-        resource.span_context.trace_id().to_string(),
-        REMOTE_TRACE_ID
-    );
 }
