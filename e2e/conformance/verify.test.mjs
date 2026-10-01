@@ -8,9 +8,6 @@ import { parse, stringify } from 'yaml';
 import { verifyResults } from './verify.mjs';
 
 const revision = '2026-07-28';
-const requirements = parse(await readFile(new URL(
-  './node_modules/@modelcontextprotocol/conformance/requirements/2026-07-28.yaml', import.meta.url,
-), 'utf8'));
 const baseline = parse(await readFile(new URL('./expected-failures-2026-07-28.yaml', import.meta.url), 'utf8'));
 const warningEntries = new Set([
   'server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription',
@@ -18,12 +15,22 @@ const warningEntries = new Set([
   'input-required-result-missing-input-response:sep-2322-missing-response-rerequests',
   'input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params',
 ]);
-const scenarios = [...requirements.server, ...requirements.not_scored
-  .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
 const noWire = new Set(['server-stateless', 'server-sse-multiple-streams',
   'dns-rebinding-protection', 'tasks-status-notifications']);
 
-async function fixture(t) {
+async function fixture(t, fixtureRevision = revision) {
+  const requirements = parse(await readFile(new URL(
+    `./node_modules/@modelcontextprotocol/conformance/requirements/${fixtureRevision}.yaml`, import.meta.url,
+  ), 'utf8'));
+  const fixtureBaseline = parse(await readFile(new URL(
+    `./expected-failures-${fixtureRevision}.yaml`, import.meta.url,
+  ), 'utf8'));
+  const scenarios = [...requirements.server, ...requirements.not_scored
+    .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
+  const uninstrumented = fixtureRevision === revision ? noWire : new Set([
+    'server-sse-multiple-streams', 'dns-rebinding-protection',
+    'server-session-lifecycle', 'server-sse-polling',
+  ]);
   const root = await mkdtemp(join(tmpdir(), 'conformance-verify-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const results = join(root, 'results');
@@ -35,7 +42,7 @@ async function fixture(t) {
     const checks = scenario === 'tasks-status-notifications'
       ? [{ id: scenario, status: 'SKIPPED' }]
       : [{ id: scenario, status: 'SUCCESS' }];
-    if (!noWire.has(scenario)) checks.push({
+    if (!uninstrumented.has(scenario)) checks.push({
       id: 'wire-schema-valid', status: 'SUCCESS', details: { messagesValidated: 1 },
     });
     files.set(scenario, { directory, checks });
@@ -53,16 +60,27 @@ async function fixture(t) {
   files.get('prompts-get-with-args').checks[0].details = { messages: [{
     role: 'user', content: { type: 'text', text: "Prompt with arguments: arg1='testValue1', arg2='testValue2'" },
   }] };
-  const header = files.get('http-header-validation').checks;
+  const header = files.get('http-header-validation')?.checks;
   for (const [id, count] of [
     ['sep-2243-server-reject-invalid-headers', 5],
     ['sep-2243-server-reject-error-code', 5],
     ['sep-2243-header-name-case-insensitive', 2],
     ['sep-2243-server-accepts-whitespace-header-value', 1],
   ]) {
-    for (let i = 0; i < count; i++) header.push({ id, name: `${id}-${i}`, status: 'SUCCESS' });
+    for (let i = 0; header && i < count; i++) header.push({ id, name: `${id}-${i}`, status: 'SUCCESS' });
   }
-  for (const entry of baseline.server) {
+  if (fixtureRevision === '2025-11-25') {
+    for (const [scenario, ids] of [
+      ['server-session-lifecycle', [
+        'server-session-initialized-accepted', 'server-session-delete-accepted',
+        'server-session-terminated-returns-404',
+      ]],
+      ['server-sse-polling', ['server-sse-priming-event', 'server-sse-retry-field']],
+    ]) {
+      files.get(scenario).checks.push(...ids.map((id) => ({ id, status: 'SUCCESS' })));
+    }
+  }
+  for (const entry of fixtureBaseline.server) {
     const [scenario, id] = entry.split(':');
     const checks = files.get(scenario).checks;
     const existing = checks.find((check) => check.id === id);
@@ -71,15 +89,15 @@ async function fixture(t) {
     else checks.push({ id, status });
   }
   const baselinePath = join(root, 'baseline.yaml');
-  await writeFile(baselinePath, stringify(baseline));
+  await writeFile(baselinePath, stringify(fixtureBaseline));
   async function save() {
     for (const { directory, checks } of files.values()) {
       await writeFile(join(directory, 'checks.json'), JSON.stringify(checks));
     }
   }
-  function verify() { return verifyResults(results, baselinePath, revision); }
+  function verify() { return verifyResults(results, baselinePath, fixtureRevision); }
   await save();
-  return { files, save, verify, baselinePath };
+  return { files, save, verify, baselinePath, baseline: fixtureBaseline };
 }
 
 test('modern verifier accepts complete fixture', async (t) => {
@@ -159,6 +177,39 @@ test('modern verifier rejects warning promotion to failure or success', async (t
   }
 });
 
+test('legacy verifier accepts complete fixture', async (t) => {
+  const f = await fixture(t, '2025-11-25');
+  await f.verify();
+});
+
+test('legacy verifier rejects any skipped check', async (t) => {
+  const f = await fixture(t, '2025-11-25');
+  f.files.get('completion-complete').checks[0].status = 'SKIPPED';
+  await f.save();
+  await assert.rejects(f.verify(), /Unexpected skipped check/);
+});
+
+test('legacy verifier rejects duplicate baseline entries', async (t) => {
+  const f = await fixture(t, '2025-11-25');
+  await writeFile(f.baselinePath, stringify({ server: [...f.baseline.server, f.baseline.server[0]] }));
+  await assert.rejects(f.verify(), /Duplicate baseline entry/);
+});
+
+test('legacy verifier checks every repeated baseline instance', async (t) => {
+  const f = await fixture(t, '2025-11-25');
+  const [scenario, id] = f.baseline.server[0].split(':');
+  const checks = f.files.get(scenario).checks;
+  const later = { id, status: 'FAILURE' };
+  checks.push(later);
+  await f.save();
+  await f.verify();
+  for (const status of ['SUCCESS', 'WARNING']) {
+    later.status = status;
+    await f.save();
+    await assert.rejects(f.verify(), /Baseline status changed/);
+  }
+});
+
 test('runner rejects unsupported or ambiguous arguments before setup', () => {
   for (const args of [
     ['--revision', '2024-11-05'],
@@ -167,7 +218,9 @@ test('runner rejects unsupported or ambiguous arguments before setup', () => {
     ['first.yaml', 'second.yaml'],
   ]) {
     const result = spawnSync(process.execPath, [new URL('./run.mjs', import.meta.url).pathname,
-      ...args], { encoding: 'utf8' });
+      ...args], { encoding: 'utf8', timeout: 10_000 });
+    assert.ifError(result.error);
+    assert.equal(result.signal, null);
     assert.notEqual(result.status, 0);
     assert.doesNotMatch(result.stdout, /Conformance artifacts:/);
   }
