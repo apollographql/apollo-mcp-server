@@ -122,16 +122,16 @@ pub(super) struct SseEvent {
     pub(super) message: Value,
 }
 
-pub(super) async fn next_message(reader: &mut SseReader) -> Value {
+pub(in crate::server::states) async fn next_message(reader: &mut SseReader) -> Value {
     reader.next_event().await.message
 }
 
-pub(super) struct SseReader {
+pub(in crate::server::states) struct SseReader {
     stream: SseStream<Body>,
 }
 
 impl SseReader {
-    pub(super) fn new(body: Body) -> Self {
+    pub(in crate::server::states) fn new(body: Body) -> Self {
         Self {
             stream: SseStream::new(body),
         }

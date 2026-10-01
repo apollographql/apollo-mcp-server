@@ -37,7 +37,7 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::server::states::telemetry::with_request_context;
+use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
     caching::Caching,
@@ -666,7 +666,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+            tracing::info_span!(parent: get_parent_span(&context), "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
             &context,
         );
         async {
@@ -726,7 +726,7 @@ impl ServerHandler for McpService {
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "listen", apollo.mcp.request_id = %context.request_context().id),
+            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", apollo.mcp.request_id = %context.request_context().id),
             context.request_context(),
         );
         async {
@@ -815,7 +815,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
             &context,
         );
         async {
@@ -855,8 +855,10 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let (span, parent_context) =
-            with_request_context(tracing::info_span!(parent: None, "list_tools"), &context);
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_tools"),
+            &context,
+        );
         async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
@@ -880,7 +882,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "list_resources"),
+            tracing::info_span!(parent: get_parent_span(&context), "list_resources"),
             &context,
         );
         async {
@@ -900,7 +902,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+            tracing::info_span!(parent: get_parent_span(&context), "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
             &context,
         );
         async {
@@ -926,8 +928,10 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let (span, parent_context) =
-            with_request_context(tracing::info_span!(parent: None, "list_prompts"), &context);
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_prompts"),
+            &context,
+        );
         async {
             let protocol_version = context.protocol_version();
 
@@ -945,7 +949,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: None, "get_prompt", apollo.mcp.prompt_name = request.name),
+            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", apollo.mcp.prompt_name = request.name),
             &context,
         );
         async { self.application.get_prompt_impl(request).map(Into::into) }
@@ -962,8 +966,10 @@ impl ServerHandler for McpService {
         request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let (span, parent_context) =
-            with_request_context(tracing::info_span!(parent: None, "set_level"), &context);
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "set_level"),
+            &context,
+        );
         async {
             // rmcp 3.5 dispatches this method for every version; its modern HTTP
             // transport maps this method-not-found error to HTTP 404.

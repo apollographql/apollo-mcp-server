@@ -480,3 +480,231 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
         }
     }
 }
+
+/// Modern HTTP carries protocol selection on each request, independently of discovery.
+fn metadata_request(id: u32, method: &str, mut params: Value) -> Request<Body> {
+    params["_meta"] = json!({
+        "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+        "io.modelcontextprotocol/clientCapabilities": {},
+        "traceparent": TRACEPARENT
+    });
+    let name = params
+        .get("name")
+        .or_else(|| params.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("Mcp-Name", name)
+        .header("Host", "localhost")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Mcp-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", method)
+        .header("traceparent", HTTP_TRACEPARENT)
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string(),
+        ))
+        .unwrap()
+}
+
+#[rstest::rstest]
+#[case::tools("tools/list", json!({}), "list_tools")]
+#[case::resources("resources/list", json!({}), "list_resources")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
+#[case::prompts("prompts/list", json!({}), "list_prompts")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[tokio::test]
+async fn metadata_parents_each_http_handler(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let spans = ExportedSpans::capture();
+    let running = create_test_running();
+    let service = build_http_service(running, false, &Default::default());
+    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let response = router
+        .oneshot(metadata_request(1, method, params))
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+    // Missing named resources/prompts and modern setLevel return errors, but
+    // still dispatch their real handlers and must retain request parentage.
+    let spans = spans.collect();
+    let handler = named(&spans, name);
+    assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
+    assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
+    assert_eq!(
+        named(&spans, "POST /mcp").parent_span_id.to_string(),
+        "bbbbbbbbbbbbbbbb"
+    );
+}
+
+#[rstest::rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(10))]
+async fn metadata_parents_http_subscription_through_readiness_and_cancellation() {
+    use super::super::running::test_support::{SseReader, next_message};
+    let spans = ExportedSpans::capture();
+    let running = create_test_running();
+    let service = build_http_service(running.clone(), false, &Default::default());
+    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let response = router
+        .clone()
+        .oneshot(metadata_request(1, "server/discover", json!({})))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.into_body().collect().await.unwrap();
+    let response = router
+        .oneshot(metadata_request(
+            2,
+            "subscriptions/listen",
+            json!({"notifications": {"toolsListChanged": true}}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut reader = SseReader::new(response.into_body());
+    assert_eq!(
+        next_message(&mut reader).await["method"],
+        "notifications/subscriptions/acknowledged"
+    );
+    assert_eq!(
+        next_message(&mut reader).await["method"],
+        "notifications/tools/list_changed"
+    );
+    assert_eq!(running.tool_list_changes.receiver_count(), 1);
+    // Cancel only after the initial refresh proves the production handler is running.
+    running.cancellation_token.cancel();
+    drop(reader);
+    running.tool_list_changes.closed().await;
+    let spans = spans.collect();
+    let handler = named(&spans, "listen");
+    assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
+    assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
+    let http_spans: Vec<_> = spans
+        .iter()
+        .filter(|span| span.name == "POST /mcp")
+        .collect();
+    assert_eq!(
+        http_spans.len(),
+        2,
+        "discovery and listen each export an HTTP span"
+    );
+    for http in http_spans {
+        assert_eq!(http.parent_span_id.to_string(), "bbbbbbbbbbbbbbbb");
+    }
+}
+
+#[derive(Clone, Default)]
+struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn formatted_handler_logs_retain_http_scope_with_metadata_otel_parent() {
+    let logs = CapturedLogs::default();
+    let writer = logs.clone();
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = registry()
+        .with(tracing_subscriber::EnvFilter::new("debug"))
+        .with(OpenTelemetryLayer::new(provider.tracer("test")))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .without_time()
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+                .with_writer(move || writer.clone()),
+        );
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let router = production_router(create_test_running());
+    let response = router.clone().oneshot(mcp_request("/mcp")).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let session = response.headers()["mcp-session-id"].clone();
+    response.into_body().collect().await.unwrap();
+    let mut request = mcp_request("/mcp");
+    request
+        .headers_mut()
+        .insert("mcp-session-id", session.clone());
+    *request.body_mut() = Body::from(
+        json!({
+            "jsonrpc": "2.0", "method": "notifications/initialized"
+        })
+        .to_string(),
+    );
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    response.into_body().collect().await.unwrap();
+    let mut request = mcp_request("/mcp");
+    request
+        .headers_mut()
+        .insert("mcp-session-id", session.clone());
+    request
+        .headers_mut()
+        .insert("traceparent", HTTP_TRACEPARENT.parse().unwrap());
+    *request.body_mut() = Body::from(
+        json!({
+            "jsonrpc": "2.0", "id": 2, "method": "logging/setLevel",
+            "params": {"level": "debug", "_meta": {"traceparent": TRACEPARENT}}
+        })
+        .to_string(),
+    );
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response.into_body().collect().await.unwrap();
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("mcp-session-id", session.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    response.into_body().collect().await.unwrap();
+    provider.force_flush().unwrap();
+    let spans = exporter.get_finished_spans().unwrap();
+    let handler = named(&spans, "set_level");
+    assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
+    assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
+    let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    let handler_event = logs
+        .lines()
+        .find(|line| line.contains("received logging/setLevel; no-op"))
+        .expect("real handler event was formatted");
+    assert!(
+        handler_event.contains("POST /mcp")
+            && handler_event.contains("url.path=\"/mcp\"")
+            && handler_event.contains("set_level"),
+        "handler lost its HTTP tracing scope: {handler_event}"
+    );
+    // Session attribution happens after the response is accepted, so it is
+    // available on HTTP close events, after the handler event has been emitted.
+    assert!(
+        logs.lines().any(|line| line.contains("POST /mcp")
+            && line.contains("apollo.mcp.session_id=")
+            && line.contains(session.to_str().unwrap())
+            && line.contains("close")),
+        "HTTP close lost accepted session scope: {logs}"
+    );
+}
