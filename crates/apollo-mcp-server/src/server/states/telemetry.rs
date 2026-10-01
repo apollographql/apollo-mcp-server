@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -24,6 +25,7 @@ use opentelemetry_semantic_conventions::attribute::{
     OTEL_STATUS_CODE, SERVER_ADDRESS, SERVER_PORT, USER_AGENT_ORIGINAL,
 };
 use rmcp::RoleServer;
+use rmcp::model::RequestMetaObject;
 use rmcp::service::RequestContext;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -326,6 +328,54 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
         .and_then(|parts| parts.extensions.get::<tracing::Span>())
         .cloned()
         .unwrap_or_else(tracing::Span::none)
+}
+
+/// Set the MCP handler's parent before entering its span. The OTel layer starts
+/// spans on entry, after which `set_parent` cannot change their parentage.
+pub(super) fn with_request_context(
+    span: tracing::Span,
+    context: &RequestContext<RoleServer>,
+) -> tracing::Span {
+    let http_parent = get_parent_span(context).context();
+    let parent = request_parent_context(&context.meta, &http_parent);
+    // A disabled tracing span or absent OTel layer has no context to set.
+    let _ = span.set_parent(parent);
+    span
+}
+
+fn request_parent_context(meta: &RequestMetaObject, http_parent: &OtelContext) -> OtelContext {
+    let baggage = meta.get_baggage().map(normalize_baggage_list);
+    let carrier: HashMap<String, String> = [
+        ("traceparent", meta.get_traceparent()),
+        ("tracestate", meta.get_tracestate()),
+        ("baggage", baggage.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+    .collect();
+
+    // Extract independently of ambient/HTTP context: tracestate must never be
+    // grafted onto a different trace when the metadata traceparent is invalid.
+    let extracted = global::get_text_map_propagator(|propagator| {
+        propagator.extract_with_context(&OtelContext::new(), &carrier)
+    });
+    let parent = if extracted.span().span_context().is_valid() {
+        extracted.clone()
+    } else {
+        http_parent.clone()
+    };
+    let baggage = if meta.get_baggage().is_some() {
+        extracted.baggage()
+    } else {
+        http_parent.baggage()
+    };
+    let baggage: Vec<_> = baggage
+        .iter()
+        .map(|(key, (value, metadata))| {
+            KeyValueMetadata::new(key.clone(), value.clone(), metadata.clone())
+        })
+        .collect();
+    sanitize_baggage_for_http_injection(parent.with_baggage(baggage))
 }
 
 /// Returns the current OpenTelemetry trace ID as a lowercase 32-character

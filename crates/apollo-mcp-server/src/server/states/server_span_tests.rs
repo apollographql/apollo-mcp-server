@@ -25,6 +25,9 @@ use super::telemetry::w3c_text_map_propagator;
 use crate::generated::telemetry::TelemetryAttribute;
 use crate::health::{HealthCheck, HealthCheckConfig};
 
+#[path = "mcp_trace_context_tests.rs"]
+mod mcp_trace_context;
+
 /// An inbound `traceparent` whose trace and span IDs the tests assert on.
 const TRACEPARENT: &str = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 const REMOTE_TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
