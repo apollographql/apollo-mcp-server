@@ -1238,6 +1238,34 @@ mod tests {
             );
             assert!(body.get("result").is_none());
         }
+
+        /// The auth middleware exempts this `GET` from token validation on the
+        /// premise that the production transport never serves it, even with
+        /// `stateful_mode: true`.
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_get_is_method_not_allowed(#[values(false, true)] stateful_mode: bool) {
+            let running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            let service = crate::server::states::starting::build_http_service(
+                running,
+                stateful_mode,
+                &Default::default(),
+            );
+            let request = http::Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .body(Body::empty())
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+        }
     }
 
     #[rstest::rstest]

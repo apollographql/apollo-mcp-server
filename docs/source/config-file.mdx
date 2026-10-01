@@ -371,7 +371,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions. When disabled, requests are sessionless and unsolicited tool-change notifications are unavailable. |
+| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, whatever this is set to. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
 <Note>

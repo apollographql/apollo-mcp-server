@@ -106,7 +106,9 @@ pub enum Transport {
         #[serde(default = "Transport::default_port")]
         port: u16,
 
-        /// Enable legacy HTTP sessions. Sessionless requests do not receive unsolicited notifications.
+        /// Enable legacy HTTP sessions for clients on protocol versions before
+        /// 2026-07-28. Sessionless requests do not receive unsolicited
+        /// notifications. Clients on 2026-07-28 or later are always sessionless.
         #[serde(default = "Transport::default_stateful_mode")]
         stateful_mode: bool,
 

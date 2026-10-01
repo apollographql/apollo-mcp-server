@@ -106,16 +106,16 @@ docker run \
 
 ### Load Balancing & Session Affinity
 
-MCP is a stateful protocol that requires session affinity (sticky sessions).
+MCP protocol versions before `2026-07-28` are stateful and require session affinity (sticky sessions). Protocol `2026-07-28` removed sessions, so clients that negotiate it need no session affinity.
 
-When an MCP client initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance through the `mcp-session-id` header. You must enable session affinity in your load balancer so that all requests sharing the same `mcp-session-id` are routed to the same backend instance.
+When a client on an older protocol version initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance through the `mcp-session-id` header. You must enable session affinity in your load balancer so that all requests sharing the same `mcp-session-id` are routed to the same backend instance.
 
 Nginx, HAProxy, or Envoy/Istio support proper session routing. Most cloud load balancers—such as the AWS Application Load Balancer (ALB) and the Google Cloud Load Balancer—do not support header-based session affinity.
 
 #### Stateless mode
 
-Although MCP is a stateful protocol by default, the Streamable HTTP transport supports operating in a stateless mode.
-This means that the session ID will not be passed back and forth between the client and server and each request made to the MCP server happens in its own HTTP POST.
+Although older MCP protocol versions are stateful by default, the Streamable HTTP transport supports serving those clients in a stateless mode too.
+This means that the session ID will not be passed back and forth between the client and server and each request made to the MCP server happens in its own HTTP POST. Clients on `2026-07-28` or later are always served this way.
 Disabling the session state being managed in memory by a single host allows for horizontal scaling of the server, though could lead to unknown issues if your MCP client has a dependency on sticky sessions.
 
 You can configure stateless mode in the transport config section:
