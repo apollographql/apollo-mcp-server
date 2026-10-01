@@ -13,6 +13,7 @@ default-run = "apollo-mcp-server"
 [dependencies]
 anyhow = "1.0.98"
 apollo-compiler.workspace = true
+apollo-compiler-1.workspace = true
 apollo-federation.workspace = true
 apollo-mcp-registry = { path = "../apollo-mcp-registry" }
 apollo-mcp-rhai = { path = "../apollo-mcp-rhai" }

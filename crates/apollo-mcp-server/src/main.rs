@@ -99,7 +99,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
     #[cfg_attr(coverage_nightly, coverage(off))]
     debug!("Configuration: {config:#?}");
     #[cfg_attr(coverage_nightly, coverage(on))]
-    let schema_source = match config.schema {
+    let schema_source = match config.schema.source {
         runtime::SchemaSource::Local { path } => SchemaSource::File { path, watch: true },
         runtime::SchemaSource::Uplink => SchemaSource::Registry(config.graphos.uplink_config()?),
         runtime::SchemaSource::Graphos => SchemaSource::PlatformApi {
@@ -166,6 +166,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .rhai_dir(config.rhai.scripts_dir)
         .transport(config.transport)
         .schema_source(schema_source)
+        .schema_validation(config.schema.validation)
         .operation_source(operation_source)
         .endpoint(config.endpoint.into_inner())
         .maybe_explorer_graph_ref(explorer_graph_ref)
