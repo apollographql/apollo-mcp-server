@@ -179,7 +179,7 @@ mod tests {
     #[rstest]
     #[case::stdout(ConsoleStream::Stdout)]
     #[case::stderr(ConsoleStream::Stderr)]
-    fn logging_layer_without_path_uses_console(#[case] console: ConsoleStream) {
+    fn logging_layer_without_path_has_no_file_guard(#[case] console: ConsoleStream) {
         let (_layer, guard) =
             Logging::logging_layer(&Logging::default(), console).expect("logging layer");
         assert!(guard.is_none());
