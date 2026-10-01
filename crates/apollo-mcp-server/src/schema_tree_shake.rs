@@ -87,6 +87,9 @@ pub struct SchemaTreeShaker<'schema> {
 struct TreeTypeNode {
     retain: bool,
     filtered_field: Option<Vec<String>>,
+    /// Set on a union retained without a selection set. Such a union names every member,
+    /// whether or not the depth limit allowed the member types themselves to be retained.
+    name_all_members: bool,
 }
 
 struct TreeDirectiveNode<'schema> {
@@ -113,6 +116,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
                 TreeTypeNode {
                     filtered_field: None,
                     retain: false,
+                    name_all_members: false,
                 },
             );
         });
@@ -361,8 +365,8 @@ impl<'schema> SchemaTreeShaker<'schema> {
                         ExtendedType::Union(union_def) => self
                             .named_type_nodes
                             .get(union_def.name.as_str())
-                            .is_some_and(|n| n.retain)
-                            .then(|| {
+                            .filter(|n| n.retain)
+                            .map(|union_tree_node| {
                                 Definition::UnionTypeDefinition(Node::new(UnionTypeDefinition {
                                     description: union_def.description.clone(),
                                     directives: union_def.directives.clone(),
@@ -374,7 +378,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                             if let Some(member_tree_node) =
                                                 self.named_type_nodes.get(member.as_str())
                                             {
-                                                member_tree_node.retain.then(|| Name::clone(member))
+                                                (union_tree_node.name_all_members
+                                                    || member_tree_node.retain)
+                                                    .then(|| Name::clone(member))
                                             } else {
                                                 tracing::error!(
                                                     "union member {} not found",
@@ -573,6 +579,9 @@ fn retain_type(
         }
 
         tree_node.retain = true;
+        if selection_set.is_none() && matches!(extended_type, ExtendedType::Union(_)) {
+            tree_node.name_all_members = true;
+        }
         if let Some(selected_fields) = selected_fields.as_ref() {
             let additional_fields = selected_fields
                 .iter()
@@ -1492,5 +1501,110 @@ mod test {
         assert!(user_type.is_some());
         let post_type = shaken_schema.types.get("Post");
         assert!(post_type.is_some());
+    }
+
+    #[fixture]
+    fn union_schema() -> apollo_compiler::validation::Valid<apollo_compiler::Schema> {
+        let source_text = r#"
+            type Query {
+                search: [SearchResult]
+            }
+
+            union SearchResult = User | Post | Comment
+
+            type User {
+                id: ID
+                name: String
+            }
+
+            type Post {
+                id: ID
+                title: String
+            }
+
+            type Comment {
+                id: ID
+                body: String
+            }
+        "#;
+        Parser::new()
+            .parse_ast(source_text, "schema.graphql")
+            .unwrap()
+            .to_schema_validate()
+            .unwrap()
+    }
+
+    fn union_member_names(schema: &apollo_compiler::Schema, union_name: &str) -> Vec<String> {
+        match schema.types.get(union_name) {
+            Some(apollo_compiler::schema::ExtendedType::Union(union_def)) => union_def
+                .members
+                .iter()
+                .map(|member| member.to_string())
+                .collect(),
+            other => panic!("expected union {union_name}, got {other:?}"),
+        }
+    }
+
+    #[rstest]
+    fn should_name_all_union_members_when_depth_limit_excludes_them(
+        union_schema: apollo_compiler::validation::Valid<apollo_compiler::Schema>,
+    ) {
+        let mut shaker = SchemaTreeShaker::new(&union_schema);
+        let union_type = union_schema.types.get("SearchResult").unwrap();
+        shaker.retain_type(union_type, None, DepthLimit::Limited(1));
+
+        let shaken_schema = shaker.shaken().unwrap_or_else(|schema| schema.partial);
+
+        assert_eq!(
+            union_member_names(&shaken_schema, "SearchResult"),
+            vec!["User", "Post", "Comment"]
+        );
+        assert!(shaken_schema.types.get("User").is_none());
+        assert!(shaken_schema.types.get("Post").is_none());
+        assert!(shaken_schema.types.get("Comment").is_none());
+    }
+
+    #[rstest]
+    fn should_retain_union_member_types_within_depth_limit(
+        union_schema: apollo_compiler::validation::Valid<apollo_compiler::Schema>,
+    ) {
+        let mut shaker = SchemaTreeShaker::new(&union_schema);
+        let union_type = union_schema.types.get("SearchResult").unwrap();
+        shaker.retain_type(union_type, None, DepthLimit::Limited(2));
+
+        let shaken_schema = shaker.shaken().unwrap();
+
+        assert_eq!(
+            union_member_names(&shaken_schema, "SearchResult"),
+            vec!["User", "Post", "Comment"]
+        );
+        assert!(shaken_schema.types.get("User").is_some());
+        assert!(shaken_schema.types.get("Post").is_some());
+        assert!(shaken_schema.types.get("Comment").is_some());
+    }
+
+    #[rstest]
+    fn should_exclude_union_members_not_selected_by_fragments(
+        union_schema: apollo_compiler::validation::Valid<apollo_compiler::Schema>,
+    ) {
+        let mut shaker = SchemaTreeShaker::new(&union_schema);
+        let (operation_document, operation_def, _comments) = operation_defs(
+            "query Search { search { ... on User { id name } } }",
+            false,
+            Some("operation.graphql".to_string()),
+        )
+        .unwrap()
+        .unwrap();
+
+        shaker.retain_operation(&operation_def, &operation_document, DepthLimit::Unlimited);
+
+        let shaken_schema = shaker.shaken().unwrap();
+
+        assert_eq!(
+            union_member_names(&shaken_schema, "SearchResult"),
+            vec!["User"]
+        );
+        assert!(shaken_schema.types.get("Post").is_none());
+        assert!(shaken_schema.types.get("Comment").is_none());
     }
 }
