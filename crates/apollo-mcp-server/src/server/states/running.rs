@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
+use opentelemetry::trace::FutureExt as _;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 #[cfg(test)]
@@ -26,7 +27,7 @@ use rmcp::{
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{Instrument as _, debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -36,7 +37,7 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::server::states::telemetry::get_parent_span;
+use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
     caching::Caching,
@@ -683,36 +684,44 @@ pub(super) struct McpService {
 }
 
 impl ServerHandler for McpService {
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let meter = &meter::METER;
-        let attributes = vec![
-            KeyValue::new(
-                TelemetryAttribute::ClientName.to_key(),
-                request.client_info.name.clone(),
-            ),
-            KeyValue::new(
-                TelemetryAttribute::ClientVersion.to_key(),
-                request.client_info.version.clone(),
-            ),
-        ];
-        meter
-            .u64_counter(TelemetryMetric::InitializeCount.as_str())
-            .build()
-            .add(1, &attributes);
-        // Negotiate rather than answering with `get_info` as-is (#794).
-        // `supported_protocol_versions` below bounds both this call and the
-        // re-negotiation rmcp runs afterwards on every transport (#803).
-        let info = self.negotiate_initialize(&request)?;
-        // rmcp's negotiate_initialize only selects versions with the legacy
-        // handshake; modern clients use discovery and per-request metadata.
-        self.notifications
-            .initialize(&self.application.tool_list_changes);
-        Ok(info)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+            &context,
+        );
+        async {
+            let meter = &meter::METER;
+            let attributes = vec![
+                KeyValue::new(
+                    TelemetryAttribute::ClientName.to_key(),
+                    request.client_info.name.clone(),
+                ),
+                KeyValue::new(
+                    TelemetryAttribute::ClientVersion.to_key(),
+                    request.client_info.version.clone(),
+                ),
+            ];
+            meter
+                .u64_counter(TelemetryMetric::InitializeCount.as_str())
+                .build()
+                .add(1, &attributes);
+            // Negotiate rather than answering with `get_info` as-is (#794).
+            // `supported_protocol_versions` below bounds both this call and the
+            // re-negotiation rmcp runs afterwards on every transport (#803).
+            let info = self.negotiate_initialize(&request)?;
+            // rmcp's negotiate_initialize only selects versions with the legacy
+            // handshake; modern clients use discovery and per-request metadata.
+            self.notifications
+                .initialize(&self.application.tool_list_changes);
+            Ok(info)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
@@ -739,221 +748,293 @@ impl ServerHandler for McpService {
         Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(context.request_context()), fields(apollo.mcp.request_id = %context.request_context().id))]
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
-        let shutdown = &self.application.cancellation_token;
-        // The SDK also enforces the accepted filter in SubscriptionSink. Keep
-        // our opt-in boundary explicit before allocating a catalog receiver.
-        if context.accepted().tools_list_changed != Some(true) {
-            // No supported notifications can arrive on this stream.
-            return Ok(());
-        }
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", apollo.mcp.request_id = %context.request_context().id),
+            context.request_context(),
+        );
+        async {
+            let shutdown = &self.application.cancellation_token;
+            // The SDK also enforces the accepted filter in SubscriptionSink. Keep
+            // our opt-in boundary explicit before allocating a catalog receiver.
+            if context.accepted().tools_list_changed != Some(true) {
+                // No supported notifications can arrive on this stream.
+                return Ok(());
+            }
 
-        let mut changes = self.application.tool_list_changes.subscribe();
-        // rmcp acknowledges before entering this handler. An initial refresh
-        // covers catalog updates during that setup window, without replaying
-        // history. Register first so updates during the send remain pending.
-        changes.mark_changed();
-        loop {
-            tokio::select! {
-                biased;
-                _ = context.cancelled() => return Ok(()),
-                _ = shutdown.cancelled() => return Ok(()),
-                changed = changes.changed() => {
-                    if changed.is_err() {
+            let mut changes = self.application.tool_list_changes.subscribe();
+            // rmcp acknowledges before entering this handler. An initial refresh
+            // covers catalog updates during that setup window, without replaying
+            // history. Register first so updates during the send remain pending.
+            changes.mark_changed();
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+                let result = tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    result = context.sink().notify_tool_list_changed() => result,
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(
+                        SubscriptionSendError::SubscriptionClosed
+                        | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
+                    ) => return Ok(()),
+                    Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(
+                        error,
+                    ))) => {
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
                         return Ok(());
+                    }
+                    Err(
+                        error @ (SubscriptionSendError::NotificationNotAccepted(_)
+                        | SubscriptionSendError::UnsupportedNotification(_)),
+                    ) => {
+                        // Invalid notifications indicate a handler bug; end this
+                        // subscription instead of retrying on every catalog change.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
+                        return Err(McpError::internal_error(
+                            "Failed to deliver tool list change notification",
+                            None,
+                        ));
+                    }
+                    Err(error) => {
+                        // Unknown errors may be recoverable. Keep listening so a
+                        // later catalog change can trigger another delivery attempt.
+                        // rmcp 3.3.0's notification-send path only returns the transport
+                        // errors handled above, so real-context tests cannot reach
+                        // this fallback for future SDK errors.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - keeping subscription open"
+                        );
                     }
                 }
             }
-            let result = tokio::select! {
-                biased;
-                _ = context.cancelled() => return Ok(()),
-                _ = shutdown.cancelled() => return Ok(()),
-                result = context.sink().notify_tool_list_changed() => result,
-            };
-            match result {
-                Ok(()) => {}
-                Err(
-                    SubscriptionSendError::SubscriptionClosed
-                    | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
-                ) => return Ok(()),
-                Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(error))) => {
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - stopping subscription delivery"
-                    );
-                    return Ok(());
-                }
-                Err(
-                    error @ (SubscriptionSendError::NotificationNotAccepted(_)
-                    | SubscriptionSendError::UnsupportedNotification(_)),
-                ) => {
-                    // Invalid notifications indicate a handler bug; end this
-                    // subscription instead of retrying on every catalog change.
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - stopping subscription delivery"
-                    );
-                    return Err(McpError::internal_error(
-                        "Failed to deliver tool list change notification",
-                        None,
-                    ));
-                }
-                Err(error) => {
-                    // Unknown errors may be recoverable. Keep listening so a
-                    // later catalog change can trigger another delivery attempt.
-                    // rmcp 3.3.0's notification-send path only returns the transport
-                    // errors handled above, so real-context tests cannot reach
-                    // this fallback for future SDK errors.
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - keeping subscription open"
-                    );
-                }
-            }
         }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let span = tracing::Span::current();
-        if let Some(args) = &request.arguments
-            && let Ok(json) = serde_json::to_string(args)
-        {
-            span.record("apollo.mcp.tool_arguments", json.as_str());
-        }
-
-        let protocol_version = context.protocol_version();
-
-        let result = self
-            .application
-            .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
-            .await;
-
-        // Strip meta before recording: _meta.structuredContent holds the unfiltered
-        // @private payload and must not be exported to the span.
-        if let Ok(r) = &result {
-            let mut stripped = r.clone();
-            stripped.meta = None;
-            if let Ok(json) = serde_json::to_string(&stripped) {
-                span.record("apollo.mcp.tool_result", json.as_str());
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            &context,
+        );
+        async {
+            let span = tracing::Span::current();
+            if let Some(args) = &request.arguments
+                && let Ok(json) = serde_json::to_string(args)
+            {
+                span.record("apollo.mcp.tool_arguments", json.as_str());
             }
-        }
 
-        result.map(Into::into)
+            let protocol_version = context.protocol_version();
+
+            let result = self
+                .application
+                .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
+                .await;
+
+            // Strip meta before recording: _meta.structuredContent holds the unfiltered
+            // @private payload and must not be exported to the span.
+            if let Ok(r) = &result {
+                let mut stripped = r.clone();
+                stripped.meta = None;
+                if let Ok(json) = serde_json::to_string(&stripped) {
+                    span.record("apollo.mcp.tool_result", json.as_str());
+                }
+            }
+
+            result.map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let client_capabilities = context.client_capabilities();
-        let protocol_version = context.protocol_version();
-        let peer = PeerContext {
-            client_capabilities: client_capabilities.as_ref(),
-            protocol_version: protocol_version.as_ref(),
-        };
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_tools"),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.application
-            .list_tools_impl(context.extensions, peer)
-            .await
+            self.application
+                .list_tools_impl(context.extensions, peer)
+                .await
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let protocol_version = context.protocol_version();
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resources"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
 
-        self.application
-            .list_resources_impl(&context.extensions, protocol_version.as_ref())
+            self.application
+                .list_resources_impl(&context.extensions, protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_resource_templates(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        let protocol_version = context.protocol_version();
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
 
-        self.application
-            .list_resource_templates_impl(protocol_version.as_ref())
+            self.application
+                .list_resource_templates_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
     async fn read_resource(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let client_capabilities = context.client_capabilities();
-        let protocol_version = context.protocol_version();
-        let peer = PeerContext {
-            client_capabilities: client_capabilities.as_ref(),
-            protocol_version: protocol_version.as_ref(),
-        };
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.application
-            .read_resource_impl(request, context.extensions, peer)
-            .await
-            .map(Into::into)
+            self.application
+                .read_resource_impl(request, context.extensions, peer)
+                .await
+                .map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let protocol_version = context.protocol_version();
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_prompts"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
 
-        self.application
-            .list_prompts_impl(protocol_version.as_ref())
+            self.application
+                .list_prompts_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        self.application.get_prompt_impl(request).map(Into::into)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", apollo.mcp.prompt_name = request.name),
+            &context,
+        );
+        async { self.application.get_prompt_impl(request).map(Into::into) }
+            .instrument(span)
+            .with_context(parent_context)
+            .await
     }
 
     // SEP-2575 removes this RPC in 2026-07-28, independently of SEP-2577's
     // deprecation of Logging. Older clients retain the compatibility no-op.
     #[allow(deprecated)]
-    #[tracing::instrument(skip_all)]
     async fn set_level(
         &self,
         request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        // rmcp 3.5 dispatches this method for every version; its modern HTTP
-        // transport maps this method-not-found error to HTTP 404.
-        if context
-            .protocol_version()
-            .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
-        {
-            return Err(McpError::method_not_found::<
-                rmcp::model::SetLevelRequestMethod,
-            >());
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "set_level"),
+            &context,
+        );
+        async {
+            // rmcp 3.5 dispatches this method for every version; its modern HTTP
+            // transport maps this method-not-found error to HTTP 404.
+            if context
+                .protocol_version()
+                .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+            {
+                return Err(McpError::method_not_found::<
+                    rmcp::model::SetLevelRequestMethod,
+                >());
+            }
+            // We do not advertise the `logging` capability and do not emit
+            // `notifications/message`. This override exists only to accept
+            // `logging/setLevel` from clients that send it without checking
+            // capabilities, so they see an empty success instead of `-32601`.
+            debug!(level = ?request.level, "received logging/setLevel; no-op");
+            Ok(())
         }
-        // We do not advertise the `logging` capability and do not emit
-        // `notifications/message`. This override exists only to accept
-        // `logging/setLevel` from clients that send it without checking
-        // capabilities, so they see an empty success instead of `-32601`.
-        debug!(level = ?request.level, "received logging/setLevel; no-op");
-        Ok(())
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     fn get_info(&self) -> ServerConfig {
