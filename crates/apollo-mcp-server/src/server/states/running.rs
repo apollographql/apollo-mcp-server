@@ -11,9 +11,9 @@ use rmcp::ErrorData;
 use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
-    GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
-    PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
-    SubscriptionFilter, ToolsCapability,
+    GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -532,6 +532,30 @@ impl Running {
         Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
+    fn list_resource_templates_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        self.list_resource_templates_with_protocol_max(
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resource_templates_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // We expose no templates, but even an empty modern list requires cache hints.
+        // rmcp's default handler returns the empty list without those hints.
+        Ok(self.caching.apply_to(
+            ListResourceTemplatesResult::default(),
+            protocol_version,
+            server_max,
+        ))
+    }
+
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
@@ -896,6 +920,26 @@ impl ServerHandler for McpService {
         .await
     }
 
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
+
+            self.application
+                .list_resource_templates_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
+    }
+
     async fn read_resource(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
@@ -1159,16 +1203,38 @@ mod tests {
         async fn request(
             version: &str,
             method: &str,
+            params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let mut running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+            request_with_running(
+                running,
+                version,
+                method,
+                params,
+                uri,
+                json_response,
+                method_header,
+            )
+            .await
+        }
+
+        async fn request_with_running(
+            running: Running,
+            version: &str,
+            method: &str,
             mut params: Value,
             uri: &str,
             json_response: bool,
             method_header: Option<&str>,
         ) -> (http::StatusCode, Value) {
-            let running = running_with_apps(
-                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
-                None,
-                None,
-            );
             let service = StreamableHttpService::new(
                 move || Ok(running.for_service()),
                 Arc::new(LocalSessionManager::default()),
@@ -1222,6 +1288,115 @@ mod tests {
             (status, body)
         }
 
+        const APP_URI: &str = "ui://widget/transport-fixture#v1";
+        const APP_HTML: &str = "<html><body>transport fixture</body></html>";
+
+        fn resource_fixture(source: crate::apps::app::AppResourceSource) -> Running {
+            let mut running = running_with_apps(AppResource::Single(source), None, None);
+            running.apps[0].uri = APP_URI.parse().unwrap();
+            running.caching.ttl_ms = 60_000;
+            running
+        }
+
+        fn assert_resource_response(status: http::StatusCode, body: &Value, version: &str) {
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            if version == "2026-07-28" {
+                assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            } else {
+                assert!(body["result"].get("resultType").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn local_app_resources_preserve_content_and_protocol_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("resources/list", "resources/read")] method: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running =
+                resource_fixture(crate::apps::app::AppResourceSource::Local(APP_HTML.into()));
+            let params = if method == "resources/read" {
+                json!({"uri": APP_URI})
+            } else {
+                json!({})
+            };
+            let (status, body) = request_with_running(
+                running,
+                version,
+                method,
+                params,
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let items = result[if method == "resources/list" {
+                "resources"
+            } else {
+                "contents"
+            }]
+            .as_array()
+            .unwrap();
+            assert_eq!(items.len(), 1, "{body}");
+            assert_eq!(items[0]["uri"], APP_URI);
+            assert_eq!(items[0]["mimeType"], "text/html;profile=mcp-app");
+            if method == "resources/read" {
+                assert_eq!(items[0]["text"], APP_HTML);
+            }
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 60_000);
+                assert_eq!(result["cacheScope"], "private");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn remote_app_resources_preserve_content_without_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/widget")
+                .with_status(200)
+                .with_body(APP_HTML)
+                .expect(1)
+                .create_async()
+                .await;
+            let running = resource_fixture(crate::apps::app::AppResourceSource::Remote(
+                format!("{}/widget", server.url()).parse().unwrap(),
+            ));
+            let (status, body) = request_with_running(
+                running,
+                version,
+                "resources/read",
+                json!({"uri": APP_URI}),
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            mock.assert_async().await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let contents = result["contents"].as_array().unwrap();
+            assert_eq!(contents.len(), 1, "{body}");
+            assert_eq!(contents[0]["uri"], APP_URI);
+            assert_eq!(contents[0]["mimeType"], "text/html;profile=mcp-app");
+            assert_eq!(contents[0]["text"], APP_HTML);
+            // Remote content is controlled outside the server configuration.
+            assert!(result.get("ttlMs").is_none(), "{body}");
+            assert!(result.get("cacheScope").is_none(), "{body}");
+        }
+
         #[rstest::rstest]
         #[case::modern("2026-07-28", -32602)]
         #[case::legacy("2025-11-25", -32002)]
@@ -1247,6 +1422,36 @@ mod tests {
                 body.get("result").is_none(),
                 "missing resources must never return contents: {body}"
             );
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", json!({
+            "resourceTemplates": [], "resultType": "complete",
+            "ttlMs": 60_000, "cacheScope": "private"
+        }))]
+        #[case::legacy("2025-11-25", json!({"resourceTemplates": []}))]
+        #[tokio::test]
+        async fn empty_template_list_uses_protocol_appropriate_cache_hints(
+            #[case] version: &str,
+            #[case] expected: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/templates/list",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("resources/templates/list"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            let mut result = body["result"].clone();
+            // rmcp attaches server metadata separately from the result's protocol fields.
+            result.as_object_mut().unwrap().remove("_meta");
+            assert_eq!(result, expected);
         }
 
         #[rstest::rstest]
@@ -1391,6 +1596,9 @@ mod tests {
         let prompts = running
             .list_prompts_with_protocol_max(Some(&version), &version)
             .unwrap();
+        let templates = running
+            .list_resource_templates_with_protocol_max(Some(&version), &version)
+            .unwrap();
 
         assert!(!tools.tools.is_empty());
         assert!(!resources.resources.is_empty());
@@ -1401,6 +1609,11 @@ mod tests {
             ("resources/list", resources.ttl_ms, resources.cache_scope),
             ("resources/read", read.ttl_ms, read.cache_scope),
             ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+            (
+                "resources/templates/list",
+                templates.ttl_ms,
+                templates.cache_scope,
+            ),
         ] {
             assert_eq!(
                 (ttl_ms, scope),

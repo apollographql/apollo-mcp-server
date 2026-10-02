@@ -514,6 +514,7 @@ fn metadata_request(id: u32, method: &str, mut params: Value) -> Request<Body> {
 #[rstest::rstest]
 #[case::tools("tools/list", json!({}), "list_tools")]
 #[case::resources("resources/list", json!({}), "list_resources")]
+#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
 #[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
 #[case::prompts("prompts/list", json!({}), "list_prompts")]
 #[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]

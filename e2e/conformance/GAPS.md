@@ -6,10 +6,22 @@ the checks we exercise. It does not establish full protocol conformance.
 
 ## Unsupported fixture behavior requiring broader work
 
-These 17 required scenarios remain baselined at individual-check granularity.
+The 2025-11-25 run has 17 required scenarios baselined at individual-check granularity.
 Making them pass through the production server requires capability or public
 configuration design, not just renaming the two GraphQL operations. Decide on
 product value before expanding the server solely to satisfy these fixtures.
+
+The `2026-07-28` baseline adds 24 scored check failures: four stateless
+capability/stream/logging checks, five tool content/progress checks, three generic
+resource checks, two typed prompt checks, and ten input-required-result checks.
+These depend on fixtures the production configuration cannot currently supply.
+Modern cache-hint failures and emitted wire-schema failures cannot be baselined.
+The resource-read caching skip is documented below.
+Four separate modern warnings are also listed at check granularity in the
+baseline. The pinned CLI considers warnings unexpected unless listed; the local
+verifier requires their exact `WARNING` status. They cover the unavailable
+tool-list-change trigger, a SHOULD-level resource error `data.uri`, and two
+input-required-result recommendations exercised without their fixture tool.
 
 | Scenarios | Current limitation | Work needed to remove the baseline |
 | --- | --- | --- |
@@ -28,7 +40,10 @@ The current workflow deliberately runs the production binary.
 
 - `server-sse-multiple-streams`, `dns-rebinding-protection`,
   `server-session-lifecycle`, and `server-sse-polling` do not emit
-  `wire-schema-valid` in alpha.11. Full wire coverage for these scenarios needs
+  `wire-schema-valid` in the legacy run. Modern `server-stateless`,
+  `server-sse-multiple-streams`, `dns-rebinding-protection`, and the skipped
+  `tasks-status-notifications` scenario also lack wire checks in alpha.11.
+  Full wire coverage for these scenarios needs
   upstream instrumentation or a suite upgrade. SDK validation in our separate
   resource checks does not fill that gap. All wire checks that are emitted
   remain mandatory and cannot be baselined.
@@ -46,6 +61,21 @@ The current workflow deliberately runs the production binary.
   exposed by this GraphQL fixture. Assess the relevant GraphQL-to-JSON-Schema
   mappings and upstream scenario maturity before adding coverage; do not infer
   support from the suite's exit status.
+- The modern task extension is unscored. Its MRTR and task lifecycle fixtures
+  are unavailable; `tasks-status-notifications` currently reports only
+  `SKIPPED`, pending an upstream rewrite. Modern custom-header validation is
+  also unscored and has five failures because its fixture is unavailable.
+  The repeated standard-header checks are enforced locally, including all
+  five invalid-header and five error-code instances.
+- Only the three known modern skips are allowed: resource-read cache hints,
+  task status notifications, and prompt-list-change notifications. Any other
+  skipped check fails verification in either revision.
+- Modern resource-read caching is skipped by the pinned suite. Rust HTTP transport
+  tests separately cover actual Apollo app resource listing and exact HTML/MIME
+  reads, local cache hints, and omission of remote cache hints, for modern and
+  legacy revisions in JSON and SSE modes. The conformance fixture
+  cannot trigger a tool-list-change notification. The error response `data.uri`
+  check is a SHOULD-level warning, not a scored failure.
 
 ## Operational scope
 
@@ -54,6 +84,5 @@ The current workflow deliberately runs the production binary.
 - Validate workflow changes on a GitHub-hosted runner before merge and link the
   run in the PR. Local success alone does not verify runner-specific behavior.
 - The suite and supplemental SDK are pinned exactly. The supplemental checks
-  assert negotiation of `2025-11-25`. When AMS-507 enables `2026-07-28`, add its
-  own requirements run and baseline and review supplemental lifecycle/error
-  assertions for the new version.
+  assert negotiation of `2025-11-25` and run only for that revision. The modern
+  revision has its own requirements run and baseline.

@@ -9,8 +9,25 @@ import { verifyApolloContent } from './supplemental.mjs';
 
 const fixture = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(fixture, '../..');
-const revision = '2025-11-25';
-const baseline = resolve(process.argv[2] ?? join(fixture, `expected-failures-${revision}.yaml`));
+const supported = new Set(['2025-11-25', '2026-07-28']);
+const args = process.argv.slice(2);
+let revision = '2025-11-25';
+let baselineArg;
+let revisionSeen = false;
+for (let i = 0; i < args.length; i++) {
+  if (args[i] === '--revision') {
+    if (revisionSeen || ++i >= args.length || !supported.has(args[i])) {
+      throw new Error('Use --revision 2025-11-25 or --revision 2026-07-28');
+    }
+    revision = args[i];
+    revisionSeen = true;
+  } else if (!args[i].startsWith('-') && baselineArg === undefined) {
+    baselineArg = args[i];
+  } else {
+    throw new Error(`Unexpected argument: ${args[i]}`);
+  }
+}
+const baseline = resolve(baselineArg ?? join(fixture, `expected-failures-${revision}.yaml`));
 await mkdir(join(fixture, 'artifacts'), { recursive: true });
 const artifacts = await mkdtemp(join(fixture, 'artifacts/run-'));
 console.log(`Conformance artifacts: ${artifacts}`);
@@ -79,7 +96,7 @@ try {
   await ready(graphql, 'http://127.0.0.1:4101/health');
   const server = logged(join(metadata.target_directory, 'debug/apollo-mcp-server'), ['config.yaml'], 'server.log');
   await ready(server, 'http://127.0.0.1:4100/health');
-  await verifyApolloContent(artifacts);
+  if (revision === '2025-11-25') await verifyApolloContent(artifacts);
 
   const results = join(artifacts, 'results');
   const suite = logged(process.execPath, [

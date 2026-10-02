@@ -11,10 +11,18 @@ export async function verifyResults(results, baseline, revision) {
     .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
   // alpha.11 uses raw HTTP/SSE in these scenarios without wire-schema
   // instrumentation. Keep this explicit so missing checks elsewhere fail.
-  const uninstrumented = new Set([
-    'server-sse-multiple-streams', 'dns-rebinding-protection',
-    'server-session-lifecycle', 'server-sse-polling',
-  ]);
+  const uninstrumented = new Set(revision === '2025-11-25'
+    ? ['server-sse-multiple-streams', 'dns-rebinding-protection',
+      'server-session-lifecycle', 'server-sse-polling']
+    : ['server-stateless', 'server-sse-multiple-streams', 'dns-rebinding-protection',
+      'tasks-status-notifications']);
+  // These skips are fixture limitations in the pinned suite. Any new skip
+  // must be reviewed rather than silently reducing the coverage of a green run.
+  const allowedSkips = new Set(revision === '2026-07-28' ? [
+    'caching:sep-2549-resources-read-caching-hints',
+    'tasks-status-notifications:tasks-status-notifications',
+    'server-stateless:sep-2575-server-sends-prompts-list-changed-on-subscription',
+  ] : []);
   const scenarios = new Map();
   for (const entry of await readdir(results, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -23,6 +31,15 @@ export async function verifyResults(results, baseline, revision) {
     assert(!scenarios.has(name), `Duplicate scenario results: ${name}`);
     const checks = JSON.parse(await readFile(join(results, entry.name, 'checks.json'), 'utf8'));
     assert(Array.isArray(checks) && checks.length > 0, `Empty checks: ${name}`);
+    if (revision === '2026-07-28' && name === 'tasks-status-notifications') {
+      assert.deepEqual(checks.map(({ id, status }) => ({ id, status })),
+        [{ id: name, status: 'SKIPPED' }],
+        'Unexpected tasks-status-notifications result; review the upstream scenario');
+    }
+    for (const check of checks.filter((check) => check.status === 'SKIPPED')) {
+      assert(allowedSkips.has(`${name}:${check.id}`),
+        `Unexpected skipped check: ${name}:${check.id}`);
+    }
     // Enforce these even in the manifest's unscored scenarios, whose failures
     // are otherwise excluded from the conformance CLI's exit status.
     const wire = checks.filter((check) => check.id === 'wire-schema-valid');
@@ -44,31 +61,61 @@ export async function verifyResults(results, baseline, revision) {
 
   // These currently pass but are unscored upstream. Preserve their signal
   // locally; the polling scenario's disconnect/resume warning remains a gap.
-  for (const [scenario, ids] of [
+  for (const [scenario, ids] of (revision === '2025-11-25' ? [
     ['server-session-lifecycle', [
       'server-session-initialized-accepted', 'server-session-delete-accepted',
       'server-session-terminated-returns-404',
     ]],
     ['server-sse-polling', ['server-sse-priming-event', 'server-sse-retry-field']],
-  ]) {
+  ] : [])) {
     for (const id of ids) {
       assert.equal(scenarios.get(scenario).find((check) => check.id === id)?.status,
         'SUCCESS', `Supplemental transport check failed: ${scenario}:${id}`);
     }
   }
 
+  if (revision === '2026-07-28') {
+    const header = scenarios.get('http-header-validation');
+    for (const [id, count] of [
+      ['sep-2243-server-reject-invalid-headers', 5],
+      ['sep-2243-server-reject-error-code', 5],
+      ['sep-2243-header-name-case-insensitive', 2],
+      ['sep-2243-server-accepts-whitespace-header-value', 1],
+    ]) {
+      const matches = header.filter((check) => check.id === id);
+      assert.equal(matches.length, count, `Missing header check occurrence: ${id}`);
+      for (const check of matches) {
+        assert.equal(check.status, 'SUCCESS', `Header validation failed: ${id}:${check.name}`);
+      }
+    }
+  }
+
   // The upstream runner tolerates absent baseline checks. Reject typos and
   // renamed checks locally so exceptions cannot silently stop being exercised.
   const exceptions = parse(await readFile(baseline, 'utf8')).server ?? [];
+  const warnings = new Set(revision === '2026-07-28' ? [
+    'server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription',
+    'sep-2164-resource-not-found:sep-2164-data-uri',
+    'input-required-result-missing-input-response:sep-2322-missing-response-rerequests',
+    'input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params',
+  ] : []);
+  assert.equal(new Set(exceptions).size, exceptions.length, 'Duplicate baseline entry');
+  for (const entry of warnings) {
+    assert(exceptions.includes(entry), `Missing warning baseline entry: ${entry}`);
+  }
   for (const entry of exceptions) {
     assert(typeof entry === 'string' && entry.split(':').length === 2,
       `Baseline must name an individual scenario:check-id: ${entry}`);
     const [scenario, id] = entry.split(':');
     assert(!id.startsWith('wire-schema-'), 'Wire checks must never be baselined');
-    const check = scenarios.get(scenario)?.find((check) => check.id === id);
-    assert(check, `Absent baseline check: ${entry}`);
-    assert.equal(check.status, 'FAILURE',
-      `Stale baseline entry, check no longer fails: ${entry} (${check.status})`);
+    assert(scenario !== 'caching', 'Caching checks must never be baselined');
+    const checks = scenarios.get(scenario)?.filter((check) => check.id === id) ?? [];
+    assert(checks.length > 0, `Absent baseline check: ${entry}`);
+    const status = warnings.has(entry) ? 'WARNING' : 'FAILURE';
+    for (const check of checks) {
+      assert.equal(check.status, status,
+        `Baseline status changed: ${entry} (expected ${status}, got ${check.status})`);
+    }
   }
 
   function passed(name) {

@@ -265,11 +265,11 @@ These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL
 
 | Option | Type | Default | Description |
 | :----- | :--- | :------ | :---------- |
-| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Requires negotiation of MCP protocol version `2026-07-28` or newer; see the following availability note. |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Applies to supported MCP protocol versions from `2026-07-28` onward. |
 
 <Note>
 
-Cache hints are currently inactive: Apollo MCP Server negotiates MCP protocol versions up to `2025-11-25`. The `caching.ttl_ms` setting doesn't currently change client caching behavior because the required protocol revision isn't supported.
+Clients using `2026-07-28` select the protocol through discovery and per-request metadata. Legacy clients using `initialize` retain their earlier protocol response shape without cache hints.
 
 </Note>
 
