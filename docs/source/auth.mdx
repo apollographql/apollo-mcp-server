@@ -162,6 +162,29 @@ Adopt `scope_mode: disabled` only when downstream services, like subgraphs, hand
 
 Apollo MCP Server reads the standard `scope` claim first. This claim is a space-separated string, defined in [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068). If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
 
+### Scope hierarchies
+
+Some authorization servers define broader scopes that include narrower ones. For example, `admin` might include `read` and `write`. Use `implied_scopes` to tell Apollo MCP Server about these relationships. Each key is a broader scope, and its list holds the scopes it includes:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    servers:
+      - https://auth.example.com
+    scopes:
+      - read
+    implied_scopes:
+      admin: [write]
+      write: [read]
+```
+
+When a token has a key, the server treats it as having every listed scope as well. Implications chain, so in the previous example a token with only `admin` also counts as having `write` and `read`, and it meets the global `read` requirement. Implications only go one way: a token with only `read` doesn't count as having `write` or `admin`.
+
+Implied scopes apply to the global requirement and to [per-operation requirements](#per-operation-scope-requirements). They don't change the scopes the server advertises. `scopes_supported` and `WWW-Authenticate` challenges still list only the scopes you require, so clients keep asking for the narrowest scopes that work.
+
+The server can't discover scope hierarchies from your IdP. Keep `implied_scopes` in sync with how your IdP defines its scopes.
+
 ## Per-operation scope requirements
 
 When enabled, the global `scopes` and `scope_mode` requirement applies uniformly to every authenticated MCP request. For finer-grained control, you can declare additional OAuth scopes per operation using `overrides.required_scopes`. This enables step-up authorization: a client with a limited token can call tools governed only by the global requirement, but is prompted to re-authorize with elevated scopes when calling a more sensitive operation.
