@@ -531,6 +531,30 @@ impl Running {
         Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
+    fn list_resource_templates_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        self.list_resource_templates_with_protocol_max(
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resource_templates_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // We expose no templates, but even an empty modern list requires cache hints.
+        // rmcp's default handler returns the empty list without those hints.
+        Ok(self.caching.apply_to(
+            ListResourceTemplatesResult::default(),
+            protocol_version,
+            server_max,
+        ))
+    }
+
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
@@ -859,14 +883,10 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        // We expose no templates, but even an empty modern list requires cache hints.
-        // rmcp's default handler returns the empty list without those hints.
         let protocol_version = context.protocol_version();
-        Ok(self.application.caching.apply_to(
-            ListResourceTemplatesResult::default(),
-            protocol_version.as_ref(),
-            &MAX_SUPPORTED_PROTOCOL_VERSION,
-        ))
+
+        self.application
+            .list_resource_templates_impl(protocol_version.as_ref())
     }
 
     #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
@@ -1467,6 +1487,9 @@ mod tests {
         let prompts = running
             .list_prompts_with_protocol_max(Some(&version), &version)
             .unwrap();
+        let templates = running
+            .list_resource_templates_with_protocol_max(Some(&version), &version)
+            .unwrap();
 
         assert!(!tools.tools.is_empty());
         assert!(!resources.resources.is_empty());
@@ -1477,6 +1500,11 @@ mod tests {
             ("resources/list", resources.ttl_ms, resources.cache_scope),
             ("resources/read", read.ttl_ms, read.cache_scope),
             ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+            (
+                "resources/templates/list",
+                templates.ttl_ms,
+                templates.cache_scope,
+            ),
         ] {
             assert_eq!(
                 (ttl_ms, scope),
