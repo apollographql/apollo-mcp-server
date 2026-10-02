@@ -485,10 +485,11 @@ struct AuthState {
     /// `allow_anonymous_mcp_discovery` flag already folded in.
     skip_token_validation: Arc<SkipTokenValidation>,
     /// Whether the streamable-HTTP transport serves the `GET` server-to-client
-    /// stream (`true`) or not (`false`, `stateful_mode: false`). A stateless
-    /// transport answers that `GET` with 405 regardless of a credential, so
-    /// gating it here would only add a 401 a client may read as "this server
-    /// requires authentication for everything".
+    /// stream to legacy-protocol clients (`true`) or not (`false`,
+    /// `stateful_mode: false`). A `GET` the transport serves statelessly, which
+    /// includes every `GET` on protocol 2026-07-28 or later, gets 405
+    /// regardless of a credential, so gating it here would only add a 401 a
+    /// client may read as "this server requires authentication for everything".
     stateful_mode: bool,
 }
 
@@ -721,6 +722,25 @@ fn standard_headers_enforced(request: &Request) -> bool {
             .is_some_and(|version| version >= ProtocolVersion::STANDARD_HEADERS.as_str())
 }
 
+/// Whether this request names a protocol version without the `initialize`
+/// handshake (2026-07-28 or later), which rmcp always serves statelessly
+/// whatever `stateful_mode` says.
+///
+/// A missing header is legacy, as in rmcp. The known-version allowlist fails
+/// closed, so an unrecognized version stays gated.
+fn uses_stateless_protocol(request: &Request) -> bool {
+    request
+        .headers()
+        .get(HEADER_MCP_PROTOCOL_VERSION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|version| {
+            ProtocolVersion::KNOWN_VERSIONS
+                .iter()
+                .find(|known| known.as_str() == version)
+        })
+        .is_some_and(|version| !version.has_initialize())
+}
+
 async fn extract_body(request: &mut Request) -> Result<JsonRpcPeek, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
@@ -810,9 +830,11 @@ async fn oauth_validate(
     };
 
     // See AuthState::stateful_mode's doc for why a stateless GET is exempt
-    // here. Stateful mode's GET carries real traffic and stays gated below
-    // like any other request.
-    if !auth_state.stateful_mode && request.method() == Method::GET {
+    // here. A legacy-protocol GET in stateful mode carries real traffic and
+    // stays gated below like any other request.
+    if request.method() == Method::GET
+        && (!auth_state.stateful_mode || uses_stateless_protocol(&request))
+    {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
         return Ok(response);
@@ -1220,6 +1242,30 @@ mod tests {
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
             assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        /// Protocol 2026-07-28 removed sessions, so rmcp serves its `GET`
+        /// statelessly (405) even when `stateful_mode` is `true`. Legacy,
+        /// missing, and unrecognized versions keep the stateful gating.
+        #[rstest::rstest]
+        #[case::modern(Some("2026-07-28"), StatusCode::METHOD_NOT_ALLOWED)]
+        #[case::legacy(Some("2025-11-25"), StatusCode::UNAUTHORIZED)]
+        #[case::missing(None, StatusCode::UNAUTHORIZED)]
+        #[case::unknown(Some("2099-01-01"), StatusCode::UNAUTHORIZED)]
+        #[case::malformed(Some("not-a-version"), StatusCode::UNAUTHORIZED)]
+        #[tokio::test]
+        async fn stateful_unauthenticated_get_is_gated_by_protocol_version(
+            #[case] version: Option<&str>,
+            #[case] expected: StatusCode,
+        ) {
+            let config = test_config();
+            let app = test_router_get_unhandled(config, /* stateful_mode */ true);
+            let mut req = Request::builder().method("GET").uri("/test");
+            if let Some(version) = version {
+                req = req.header(HEADER_MCP_PROTOCOL_VERSION, version);
+            }
+            let res = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), expected);
         }
 
         /// Confirms the bypass added in `oauth_validate` is scoped to `GET`:
@@ -2556,11 +2602,17 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
             }
 
+            /// Only a legacy-protocol `GET` is served in stateful mode, so that
+            /// is the one a method header must not unlock.
             #[tokio::test]
             async fn method_header_does_not_bypass_stateful_get_auth() {
                 let app = skip_router(skip(&["tools/list"], &[], &[]));
                 let mut req = request("tools/list", Body::empty());
                 *req.method_mut() = Method::GET;
+                req.headers_mut().insert(
+                    HEADER_MCP_PROTOCOL_VERSION,
+                    HeaderValue::from_static(ProtocolVersion::V_2025_11_25.as_str()),
+                );
                 assert_eq!(
                     app.oneshot(req).await.unwrap().status(),
                     StatusCode::UNAUTHORIZED
