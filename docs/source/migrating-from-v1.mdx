@@ -1,0 +1,110 @@
+---
+title: Migrating from v1 to v2
+subtitle: Upgrade your Apollo MCP Server deployment from v1.x to v2.x
+---
+
+<Note>
+
+This guide is a scaffold for the Apollo MCP Server v2 migration guide. Sections marked **TODO** need to be filled in with the actual breaking changes, configuration updates, and new capabilities once the v2 release scope is finalized. Keep the structure and the "Upgrade step" callouts intact as you replace each placeholder so the finished guide stays consistent with the rest of the docs.
+
+</Note>
+
+Apollo MCP Server v2.x includes breaking changes when upgrading from v1.x. <!-- TODO: one or two sentences summarizing the overall theme of the v2 changes, e.g. config reshaping, removed flags, protocol version bump. --> This guide describes those breaking changes and how to resolve them, and it highlights new capabilities introduced in v2.
+
+## Before you begin
+
+- Review the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) for every release between your current v1.x version and v2.0.0.
+- Back up your current `config.yaml` and any scripts that set `APOLLO_MCP_*` environment variables.
+- If you run Apollo MCP Server via the [Apollo GraphOS Operator](./deploy#deploy-on-kubernetes-with-the-apollo-graphos-operator-recommended-for-kubernetes) or a container image, confirm the v2 image tag before changing your deployment manifests.
+
+## Upgrade strategy
+
+<!-- TODO: describe the recommended order of operations for upgrading, e.g.:
+  1. Upgrade in a non-production environment first.
+  2. Update `config.yaml` for renamed/removed options (see "Configuration changes" below).
+  3. Update tool and prompt definitions if the operation/manifest format changed.
+  4. Deploy the v2 binary or container image.
+  5. Monitor logs, telemetry, and MCP client behavior after rollout.
+-->
+
+## Breaking changes
+
+The following sections describe features that have been removed, renamed, or changed in incompatible ways in v2.x. An upgrade step is included for each, where applicable.
+
+### Configuration changes
+
+<!-- TODO: document changes to config.yaml, covering the areas in the v1 config reference:
+  - endpoint, transport (including auth nested under transport), operations, schema,
+    introspection, graphos, overrides, headers, forward_headers, health_check, cors,
+    telemetry, logging, server_info, instructions, custom_scalars.
+  - Call out any renamed keys, changed defaults, or options that moved to a different
+    section, following the "Previous" / "New" yaml comparison style used elsewhere in
+    this guide. -->
+
+**Upgrade step**: <!-- TODO -->
+
+### Environment variables and CLI flags
+
+<!-- TODO: document renamed or removed `APOLLO_MCP_*` environment variables and any
+  CLI argument changes (including the nested override format
+  `APOLLO_MCP_<SECTION>__<NESTED_KEY>`). -->
+
+**Upgrade step**: <!-- TODO -->
+
+### Tool and prompt definitions
+
+<!-- TODO: document changes affecting how operations become tools (see "Define tools"
+  and "Define prompts"), including changes to `operations.source` modes (`infer`,
+  `local`, `manifest`, `collection`, `introspect`, `uplink`), overrides, or tool
+  annotations. -->
+
+**Upgrade step**: <!-- TODO -->
+
+### Authorization
+
+<!-- TODO: document changes to `transport.auth`, JWT/JWKS configuration, or header
+  forwarding behavior described in the "Authorization" page. -->
+
+**Upgrade step**: <!-- TODO -->
+
+### Telemetry
+
+<!-- TODO: document renamed or removed metrics, trace attributes, or exporter
+  configuration described in the "Telemetry" page. -->
+
+**Upgrade step**: <!-- TODO -->
+
+### Error handling
+
+<!-- TODO: document any changes to how GraphQL errors map onto MCP protocol errors
+  vs. tool execution errors, as described in the "Error Handling" page. -->
+
+### Rhai scripting
+
+<!-- TODO: document changes to lifecycle hooks or the Rhai functions reference, if
+  the scripting API changes in v2. Remove this section if Rhai scripting is
+  unaffected. -->
+
+### MCP Apps
+
+<!-- TODO: document changes to MCP Apps resources, manifests, or the development
+  workflow, if affected. Remove this section if MCP Apps is unaffected. -->
+
+## New capabilities
+
+The following lists new capabilities in Apollo MCP Server v2.x. These capabilities don't introduce breaking changes.
+
+<!-- TODO: list notable new features, following the "### Feature name" + short
+  description + optional example pattern used in the CHANGELOG. -->
+
+## Deploy your upgraded server
+
+Make sure you're referencing the correct Apollo MCP Server release. For deployment options, go to [Deploy the MCP Server](./deploy).
+
+## Getting help
+
+If you run into an upgrade issue that isn't resolved by this guide:
+
+- Check [Apollo MCP Server GitHub issues](https://github.com/apollographql/apollo-mcp-server/issues)
+- Join the [Apollo community forums](https://community.apollographql.com/c/mcp-server/41)
+- Contact your Apollo representative for direct support
