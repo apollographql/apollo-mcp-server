@@ -11,7 +11,7 @@ use url::Url;
 use apollo_mcp_server::server_info::ServerInfoConfig;
 
 use super::{
-    OperationSource, SchemaSource, endpoint::Endpoint, graphos::GraphOSConfig,
+    OperationSource, SchemaConfig, endpoint::Endpoint, graphos::GraphOSConfig,
     introspection::Introspection, logging::Logging, overrides::Overrides, rhai::RhaiConfig,
     telemetry::Telemetry,
 };
@@ -78,7 +78,7 @@ pub struct Config {
     pub overrides: Overrides,
 
     /// The schema to load for operations
-    pub schema: SchemaSource,
+    pub schema: SchemaConfig,
 
     /// The type of server transport to use
     pub transport: Transport,

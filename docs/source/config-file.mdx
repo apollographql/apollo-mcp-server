@@ -336,6 +336,32 @@ When you use `source: graphos`, MCP Server polls GraphOS for schema changes peri
 
 For `source: graphos`, transient errors before the initial schema load are retried, although a permanent initial error prevents startup. After a schema has loaded, later poll or fetch errors keep the current schema and polling continues. This last-known-good behavior applies to request failures, not to the contents of a successfully fetched publication: a schema document that can't be parsed and validated causes the server to exit with an error.
 
+#### Schema validation
+
+The optional `validation` field, alongside `source`, controls how MCP Server handles a schema that breaks GraphQL validation rules. It applies to every source.
+
+| Option       | Type                     | Default    | Description                                                     |
+| :----------- | :----------------------- | :--------- | :-------------------------------------------------------------- |
+| `validation` | `"strict" \| "lenient"` | `"strict"` | How strictly to validate a schema that isn't a supergraph |
+
+- `strict`: MCP Server rejects a schema that breaks GraphQL validation rules and exits with an error. If the schema breaks only rules introduced by the [GraphQL September 2025 specification](https://spec.graphql.org/September2025/), such as a deprecated field that implements a non-deprecated interface field, MCP Server logs a warning that lists them and loads the schema.
+- `lenient`: MCP Server logs a warning that lists every validation error and loads the schema anyway. Use this for a schema you can't change, such as a third-party API's published schema.
+
+A schema that can't be parsed always prevents startup, whatever the value of `validation`. For a supergraph, federation validates the supergraph, and MCP Server only warns when the API schema derived from it breaks September 2025 rules.
+
+```yaml title="config.yaml"
+schema:
+  source: local
+  path: ./schema.graphql
+  validation: lenient
+```
+
+<Caution>
+
+With `validation: lenient`, an invalid schema can cause failures later that are harder to trace to the schema, for example when MCP Server validates or executes an operation that uses an invalid type. Check the warning at startup and prefer fixing the schema when you can.
+
+</Caution>
+
 ### Transport
 
 These fields are under the top-level `transport` key, to configure running the MCP Server in different environments - stdio or Streamable HTTP.
