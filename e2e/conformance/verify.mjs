@@ -108,6 +108,7 @@ export async function verifyResults(results, baseline, revision) {
       `Baseline must name an individual scenario:check-id: ${entry}`);
     const [scenario, id] = entry.split(':');
     assert(!id.startsWith('wire-schema-'), 'Wire checks must never be baselined');
+    assert(scenario !== 'caching', 'Caching checks must never be baselined');
     const checks = scenarios.get(scenario)?.filter((check) => check.id === id) ?? [];
     assert(checks.length > 0, `Absent baseline check: ${entry}`);
     const status = warnings.has(entry) ? 'WARNING' : 'FAILURE';

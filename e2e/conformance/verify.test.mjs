@@ -165,6 +165,15 @@ test('modern verifier rejects absent and stale baseline checks', async (t) => {
   await assert.rejects(f.verify(), /Baseline status changed/);
 });
 
+test('modern verifier rejects baselined caching failures', async (t) => {
+  const f = await fixture(t);
+  const id = 'sep-2549-resources-templates-list-caching-hints';
+  f.files.get('caching').checks.push({ id, status: 'FAILURE' });
+  await f.save();
+  await writeFile(f.baselinePath, stringify({ server: [...baseline.server, `caching:${id}`] }));
+  await assert.rejects(f.verify(), /Caching checks must never be baselined/);
+});
+
 test('modern verifier rejects warning promotion to failure or success', async (t) => {
   const f = await fixture(t);
   const entry = [...warningEntries][0];
