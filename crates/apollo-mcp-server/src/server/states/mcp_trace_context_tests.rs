@@ -193,6 +193,8 @@ async fn explicit_forwarded_baggage_remains_when_context_baggage_is_empty() {
 #[case::unsafe_baggage(json!({"baggage": "safe=ok,userId=alice;property=one%0Atwo"}), false, Some("safe=ok"), "http=one")]
 #[case::retain_http_baggage(json!({"traceparent": TRACEPARENT}), true, Some("source=http"), "")]
 #[case::invalid_state(json!({"traceparent": TRACEPARENT, "tracestate": "invalid"}), true, Some("source=http"), "")]
+#[case::control_char_state(json!({"traceparent": TRACEPARENT, "tracestate": "meta=one,vendor=k\u{1}"}), true, Some("source=http"), "")]
+#[case::non_ascii_state(json!({"traceparent": TRACEPARENT, "tracestate": "vendor=caf\u{e9}"}), true, Some("source=http"), "")]
 #[case::raw_equals(json!({"baggage": "token=a=b"}), false, Some("token=a%3Db"), "http=one")]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]

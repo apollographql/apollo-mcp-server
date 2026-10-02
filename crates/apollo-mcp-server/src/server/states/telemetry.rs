@@ -355,11 +355,22 @@ pub(super) fn with_request_context(
     (span, parent)
 }
 
+/// Whether `value` is text an inbound HTTP header could carry, which is all
+/// `HeaderExtractor` reads. Metadata strings are held to the same set because
+/// the trace-context propagator re-injects tracestate values unchanged.
+fn is_http_header_text(value: &str) -> bool {
+    HeaderValue::from_str(value).is_ok_and(|value| value.to_str().is_ok())
+}
+
 fn request_parent_context(meta: &RequestMetaObject, http_parent: &OtelContext) -> OtelContext {
     let baggage = meta.get_baggage().map(normalize_baggage_list);
     let carrier: HashMap<String, String> = [
         ("traceparent", meta.get_traceparent()),
-        ("tracestate", meta.get_tracestate()),
+        (
+            "tracestate",
+            meta.get_tracestate()
+                .filter(|tracestate| is_http_header_text(tracestate)),
+        ),
         ("baggage", baggage.as_deref()),
     ]
     .into_iter()
