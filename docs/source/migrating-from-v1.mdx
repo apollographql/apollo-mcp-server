@@ -1,0 +1,30 @@
+---
+title: Migrating from v1 to v2
+subtitle: Upgrade your Apollo MCP Server deployment from v1.x to v2.x
+---
+
+Apollo MCP Server v2.0 doesn't include any breaking API changes. The major version bump reflects how much the [Model Context Protocol specification](https://modelcontextprotocol.io/specification) itself has changed since Apollo MCP Server's 1.0 release, not a break in compatibility with your existing configuration, tools, or deployments.
+
+Upgrading from the latest 1.x release should be as smooth as any minor version update:
+
+1. Review the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) for the full list of changes between your current version and v2.0.0.
+2. Update your Apollo MCP Server binary, container image, or [Apollo GraphOS Operator](./deploy#deploy-on-kubernetes-with-the-apollo-graphos-operator-recommended-for-kubernetes) version to v2.0.0.
+3. Redeploy. No changes to `config.yaml`, `APOLLO_MCP_*` environment variables, or tool and prompt definitions are required.
+
+## What's new in v2.0
+
+- **MCP protocol 2026-07-28 support**: the server now supports the 2026-07-28 revision, including `subscriptions/listen`, cache hints on resource and tool list responses, and standard request headers. Older protocol versions your clients already use continue to work unchanged.
+- **Rhai hooks run concurrently**: hook calls no longer block each other behind a single exclusive engine lock, so a hook that makes a slow HTTP call can no longer stall other in-flight tool calls.
+- **Deterministic tool ordering**: `tools/list` now returns predefined GraphQL operation tools sorted alphabetically by operation name, improving client-side tool-list caching and LLM prompt cache reuse.
+- **Separate health check listener**: `health_check.listen` lets you serve the health check on its own address/port instead of the main `streamable_http` listener.
+- **MCP request trace context propagation**: incoming `traceparent`, `tracestate`, and `baggage` metadata now parents the request span and propagates to downstream GraphQL calls.
+
+<Note>
+
+If your `main.rhai` script relies on variables declared at the top level to persist state across calls (for example a cached token or a counter), review the Rhai hook concurrency change in the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) before upgrading. Each hook invocation now gets its own copy of those variables, so writes from one call no longer carry over to the next.
+
+</Note>
+
+## Getting help
+
+If you run into an upgrade issue, check [Apollo MCP Server GitHub issues](https://github.com/apollographql/apollo-mcp-server/issues).

@@ -1,15 +1,19 @@
 switcher:
   heading: "Apollo MCP Server"
   versions:
-    - label: v1
+    - label: v2
       latest: true
       href: ./
+    - label: v1
+      href: ./v1
 defaultOpenDepth: 2
 items:
   - label: "Overview"
     href: "."
   - label: "Quickstart"
     href: "./quickstart"
+  - label: "Migrate from v1 to v2"
+    href: "./migrating-from-v1"
   - label: "Define tools"
     href: "./define-tools"
   - label: "Define prompts"
