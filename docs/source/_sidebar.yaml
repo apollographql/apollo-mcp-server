@@ -5,7 +5,7 @@ switcher:
       latest: true
       href: ./
     - label: v1
-      href: ../v1
+      href: ./v1
 defaultOpenDepth: 2
 items:
   - label: "Overview"
