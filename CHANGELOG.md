@@ -4,6 +4,142 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.0.0 (2026-10-05)
+
+### Breaking Changes
+
+#### Apollo MCP Server 2.0
+
+Apollo MCP Server 2.0 adds support for MCP protocol `2026-07-28` while continuing to serve clients on earlier protocol versions. The major version reflects how much the MCP specification and the server have changed since 1.0.
+
+Highlights since 1.0:
+
+- MCP `2025-11-25` (1.16.0) and `2026-07-28` (2.0.0) support, including `server/discover`, `subscriptions/listen`, cache hints, and standard request headers. Tool output schemas and structured content arrived in 1.4.0.
+- MCP Apps and OpenAI Apps SDK support (1.8.0), and prompts defined in Markdown files (1.13.0).
+- Rhai scripting for request hooks (1.10.0), with hot reloading for scripts (1.11.0) and the config file (1.12.0).
+- OAuth scope enforcement with `insufficient_scope` (1.4.0), metadata discovery (1.6.0), step-up authorization (1.10.0), issuer validation (1.15.0, 1.17.0), per-operation scope alternatives, and configurable token validation skips (1.18.0).
+- Header forwarding to the GraphQL API (1.1.0) and distributed trace context propagation (1.4.0, 2.0.0).
+
+Upgrading from 1.20.0 doesn't require configuration changes. Review Rhai scripts that write to variables declared at the top level of `main.rhai`, since each hook invocation now gets its own copy of those variables.
+
+If you're upgrading from an earlier 1.x release, these changes may also need attention:
+
+- 1.1.0: The default port changed from `5000` to `8000`.
+- 1.5.0: The SSE transport was removed. Use `streamable_http`.
+- 1.6.0: GraphQL API failures and input validation errors are returned as tool execution errors with `isError: true`.
+- 1.7.0: Host header validation is enabled by default for `streamable_http`. Add hostnames other than localhost to `transport.host_validation.allowed_hosts`.
+- 1.7.0 and 1.17.0: Invalid or misplaced configuration, such as `auth` at the top level or under `stdio`, fails at startup instead of being ignored.
+- 1.14.0: `transport.auth.servers` entries are published as written, so each must exactly match its authorization server's `issuer`.
+- 1.18.0: Nullable inputs in generated tool schemas use `anyOf` with a `null` alternative. `allow_anonymous_mcp_discovery` is deprecated in favor of `transport.auth.skip_token_validation.methods`.
+- 1.20.0: Schemas are validated against the GraphQL September 2025 rules, so a schema that loaded before can be rejected at startup.
+
+### Features
+
+#### Support MCP protocol 2026-07-28
+
+Declare support for MCP 2026-07-28, enabling subscriptions/listen, cache hints,
+and standard request headers. Modern responses include resultType: "complete";
+missing resources return -32602 and unknown methods return HTTP 404 with -32601.
+Older supported protocol versions remain available.
+
+#### Run Rhai hooks concurrently instead of behind an exclusive lock
+
+A Rhai hook that blocked on an HTTP call could hang the server. Every hook call took an exclusive lock on the shared engine and held it for the whole script, blocking the waiting calls' tokio worker threads until none was left to finish the in-flight request; three concurrent tool calls were enough on a two-core deployment. Hooks now run against a snapshot of the engine with no lock held, and a reload swaps in a freshly compiled engine so hooks already in flight keep running against the scripts they started with. Hook bodies for concurrent requests now genuinely run in parallel, where the lock used to serialize them, so a hook that performs side effects can no longer assume it is the only one running.
+
+Each hook invocation now gets its own copy of the variables declared at the top level of `main.rhai`. Hooks still read the values captured at load time, but a value a hook writes to one is discarded when the hook returns instead of reaching later calls, the experimental `on_startup` hook included. Variables that a top-level closure captured are copied too, so concurrent calls never read each other's values, and the closure keeps the value from load time. A script that kept a cached token or a counter there loses those writes with no error and no log, hence the minor bump.
+
+### Fixes
+
+#### Omit empty `_meta.ui` from MCP App resources
+
+When an app manifest sets no CSP or widget settings, `resources/read` no longer returns `"_meta": {"ui": null}`. MCP Apps requires `_meta.ui` to be an object when present, so hosts that validate resource metadata could reject the app.
+
+#### Return GraphQL operation tools in deterministic order
+
+Predefined GraphQL operation tools in `tools/list` are now sorted alphabetically by operation name using case-sensitive lexicographic ordering. With unique operation names, the order remains stable across repeated calls and schema or operation reloads with the same operations, supporting client-side tool-list caching and LLM prompt cache reuse. Operations with equal names retain their source order. Built-in and app tools retain their existing order after the predefined operations.
+
+#### Support serving the health check on its own address/port
+
+`health_check.listen` is a new, optional config field that serves the health check on its own
+socket instead of merging it into the main `streamable_http` listener. This mirrors how the
+Apollo Router exposes a separate health-check listen address, and is useful when infrastructure
+like a Kubernetes readiness probe expects a dedicated port, for example one that isn't exposed
+through your ingress.
+
+```yaml
+health_check:
+  enabled: true
+  listen: 0.0.0.0:8088
+```
+
+When unset (the default), behaviour is unchanged: the health check is served on the same port as
+the rest of the server.
+
+#### Validate generated GraphQL tool schemas against JSON Schema 2020-12
+
+Repeated non-null selections no longer create duplicate `required` entries.
+Output schemas now validate fields selected through nested, named, and inline
+fragments on unions and interfaces together, while accepting members with no
+matching fragment and rejecting incompatible member-key combinations.
+Regression tests check generated input and output schemas against Draft 2020-12
+and through MCP `tools/list`.
+
+#### Reject `logging/setLevel` under protocol 2026-07-28
+
+Prepare `logging/setLevel` to return JSON-RPC method-not-found (`-32601`) for
+protocol 2026-07-28 and later, with HTTP 404 over Streamable HTTP. Older protocol
+versions retain the empty-success no-op. The server continues to omit the logging
+capability and does not emit MCP logging notifications.
+
+This change does not enable protocol 2026-07-28: the production version cap remains
+2025-11-25 until the broader protocol support is enabled separately.
+
+#### Use `Mcp-Name` headers for tool exceptions and per-operation scopes
+
+For SDK-known protocol versions from `2026-07-28` onward, the auth middleware now reads the `tools/call` tool name from `Mcp-Name` instead of the body, for both `skip_token_validation.tools` and `overrides.required_scopes`. Authenticated tool calls no longer buffer the body in the auth middleware when their headers are usable. A tokenless request with a missing or malformed `Mcp-Method` or `Mcp-Name` is rejected. Older protocol versions keep the 16 KiB body peek.
+
+Also updates `rmcp` to 3.5.0, which rejects repeated SEP-2243 headers and validates `Mcp-Method` on `initialize`, so the server's own checks for both are removed.
+
+#### Propagate MCP request trace context
+
+Read W3C `traceparent`, `tracestate`, and `baggage` from incoming request `_meta`
+over stdio and Streamable HTTP. Valid metadata trace context parents the MCP
+handler span directly; otherwise HTTP span parentage is retained. Metadata
+baggage replaces HTTP baggage when present, and safe context propagates to
+downstream GraphQL requests. Invalid telemetry values do not fail requests.
+Context propagation and Rhai trace-ID correlation also work when logging
+filters disable request spans.
+
+#### Keep word spacing in minified descriptions
+
+Minified `introspect` and `search` results previously removed all whitespace from type, field, argument, and input field descriptions and `@deprecated` reasons, merging words together. Each whitespace run now collapses to a single space and leading and trailing whitespace is trimmed, so descriptions stay compact and readable.
+
+#### Include cache hints on resource template lists
+
+Empty `resources/templates/list` responses now include the configured `ttlMs`
+and private `cacheScope` for MCP 2026-07-28 clients. Earlier protocol versions
+retain their existing response shape.
+
+#### Update rmcp to 3.5.1
+
+On protocol `2026-07-28`, errors such as an unknown tool, an unknown prompt, a missing prompt argument, or a missing resource are now sent with HTTP 200 as in-band JSON-RPC `-32602` errors. Previously they were sent with HTTP 400, which a client could mistake for a legacy server and fall back to `initialize`. Requests with malformed `_meta` are still rejected with HTTP 400.
+
+Remote app resource reads now include `ttlMs: 0` and `cacheScope: "private"` for `2026-07-28` clients instead of omitting cache hints, which the protocol requires on every `resources/read` result.
+
+#### Don't reject an unauthenticated 2026-07-28 GET with 401 when `stateful_mode` is true
+
+With `transport.auth` configured and `stateful_mode: true` (the default), an unauthenticated `GET` on the MCP endpoint that sends `Mcp-Protocol-Version: 2026-07-28` now returns 405 instead of 401. Protocol 2026-07-28 has no sessions, so the transport never serves that `GET`, whatever `stateful_mode` says. This is the same correction already made for `stateful_mode: false`.
+
+`stateful_mode` only affects clients on protocol versions before 2026-07-28, and their behavior is unchanged: an unauthenticated `GET` without a version header, or with an older or unrecognized version, still returns 401.
+
+#### Send stdio transport logs to stderr
+
+When `transport.type` is `stdio` and `logging.path` is not set, log output is written to stderr instead of stdout. The stdio transport reserves stdout for MCP JSON-RPC messages, and log lines on stdout could corrupt the message stream for MCP clients. The `streamable_http` transport continues to log to stdout.
+
+#### Report unknown tools as invalid params
+
+Calling a tool that doesn't exist now returns JSON-RPC error `-32602` (Invalid params), as the MCP tools specification requires. Previously the server returned `-32601` (Method not found). On the `2026-07-28` Streamable HTTP transport, `-32601` is sent with HTTP 404, which tells a client that the server doesn't implement `tools/call` at all.
+
 ## 1.20.0 (2026-09-24)
 
 ### Features
