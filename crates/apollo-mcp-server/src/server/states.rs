@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use apollo_compiler::{Schema, validation::Valid};
+use apollo_compiler::{
+    Schema,
+    validation::{Valid, WithErrors},
+};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
@@ -18,6 +21,7 @@ use crate::{
     headers::ForwardHeaders,
     health::HealthCheckConfig,
     operations::{AnnotationOverrides, MutationMode},
+    schema_validation::SchemaValidation,
     scope_requirements::OperationRequiredScopes,
     server_info::ServerInfoConfig,
 };
@@ -81,6 +85,7 @@ struct Config {
 impl StateMachine {
     pub(crate) async fn start(self, server: Server) -> Result<ShutdownReason, ServerError> {
         let config_validator = server.config_validator;
+        let schema_validation = server.schema_validation;
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -138,7 +143,7 @@ impl StateMachine {
         });
 
         while let Some(event) = stream.next().await {
-            state = Self::process_event(state, event, &config_validator).await?;
+            state = Self::process_event(state, event, &config_validator, schema_validation).await?;
             if let State::Starting(starting) = state {
                 state = starting.start().await.into();
             }
@@ -162,11 +167,12 @@ impl StateMachine {
         state: State,
         event: ServerEvent,
         config_validator: &Option<ConfigValidator>,
+        schema_validation: SchemaValidation,
     ) -> Result<State, ServerError> {
         Ok(match event {
             ServerEvent::SchemaUpdated(registry_event) => match registry_event {
                 SchemaEvent::UpdateSchema(schema_state) => {
-                    let schema = Self::sdl_to_api_schema(schema_state)?;
+                    let schema = Self::sdl_to_api_schema(schema_state, schema_validation)?;
                     match state {
                         State::Configuring(configuring) => {
                             configuring.set_schema(schema).await.into()
@@ -262,7 +268,10 @@ impl StateMachine {
     }
 
     #[allow(clippy::result_large_err)]
-    fn sdl_to_api_schema(schema_state: SchemaState) -> Result<Valid<Schema>, ServerError> {
+    fn sdl_to_api_schema(
+        schema_state: SchemaState,
+        validation: SchemaValidation,
+    ) -> Result<Valid<Schema>, ServerError> {
         match Supergraph::new_with_router_specs(&schema_state.sdl) {
             // apollo-federation is still on apollo-compiler 1.x, so re-parse its API schema
             Ok(supergraph) => {
@@ -275,15 +284,40 @@ impl StateMachine {
                     .map_err(|e| ServerError::ApiSchema(e.into()))?;
                 // Federation already validated this schema, so only warn about newer rules
                 Ok(schema.validate().unwrap_or_else(|invalid| {
-                    warn!(
-                        "The API schema derived from the supergraph breaks GraphQL September 2025 validation rules:\n{}",
-                        invalid.errors
-                    );
-                    Valid::assume_valid(invalid.partial)
+                    assume_valid_with_warning(
+                        invalid,
+                        "The API schema derived from the supergraph breaks GraphQL September 2025 validation rules",
+                    )
                 }))
             }
-            Err(_) => Schema::parse_and_validate(schema_state.sdl, "schema.graphql")
-                .map_err(|e| ServerError::GraphQLSchema(e.into())),
+            Err(_) => {
+                let schema = Schema::parse(&schema_state.sdl, "schema.graphql")
+                    .map_err(|e| ServerError::GraphQLSchema(e.into()))?;
+                match (schema.validate(), validation) {
+                    (Ok(schema), _) => Ok(schema),
+                    (Err(invalid), SchemaValidation::Lenient) => Ok(assume_valid_with_warning(
+                        invalid,
+                        "The schema breaks GraphQL validation rules and is used anyway because `schema.validation` is `lenient`",
+                    )),
+                    // A schema that apollo-compiler 1.x accepts only breaks rules introduced by
+                    // the GraphQL September 2025 specification
+                    (Err(invalid), SchemaValidation::Strict)
+                        if apollo_compiler_1::Schema::parse_and_validate(
+                            schema_state.sdl,
+                            "schema.graphql",
+                        )
+                        .is_ok() =>
+                    {
+                        Ok(assume_valid_with_warning(
+                            invalid,
+                            "The schema breaks GraphQL September 2025 validation rules",
+                        ))
+                    }
+                    (Err(invalid), SchemaValidation::Strict) => {
+                        Err(ServerError::GraphQLSchema(invalid.into()))
+                    }
+                }
+            }
         }
     }
 
@@ -447,6 +481,12 @@ impl From<Result<Running, ServerError>> for State {
     }
 }
 
+/// Logs `context` with every diagnostic in `invalid` and uses its partial schema as is
+fn assume_valid_with_warning(invalid: WithErrors<Schema>, context: &str) -> Valid<Schema> {
+    warn!("{context}:\n{}", invalid.errors);
+    Valid::assume_valid(invalid.partial)
+}
+
 impl From<ServerError> for State {
     fn from(error: ServerError) -> Self {
         State::Error(error)
@@ -460,7 +500,7 @@ mod tests {
     use std::str::FromStr;
     use std::sync::Arc;
 
-    use apollo_compiler::Schema;
+    use apollo_compiler::{Schema, validation::Valid};
     use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
     use apollo_mcp_registry::uplink::schema::SchemaState;
     use reqwest::header::HeaderMap;
@@ -475,6 +515,7 @@ mod tests {
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
     use crate::operations::{MutationMode, RawOperation};
+    use crate::schema_validation::SchemaValidation;
     use crate::server::Transport;
     use crate::server_info::ServerInfoConfig;
     use apollo_mcp_rhai::SharedRhaiEngine;
@@ -562,7 +603,7 @@ mod tests {
     }
 
     async fn process_event(state: State, event: ServerEvent) -> State {
-        StateMachine::process_event(state, event, &None)
+        StateMachine::process_event(state, event, &None, SchemaValidation::default())
             .await
             .unwrap_or_else(State::Error)
     }
@@ -572,7 +613,7 @@ mod tests {
         event: ServerEvent,
         validator: &Option<super::ConfigValidator>,
     ) -> State {
-        StateMachine::process_event(state, event, validator)
+        StateMachine::process_event(state, event, validator, SchemaValidation::default())
             .await
             .unwrap_or_else(State::Error)
     }
@@ -893,13 +934,20 @@ mod tests {
 
     const RICH_SUPERGRAPH: &str = include_str!("testdata/rich_supergraph.graphql");
 
-    fn schema_state(sdl: &str) -> SchemaState {
-        SchemaState::from_str(sdl).unwrap()
+    const NEWER_RULES_WARNING: &str = "breaks GraphQL September 2025 validation rules";
+
+    const LENIENT_WARNING: &str = "`schema.validation` is `lenient`";
+
+    fn sdl_to_api_schema(
+        sdl: &str,
+        validation: SchemaValidation,
+    ) -> Result<Valid<Schema>, ServerError> {
+        StateMachine::sdl_to_api_schema(SchemaState::from_str(sdl).unwrap(), validation)
     }
 
     #[test]
     fn sdl_to_api_schema_strips_join_types_from_supergraph() {
-        let schema = StateMachine::sdl_to_api_schema(schema_state(MINIMAL_SUPERGRAPH)).unwrap();
+        let schema = sdl_to_api_schema(MINIMAL_SUPERGRAPH, SchemaValidation::Strict).unwrap();
 
         assert!(
             !schema.types.contains_key("join__Graph"),
@@ -909,7 +957,7 @@ mod tests {
 
     #[test]
     fn sdl_to_api_schema_keeps_root_fields_of_supergraph() {
-        let schema = StateMachine::sdl_to_api_schema(schema_state(MINIMAL_SUPERGRAPH)).unwrap();
+        let schema = sdl_to_api_schema(MINIMAL_SUPERGRAPH, SchemaValidation::Strict).unwrap();
 
         assert!(
             schema.type_field("Query", "me").is_ok(),
@@ -919,7 +967,7 @@ mod tests {
 
     #[test]
     fn sdl_to_api_schema_keeps_rich_supergraph_constructs() {
-        let schema = StateMachine::sdl_to_api_schema(schema_state(RICH_SUPERGRAPH)).unwrap();
+        let schema = sdl_to_api_schema(RICH_SUPERGRAPH, SchemaValidation::Strict).unwrap();
 
         insta::assert_snapshot!("rich_supergraph_api_schema", schema.to_string());
     }
@@ -927,11 +975,9 @@ mod tests {
     #[traced_test]
     #[test]
     fn sdl_to_api_schema_validates_rich_supergraph_without_warnings() {
-        StateMachine::sdl_to_api_schema(schema_state(RICH_SUPERGRAPH)).unwrap();
+        sdl_to_api_schema(RICH_SUPERGRAPH, SchemaValidation::Strict).unwrap();
 
-        assert!(!logs_contain(
-            "breaks GraphQL September 2025 validation rules"
-        ));
+        assert!(!logs_contain(NEWER_RULES_WARNING));
     }
 
     /// A supergraph federation accepts, but whose `@deprecated` on a required argument breaks a
@@ -946,7 +992,7 @@ mod tests {
     #[test]
     fn sdl_to_api_schema_loads_derived_api_schema_that_breaks_newer_rules() {
         let result =
-            StateMachine::sdl_to_api_schema(schema_state(&supergraph_breaking_newer_rules()));
+            sdl_to_api_schema(&supergraph_breaking_newer_rules(), SchemaValidation::Strict);
 
         assert!(
             result.is_ok(),
@@ -958,19 +1004,64 @@ mod tests {
     #[traced_test]
     #[test]
     fn sdl_to_api_schema_warns_when_derived_api_schema_breaks_newer_rules() {
-        StateMachine::sdl_to_api_schema(schema_state(&supergraph_breaking_newer_rules())).unwrap();
+        sdl_to_api_schema(&supergraph_breaking_newer_rules(), SchemaValidation::Strict).unwrap();
 
-        assert!(logs_contain(
-            "breaks GraphQL September 2025 validation rules"
-        ));
+        assert!(logs_contain(NEWER_RULES_WARNING));
     }
 
     #[test]
-    fn sdl_to_api_schema_rejects_plain_sdl_that_breaks_newer_rules() {
-        let error = StateMachine::sdl_to_api_schema(schema_state(
-            r#"type Query { me(id: ID! @deprecated(reason: "unused")): String }"#,
-        ))
-        .unwrap_err();
+    fn sdl_to_api_schema_parses_plain_sdl() {
+        let schema =
+            sdl_to_api_schema("type Query { id: String }", SchemaValidation::Strict).unwrap();
+
+        assert!(
+            schema.type_field("Query", "id").is_ok(),
+            "expected Query.id in the parsed schema"
+        );
+    }
+
+    /// Plain SDL that breaks only rules introduced by the GraphQL September 2025 specification
+    const DEPRECATED_REQUIRED_ARGUMENT: &str =
+        r#"type Query { me(id: ID! @deprecated(reason: "unused")): String }"#;
+
+    const DEPRECATED_IMPLEMENTATION_FIELD: &str = r#"
+        interface Node { id: ID }
+        type User implements Node { id: ID @deprecated(reason: "unused") }
+        type Query { node: Node user: User }
+    "#;
+
+    /// Plain SDL that breaks rules that predate the GraphQL September 2025 specification
+    const UNDEFINED_TYPE: &str = "type Query { id: Missing }";
+
+    const EMPTY_INPUT_OBJECT: &str = "input Filter type Query { users(filter: Filter): String }";
+
+    const OLDER_AND_NEWER_RULES: &str = r#"
+        interface Node { id: ID }
+        type User implements Node { id: ID @deprecated(reason: "unused") }
+        type Query { node: Node user: User missing: Missing }
+    "#;
+
+    #[traced_test]
+    #[rstest::rstest]
+    #[case::deprecated_required_argument(DEPRECATED_REQUIRED_ARGUMENT)]
+    #[case::deprecated_implementation_field(DEPRECATED_IMPLEMENTATION_FIELD)]
+    fn sdl_to_api_schema_strict_loads_plain_sdl_that_only_breaks_newer_rules(#[case] sdl: &str) {
+        let result = sdl_to_api_schema(sdl, SchemaValidation::Strict);
+
+        assert!(
+            result.is_ok(),
+            "expected the schema to load, got {:?}",
+            result.err()
+        );
+        assert!(logs_contain(NEWER_RULES_WARNING));
+    }
+
+    #[rstest::rstest]
+    #[case::undefined_type(UNDEFINED_TYPE)]
+    #[case::empty_input_object(EMPTY_INPUT_OBJECT)]
+    #[case::older_and_newer_rules(OLDER_AND_NEWER_RULES)]
+    fn sdl_to_api_schema_strict_rejects_plain_sdl_that_breaks_older_rules(#[case] sdl: &str) {
+        let error = sdl_to_api_schema(sdl, SchemaValidation::Strict).unwrap_err();
 
         assert!(
             matches!(error, ServerError::GraphQLSchema(_)),
@@ -979,20 +1070,38 @@ mod tests {
     }
 
     #[test]
-    fn sdl_to_api_schema_parses_plain_sdl() {
-        let schema =
-            StateMachine::sdl_to_api_schema(schema_state("type Query { id: String }")).unwrap();
+    fn sdl_to_api_schema_strict_reports_every_diagnostic() {
+        let error = sdl_to_api_schema(OLDER_AND_NEWER_RULES, SchemaValidation::Strict).unwrap_err();
 
-        assert!(
-            schema.type_field("Query", "id").is_ok(),
-            "expected Query.id in the parsed schema"
-        );
+        let ServerError::GraphQLSchema(invalid) = error else {
+            panic!("expected a GraphQLSchema error, got {error}");
+        };
+        assert_eq!(invalid.errors.len(), 2, "{}", invalid.errors);
     }
 
-    #[test]
-    fn sdl_to_api_schema_returns_schema_error_for_invalid_sdl() {
-        let error = StateMachine::sdl_to_api_schema(schema_state("type Query { id: Missing }"))
-            .unwrap_err();
+    #[traced_test]
+    #[rstest::rstest]
+    #[case::undefined_type(UNDEFINED_TYPE)]
+    #[case::empty_input_object(EMPTY_INPUT_OBJECT)]
+    #[case::older_and_newer_rules(OLDER_AND_NEWER_RULES)]
+    fn sdl_to_api_schema_lenient_loads_plain_sdl_that_breaks_older_rules(#[case] sdl: &str) {
+        let result = sdl_to_api_schema(sdl, SchemaValidation::Lenient);
+
+        assert!(
+            result.is_ok(),
+            "expected the schema to load, got {:?}",
+            result.err()
+        );
+        assert!(logs_contain(LENIENT_WARNING));
+    }
+
+    #[rstest::rstest]
+    #[case::strict(SchemaValidation::Strict)]
+    #[case::lenient(SchemaValidation::Lenient)]
+    fn sdl_to_api_schema_rejects_plain_sdl_that_does_not_parse(
+        #[case] validation: SchemaValidation,
+    ) {
+        let error = sdl_to_api_schema("type Query { id: String", validation).unwrap_err();
 
         assert!(
             matches!(error, ServerError::GraphQLSchema(_)),

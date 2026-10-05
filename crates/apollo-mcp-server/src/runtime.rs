@@ -26,7 +26,7 @@ use figment::{
     value::{Dict, Map},
 };
 pub use operation_source::{IdOrDefault, OperationSource};
-pub use schema_source::SchemaSource;
+pub use schema_source::{SchemaConfig, SchemaSource};
 
 /// Separator to use when drilling down into nested options in the env figment
 const ENV_NESTED_SEPARATOR: &str = "__";
@@ -219,6 +219,34 @@ mod test {
     }
 
     #[test]
+    fn it_merges_schema_validation_from_env_with_file_schema_source() {
+        let config = "
+            schema:
+              source: local
+              path: schema.graphql
+        ";
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+
+            jail.create_file(path, config)?;
+            jail.set_env("APOLLO_MCP_SCHEMA__VALIDATION", "lenient");
+
+            let config = read_config(path)?;
+
+            assert!(matches!(
+                config.schema.source,
+                super::SchemaSource::Local { .. }
+            ));
+            assert_eq!(
+                config.schema.validation,
+                apollo_mcp_server::schema_validation::SchemaValidation::Lenient
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
     fn it_merges_env_and_file_with_uplink_endpoints() {
         let config = "
             endpoint: http://from_file:4000/
@@ -405,7 +433,10 @@ mod test {
                     annotations: {},
                     required_scopes: {},
                 },
-                schema: Uplink,
+                schema: SchemaConfig {
+                    source: Uplink,
+                    validation: Strict,
+                },
                 transport: Stdio,
             }
             "#);

@@ -19,6 +19,7 @@ pub(crate) mod meter;
 pub mod operations;
 pub(crate) mod prompts;
 pub(crate) mod schema_tree_shake;
+pub mod schema_validation;
 pub mod scope_requirements;
 pub mod server;
 pub mod server_info;

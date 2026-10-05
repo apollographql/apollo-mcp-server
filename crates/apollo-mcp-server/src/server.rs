@@ -20,6 +20,7 @@ use crate::headers::ForwardHeaders;
 use crate::health::HealthCheckConfig;
 use crate::host_validation::HostValidationConfig;
 use crate::operations::{AnnotationOverrides, MutationMode, OperationSource};
+use crate::schema_validation::SchemaValidation;
 use crate::scope_requirements::{OperationRequiredScopes, OperationScopeRequirements};
 use crate::server_info::ServerInfoConfig;
 
@@ -49,6 +50,7 @@ pub struct Server {
     rhai_dir: PathBuf,
     transport: Transport,
     schema_source: SchemaSource,
+    schema_validation: SchemaValidation,
     operation_source: OperationSource,
     endpoint: Url,
     headers: HeaderMap,
@@ -147,6 +149,7 @@ impl Server {
         rhai_dir: PathBuf,
         transport: Transport,
         schema_source: SchemaSource,
+        #[builder(default)] schema_validation: SchemaValidation,
         operation_source: OperationSource,
         endpoint: Url,
         headers: HeaderMap,
@@ -190,6 +193,7 @@ impl Server {
             rhai_dir,
             transport,
             schema_source,
+            schema_validation,
             operation_source,
             endpoint,
             headers,
