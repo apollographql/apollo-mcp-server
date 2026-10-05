@@ -10,7 +10,6 @@ import { verifyResults } from './verify.mjs';
 const revision = '2026-07-28';
 const baseline = parse(await readFile(new URL('./expected-failures-2026-07-28.yaml', import.meta.url), 'utf8'));
 const warningEntries = new Set([
-  'server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription',
   'sep-2164-resource-not-found:sep-2164-data-uri',
   'input-required-result-missing-input-response:sep-2322-missing-response-rerequests',
   'input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params',
