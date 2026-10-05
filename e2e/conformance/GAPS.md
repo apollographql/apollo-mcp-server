@@ -72,7 +72,7 @@ The current workflow deliberately runs the production binary.
   skipped check fails verification in either revision.
 - Modern resource-read caching is skipped by the pinned suite. Rust HTTP transport
   tests separately cover actual Apollo app resource listing and exact HTML/MIME
-  reads, local cache hints, and omission of remote cache hints, for modern and
+  reads, local cache hints, and immediately stale remote cache hints, for modern and
   legacy revisions in JSON and SSE modes.
 - `server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription`
   passes without proving list-change delivery. The suite calls an absent

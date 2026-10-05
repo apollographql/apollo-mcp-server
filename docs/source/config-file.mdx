@@ -265,7 +265,7 @@ These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL
 
 | Option | Type | Default | Description |
 | :----- | :--- | :------ | :---------- |
-| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Applies to supported MCP protocol versions from `2026-07-28` onward. |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads use a `ttlMs` of `0` because their content can change outside the server. Cache scope is always `private`. Applies to supported MCP protocol versions from `2026-07-28` onward. |
 
 <Note>
 
