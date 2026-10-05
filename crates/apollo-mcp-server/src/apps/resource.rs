@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use url::Url;
 
 use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
+use crate::caching::Caching;
 
 use super::App;
 
@@ -16,11 +17,11 @@ pub(crate) enum ResourceOrigin {
 }
 
 impl ResourceOrigin {
-    pub(crate) fn allows_cache_hints(self) -> bool {
+    pub(crate) fn caching(self, configured: Caching) -> Caching {
         match self {
-            Self::Local => true,
+            Self::Local => configured,
             // Remote content can change independently of server configuration.
-            Self::Remote => false,
+            Self::Remote => Caching { ttl_ms: 0 },
         }
     }
 }
@@ -257,13 +258,13 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::local(ResourceOrigin::Local, true)]
-    #[case::remote(ResourceOrigin::Remote, false)]
-    fn only_local_resources_allow_cache_hints(
+    #[case::local(ResourceOrigin::Local, 60_000)]
+    #[case::remote(ResourceOrigin::Remote, 0)]
+    fn only_local_resources_use_configured_ttl(
         #[case] origin: ResourceOrigin,
-        #[case] expected: bool,
+        #[case] expected: u64,
     ) {
-        assert_eq!(origin.allows_cache_hints(), expected);
+        assert_eq!(origin.caching(Caching { ttl_ms: 60_000 }).ttl_ms, expected);
     }
 
     #[test]

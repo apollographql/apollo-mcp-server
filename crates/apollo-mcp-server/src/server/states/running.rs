@@ -591,12 +591,9 @@ impl Running {
             let (resource, origin) =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
             let result = ReadResourceResult::new(vec![resource]);
-            Ok(if origin.allows_cache_hints() {
-                self.caching
-                    .apply_to(result, peer.protocol_version, server_max)
-            } else {
-                result
-            })
+            Ok(origin
+                .caching(self.caching)
+                .apply_to(result, peer.protocol_version, server_max))
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -1359,7 +1356,7 @@ mod tests {
 
         #[rstest::rstest]
         #[tokio::test]
-        async fn remote_app_resources_preserve_content_without_cache_hints(
+        async fn remote_app_resources_preserve_content_and_are_immediately_stale(
             #[values("2026-07-28", "2025-11-25")] version: &str,
             #[values(false, true)] json_response: bool,
         ) {
@@ -1392,9 +1389,13 @@ mod tests {
             assert_eq!(contents[0]["uri"], APP_URI);
             assert_eq!(contents[0]["mimeType"], "text/html;profile=mcp-app");
             assert_eq!(contents[0]["text"], APP_HTML);
-            // Remote content is controlled outside the server configuration.
-            assert!(result.get("ttlMs").is_none(), "{body}");
-            assert!(result.get("cacheScope").is_none(), "{body}");
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 0, "{body}");
+                assert_eq!(result["cacheScope"], "private", "{body}");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
         }
 
         #[rstest::rstest]
@@ -1407,7 +1408,7 @@ mod tests {
             #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
             #[values(false, true)] json_response: bool,
         ) {
-            let (_, body) = request(
+            let (status, body) = request(
                 version,
                 "resources/read",
                 json!({"uri": "ui://missing/does-not-exist"}),
@@ -1416,6 +1417,7 @@ mod tests {
                 Some("resources/read"),
             )
             .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
             assert_eq!(body["id"], 42);
             assert_eq!(body["error"]["code"], code, "{body}");
             assert!(
@@ -1440,8 +1442,8 @@ mod tests {
                 Some("tools/call"),
             )
             .await;
-            // HTTP 404 with -32601 would tell a client the server lacks tools/call.
-            assert_ne!(status, http::StatusCode::NOT_FOUND, "{body}");
+            // Unknown tools are an in-band error, not a malformed or unsupported request.
+            assert_eq!(status, http::StatusCode::OK, "{body}");
             assert_eq!(body["id"], 42);
             assert_eq!(body["error"]["code"], -32602, "{body}");
         }
@@ -2300,10 +2302,12 @@ mod tests {
         }
 
         #[rstest]
+        #[case::legacy_server(ProtocolVersion::V_2025_11_25, None)]
+        #[case::modern_server(ProtocolVersion::V_2026_07_28, Some(0))]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content_without_cache_hints(
-            #[values(ProtocolVersion::V_2025_11_25, ProtocolVersion::V_2026_07_28)]
-            server_max: ProtocolVersion,
+        async fn fetch_remote_resource_downloads_content_as_immediately_stale(
+            #[case] server_max: ProtocolVersion,
+            #[case] expected_ttl_ms: Option<u64>,
         ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
@@ -2341,7 +2345,13 @@ mod tests {
                 .expect("resource fetch failed");
 
             mock.assert();
-            assert_eq!((resource.ttl_ms, resource.cache_scope), (None, None));
+            assert_eq!(
+                (resource.ttl_ms, resource.cache_scope),
+                (
+                    expected_ttl_ms,
+                    expected_ttl_ms.map(|_| CacheScope::Private)
+                )
+            );
             let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
             else {
                 panic!("unexpected resource contents");
