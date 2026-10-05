@@ -17,11 +17,11 @@ resource checks, two typed prompt checks, and ten input-required-result checks.
 These depend on fixtures the production configuration cannot currently supply.
 Modern cache-hint failures and emitted wire-schema failures cannot be baselined.
 The resource-read caching skip is documented below.
-Four separate modern warnings are also listed at check granularity in the
+Three separate modern warnings are also listed at check granularity in the
 baseline. The pinned CLI considers warnings unexpected unless listed; the local
-verifier requires their exact `WARNING` status. They cover the unavailable
-tool-list-change trigger, a SHOULD-level resource error `data.uri`, and two
-input-required-result recommendations exercised without their fixture tool.
+verifier requires their exact `WARNING` status. They cover a SHOULD-level
+resource error `data.uri` and two input-required-result recommendations
+exercised without their fixture tool.
 
 | Scenarios | Current limitation | Work needed to remove the baseline |
 | --- | --- | --- |
@@ -73,8 +73,14 @@ The current workflow deliberately runs the production binary.
 - Modern resource-read caching is skipped by the pinned suite. Rust HTTP transport
   tests separately cover actual Apollo app resource listing and exact HTML/MIME
   reads, local cache hints, and omission of remote cache hints, for modern and
-  legacy revisions in JSON and SSE modes. The conformance fixture
-  cannot trigger a tool-list-change notification. The error response `data.uri`
+  legacy revisions in JSON and SSE modes.
+- `server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription`
+  passes without proving list-change delivery. The suite calls an absent
+  `test_trigger_tool_change` tool and treats only `-32601` as a missing hook,
+  but the server correctly reports an unknown tool as `-32602`. The check then
+  accepts the refresh notification the server sends when a subscription opens.
+  Rust subscription tests cover notifications after real catalog changes.
+- The error response `data.uri`
   check is a SHOULD-level warning, not a scored failure.
 
 ## Operational scope

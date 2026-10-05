@@ -1,6 +1,6 @@
 use rmcp::ErrorData;
 use rmcp::model::{MetaObject, Resource, ResourceContents};
-use serde_json::json;
+use serde_json::{Value, json};
 use url::Url;
 
 use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
@@ -163,8 +163,10 @@ pub(crate) async fn get_app_resource(
         }
     }
 
-    meta.get_or_insert_with(MetaObject::new)
-        .insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
+    if let Some(ui) = ui {
+        meta.get_or_insert_with(MetaObject::new)
+            .insert("ui".into(), Value::Object(ui.0));
+    }
 
     Ok((
         ResourceContents::TextResourceContents {
@@ -412,6 +414,39 @@ mod tests {
         assert!(ui_meta.get("description").is_none());
         // MCPApps should not have openai-specific root meta keys
         assert!(meta.get("openai/widgetPrefersBorder").is_none());
+    }
+
+    #[rstest::rstest]
+    #[case::mcp(AppTarget::MCPApps)]
+    #[case::openai(AppTarget::AppsSDK)]
+    #[tokio::test]
+    async fn get_app_resource_omits_ui_meta_without_ui_settings(#[case] target: AppTarget) {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
+            "ui://widget/TestApp".parse().unwrap(),
+            &target,
+            "TestApp",
+        )
+        .await
+        .unwrap();
+
+        let ResourceContents::TextResourceContents { meta, .. } = result.0 else {
+            unreachable!()
+        };
+        // MCP Apps requires `_meta.ui` to be an object when present.
+        assert!(meta.is_none(), "{meta:?}");
     }
 
     #[tokio::test]

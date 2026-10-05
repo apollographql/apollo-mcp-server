@@ -1093,7 +1093,7 @@ fn extract_app_param(extensions: &Extensions) -> Option<String> {
 
 fn tool_not_found(name: &str) -> McpError {
     McpError::new(
-        ErrorCode::METHOD_NOT_FOUND,
+        ErrorCode::INVALID_PARAMS,
         format!("Tool {name} not found"),
         None,
     )
@@ -1258,10 +1258,10 @@ mod tests {
                 Some(value) => request.header("Mcp-Method", value),
                 None => request,
             };
-            let request = if method == "resources/read" {
-                request.header("Mcp-Name", params["uri"].as_str().unwrap())
-            } else {
-                request
+            let request = match method {
+                "resources/read" => request.header("Mcp-Name", params["uri"].as_str().unwrap()),
+                "tools/call" => request.header("Mcp-Name", params["name"].as_str().unwrap()),
+                _ => request,
             };
             let request = request
                 .body(Body::from(
@@ -1422,6 +1422,28 @@ mod tests {
                 body.get("result").is_none(),
                 "missing resources must never return contents: {body}"
             );
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_tool_is_invalid_params(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "tools/call",
+                json!({"name": "DoesNotExist", "arguments": {}}),
+                uri,
+                json_response,
+                Some("tools/call"),
+            )
+            .await;
+            // HTTP 404 with -32601 would tell a client the server lacks tools/call.
+            assert_ne!(status, http::StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32602, "{body}");
         }
 
         #[rstest::rstest]
@@ -2140,9 +2162,8 @@ mod tests {
             };
             assert_eq!(text, resource_content);
             assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
-            // Meta always contains at least the "ui" key now
-            let meta = meta.expect("meta should be set");
-            assert!(meta.get("ui").is_some());
+            // Without CSP or widget settings there is no `_meta.ui` to report.
+            assert!(meta.is_none());
             assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
         }
 

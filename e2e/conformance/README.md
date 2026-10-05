@@ -54,16 +54,18 @@ it without scoring it.
 
 The `2026-07-28` manifest selects 37 scored server scenarios and 13 unscored
 scenarios. Its baseline lists 24 failed scored checks requiring unavailable
-fixture behavior and four check-level warnings. The pinned CLI treats warnings
-as baseline failures; the verifier requires those four checks to remain warnings
+fixture behavior and three check-level warnings. The pinned CLI treats warnings
+as baseline failures; the verifier requires those three checks to remain warnings
 so a new failure or resolved warning is noticed. The unscored task extension, JSON Schema, and custom-header scenarios
 remain visible. The verifier requires every repeated check in the unscored
 `http-header-validation` scenario to pass. `tasks-status-notifications` emits one
 `SKIPPED` check pending an upstream rewrite. Five custom-header failures lack a
 production fixture. The modern resource-read cache check is skipped by the
 suite, so the run does not prove read caching. This fixture also lacks a
-tool-list-change trigger. The other warnings cover a SHOULD-level resource error
-URI and two input-required-result recommendations whose fixture tools are absent.
+tool-list-change trigger, so the passing tools-list-changed subscription check
+is not real coverage; see [GAPS.md](GAPS.md). The warnings cover a SHOULD-level
+resource error URI and two input-required-result recommendations whose fixture
+tools are absent.
 
 The passing content checks exercise Apollo's GraphQL execution, error mapping,
 and prompt rendering, providing application-level signal beyond rmcp's own

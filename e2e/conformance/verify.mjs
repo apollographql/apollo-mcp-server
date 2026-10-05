@@ -94,7 +94,6 @@ export async function verifyResults(results, baseline, revision) {
   // renamed checks locally so exceptions cannot silently stop being exercised.
   const exceptions = parse(await readFile(baseline, 'utf8')).server ?? [];
   const warnings = new Set(revision === '2026-07-28' ? [
-    'server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription',
     'sep-2164-resource-not-found:sep-2164-data-uri',
     'input-required-result-missing-input-response:sep-2322-missing-response-rerequests',
     'input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params',
