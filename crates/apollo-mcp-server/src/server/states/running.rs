@@ -2302,12 +2302,15 @@ mod tests {
         }
 
         #[rstest]
-        #[case::legacy_server(ProtocolVersion::V_2025_11_25, None)]
-        #[case::modern_server(ProtocolVersion::V_2026_07_28, Some(0))]
+        #[case::legacy_server(ProtocolVersion::V_2025_11_25, (None, None))]
+        #[case::modern_server(
+            ProtocolVersion::V_2026_07_28,
+            (Some(0), Some(CacheScope::Private))
+        )]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content_as_immediately_stale(
+        async fn fetch_remote_resource_downloads_content_with_protocol_cache_hints(
             #[case] server_max: ProtocolVersion,
-            #[case] expected_ttl_ms: Option<u64>,
+            #[case] expected_hints: (Option<u64>, Option<CacheScope>),
         ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
@@ -2345,13 +2348,7 @@ mod tests {
                 .expect("resource fetch failed");
 
             mock.assert();
-            assert_eq!(
-                (resource.ttl_ms, resource.cache_scope),
-                (
-                    expected_ttl_ms,
-                    expected_ttl_ms.map(|_| CacheScope::Private)
-                )
-            );
+            assert_eq!((resource.ttl_ms, resource.cache_scope), expected_hints);
             let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
             else {
                 panic!("unexpected resource contents");
