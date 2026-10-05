@@ -12,8 +12,6 @@ items:
     href: "."
   - label: "Quickstart"
     href: "./quickstart"
-  - label: "Migrate from v1 to v2"
-    href: "./migrating-from-v1"
   - label: "Define tools"
     href: "./define-tools"
   - label: "Define prompts"
@@ -76,3 +74,7 @@ items:
         href: "./guides/dev-to-prod-workflows"
       - label: "Authorization with Auth0"
         href: "./guides/auth-auth0"
+  - label: "Releases"
+    children:
+      - label: "Migrate from v1 to v2"
+        href: "./migrating-from-v1"
