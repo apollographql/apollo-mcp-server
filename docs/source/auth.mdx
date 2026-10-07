@@ -409,7 +409,7 @@ A listed header is checked before the JSON-RPC body, so a match skips validation
 
 Make sure something downstream validates that header. If nothing does, the header is an open door: any caller can send it with any value.
 
-That validator only gates requests that reach your API. Requests the MCP server answers itself, such as the `initialize` handshake, `notifications/initialized`, `tools/list`, `resources/read`, and the `GET` stream, never reach your API, so nothing validates the header value on them even with a correctly configured downstream validator. A caller that sends the header with any value gets a working session, the full tool list, and your schema. Downstream validation gates tool execution, not discovery.
+That validator only gates requests that reach your API. Requests the MCP server answers itself, such as the `initialize` handshake, `notifications/initialized`, `tools/list`, `resources/read`, and the `GET` stream, never reach your API, so nothing validates the header value on them even with a correctly configured downstream validator. A caller that sends the header with any value gets a working session and your schema. They get the full tool list only when `filter_tools_by_scope` is disabled; when enabled, `tools/list` uses an empty scope set and excludes tools with `required_scopes` entries. Downstream validation gates tool execution, not discovery.
 
 The header only reaches your API if you also list it in [`forward_headers`](/apollo-mcp-server/config-file#forwarding-headers). If you do not, the header is dropped before the GraphQL request goes out, and nothing downstream can validate it: the middleware skips validation, and the upstream request looks like an ordinary anonymous call.
 
