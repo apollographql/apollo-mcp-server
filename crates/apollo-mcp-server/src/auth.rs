@@ -33,11 +33,13 @@ use url::Url;
 use crate::apps::app_param_from_query;
 use crate::scope_requirements::OperationRequiredScopes;
 
+mod implied_scopes;
 mod networked_key_resolver;
 mod protected_resource;
 mod valid_token;
 mod www_authenticate;
 
+use implied_scopes::with_implied_scopes;
 use protected_resource::ProtectedResource;
 use valid_token::TokenValidator;
 pub(crate) use valid_token::ValidToken;
@@ -363,6 +365,14 @@ pub struct Config {
     /// This does not change the all-of semantics of per-operation requirements.
     #[serde(default)]
     pub scope_mode: ScopeMode,
+
+    /// Scopes implied by a broader scope, keyed by the broader scope.
+    ///
+    /// A token granted a key also counts as holding every listed scope, and
+    /// implications chain. This applies to both the global and per-operation
+    /// checks, but not to the scopes advertised to clients.
+    #[serde(default)]
+    pub implied_scopes: HashMap<String, Vec<String>>,
 
     /// Whether to disable the auth token passthrough to upstream API
     #[serde(default)]
@@ -968,24 +978,26 @@ async fn oauth_validate(
         unauthorized_error()
     })?;
 
+    let token_scopes = with_implied_scopes(&valid_token.scopes, &auth_config.implied_scopes);
+
     // Global scope validation. An empty list or `scope_mode: disabled` imposes
     // no global scope requirement; per-operation requirements still run below.
     if !auth_config.scopes.is_empty() {
         let sufficient = auth_config
             .scope_mode
-            .is_satisfied_by(&auth_config.scopes, &valid_token.scopes);
+            .is_satisfied_by(&auth_config.scopes, &token_scopes);
 
         if !sufficient {
             // Compute missing scopes for diagnostic logging
             let missing: Vec<_> = auth_config
                 .scopes
                 .iter()
-                .filter(|req| !valid_token.scopes.contains(*req))
+                .filter(|req| !token_scopes.contains(*req))
                 .collect();
 
             tracing::warn!(
                 required = ?auth_config.scopes,
-                present = ?valid_token.scopes,
+                present = ?token_scopes,
                 missing = ?missing,
                 mode = ?auth_config.scope_mode,
                 "Token has insufficient scopes"
@@ -1005,12 +1017,12 @@ async fn oauth_validate(
     // Per-operation requirements add to the global check and always require
     // every listed scope, independently of the global `scope_mode`.
     if let Some(required) = header_peek.or(body_peek).as_ref().and_then(|peek| {
-        missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
+        missing_scopes_for_operation(peek, &auth_state.required_scopes, &token_scopes)
     }) {
         let challenge_scopes = required.challenge_scopes();
         tracing::warn!(
             required = ?required,
-            present = ?valid_token.scopes,
+            present = ?token_scopes,
             "Token has insufficient scopes for operation"
         );
         tracing::Span::current().record("reason", "insufficient_scope");
@@ -1059,6 +1071,7 @@ mod tests {
             resource_documentation: None,
             scopes: vec!["read".to_string()],
             scope_mode: ScopeMode::default(),
+            implied_scopes: HashMap::new(),
             disable_auth_token_passthrough: false,
             skip_token_validation: SkipTokenValidation::default(),
             allow_anonymous_mcp_discovery: false,
@@ -3439,6 +3452,145 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 let status = send(version, names, tool_call_body("RestrictedOp")).await;
                 assert_eq!(status, StatusCode::FORBIDDEN);
             }
+        }
+    }
+
+    mod implied_scopes {
+        use super::*;
+
+        fn implied(broader: &str, narrower: &[&str]) -> HashMap<String, Vec<String>> {
+            HashMap::from([(
+                broader.to_string(),
+                narrower.iter().map(|scope| scope.to_string()).collect(),
+            )])
+        }
+
+        fn router(
+            config: Config,
+            required_scopes: HashMap<String, OperationRequiredScopes>,
+        ) -> Router {
+            let mut auth_state = test_auth_state(config);
+            auth_state.required_scopes = Arc::new(required_scopes);
+            Router::new()
+                .route("/mcp", post(|| async { "ok" }))
+                .layer(from_fn_with_state(auth_state, oauth_validate))
+        }
+
+        fn tool_call(token: &str, tool: &str) -> Request<Body> {
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .body(tool_call_body(tool))
+                .unwrap()
+        }
+
+        #[tokio::test]
+        async fn broader_scope_satisfies_global_requirement() {
+            let issuer = mock_issuer("admin").await;
+            let mut config = test_config();
+            config.servers = vec![issuer.server.url()];
+            config.implied_scopes = implied("admin", &["read"]);
+            let app = router(config, HashMap::new());
+
+            let res = app
+                .oneshot(tool_call(&issuer.token, "AnyOp"))
+                .await
+                .unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn broader_scope_satisfies_operation_requirement() {
+            let issuer = mock_issuer("read admin").await;
+            let mut config = test_config();
+            config.servers = vec![issuer.server.url()];
+            config.implied_scopes = implied("admin", &["user:write"]);
+            let required_scopes = HashMap::from([(
+                "DeleteUser".to_string(),
+                OperationRequiredScopes::new(vec![vec!["user:write".to_string()]])
+                    .expect("valid requirement"),
+            )]);
+            let app = router(config, required_scopes);
+
+            let res = app
+                .oneshot(tool_call(&issuer.token, "DeleteUser"))
+                .await
+                .unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[tokio::test]
+        async fn implications_do_not_run_from_narrower_to_broader() {
+            let issuer = mock_issuer("read").await;
+            let mut config = test_config();
+            config.servers = vec![issuer.server.url()];
+            config.implied_scopes = implied("admin", &["read"]);
+            let required_scopes = HashMap::from([(
+                "DeleteUser".to_string(),
+                OperationRequiredScopes::new(vec![vec!["admin".to_string()]])
+                    .expect("valid requirement"),
+            )]);
+            let app = router(config, required_scopes);
+
+            let res = app
+                .oneshot(tool_call(&issuer.token, "DeleteUser"))
+                .await
+                .unwrap();
+
+            assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        }
+
+        #[tokio::test]
+        async fn challenge_advertises_required_scopes_not_broader_ones() {
+            let mut config = test_config();
+            config.implied_scopes = implied("admin", &["read"]);
+            let app = router(config, HashMap::new());
+
+            let req = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .body(tool_call_body("AnyOp"))
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            let www_auth = res
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .unwrap()
+                .to_str()
+                .unwrap();
+            assert!(www_auth.contains(r#"scope="read""#), "got: {www_auth}");
+        }
+
+        #[test]
+        fn yaml_deserialization_with_implied_scopes() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                resource: http://localhost:4000
+                implied_scopes:
+                  admin: [read, write]
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+
+            assert_eq!(config.implied_scopes, implied("admin", &["read", "write"]));
+        }
+
+        #[test]
+        fn yaml_deserialization_without_implied_scopes_defaults_to_empty() {
+            let yaml = r#"
+                servers:
+                  - http://localhost:1234
+                resource: http://localhost:4000
+            "#;
+
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+
+            assert!(config.implied_scopes.is_empty());
         }
     }
 }
