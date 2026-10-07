@@ -2573,12 +2573,14 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let app = Router::new()
                 .route(
                     "/mcp",
-                    post(|Extension(policy): Extension<OperationScopePolicy>| async move {
-                        assert!(policy.filters_tools_list());
-                        assert!(!policy.allows_tool("RestrictedOp", &[]));
-                        assert!(policy.allows_tool("PublicOp", &[]));
-                        StatusCode::OK
-                    }),
+                    post(
+                        |Extension(policy): Extension<OperationScopePolicy>| async move {
+                            assert!(policy.filters_tools_list());
+                            assert!(!policy.allows_tool("RestrictedOp", &[]));
+                            assert!(policy.allows_tool("PublicOp", &[]));
+                            StatusCode::OK
+                        },
+                    ),
                 )
                 .layer(from_fn_with_state(auth_state, oauth_validate));
             let body = if standard_headers || skip_header {
