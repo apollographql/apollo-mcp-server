@@ -78,7 +78,9 @@ impl Introspect {
                 },
             ),
             None => {
-                return Ok(CallToolResult::success(vec![]));
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Type '{type_name}' was not found in the schema"
+                ))]));
             }
         }
         let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
@@ -189,6 +191,36 @@ mod tests {
         // Should contain minification legend
         assert!(description.contains("T=type,I=input,E=enum,U=union,F=interface"));
         assert!(description.contains("s=String,i=Int,f=Float,b=Boolean,d=ID"));
+    }
+
+    #[rstest]
+    #[case("NoSuchType")]
+    #[case("mutation")]
+    #[tokio::test]
+    async fn introspect_unknown_type_returns_error(
+        schema: Arc<RwLock<Valid<Schema>>>,
+        #[case] type_name: &str,
+    ) {
+        let introspect = Introspect::new(
+            schema,
+            Some("Query".to_string()),
+            Some("Mutation".to_string()),
+            false,
+            None,
+        );
+        let result = introspect
+            .execute(Input {
+                type_name: type_name.to_string(),
+                depth: 1,
+            })
+            .await
+            .expect("Introspect execution failed");
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(result.content.iter().any(|content| matches!(
+            content,
+            ContentBlock::Text(text) if text.text.contains(type_name)
+        )));
     }
 
     #[rstest]
