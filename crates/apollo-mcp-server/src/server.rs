@@ -145,8 +145,8 @@ impl Server {
     pub fn new(
         config_path: Option<PathBuf>,
         rhai_dir: PathBuf,
-        apps_dir: PathBuf,
-        prompts_dir: PathBuf,
+        #[builder(default = PathBuf::from("apps"))] apps_dir: PathBuf,
+        #[builder(default = PathBuf::from("prompts"))] prompts_dir: PathBuf,
         transport: Transport,
         schema_source: SchemaSource,
         operation_source: OperationSource,

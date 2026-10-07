@@ -115,8 +115,6 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
 
     let server = Server::builder()
         .rhai_dir(PathBuf::from("rhai"))
-        .apps_dir(PathBuf::from("apps"))
-        .prompts_dir(PathBuf::from("prompts"))
         .transport(Transport::StreamableHttp {
             auth: None,
             address: "127.0.0.1".parse().unwrap(),
