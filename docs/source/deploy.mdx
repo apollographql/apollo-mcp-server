@@ -1,11 +1,25 @@
 ---
 title: Deploy the MCP Server
-subtitle: Deployment using Docker containers, when to choose which option, and production considerations
+subtitle: Deployment using the Apollo GraphOS Operator or Docker containers, when to choose which option, and production considerations
 ---
 
-To deploy Apollo MCP Server in your production environment, use the recommended [Apollo Runtime Container](#apollo-runtime-container-recommended). You can also use a [standalone Apollo MCP Server container](#standalone-apollo-mcp-server-container) if needed.
+To deploy Apollo MCP Server in your production environment, use the [Apollo GraphOS Operator](#deploy-on-kubernetes-with-the-apollo-graphos-operator-recommended-for-kubernetes) if you're running on Kubernetes. Otherwise, use the [Apollo Runtime Container](#apollo-runtime-container-recommended-for-non-kubernetes-deployments). A [standalone Apollo MCP Server container](#standalone-apollo-mcp-server-container) is also available if you need to run it separately from your GraphQL API.
 
-## Apollo Runtime Container (Recommended)
+## Deploy on Kubernetes with the Apollo GraphOS Operator (Recommended for Kubernetes)
+
+If you run Apollo Router on Kubernetes using the [Apollo GraphOS Operator](/apollo-operator/), use it to deploy Apollo MCP Server too. The operator manages the Deployment, Service, ConfigMap, and ephemeral graph API key Secret for you, and can wire an MCP Server directly to an existing Router it also manages.
+
+<Note>
+
+Deploying Apollo MCP Server this way requires Apollo GraphOS Operator v1.5.0 or later, and an Apollo GraphOS Developer, Standard, or Enterprise plan.
+
+</Note>
+
+The operator forces `transport.stateful_mode: false`, so the session-affinity requirements described under [Load Balancing & Session Affinity](#load-balancing--session-affinity) don't apply to operator-managed deployments — its plain Kubernetes Service works without any special load balancer configuration.
+
+For setup instructions, see the [Apollo GraphOS Operator documentation](/apollo-operator/).
+
+## Apollo Runtime Container (Recommended for non-Kubernetes deployments)
 
 For most production deployments, use the all-in-one [Apollo Runtime Container](/graphos/routing/self-hosted/containerization/docker). It includes everything you need to serve both GraphQL and MCP requests in a single, optimized container.
 
@@ -80,28 +94,28 @@ docker run \
 
 ## When to choose which option?
 
-| Scenario                            | Recommended Option           | Why                                                                                                       |
-| ----------------------------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------- |
-| New GraphQL + MCP deployment        | Apollo Runtime Container     | Single container, easier to manage, optimized performance                                                 |
-| GraphOS-managed graph               | Apollo Runtime Container     | Automatic sync for schema and persisted queries, unified telemetry                                        |
-| Kubernetes/orchestrated environment | Apollo Runtime Container     | Fewer moving parts, simpler networking                                                                    |
-| Adding MCP to existing GraphQL API  | Standalone Apollo MCP Server | Connect to your existing GraphQL endpoint                                                                 |
-| Local development                   | `rover dev`                  | [Run `rover dev`](/apollo-mcp-server/run#with-the-rover-cli) to develop locally with both GraphQL and MCP |
+| Scenario                                      | Recommended Option           | Why                                                                                                       |
+|-----------------------------------------------|------------------------------|-----------------------------------------------------------------------------------------------------------|
+| Kubernetes + GraphOS-managed graph            | Apollo GraphOS Operator      | Manages the Deployment/Service/ConfigMap/Secret lifecycle for you                                         |
+| New GraphQL + MCP deployment (non-Kubernetes) | Apollo Runtime Container     | Single container, easier to manage, optimized performance                                                 |
+| GraphOS-managed graph (non-Kubernetes)        | Apollo Runtime Container     | Automatic sync for schema and persisted queries, unified telemetry                                        |
+| Adding MCP to existing GraphQL API            | Standalone Apollo MCP Server | Connect to your existing GraphQL endpoint                                                                 |
+| Local development                             | `rover dev`                  | [Run `rover dev`](/apollo-mcp-server/run#with-the-rover-cli) to develop locally with both GraphQL and MCP |
           
 ## Production Considerations
 
 ### Load Balancing & Session Affinity
 
-MCP is a stateful protocol that requires session affinity (sticky sessions).
+Clients that negotiate protocol `2026-07-28` or later don't use sessions and need no session affinity. Older protocol versions are stateful and require session affinity (sticky sessions).
 
-When an MCP client initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance through the `mcp-session-id` header. You must enable session affinity in your load balancer so that all requests sharing the same `mcp-session-id` are routed to the same backend instance.
+When a client on an older protocol version initializes a session with Apollo MCP Server, it receives a session identifier unique to that server instance through the `mcp-session-id` header. You must enable session affinity in your load balancer so that all requests sharing the same `mcp-session-id` are routed to the same backend instance.
 
 Nginx, HAProxy, or Envoy/Istio support proper session routing. Most cloud load balancers—such as the AWS Application Load Balancer (ALB) and the Google Cloud Load Balancer—do not support header-based session affinity.
 
 #### Stateless mode
 
-Although MCP is a stateful protocol by default, the Streamable HTTP transport supports operating in a stateless mode.
-This means that the session ID will not be passed back and forth between the client and server and each request made to the MCP server happens in its own HTTP POST.
+Although older MCP protocol versions are stateful by default, the Streamable HTTP transport supports serving those clients in a stateless mode too.
+In stateless mode, the client and server don't exchange a session ID, and each request to Apollo MCP Server is its own HTTP POST. Apollo MCP Server always serves clients on `2026-07-28` or later this way.
 Disabling the session state being managed in memory by a single host allows for horizontal scaling of the server, though could lead to unknown issues if your MCP client has a dependency on sticky sessions.
 
 You can configure stateless mode in the transport config section:
@@ -124,6 +138,11 @@ For the standalone Apollo MCP Server container:
 
 - Scale Apollo MCP Server independently of your GraphQL API
 - More complex but enables fine-tuned resource allocation
+
+For Apollo GraphOS Operator-managed deployments:
+
+- Set `spec.replicas` on the `McpServer` resource, or attach a Kubernetes `HorizontalPodAutoscaler` directly to it — the operator exposes a `scale` subresource, so the `McpServer` itself can be the autoscaling target
+- Because the operator forces `transport.stateful_mode: false`, scaling out requires no session-affinity configuration on the Service it manages
 
 ### Next steps
 

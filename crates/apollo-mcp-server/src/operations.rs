@@ -4,6 +4,7 @@
 //! into MCP tools.
 
 mod annotation_overrides;
+mod executable_descriptions;
 mod execution;
 mod mutation_mode;
 mod operation;

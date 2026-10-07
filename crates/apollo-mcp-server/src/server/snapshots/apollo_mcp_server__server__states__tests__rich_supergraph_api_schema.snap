@@ -1,0 +1,37 @@
+---
+source: crates/apollo-mcp-server/src/server/states.rs
+expression: schema.to_string()
+---
+schema {
+  query: RootQuery
+}
+
+scalar DateTime @specifiedBy(url: "https://scalars.graphql.org/andimarek/date-time")
+
+interface Node {
+  id: ID!
+}
+
+type Product implements Node {
+  id: ID!
+  name: String
+  releasedAt: DateTime
+  price: Int
+}
+
+type Review implements Node {
+  id: ID!
+  body: String
+}
+
+union SearchResult = Product | Review
+
+input SearchFilter {
+  limit: Int = 10
+  includeReviews: Boolean = false
+}
+
+type RootQuery {
+  node(id: ID!): Node
+  search(term: String!, filter: SearchFilter = {limit: 5, includeReviews: false}): [SearchResult!]!
+}

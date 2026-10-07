@@ -1,6 +1,6 @@
 use crate::errors::McpError;
 use crate::schema_from_type;
-use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, Tool};
+use rmcp::model::{CallToolResult, ContentBlock, ErrorCode, Tool, ToolAnnotations};
 use rmcp::schemars::JsonSchema;
 use rmcp::serde_json::Value;
 use rmcp::{schemars, serde_json};
@@ -50,6 +50,14 @@ impl Explorer {
                 EXPLORER_TOOL_NAME,
                 "Get the URL to open a GraphQL operation in Apollo Explorer",
                 schema_from_type!(Input),
+            )
+            // Formatting a Studio URL touches nothing: no schema, no endpoint, no external call.
+            .annotate(
+                ToolAnnotations::new()
+                    .read_only(true)
+                    .destructive(false)
+                    .idempotent(true)
+                    .open_world(false),
             ),
         }
     }
@@ -93,6 +101,24 @@ mod tests {
     use insta::assert_snapshot;
     use rmcp::serde_json::json;
     use rstest::rstest;
+
+    #[test]
+    fn explorer_tool_is_annotated_read_only_and_closed_world() {
+        let annotations = Explorer::new(String::from("mcp-example@mcp"))
+            .tool
+            .annotations
+            .expect("explorer tool must expose annotations");
+
+        assert_eq!(
+            (
+                annotations.read_only_hint,
+                annotations.destructive_hint,
+                annotations.idempotent_hint,
+                annotations.open_world_hint,
+            ),
+            (Some(true), Some(false), Some(true), Some(false))
+        );
+    }
 
     #[test]
     fn create_explorer_url() {

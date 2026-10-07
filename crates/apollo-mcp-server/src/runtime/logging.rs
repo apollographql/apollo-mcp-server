@@ -8,6 +8,7 @@ mod log_rotation_kind;
 mod parsers;
 mod trace_id_format;
 
+use apollo_mcp_server::server::Transport;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -50,6 +51,31 @@ impl Default for Logging {
     }
 }
 
+/// The standard stream that receives log output when no log file path is configured
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConsoleStream {
+    Stdout,
+    /// Required by the stdio transport, which reserves stdout for MCP messages
+    Stderr,
+}
+
+impl ConsoleStream {
+    /// The console stream that is safe to log to for the given transport
+    pub fn for_transport(transport: &Transport) -> Self {
+        match transport {
+            Transport::Stdio {} => Self::Stderr,
+            Transport::StreamableHttp { .. } => Self::Stdout,
+        }
+    }
+
+    fn make_writer(self) -> BoxMakeWriter {
+        match self {
+            Self::Stdout => BoxMakeWriter::new(std::io::stdout),
+            Self::Stderr => BoxMakeWriter::new(std::io::stderr),
+        }
+    }
+}
+
 type LoggingLayerResult = (
     Layer<
         tracing_subscriber::Registry,
@@ -72,7 +98,10 @@ impl Logging {
         Ok(env_filter)
     }
 
-    pub fn logging_layer(logging: &Logging) -> Result<LoggingLayerResult, anyhow::Error> {
+    pub fn logging_layer(
+        logging: &Logging,
+        console: ConsoleStream,
+    ) -> Result<LoggingLayerResult, anyhow::Error> {
         let (writer, guard, with_ansi) = match logging.path.clone() {
             Some(path) => std::fs::create_dir_all(&path)
                 .map(|_| path)
@@ -99,7 +128,7 @@ impl Logging {
                     eprintln!("Log file setup failed - falling back to stderr");
                     (BoxMakeWriter::new(std::io::stderr), None, true)
                 }),
-            None => (BoxMakeWriter::new(std::io::stdout), None, true),
+            None => (console.make_writer(), None, true),
         };
 
         let inner_format = tracing_subscriber::fmt::format::Format::default()
@@ -132,4 +161,27 @@ fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
     }
 
     Level::json_schema(generator)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::stdio("type: stdio", ConsoleStream::Stderr)]
+    #[case::streamable_http("type: streamable_http", ConsoleStream::Stdout)]
+    fn console_stream_for_transport(#[case] yaml: &str, #[case] expected: ConsoleStream) {
+        let transport: Transport = serde_yaml::from_str(yaml).expect("valid transport");
+        assert_eq!(ConsoleStream::for_transport(&transport), expected);
+    }
+
+    #[rstest]
+    #[case::stdout(ConsoleStream::Stdout)]
+    #[case::stderr(ConsoleStream::Stderr)]
+    fn logging_layer_without_path_has_no_file_guard(#[case] console: ConsoleStream) {
+        let (_layer, guard) =
+            Logging::logging_layer(&Logging::default(), console).expect("logging layer");
+        assert!(guard.is_none());
+    }
 }

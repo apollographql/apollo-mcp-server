@@ -1,7 +1,7 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rhai::module_resolvers::FileModuleResolver;
-use rhai::{AST, Dynamic, Engine, EvalAltResult, FuncArgs, Position, Scope};
+use rhai::{AST, Array, Dynamic, Engine, EvalAltResult, FnPtr, FuncArgs, Map, Position, Scope};
 use tracing::info;
 
 use crate::checkpoints::OnExecuteGraphqlOperationContext;
@@ -13,17 +13,16 @@ pub struct RhaiEngine {
     scope: Scope<'static>,
     ast: AST,
     main_file: PathBuf,
-    script_dir: PathBuf,
 }
 
 impl RhaiEngine {
-    pub fn new(script_dir: impl Into<PathBuf>) -> Self {
-        let script_dir = script_dir.into();
+    pub(crate) fn new(script_dir: impl AsRef<Path>) -> Self {
+        let script_dir = script_dir.as_ref();
         let main_file = script_dir.join("main.rhai");
 
         let mut engine = Engine::new();
 
-        let resolver = FileModuleResolver::new_with_path(&script_dir);
+        let resolver = FileModuleResolver::new_with_path(script_dir);
         engine.set_module_resolver(resolver);
 
         let scope = Self::create_scope();
@@ -37,7 +36,6 @@ impl RhaiEngine {
             scope,
             ast: AST::empty(),
             main_file,
-            script_dir,
         }
     }
 
@@ -73,11 +71,26 @@ impl RhaiEngine {
         Scope::new()
     }
 
-    pub fn load_from_path(&mut self) -> Result<(), Box<EvalAltResult>> {
+    pub(crate) fn load_from_path(&mut self) -> Result<(), Box<EvalAltResult>> {
         if !self.main_file.exists() {
             return Ok(());
         }
 
+        self.compile_and_run()
+    }
+
+    /// Compiles the scripts in `script_dir` into a new engine.
+    /// Unlike [`Self::load_from_path`], a missing main script is an error, so callers
+    /// reloading scripts can keep the engine they already have.
+    pub(crate) fn compile_from_path(
+        script_dir: impl AsRef<Path>,
+    ) -> Result<Self, Box<EvalAltResult>> {
+        let mut engine = Self::new(script_dir);
+        engine.compile_and_run()?;
+        Ok(engine)
+    }
+
+    fn compile_and_run(&mut self) -> Result<(), Box<EvalAltResult>> {
         self.ast = self
             .engine
             .compile_file(self.main_file.clone())
@@ -86,65 +99,89 @@ impl RhaiEngine {
         // Run the AST with our scope to put any global variables
         // defined in scripts into scope.
         self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
+        self.detach_shared_values();
 
         Ok(())
     }
 
-    pub fn execute_hook(
-        &mut self,
+    /// A closure that captures a top-level variable turns it into a shared cell, and cloning a
+    /// `Scope` copies the pointer to that cell rather than its contents. Replacing every shared
+    /// value with a plain copy keeps the per-invocation scope in [`Self::execute_hook`] from
+    /// leaking one call's writes into another.
+    fn detach_shared_values(&mut self) {
+        let mut detached = Self::create_scope();
+        for (name, is_constant, value) in self.scope.iter_raw() {
+            let value = detach(value.clone());
+            if is_constant {
+                detached.push_constant_dynamic(name, value);
+            } else {
+                detached.push_dynamic(name, value);
+            }
+        }
+        self.scope = detached;
+    }
+
+    pub(crate) fn execute_hook(
+        &self,
         hook_name: &str,
         args: impl FuncArgs,
     ) -> Result<Option<Dynamic>, Box<EvalAltResult>> {
         if self.ast_has_function(hook_name) {
-            return Ok(Some(self.engine.call_fn::<Dynamic>(
-                &mut self.scope,
-                &self.ast,
-                hook_name,
-                args,
-            )?));
+            // CONCURRENCY: a per-invocation copy of the top-level scope keeps hook execution
+            // off an exclusive lock, which would deadlock a script that blocks on HTTP. The copy
+            // is what makes top-level values visible: `call_fn` re-runs the top-level statements
+            // but discards their bindings. Neither half can go away, see the tests below. The
+            // copy is independent only because `detach_shared_values` ran at load.
+            let mut scope = self.scope.clone();
+
+            return Ok(Some(
+                self.engine
+                    .call_fn::<Dynamic>(&mut scope, &self.ast, hook_name, args)?,
+            ));
         }
 
         Ok(None)
     }
 
-    pub fn ast_has_function(&self, name: &str) -> bool {
+    pub(crate) fn ast_has_function(&self, name: &str) -> bool {
         self.ast.iter_functions().any(|fn_def| fn_def.name == name)
     }
 
-    /// Reloads the Rhai scripts from disk atomically.
-    /// On success, replaces the current scope and AST.
-    /// On failure, returns an error and preserves the existing scope and AST.
-    /// When the script file is absent, the existing scope and AST are preserved to avoid
-    /// clearing hooks during atomic editor saves (delete-then-create).
-    pub fn reload(&mut self) -> Result<(), Box<EvalAltResult>> {
-        if !self.main_file.exists() {
-            return Err(format!("Rhai script {} not found", self.main_file.display()).into());
-        }
-
-        // Reset the module resolver to clear cached modules so that
-        // changes to imported Rhai module files are picked up.
-        let resolver = FileModuleResolver::new_with_path(&self.script_dir);
-        self.engine.set_module_resolver(resolver);
-
-        let mut new_scope = Self::create_scope();
-
-        let new_ast = self
-            .engine
-            .compile_file(self.main_file.clone())
-            .map_err(|err| format!("in Rhai script {}: {}", self.main_file.display(), err))?;
-
-        self.engine.run_ast_with_scope(&mut new_scope, &new_ast)?;
-
-        self.scope = new_scope;
-        self.ast = new_ast;
-        Ok(())
-    }
-
     #[cfg(test)]
-    pub fn load_from_string(&mut self, script: &str) -> Result<(), Box<EvalAltResult>> {
+    pub(crate) fn load_from_string(&mut self, script: &str) -> Result<(), Box<EvalAltResult>> {
         self.ast = self.engine.compile(script)?;
         self.engine.run_ast_with_scope(&mut self.scope, &self.ast)?;
+        self.detach_shared_values();
         Ok(())
+    }
+}
+
+/// Deep-copies `value` so that no part of it is shared, including values nested in arrays and
+/// maps and values a closure captured.
+fn detach(value: Dynamic) -> Dynamic {
+    let value = match value.flatten().try_cast_result::<Array>() {
+        Ok(array) => return Dynamic::from_array(array.into_iter().map(detach).collect()),
+        Err(value) => value,
+    };
+
+    let value = match value.try_cast_result::<Map>() {
+        Ok(map) => {
+            return Dynamic::from_map(
+                map.into_iter()
+                    .map(|(key, item)| (key, detach(item)))
+                    .collect(),
+            );
+        }
+        Err(value) => value,
+    };
+
+    match value.try_cast_result::<FnPtr>() {
+        Ok(mut fn_ptr) => {
+            let curry: Vec<Dynamic> = fn_ptr.iter_curry().cloned().map(detach).collect();
+            fn_ptr.set_curry(curry);
+            Dynamic::from(fn_ptr)
+        }
+        Err(value) => value,
     }
 }
 
@@ -201,7 +238,7 @@ mod tests {
 
     #[test]
     fn should_return_none_when_hook_not_defined() {
-        let mut engine = create_engine("");
+        let engine = create_engine("");
 
         let result = engine
             .execute_hook("nonexistent_hook", ())
@@ -212,7 +249,7 @@ mod tests {
 
     #[test]
     fn should_return_some_with_return_value() {
-        let mut engine = create_engine("fn my_hook() { 42 }");
+        let engine = create_engine("fn my_hook() { 42 }");
 
         let result = engine
             .execute_hook("my_hook", ())
@@ -223,7 +260,7 @@ mod tests {
 
     #[test]
     fn should_pass_arguments_to_hook() {
-        let mut engine = create_engine("fn add(a, b) { a + b }");
+        let engine = create_engine("fn add(a, b) { a + b }");
 
         let result = engine
             .execute_hook("add", (3_i64, 4_i64))
@@ -234,7 +271,7 @@ mod tests {
 
     #[test]
     fn should_return_error_when_hook_throws() {
-        let mut engine = create_engine(r#"fn failing() { throw "oops"; }"#);
+        let engine = create_engine(r#"fn failing() { throw "oops"; }"#);
 
         let result = engine.execute_hook("failing", ());
 
@@ -243,7 +280,7 @@ mod tests {
 
     #[test]
     fn should_access_registered_json_functions() {
-        let mut engine = create_engine(
+        let engine = create_engine(
             r#"fn parse_json() {
                 let obj = JSON::parse("{\"key\": \"value\"}");
                 obj["key"]
@@ -259,7 +296,7 @@ mod tests {
 
     #[test]
     fn should_access_registered_sha256_functions() {
-        let mut engine = create_engine(
+        let engine = create_engine(
             r#"fn hash_it() {
                 Sha256::digest("hello")
             }"#,
@@ -285,23 +322,20 @@ mod tests {
     }
 
     #[test]
-    fn should_persist_global_variables_in_scope() {
-        let mut engine = create_engine("let global_var = 100;");
+    fn should_isolate_global_variable_writes_between_invocations() {
+        let engine = create_engine("let counter = 0;\nfn bump() { counter += 1; counter }");
 
-        let result = engine
-            .execute_hook("get_var", ())
-            .expect("Should not error");
+        let first = engine.execute_hook("bump", ()).expect("Should not error");
+        let second = engine.execute_hook("bump", ()).expect("Should not error");
 
-        // The hook doesn't exist, so it should return None
-        assert!(result.is_none());
+        assert_eq!(first.unwrap().as_int().unwrap(), 1);
+        assert_eq!(second.unwrap().as_int().unwrap(), 1);
+    }
 
-        // But we can verify the script ran by loading another script that uses the scope
-        // The scope should have 'global_var' from the first script
-        let ast = engine
-            .engine
-            .compile("fn get_global() { global_var }")
-            .expect("Should compile");
-        engine.ast = ast;
+    #[test]
+    fn should_expose_top_level_values_through_the_scope_copy() {
+        // A fresh scope is not enough: `call_fn` re-runs the top level but drops its bindings.
+        let engine = create_engine("let global_var = 100;\nfn get_global() { global_var }");
 
         let result = engine
             .execute_hook("get_global", ())
@@ -310,143 +344,60 @@ mod tests {
         assert_eq!(result.unwrap().as_int().unwrap(), 100);
     }
 
-    fn write_rhai_script(base: &std::path::Path, content: &str) {
-        let rhai_dir = base.join("rhai");
-        std::fs::create_dir_all(&rhai_dir).expect("Should create rhai dir");
-        std::fs::write(rhai_dir.join("main.rhai"), content).expect("Should write script");
-    }
+    #[test]
+    #[tracing_test::traced_test]
+    fn should_reevaluate_top_level_statements_on_every_invocation() {
+        let engine = create_engine("print(\"top level ran\");\nfn noop() { 42 }");
 
-    fn write_rhai_module(base: &std::path::Path, module_name: &str, content: &str) {
-        let rhai_dir = base.join("rhai");
-        std::fs::create_dir_all(&rhai_dir).expect("Should create rhai dir");
-        std::fs::write(rhai_dir.join(format!("{module_name}.rhai")), content)
-            .expect("Should write module");
+        engine.execute_hook("noop", ()).expect("Should not error");
+
+        logs_assert(|lines: &[&str]| {
+            // Once when the script loaded, once for the hook call.
+            match lines
+                .iter()
+                .filter(|line| line.contains("top level ran"))
+                .count()
+            {
+                2 => Ok(()),
+                count => Err(format!(
+                    "expected the top level to run at load and once per hook call, saw {count}"
+                )),
+            }
+        });
     }
 
     #[test]
-    fn reload_should_preserve_state_when_script_file_missing() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        let script_dir = dir.path().join("rhai");
-
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("fn original() { 1 }")
-            .expect("Should compile");
-
-        assert!(engine.reload().is_err());
-        assert!(engine.ast_has_function("original"));
-    }
-
-    #[test]
-    fn reload_should_load_new_script_from_disk() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_script(dir.path(), "fn reloaded() { 99 }");
-        let script_dir = dir.path().join("rhai");
-
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("fn original() { 1 }")
-            .expect("Should compile");
-
-        engine.reload().expect("Should reload successfully");
-
-        assert!(engine.ast_has_function("reloaded"));
-    }
-
-    #[test]
-    fn reload_should_remove_old_functions_after_loading_new_script() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_script(dir.path(), "fn reloaded() { 99 }");
-        let script_dir = dir.path().join("rhai");
-
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("fn original() { 1 }")
-            .expect("Should compile");
-
-        engine.reload().expect("Should reload successfully");
-
-        assert!(!engine.ast_has_function("original"));
-    }
-
-    #[test]
-    fn reload_should_preserve_state_on_compile_error() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_script(dir.path(), "this is not valid {{{");
-        let script_dir = dir.path().join("rhai");
-
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("fn original() { 1 }")
-            .expect("Should compile");
-
-        let result = engine.reload();
-
-        assert!(result.is_err());
-        assert!(engine.ast_has_function("original"));
-    }
-
-    #[test]
-    fn reload_should_preserve_state_on_runtime_error() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_script(dir.path(), r#"throw "init error";"#);
-        let script_dir = dir.path().join("rhai");
-
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("fn original() { 1 }")
-            .expect("Should compile");
-
-        let result = engine.reload();
-
-        assert!(result.is_err());
-        assert!(engine.ast_has_function("original"));
-    }
-
-    #[test]
-    fn reload_should_pick_up_changes_to_imported_modules() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 1 }");
-        write_rhai_script(
-            dir.path(),
-            r#"import "helpers" as h; fn get_value() { h::helper_value() }"#,
+    fn should_isolate_direct_writes_to_captured_values_between_invocations() {
+        let engine = create_engine(
+            "let m = #{ v: 0 };\nlet get = || m.v;\nfn write() { m.v = 5; }\nfn read() { m.v }",
         );
-        let script_dir = dir.path().join("rhai");
 
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine.load_from_path().expect("Should load");
+        engine.execute_hook("write", ()).expect("Should not error");
+        let result = engine.execute_hook("read", ()).expect("Should not error");
 
-        let result = engine
-            .execute_hook("get_value", ())
-            .expect("Should not error");
-        assert_eq!(result.unwrap().as_int().unwrap(), 1);
-
-        // Update the module file and reload
-        write_rhai_module(dir.path(), "helpers", "fn helper_value() { 42 }");
-        engine.reload().expect("Should reload successfully");
-
-        let result = engine
-            .execute_hook("get_value", ())
-            .expect("Should not error");
-        assert_eq!(result.unwrap().as_int().unwrap(), 42);
+        assert_eq!(result.unwrap().as_int().unwrap(), 0);
     }
 
     #[test]
-    fn reload_should_reset_scope_with_new_globals() {
-        let dir = tempfile::tempdir().expect("Should create temp dir");
-        write_rhai_script(dir.path(), "let new_var = 200;\nfn get_new() { new_var }");
-        let script_dir = dir.path().join("rhai");
+    fn should_isolate_writes_through_a_closure_between_invocations() {
+        let engine = create_engine(
+            "let m = #{ v: 0 };\nlet set = |x| m.v = x;\nlet get = || m.v;\nfn write() { set.call(5); }\nfn read() { get.call() }",
+        );
 
-        let mut engine = RhaiEngine::new(&script_dir);
-        engine
-            .load_from_string("let old_var = 100;")
-            .expect("Should compile");
+        engine.execute_hook("write", ()).expect("Should not error");
+        let result = engine.execute_hook("read", ()).expect("Should not error");
 
-        engine.reload().expect("Should reload successfully");
+        assert_eq!(result.unwrap().as_int().unwrap(), 0);
+    }
 
-        let result = engine
-            .execute_hook("get_new", ())
-            .expect("Should not error");
-        assert_eq!(result.unwrap().as_int().unwrap(), 200);
+    #[test]
+    fn should_let_closures_read_the_values_they_captured() {
+        let engine = create_engine(
+            "let prefix = \"p-\";\nlet add = |s| prefix + s;\nfn run() { add.call(\"x\") }",
+        );
+
+        let result = engine.execute_hook("run", ()).expect("Should not error");
+
+        assert_eq!(result.unwrap().into_string().unwrap(), "p-x");
     }
 }

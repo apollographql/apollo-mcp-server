@@ -6,7 +6,6 @@ use http::HeaderMap;
 use http::request::Parts;
 use opentelemetry::Context;
 use opentelemetry::trace::FutureExt;
-use parking_lot::Mutex;
 use rmcp::model::{CallToolResult, ContentBlock, JsonObject, MetaObject, Tool};
 use serde_json::{Map, Value, json};
 use url::Url;
@@ -16,7 +15,7 @@ use crate::errors::McpError;
 use crate::graphql::{self, Executable};
 use crate::operations::Operation;
 use crate::server::states::telemetry::current_trace_id;
-use apollo_mcp_rhai::{RhaiEngine, checkpoints};
+use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
 use super::App;
 
@@ -28,7 +27,7 @@ pub(crate) async fn find_and_execute_app_tool(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
-    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    rhai_engine: &SharedRhaiEngine,
     axum_parts: Option<&Parts>,
 ) -> Option<Result<CallToolResult, McpError>> {
     let app = apps.iter().find(|app| app.name == app_name)?;
@@ -58,7 +57,7 @@ async fn execute_app_tool(
     headers: &HeaderMap,
     arguments: Option<&JsonObject>,
     endpoint: &Url,
-    rhai_engine: &Arc<Mutex<RhaiEngine>>,
+    rhai_engine: &SharedRhaiEngine,
     axum_parts: Option<&Parts>,
 ) -> Result<CallToolResult, McpError> {
     let (endpoint, headers) = checkpoints::on_execute_graphql_operation(
@@ -433,7 +432,7 @@ mod tests {
             &HeaderMap::new(),
             Some(&object!({"apples": 1, "oranges": 2, "bananas": 3})),
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await
@@ -539,7 +538,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await;
@@ -594,7 +593,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await;
@@ -648,7 +647,7 @@ mod tests {
             &HeaderMap::new(),
             None,
             &server.url().parse().unwrap(),
-            &Arc::new(Mutex::new(RhaiEngine::new("rhai"))),
+            &SharedRhaiEngine::new("rhai"),
             None,
         )
         .await;

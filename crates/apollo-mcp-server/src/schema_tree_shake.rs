@@ -1,7 +1,7 @@
 //! Tree shaking for GraphQL schemas
 
 use apollo_compiler::ast::{
-    Argument, Definition, DirectiveDefinition, DirectiveList, Document, EnumTypeDefinition, Field,
+    Argument, Definition, DirectiveDefinition, Document, EnumTypeDefinition, Field,
     FragmentDefinition, InputObjectTypeDefinition, InterfaceTypeDefinition, ObjectTypeDefinition,
     OperationDefinition, OperationType, ScalarTypeDefinition, SchemaDefinition, Selection,
     UnionTypeDefinition,
@@ -218,15 +218,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
             Definition::SchemaDefinition(apollo_compiler::Node::new(SchemaDefinition {
                 root_operations,
                 description: self.schema.schema_definition.description.clone(),
-                directives: DirectiveList(
-                    self.schema
-                        .schema_definition
-                        .directives
-                        .0
-                        .iter()
-                        .map(|directive| directive.node.clone())
-                        .collect(),
-                ),
+                directives: self.schema.schema_definition.directives.clone(),
             }));
 
         let directive_definitions = self
@@ -260,20 +252,13 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                     Some(Definition::ObjectTypeDefinition(Node::new(
                                         ObjectTypeDefinition {
                                             description: object_def.description.clone(),
-                                            directives: DirectiveList(
-                                                object_def
-                                                    .directives
-                                                    .0
-                                                    .iter()
-                                                    .map(|directive| directive.node.clone())
-                                                    .collect(),
-                                            ),
+                                            directives: object_def.directives.clone(),
                                             name: object_def.name.clone(),
                                             implements_interfaces: object_def
                                                 .implements_interfaces
                                                 .iter()
                                                 .map(|implemented_interface| {
-                                                    implemented_interface.name.clone()
+                                                    Name::clone(implemented_interface)
                                                 })
                                                 .collect(),
                                             fields: object_def
@@ -286,9 +271,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                     {
                                                         filtered_fields
                                                             .contains(&field_name.to_string())
-                                                            .then_some(field.node)
+                                                            .then_some(field)
                                                     } else {
-                                                        Some(field.node)
+                                                        Some(field)
                                                     }
                                                 })
                                                 .collect(),
@@ -310,14 +295,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                     Some(Definition::InputObjectTypeDefinition(Node::new(
                                         InputObjectTypeDefinition {
                                             description: input_def.description.clone(),
-                                            directives: DirectiveList(
-                                                input_def
-                                                    .directives
-                                                    .0
-                                                    .iter()
-                                                    .map(|directive| directive.node.clone())
-                                                    .collect(),
-                                            ),
+                                            directives: input_def.directives.clone(),
                                             name: input_def.name.clone(),
                                             fields: input_def
                                                 .fields
@@ -329,9 +307,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                     {
                                                         filtered_fields
                                                             .contains(&field_name.to_string())
-                                                            .then_some(field.node)
+                                                            .then_some(field)
                                                     } else {
-                                                        Some(field.node)
+                                                        Some(field)
                                                     }
                                                 })
                                                 .collect(),
@@ -349,20 +327,13 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                     Some(Definition::InterfaceTypeDefinition(Node::new(
                                         InterfaceTypeDefinition {
                                             description: interface_def.description.clone(),
-                                            directives: DirectiveList(
-                                                interface_def
-                                                    .directives
-                                                    .0
-                                                    .iter()
-                                                    .map(|directive| directive.node.clone())
-                                                    .collect(),
-                                            ),
+                                            directives: interface_def.directives.clone(),
                                             name: interface_def.name.clone(),
                                             implements_interfaces: interface_def
                                                 .implements_interfaces
                                                 .iter()
                                                 .map(|implemented_interface| {
-                                                    implemented_interface.name.clone()
+                                                    Name::clone(implemented_interface)
                                                 })
                                                 .collect(),
                                             fields: interface_def
@@ -375,9 +346,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                                     {
                                                         filtered_fields
                                                             .contains(&field_name.to_string())
-                                                            .then_some(field.node)
+                                                            .then_some(field)
                                                     } else {
-                                                        Some(field.node)
+                                                        Some(field)
                                                     }
                                                 })
                                                 .collect(),
@@ -394,24 +365,16 @@ impl<'schema> SchemaTreeShaker<'schema> {
                             .then(|| {
                                 Definition::UnionTypeDefinition(Node::new(UnionTypeDefinition {
                                     description: union_def.description.clone(),
-                                    directives: DirectiveList(
-                                        union_def
-                                            .directives
-                                            .0
-                                            .iter()
-                                            .map(|directive| directive.node.clone())
-                                            .collect(),
-                                    ),
+                                    directives: union_def.directives.clone(),
                                     name: union_def.name.clone(),
                                     members: union_def
                                         .members
-                                        .clone()
-                                        .into_iter()
+                                        .iter()
                                         .filter_map(|member| {
                                             if let Some(member_tree_node) =
                                                 self.named_type_nodes.get(member.as_str())
                                             {
-                                                member_tree_node.retain.then_some(member.name)
+                                                member_tree_node.retain.then(|| Name::clone(member))
                                             } else {
                                                 tracing::error!(
                                                     "union member {} not found",
@@ -431,22 +394,9 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                     Some(Definition::EnumTypeDefinition(Node::new(
                                         EnumTypeDefinition {
                                             description: enum_def.description.clone(),
-                                            directives: DirectiveList(
-                                                enum_def
-                                                    .directives
-                                                    .0
-                                                    .iter()
-                                                    .map(|directive| directive.node.clone())
-                                                    .collect(),
-                                            ),
+                                            directives: enum_def.directives.clone(),
                                             name: enum_def.name.clone(),
-                                            values: enum_def
-                                                .values
-                                                .iter()
-                                                .map(|(_enum_value_name, enum_value)| {
-                                                    enum_value.node.clone()
-                                                })
-                                                .collect(),
+                                            values: enum_def.values.values().cloned().collect(),
                                         },
                                     )))
                                 } else {
@@ -461,14 +411,7 @@ impl<'schema> SchemaTreeShaker<'schema> {
                                     Some(Definition::ScalarTypeDefinition(Node::new(
                                         ScalarTypeDefinition {
                                             description: scalar_def.description.clone(),
-                                            directives: DirectiveList(
-                                                scalar_def
-                                                    .directives
-                                                    .0
-                                                    .iter()
-                                                    .map(|directive| directive.node.clone())
-                                                    .collect(),
-                                            ),
+                                            directives: scalar_def.directives.clone(),
                                             name: scalar_def.name.clone(),
                                         },
                                     )))

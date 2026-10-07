@@ -9,7 +9,7 @@ expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
       "type": "object",
       "properties": {
         "user": {
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -27,7 +27,7 @@ expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
                   "type": "object",
                   "properties": {
                     "bio": {
-                      "oneOf": [
+                      "anyOf": [
                         {
                           "type": "string"
                         },

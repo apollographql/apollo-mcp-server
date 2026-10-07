@@ -1,0 +1,3 @@
+query test_error_handling {
+  intentionalError
+}

@@ -1,0 +1,94 @@
+# Conformance coverage gaps
+
+The baseline records missing fixture behavior, not proven specification
+violations. A successful optional workflow means no unexpected regression in
+the checks we exercise. It does not establish full protocol conformance.
+
+## Unsupported fixture behavior requiring broader work
+
+The 2025-11-25 run has 17 required scenarios baselined at individual-check granularity.
+Making them pass through the production server requires capability or public
+configuration design, not just renaming the two GraphQL operations. Decide on
+product value before expanding the server solely to satisfy these fixtures.
+
+The `2026-07-28` baseline adds 24 scored check failures: four stateless
+capability/stream/logging checks, five tool content/progress checks, three generic
+resource checks, two typed prompt checks, and ten input-required-result checks.
+These depend on fixtures the production configuration cannot currently supply.
+Modern cache-hint failures and emitted wire-schema failures cannot be baselined.
+The resource-read caching skip is documented below.
+Three separate modern warnings are also listed at check granularity in the
+baseline. The pinned CLI considers warnings unexpected unless listed; the local
+verifier requires their exact `WARNING` status. They cover a SHOULD-level
+resource error `data.uri` and two input-required-result recommendations
+exercised without their fixture tool.
+
+| Scenarios | Current limitation | Work needed to remove the baseline |
+| --- | --- | --- |
+| `tools-call-image`, `tools-call-audio`, `tools-call-embedded-resource`, `tools-call-mixed-content` | This fixture's GraphQL tools return JSON as text, not the requested MCP content blocks. | Design how GraphQL output maps to typed MCP content, including MIME types and encoding, and exercise that production path. |
+| `tools-call-with-logging`, `tools-call-with-progress` | The configured operations do not emit the requested protocol notifications. Server logs alone do not satisfy these checks. | Provide a supported way to emit request-related MCP logging/progress from operation execution and a deterministic fixture. |
+| `tools-call-sampling`, `tools-call-elicitation`, `elicitation-sep1034-defaults`, `elicitation-sep1330-enums` | The fixture cannot initiate the requested client interactions. | Design client capability handling and the operation lifecycle for sampling/elicitation, including cancellation, validation, and failure handling. |
+| `resources-read-text`, `resources-read-binary`, `resources-templates-read` | Resources are HTML MCP Apps routed by app name; the suite hardcodes generic `test://` resources. | Generic resource/template support or upstream fixture parameterization. Actual Apollo HTML listing/read/error behavior is covered separately in `supplemental.mjs`; binary and template behavior is not. |
+| `resources-subscribe`, `resources-unsubscribe` | The required 2025 resource subscription fixture is unavailable. | Define resource update ownership and notification lifecycle for that protocol revision. Future-version subscription work does not automatically satisfy these dated scenarios. |
+| `prompts-get-embedded-resource`, `prompts-get-with-image` | Markdown prompt templates produce text messages. | Design typed prompt content and configuration, then add representative fixtures. |
+
+A separate fake MCP server or test-only handlers could satisfy more fixtures,
+but would not establish that the shipped Apollo server supports those paths.
+The current workflow deliberately runs the production binary.
+
+## Upstream and pending coverage limitations
+
+- `server-sse-multiple-streams`, `dns-rebinding-protection`,
+  `server-session-lifecycle`, and `server-sse-polling` do not emit
+  `wire-schema-valid` in the legacy run. Modern `server-stateless`,
+  `server-sse-multiple-streams`, `dns-rebinding-protection`, and the skipped
+  `tasks-status-notifications` scenario also lack wire checks in alpha.11.
+  Full wire coverage for these scenarios needs
+  upstream instrumentation or a suite upgrade. SDK validation in our separate
+  resource checks does not fill that gap. All wire checks that are emitted
+  remain mandatory and cannot be baselined.
+- `server-session-lifecycle` is unscored upstream. The local verifier explicitly
+  enforces acceptance of initialization, session deletion, and rejection of a
+  terminated session, so a regression fails this workflow.
+- `server-sse-polling` is pending/unscored. Its priming and retry-field checks
+  pass and are enforced locally. Its disconnect/resume check currently warns:
+  the `test_reconnection` tool is absent and no tool result is received after
+  reconnecting. This is **not successful reconnection coverage**. A meaningful
+  fixture needs deterministic mid-call disconnection and resumed delivery;
+  simply adding a fast GraphQL tool with that name would not exercise it.
+- `json-schema-2020-12` is pending/unscored and fails because its special tool
+  fixture is absent. Arbitrary JSON Schema 2020-12 fixture constructs are not
+  exposed by this GraphQL fixture. Assess the relevant GraphQL-to-JSON-Schema
+  mappings and upstream scenario maturity before adding coverage; do not infer
+  support from the suite's exit status.
+- The modern task extension is unscored. Its MRTR and task lifecycle fixtures
+  are unavailable; `tasks-status-notifications` currently reports only
+  `SKIPPED`, pending an upstream rewrite. Modern custom-header validation is
+  also unscored and has five failures because its fixture is unavailable.
+  The repeated standard-header checks are enforced locally, including all
+  five invalid-header and five error-code instances.
+- Only the three known modern skips are allowed: resource-read cache hints,
+  task status notifications, and prompt-list-change notifications. Any other
+  skipped check fails verification in either revision.
+- Modern resource-read caching is skipped by the pinned suite. Rust HTTP transport
+  tests separately cover actual Apollo app resource listing and exact HTML/MIME
+  reads, local cache hints, and immediately stale remote cache hints, for modern and
+  legacy revisions in JSON and SSE modes.
+- `server-stateless:sep-2575-server-sends-tools-list-changed-on-subscription`
+  passes without proving list-change delivery. The suite calls an absent
+  `test_trigger_tool_change` tool and treats only `-32601` as a missing hook,
+  but the server correctly reports an unknown tool as `-32602`. The check then
+  accepts the refresh notification the server sends when a subscription opens.
+  Rust subscription tests cover notifications after real catalog changes.
+- The error response `data.uri`
+  check is a SHOULD-level warning, not a scored failure.
+
+## Operational scope
+
+- Manual execution is intentional. Run after rmcp upgrades, MCP handler or
+  transport changes, and suite updates; this does not detect every PR regression.
+- Validate workflow changes on a GitHub-hosted runner before merge and link the
+  run in the PR. Local success alone does not verify runner-specific behavior.
+- The suite and supplemental SDK are pinned exactly. The supplemental checks
+  assert negotiation of `2025-11-25` and run only for that revision. The modern
+  revision has its own requirements run and baseline.

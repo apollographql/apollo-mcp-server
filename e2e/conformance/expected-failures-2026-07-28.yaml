@@ -1,0 +1,44 @@
+# Observed with conformance 0.2.0-alpha.11. These 24 failed checks need
+# fixture capabilities unavailable through the production server configuration.
+# Three additional checks emit warnings and are listed separately below.
+# Caching and wire-schema failures are deliberately not baselined.
+server:
+  # The stateless scenario expects tools and notifications this fixture lacks.
+  - server-stateless:sep-2575-http-server-no-independent-requests-on-stream
+  - server-stateless:sep-2575-missing-capability-http-400
+  - server-stateless:sep-2575-server-no-log-without-loglevel
+  - server-stateless:sep-2575-server-rejects-undeclared-capability
+
+  # GraphQL operations return JSON text, not these content or notification types.
+  - tools-call-image:tools-call-image
+  - tools-call-audio:tools-call-audio
+  - tools-call-embedded-resource:tools-call-embedded-resource
+  - tools-call-mixed-content:tools-call-mixed-content
+  - tools-call-with-progress:tools-call-with-progress
+
+  # Apollo app resources do not provide the suite's generic test:// fixtures.
+  - resources-read-text:resources-read-text
+  - resources-read-binary:resources-read-binary
+  - resources-templates-read:resources-templates-read
+
+  # Markdown prompt fixtures only render text.
+  - prompts-get-embedded-resource:prompts-get-embedded-resource
+  - prompts-get-with-image:prompts-get-with-image
+
+  # No production fixture starts these input-required-result flows.
+  - input-required-result-basic-elicitation:sep-2322-elicitation-incomplete
+  - input-required-result-basic-sampling:sep-2322-sampling-incomplete
+  - input-required-result-basic-list-roots:sep-2322-list-roots-incomplete
+  - input-required-result-request-state:sep-2322-request-state-incomplete
+  - input-required-result-multiple-input-requests:sep-2322-multiple-inputs-incomplete
+  - input-required-result-multi-round:sep-2322-multi-round-r1
+  - input-required-result-non-tool-request:sep-2322-non-tool-incomplete
+  - input-required-result-result-type:sep-2322-result-type-included
+  - input-required-result-tampered-state:sep-2322-reject-tampered-state
+  - input-required-result-capability-check:sep-2322-respect-client-capabilities
+
+  # Warnings: the pinned CLI treats WARNING as an unexpected baseline failure.
+  # These entries retain check-level visibility; the verifier requires WARNING.
+  - sep-2164-resource-not-found:sep-2164-data-uri
+  - input-required-result-missing-input-response:sep-2322-missing-response-rerequests
+  - input-required-result-ignore-extra-params:sep-2322-ignore-unexpected-params

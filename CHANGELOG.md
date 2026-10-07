@@ -4,6 +4,346 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.0.0 (2026-10-05)
+
+### Breaking Changes
+
+#### Apollo MCP Server 2.0
+
+Apollo MCP Server 2.0 adds support for MCP protocol `2026-07-28` while continuing to serve clients on earlier protocol versions. The major version reflects how much the MCP specification and the server have changed since 1.0.
+
+Highlights since 1.0:
+
+- MCP `2025-11-25` (1.16.0) and `2026-07-28` (2.0.0) support, including `server/discover`, `subscriptions/listen`, cache hints, and standard request headers. Tool output schemas and structured content arrived in 1.4.0.
+- MCP Apps and OpenAI Apps SDK support (1.8.0), and prompts defined in Markdown files (1.13.0).
+- Rhai scripting for request hooks (1.10.0), with hot reloading for scripts (1.11.0) and the config file (1.12.0).
+- OAuth scope enforcement with `insufficient_scope` (1.4.0), metadata discovery (1.6.0), step-up authorization (1.10.0), issuer validation (1.15.0, 1.17.0), per-operation scope alternatives, and configurable token validation skips (1.18.0).
+- Header forwarding to the GraphQL API (1.1.0) and distributed trace context propagation (1.4.0, 2.0.0).
+
+Upgrading from 1.20.0 doesn't require configuration changes. Review Rhai scripts that write to variables declared at the top level of `main.rhai`, since each hook invocation now gets its own copy of those variables.
+
+If you're upgrading from an earlier 1.x release, these changes may also need attention:
+
+- 1.1.0: The default port changed from `5000` to `8000`.
+- 1.5.0: The SSE transport was removed. Use `streamable_http`.
+- 1.6.0: GraphQL API failures and input validation errors are returned as tool execution errors with `isError: true`.
+- 1.7.0: Host header validation is enabled by default for `streamable_http`. Add hostnames other than localhost to `transport.host_validation.allowed_hosts`.
+- 1.7.0 and 1.17.0: Invalid or misplaced configuration, such as `auth` at the top level or under `stdio`, fails at startup instead of being ignored.
+- 1.14.0: `transport.auth.servers` entries are published as written, so each must exactly match its authorization server's `issuer`.
+- 1.18.0: Nullable inputs in generated tool schemas use `anyOf` with a `null` alternative. `allow_anonymous_mcp_discovery` is deprecated in favor of `transport.auth.skip_token_validation.methods`.
+- 1.20.0: Schemas are validated against the GraphQL September 2025 rules, so a schema that loaded before can be rejected at startup.
+
+### Features
+
+#### Support MCP protocol 2026-07-28
+
+Declare support for MCP 2026-07-28, enabling subscriptions/listen, cache hints,
+and standard request headers. Modern responses include resultType: "complete";
+missing resources return -32602 and unknown methods return HTTP 404 with -32601.
+Older supported protocol versions remain available.
+
+#### Run Rhai hooks concurrently instead of behind an exclusive lock
+
+A Rhai hook that blocked on an HTTP call could hang the server. Every hook call took an exclusive lock on the shared engine and held it for the whole script, blocking the waiting calls' tokio worker threads until none was left to finish the in-flight request; three concurrent tool calls were enough on a two-core deployment. Hooks now run against a snapshot of the engine with no lock held, and a reload swaps in a freshly compiled engine so hooks already in flight keep running against the scripts they started with. Hook bodies for concurrent requests now genuinely run in parallel, where the lock used to serialize them, so a hook that performs side effects can no longer assume it is the only one running.
+
+Each hook invocation now gets its own copy of the variables declared at the top level of `main.rhai`. Hooks still read the values captured at load time, but a value a hook writes to one is discarded when the hook returns instead of reaching later calls, the experimental `on_startup` hook included. Variables that a top-level closure captured are copied too, so concurrent calls never read each other's values, and the closure keeps the value from load time. A script that kept a cached token or a counter there loses those writes with no error and no log, hence the minor bump.
+
+### Fixes
+
+#### Omit empty `_meta.ui` from MCP App resources
+
+When an app manifest sets no CSP or widget settings, `resources/read` no longer returns `"_meta": {"ui": null}`. MCP Apps requires `_meta.ui` to be an object when present, so hosts that validate resource metadata could reject the app.
+
+#### Return GraphQL operation tools in deterministic order
+
+Predefined GraphQL operation tools in `tools/list` are now sorted alphabetically by operation name using case-sensitive lexicographic ordering. With unique operation names, the order remains stable across repeated calls and schema or operation reloads with the same operations, supporting client-side tool-list caching and LLM prompt cache reuse. Operations with equal names retain their source order. Built-in and app tools retain their existing order after the predefined operations.
+
+#### Support serving the health check on its own address/port
+
+`health_check.listen` is a new, optional config field that serves the health check on its own
+socket instead of merging it into the main `streamable_http` listener. This mirrors how the
+Apollo Router exposes a separate health-check listen address, and is useful when infrastructure
+like a Kubernetes readiness probe expects a dedicated port, for example one that isn't exposed
+through your ingress.
+
+```yaml
+health_check:
+  enabled: true
+  listen: 0.0.0.0:8088
+```
+
+When unset (the default), behaviour is unchanged: the health check is served on the same port as
+the rest of the server.
+
+#### Validate generated GraphQL tool schemas against JSON Schema 2020-12
+
+Repeated non-null selections no longer create duplicate `required` entries.
+Output schemas now validate fields selected through nested, named, and inline
+fragments on unions and interfaces together, while accepting members with no
+matching fragment and rejecting incompatible member-key combinations.
+Regression tests check generated input and output schemas against Draft 2020-12
+and through MCP `tools/list`.
+
+#### Reject `logging/setLevel` under protocol 2026-07-28
+
+Prepare `logging/setLevel` to return JSON-RPC method-not-found (`-32601`) for
+protocol 2026-07-28 and later, with HTTP 404 over Streamable HTTP. Older protocol
+versions retain the empty-success no-op. The server continues to omit the logging
+capability and does not emit MCP logging notifications.
+
+This change does not enable protocol 2026-07-28: the production version cap remains
+2025-11-25 until the broader protocol support is enabled separately.
+
+#### Use `Mcp-Name` headers for tool exceptions and per-operation scopes
+
+For SDK-known protocol versions from `2026-07-28` onward, the auth middleware now reads the `tools/call` tool name from `Mcp-Name` instead of the body, for both `skip_token_validation.tools` and `overrides.required_scopes`. Authenticated tool calls no longer buffer the body in the auth middleware when their headers are usable. A tokenless request with a missing or malformed `Mcp-Method` or `Mcp-Name` is rejected. Older protocol versions keep the 16 KiB body peek.
+
+Also updates `rmcp` to 3.5.0, which rejects repeated SEP-2243 headers and validates `Mcp-Method` on `initialize`, so the server's own checks for both are removed.
+
+#### Propagate MCP request trace context
+
+Read W3C `traceparent`, `tracestate`, and `baggage` from incoming request `_meta`
+over stdio and Streamable HTTP. Valid metadata trace context parents the MCP
+handler span directly; otherwise HTTP span parentage is retained. Metadata
+baggage replaces HTTP baggage when present, and safe context propagates to
+downstream GraphQL requests. Invalid telemetry values do not fail requests.
+Context propagation and Rhai trace-ID correlation also work when logging
+filters disable request spans.
+
+#### Keep word spacing in minified descriptions
+
+Minified `introspect` and `search` results previously removed all whitespace from type, field, argument, and input field descriptions and `@deprecated` reasons, merging words together. Each whitespace run now collapses to a single space and leading and trailing whitespace is trimmed, so descriptions stay compact and readable.
+
+#### Include cache hints on resource template lists
+
+Empty `resources/templates/list` responses now include the configured `ttlMs`
+and private `cacheScope` for MCP 2026-07-28 clients. Earlier protocol versions
+retain their existing response shape.
+
+#### Update rmcp to 3.5.1
+
+On protocol `2026-07-28`, errors such as an unknown tool, an unknown prompt, a missing prompt argument, or a missing resource are now sent with HTTP 200 as in-band JSON-RPC `-32602` errors. Previously they were sent with HTTP 400, which a client could mistake for a legacy server and fall back to `initialize`. Requests with malformed `_meta` are still rejected with HTTP 400.
+
+Remote app resource reads now include `ttlMs: 0` and `cacheScope: "private"` for `2026-07-28` clients instead of omitting cache hints, which the protocol requires on every `resources/read` result.
+
+#### Don't reject an unauthenticated 2026-07-28 GET with 401 when `stateful_mode` is true
+
+With `transport.auth` configured and `stateful_mode: true` (the default), an unauthenticated `GET` on the MCP endpoint that sends `Mcp-Protocol-Version: 2026-07-28` now returns 405 instead of 401. Protocol 2026-07-28 has no sessions, so the transport never serves that `GET`, whatever `stateful_mode` says. This is the same correction already made for `stateful_mode: false`.
+
+`stateful_mode` only affects clients on protocol versions before 2026-07-28, and their behavior is unchanged: an unauthenticated `GET` without a version header, or with an older or unrecognized version, still returns 401.
+
+#### Send stdio transport logs to stderr
+
+When `transport.type` is `stdio` and `logging.path` is not set, log output is written to stderr instead of stdout. The stdio transport reserves stdout for MCP JSON-RPC messages, and log lines on stdout could corrupt the message stream for MCP clients. The `streamable_http` transport continues to log to stdout.
+
+#### Report unknown tools as invalid params
+
+Calling a tool that doesn't exist now returns JSON-RPC error `-32602` (Invalid params), as the MCP tools specification requires. Previously the server returned `-32601` (Method not found). On the `2026-07-28` Streamable HTTP transport, `-32601` is sent with HTTP 404, which tells a client that the server doesn't implement `tools/call` at all.
+
+## 1.20.0 (2026-09-24)
+
+### Features
+
+#### Validate schemas with the GraphQL September 2025 rules
+
+MCP Server now parses schemas with apollo-compiler 2.0, pinned to `2.0.0-beta.1`, which follows the GraphQL September 2025 specification. Schemas you provide directly are validated against its stricter rules, so one that loaded before can now be rejected at startup or on hot reload. For example, `@deprecated` on a required argument, a default value that doesn't match its type, or one object type used for more than one root operation is now an error. Federation already validates the API schema it derives from a supergraph, so rule violations there are logged as warnings instead of preventing the server from starting.
+
+#### Use operation and variable descriptions in tool definitions
+
+Operations and their variables can now carry descriptions, as defined by the GraphQL September 2025 specification. An operation's description becomes the tool description, ahead of leading `#` comments; config-level `overrides.descriptions` still take priority over both. A variable's description becomes its input property description, ahead of a `#` comment on the variable and the schema's argument description. A variable description applies to the variable as a whole; describing individual fields of an input object isn't supported.
+
+Descriptions on operations, fragments, and variables are removed before an operation is sent to the GraphQL endpoint, so endpoints whose parsers predate the syntax, including the Apollo Router, keep working.
+
+#### Advertise a server icon in `initialize`
+
+Server operators can now configure `server_info.icons`, letting the MCP
+`initialize` response advertise one or more icons that clients render
+alongside the server's name. Each entry mirrors the fields of the MCP
+[`Icon`](https://modelcontextprotocol.io/specification/2025-11-25/schema#icon)
+object: `src`, `mime_type`, `sizes`, and `theme`. No icon is advertised
+by default.
+
+### Fixes
+
+#### Annotate built-in introspection tools
+
+The built-in `introspect`, `search`, `validate`, and `execute` tools now expose MCP `ToolAnnotations`. Schema-only tools are marked read-only, non-destructive, and idempotent. `execute` is read-only unless `mutation_mode` is `all`, and is always marked open-world because it calls the configured GraphQL endpoint.
+
+#### Annotate the built-in `explorer` tool
+
+The `explorer` tool now exposes MCP `ToolAnnotations` alongside the other built-ins: read-only, non-destructive, idempotent, and closed-world, since it only formats an Apollo Explorer URL and reaches nothing. Clients that gate auto-approval on `readOnlyHint` no longer prompt for it.
+
+The docs now describe the `explorer` tool itself, and note that `overrides.annotations` applies to operation tools only — an entry named after a built-in tool is ignored.
+
+#### Use method headers for anonymous discovery when the protocol validates them
+
+Anonymous method matching now prefers `Mcp-Method` for SDK-known protocol versions from `2026-07-28` onward, avoiding auth middleware body buffering when the header decides access. Older versions and requests without that header retain the 16 KiB body peek. Tool-name exceptions still inspect the body. The server's advertised protocol versions are unchanged.
+
+The deprecated `allow_anonymous_mcp_discovery` flag retains its existing method list; its documentation and deprecation guidance now also list the already-supported `server/discover`. A local initialization check rejects contradictory method headers to cover rmcp's handshake exemption.
+
+#### Delegate protocol version negotiation to rmcp
+
+This server negotiated the `initialize` protocol version itself, echoing the client's requested version when supported and otherwise falling back to the newest revision it implements. rmcp 3.3.0 exposes that same rule through `ServerHandler::negotiate_initialize`, so the local copy has been removed in favor of the SDK's, along with the hand-filtered list of supported versions that `ProtocolVersion::known_up_to` now derives.
+
+Negotiated versions are unchanged on every transport: a supported version is still echoed back, and anything newer or unrecognized still falls back to the newest revision this server implements.
+
+#### Export the standard HTTP server metrics again
+
+`axum-otel-metrics` supplies the server's `http.server.*` metrics, and it takes
+its meter from `opentelemetry::global`. It was pinned to a version built
+against OpenTelemetry 0.30 while the server runs 0.32, and each major version
+of that crate keeps its own global, so the layer recorded into a no-op provider
+and nothing reached the configured exporter. Every metric the telemetry docs
+attributed to that library was missing.
+
+Upgrading `axum-otel-metrics` to 0.14.1 collapses the two OpenTelemetry
+versions into one, and the metrics now reach the provider the server installs.
+The documented names change with it: the duration histogram follows the current
+conventions as `http.server.request.duration` rather than `http.server.duration`,
+and `http.server.request.body.size` and `http.server.response.body.size` are
+emitted alongside `http.server.active_requests`.
+
+#### Emit a standards-compliant HTTP `SERVER` span for inbound requests
+
+The span wrapping every request to the MCP endpoint was exported as `INTERNAL` and carried its HTTP data under names of this server's own invention, so backends that derive request and error metrics from span kind and status under-counted requests and missed server errors. That span is now a `SERVER` span named `{method} {route}`, with its status set to error on a 5xx response, following the OpenTelemetry [HTTP server span conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span).
+
+Collector rules, dashboards and monitors that match the old span need to change:
+
+| Before | After |
+| --- | --- |
+| span name `mcp_server` | `{method} {route}`, for example `POST /mcp` |
+| span kind `INTERNAL` | `SERVER` |
+| `method` | `http.request.method` |
+| `uri` | `url.path` |
+| `status_code`, a string such as `"200 OK"` | `http.response.status_code`, the integer `200` |
+| `session_id` | `apollo.mcp.session_id` |
+
+The span also carries `server.address`, `server.port`, `user_agent.original`, `network.protocol.version`, `error.type` on a 5xx response, and `http.request.method_original` for a method outside the conventions' set — such a request reports `http.request.method` as `_OTHER` and is named `HTTP {route}`.
+
+Requests that stream a response — every tool call — now report the full request duration rather than the time to the response head, because the span stays open until the body finishes. This is the duration the span should always have carried, but it is several times larger than the old one, so alert thresholds and latency panels built on the previous number need re-baselining. A `GET` on the MCP endpoint is unaffected: it is the session's standing server-to-client stream, and its span still ends at the response head.
+
+Trace context propagation, baggage handling and the rest of the span tree are unchanged.
+
+#### Prepare tool-change subscription streams
+
+Add request-scoped tool-list change subscriptions in preparation for MCP 2026-07-28 support. The supported protocol version and legacy notification behavior are unchanged.
+
+## 1.19.0 (2026-09-11)
+
+### Features
+
+#### Prepare configurable cache hints for MCP list and read responses
+
+Add `caching.ttl_ms` (default: 300,000 milliseconds) to configure SEP-2549 cache hints for `tools/list`, `resources/list`, `resources/read`, and `prompts/list`. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided because response visibility can depend on authentication scope.
+
+Hints require negotiated MCP protocol version `2026-07-28` or newer. The server currently caps negotiation at `2025-11-25`, so this is preparatory support: clients will not receive cache hints until the server implements and negotiates the required protocol revision.
+
+### Fixes
+
+#### Send tool-change notifications from service-owned tasks
+
+Replace shared MCP peer tracking with service-owned tool-change notification tasks. Slow clients no longer delay catalog updates or other clients, and a slow send no longer permanently disables notifications after five seconds. Legacy session teardown releases notification resources. Catalog invalidations registered during initialization are retained until the initialized notification starts delivery, preventing missed updates while callbacks are scheduled.
+
+Existing sessionless HTTP behavior and supported protocol versions are preserved.
+
+#### Don't reject an unauthenticated GET with 401 on a stateless streamable-HTTP transport
+
+With `transport.auth` configured and `stateful_mode: false`, an unauthenticated `GET` on the MCP endpoint now returns 405, matching what it already returned once a credential skipped validation, instead of 401. That route was never served in stateless mode regardless of a credential, so the 401 protected nothing on the wire. It did have a client-visible effect: at least one MCP client reads a 401 on that GET as "this server requires authentication" and hides every tool, including tools `transport.auth.skip_token_validation` was configured to expose without a token.
+
+A stateful transport's GET is unaffected: it still returns 401 when unauthenticated, because that GET carries the real server-to-client stream and must stay protected.
+
+## 1.18.0 (2026-09-09)
+
+### Features
+
+#### Configure which requests skip OAuth token validation
+
+`transport.auth.skip_token_validation` lists requests that skip bearer token validation, keyed on the JSON-RPC method name, the tool named by a `tools/call`, or an HTTP header name such as `x-api-key`. `tools/call`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `prompts/get`, and `completion/complete` are rejected from the method list, since each names one of many items through a request parameter the list can't see; `authorization` is rejected from the header list, since it could never match. A `tools/call` carrying an `?app=` query parameter never matches the tool list either, because the server dispatches that app's own tool rather than the named operation. Every list applies only when the request carries no `Authorization` header, so a caller that presents a token is always validated and an expired token is rejected even on a listed method, tool, or header. A tokenless request with a body too large or malformed to inspect no longer fails outright on that alone: it still gets the normal 401 challenge instead of a 413 or 400, since it was never going to succeed without a token.
+
+This lets a deployment keep public tools reachable without a token, and lets a non-OAuth credential such as an API key coexist with OAuth, authenticated by a later layer.
+
+`allow_anonymous_mcp_discovery` is deprecated in favor of `skip_token_validation.methods`, which it now maps onto (`initialize`, `tools/list`, `resources/list`) with a startup warning. Setting both is a startup error.
+
+#### Support per-operation scope alternatives
+
+`overrides.required_scopes` now accepts nested scope lists for per-operation authorization. Flat lists keep their existing behavior and require every listed scope. Nested lists define alternatives: each inner list is an AND group, and the outer list is OR.
+
+This lets a single operation accept scope rules such as either `user:write` plus `tenant:admin`, or `admin`, while preserving existing flat-list configurations and flat-map builder inputs.
+
+When a per-operation `403` is returned for a nested requirement, the `WWW-Authenticate` header's `scope` auth-param always names the complete first-listed alternative, regardless of the presented token, and its `scope_mode` auth-param always reports `require_all` regardless of the globally configured `scope_mode`.
+
+If you embed Apollo MCP Server as a library, `Server::builder()`'s `required_scopes` parameter now takes `impl Into<OperationScopeRequirements>` instead of `HashMap<String, Vec<String>>` directly. Existing `HashMap<String, Vec<String>>` call sites keep working unchanged through that conversion.
+
+#### Support the `server/discover` RPC
+
+The server now answers `server/discover`, the RPC MCP 2026-07-28 requires for up-front protocol version selection. Clients can call it before any other request — including as the opening message on stdio, where it doubles as a backward-compatibility probe — without first establishing a session.
+
+The response advertises the same capabilities the `initialize` response returns, lists the protocol versions the server implements, and carries the server's implementation metadata — name, version, title, website URL, and description — sourced from the `server_info` configuration key. Note that discovery carries this metadata in the result's `_meta` under `io.modelcontextprotocol/serverInfo` rather than a top-level field.
+
+`server/discover` can now be listed in `skip_token_validation.methods` to allow it without authentication, and the deprecated `allow_anonymous_mcp_discovery` flag now folds it in alongside `initialize`, `tools/list`, and `resources/list`, since `server/discover` may be a client's first MCP request.
+
+The newest protocol version the server negotiates remains `2025-11-25`. Answering `server/discover` does not by itself make the server conformant with `2026-07-28`: that revision also replaces the standalone notification stream with `subscriptions/listen`, which this server does not yet implement. Advertising `2026-07-28` while the server announces `tools.listChanged` would promise change notifications it has no way to deliver, so the supported-version list stays capped until that work lands.
+
+### Fixes
+
+#### Report config file errors against the file instead of `APOLLO_MCP_` environment variables
+
+A validation error in a YAML config file was reported as coming from the environment whenever an `APOLLO_MCP_<SECTION>__*` variable was set for the same top-level section. With `APOLLO_MCP_TRANSPORT__PORT` set, a config file missing `transport.auth.resource` failed with ``missing field `resource` for key "TRANSPORT" in `APOLLO_MCP_` environment variable(s)``, sending operators to look through their deployment environment rather than the file that actually had the problem. Figment tags a section assembled from several providers with whichever provider won precedence, and the environment always wins over the file, so it was credited for errors it did not cause.
+
+Config errors are now attributed by extracting the config file on its own. Figment reports an error against a key path only as precise as the deserializer that failed, so for a section both sources filled in the path cannot say which one supplied the offending value, but a failure that survives without the environment belongs to the file. Errors that really do come from an `APOLLO_MCP_` variable, including one that overrides a value the file already set, still name the environment.
+
+Errors from a config file also name its path now, for example ``missing field `resource` for key "default.transport" in config file 'router-config.yaml'``, where they previously said only "YAML source string".
+
+#### Cap protocol version negotiation on stateful transports
+
+On stateful streamable HTTP sessions and stdio, rmcp's handshake re-negotiated the protocol version after this server's `initialize` handler ran, echoing back any version in rmcp's `KNOWN_VERSIONS` regardless of whether this server implements it. A stateful client requesting `2026-07-28`, a revision rmcp has a constant for but this server doesn't yet handle (SEP-2243 headers and `subscriptions/listen`), was told the server supports it and could send follow-up requests the server couldn't serve.
+
+The rmcp upgrade to 3.2.0 adds a `ServerHandler::supported_protocol_versions` hook that rmcp's re-negotiation now consults on every transport. This server overrides it to the versions it actually implements, so the cap at the newest supported protocol version now holds consistently across stateless and stateful streamable HTTP and stdio.
+
+#### Clarify security boundaries in documentation
+
+The documentation now describes the server's security controls in terms of what the implementation actually enforces — secret handling, header forwarding, OAuth scope semantics, mutation modes, the GraphQL execution boundary, host and Origin validation, and telemetry redaction — along with their boundaries and the responsibilities that remain with MCP clients, operators, and upstream GraphQL services. Runtime behavior is unchanged apart from a more precise warning when global scope enforcement is disabled while global scopes are configured, plus a regression test covering explicitly forwarded authorization headers when automatic passthrough is disabled.
+
+#### Default `transport.auth.scopes` to an empty list
+
+`transport.auth.scopes` no longer has to be present in an auth configuration. Omitting it now means the same thing as an empty list, which is no global scope requirement. This matches its sibling list fields `audiences` and `issuers`, which already defaulted to empty, and it removes the `scopes: []` boilerplate that deployments running with `scope_mode: disabled` had to carry.
+
+Previously an auth block without `scopes` failed at startup with `missing field 'scopes' for key "default.transport"`, an error that gave no hint that an empty list was an acceptable answer. The surrounding code already treated an empty list as valid, so only the deserialization requirement was out of step. `scopes` also drops out of the required list in the generated configuration JSON Schema.
+
+#### Correct the documented CORS defaults and document list replacement
+
+The CORS documentation showed `allow_methods` defaulting to `GET, POST`. The actual default has been `GET, POST, DELETE` for some time, and DELETE is how a client terminates a session it no longer needs, so a reader who copied the documented block as a starting point lost session termination.
+
+The documentation also never said that `allow_methods`, `allow_headers`, and `expose_headers` replace the default lists rather than extend them. An operator setting `allow_headers` to add one custom header silently dropped `mcp-protocol-version` and `mcp-session-id` from the preflight response, which breaks every browser-based MCP client with nothing in the config or the logs pointing at the cause. The auth documentation steers operators into exactly this edit when they use `skip_token_validation.headers` with browser clients, so it now links to a worked example that repeats the defaults alongside the added header.
+
+#### Document how GraphQL types map to generated tool schemas
+
+The Define MCP Tools page gains a "Generated tool schemas" reference: a worked example with the exact `inputSchema` the server emits, the GraphQL-to-JSON-Schema type mapping, how nullability and `required` are expressed, how default values are converted, where input property descriptions come from, and the shape of the optional `outputSchema`. No runtime behavior changes.
+
+#### Express nullability and default values in generated input schemas
+
+The shape of generated tool input schemas changes: every nullable variable, input object field, and list item is now wrapped as `{"anyOf": [<type>, {"type": "null"}]}`. `anyOf` is used because the strict-mode schema subsets of OpenAI and Anthropic accept it and reject `oneOf`. Any call that was valid before stays valid, since omitting a property is still allowed and `required` only shrinks. Hosts that inspect `properties.<name>.type` directly will see `anyOf` instead of a bare type, and tests that snapshot tool schemas will need updating.
+
+Previously, a variable was marked nullable only by leaving it out of `required`. Clients that rewrite schemas for strict function calling move every property into `required`, which removed the only way to leave a value unset, so models sent placeholder values such as `""`, `[]`, or an arbitrary boolean for filters they meant to skip. With an explicit `null` alternative, `null` stays valid after such a rewrite.
+
+GraphQL default values on variables and input fields are emitted as JSON Schema `default`, following GraphQL input coercion so the value matches the property's schema: a single value declared for a list type is emitted as a one-element list, and an Int literal declared for an `ID` as a string. A non-null variable with a default value, such as `$limit: Int! = 10`, is no longer listed as `required`, matching GraphQL semantics and how input fields were already handled. Models may now omit it and let the default apply where they previously had to supply a value. This only helps clients that honor `required` as written; a strict rewrite that forces every property into `required` still has to supply such a variable, since a non-null type has no `null` alternative. Descriptions on list-typed variables now sit on the property itself rather than on its items, so they stay visible above the new wrapper.
+
+#### Fix output schema rejecting valid responses for nullable and union fields
+
+With `overrides.enable_output_schema: true`, a nullable field's `outputSchema` wrapped its inner schema in `oneOf` with `{"type": "null"}`. For a custom scalar with no entry in `custom_scalars`, and for unknown types, the inner schema is `{}`, which already accepts `null`. A `null` response value therefore matched both `oneOf` branches, and MCP clients that validate `structuredContent` against `outputSchema` (such as the official MCP TypeScript SDK) rejected the tool result.
+
+GraphQL union fields had the same problem. Each inline fragment became a `oneOf` branch, but the member schemas carry no discriminator and allow extra properties, so a response object that satisfies more than one fragment (for example when fragments select the same field names) also failed validation.
+
+Both places now use `anyOf`, which is the correct keyword for a union and has no exclusivity requirement.
+
+#### Negotiate protocol version in stateless streamable HTTP mode
+
+When running streamable HTTP in stateless mode, the server answered `initialize` with its newest supported MCP protocol version regardless of the version the client requested, breaking clients that require an older version (such as AWS AgentCore requesting `2025-06-18`). The server now echoes the client's requested protocol version when it is a version the server implements, and otherwise negotiates down to the newest version the server implements (`2025-11-25`). Versions that the underlying SDK recognizes but this server does not yet implement are capped rather than advertised, so the server never claims support for a revision it can't serve.
+
+#### Propagate W3C baggage through MCP Server telemetry
+
+Apollo MCP Server now registers a composite OpenTelemetry propagator containing W3C Trace Context and W3C Baggage so incoming `baggage` is extracted and outgoing GraphQL requests inject it. Default CORS `allow_headers` also includes `baggage` so browser clients can send the header on MCP requests.
+
 ## 1.17.0 (2026-07-30)
 
 ### Features

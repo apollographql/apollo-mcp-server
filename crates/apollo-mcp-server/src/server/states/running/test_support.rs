@@ -1,0 +1,197 @@
+use axum::body::Body;
+use futures::StreamExt as _;
+use serde_json::Value;
+use sse_stream::SseStream;
+use std::{
+    pin::Pin,
+    sync::atomic::{AtomicBool, Ordering},
+    task::{Context, Poll},
+};
+use tokio::io::{AsyncWrite, DuplexStream};
+use tokio::sync::mpsc;
+
+use super::*;
+use crate::operations::RawOperation;
+
+/// Reports actual write backpressure once armed, without changing the I/O.
+pub(super) struct ObservedWriter {
+    pub(super) output: DuplexStream,
+    pub(super) armed: Arc<AtomicBool>,
+    pub(super) blocked: mpsc::UnboundedSender<()>,
+}
+
+impl AsyncWrite for ObservedWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bytes: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let result = Pin::new(&mut self.output).poll_write(cx, bytes);
+        if result.is_pending() && self.armed.swap(false, Ordering::SeqCst) {
+            self.blocked.send(()).unwrap();
+        }
+        result
+    }
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.output).poll_flush(cx)
+    }
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.output).poll_shutdown(cx)
+    }
+}
+
+#[tokio::test]
+async fn observed_writer_delegates_shutdown() {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let (output, mut peer) = tokio::io::duplex(8);
+    let (blocked, _observed) = mpsc::unbounded_channel();
+    let mut writer = ObservedWriter {
+        output,
+        armed: Arc::new(AtomicBool::new(false)),
+        blocked,
+    };
+
+    writer.shutdown().await.unwrap();
+
+    let mut byte = [0];
+    assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+}
+
+pub(in crate::server::states) fn create_test_running() -> Running {
+    let schema =
+        apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+            .unwrap();
+    Running {
+        schema: Arc::new(RwLock::new(schema)),
+        operations: Arc::new(RwLock::new(vec![])),
+        apps: vec![],
+        prompts: vec![],
+        headers: http::HeaderMap::new(),
+        forward_headers: vec![],
+        endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+        execute_tool: None,
+        introspect_tool: None,
+        search_tool: None,
+        explorer_tool: None,
+        validate_tool: None,
+        custom_scalar_map: None,
+        tool_list_changes: Default::default(),
+        cancellation_token: CancellationToken::new(),
+        mutation_mode: MutationMode::All,
+        disable_type_description: false,
+        disable_schema_description: false,
+        enable_output_schema: false,
+        disable_auth_token_passthrough: false,
+        descriptions: HashMap::new(),
+        annotations: HashMap::new(),
+        health_check: None,
+        server_info: Default::default(),
+        instructions: None,
+        rhai_engine: SharedRhaiEngine::new("rhai"),
+        caching: Default::default(),
+    }
+}
+
+/// A server exposing one `Hello` tool that resolves against `endpoint`.
+pub(in crate::server::states) fn create_test_running_with_operation(endpoint: url::Url) -> Running {
+    let operation = RawOperation::from(("query Hello { hello }".to_string(), None))
+        .into_operation(
+            &apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                .unwrap(),
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .expect("operation should be valid");
+
+    Running {
+        operations: Arc::new(RwLock::new(vec![operation])),
+        endpoint,
+        ..create_test_running()
+    }
+}
+
+pub(super) struct SseEvent {
+    pub(super) id: Option<String>,
+    pub(super) message: Value,
+}
+
+pub(in crate::server::states) async fn next_message(reader: &mut SseReader) -> Value {
+    reader.next_event().await.message
+}
+
+pub(in crate::server::states) struct SseReader {
+    stream: SseStream<Body>,
+}
+
+impl SseReader {
+    pub(in crate::server::states) fn new(body: Body) -> Self {
+        Self {
+            stream: SseStream::new(body),
+        }
+    }
+
+    pub(super) async fn next_notification(&mut self) -> String {
+        let event = self.next_event().await;
+        assert_eq!(event.message["method"], "notifications/tools/list_changed");
+        event
+            .id
+            .expect("legacy notifications must have an SSE event ID")
+    }
+
+    pub(super) async fn next_event(&mut self) -> SseEvent {
+        loop {
+            let event = self
+                .stream
+                .next()
+                .await
+                .expect("SSE stream closed before the expected message")
+                .expect("invalid SSE event");
+            let Some(data) = event.data.filter(|data| !data.is_empty()) else {
+                continue; // Ignore keep-alive and retry-only events.
+            };
+            return SseEvent {
+                id: event.id,
+                message: serde_json::from_str(&data).expect("SSE data must contain a JSON message"),
+            };
+        }
+    }
+}
+
+proptest::proptest! {
+    #[test]
+    fn notification_stream_preserves_events_across_frame_boundaries(
+        chunk_sizes in proptest::collection::vec(1usize..128, 1..16),
+        crlf in proptest::bool::ANY,
+    ) {
+        // Framing must not affect event identity, including when several
+        // events share a frame or an event is split between frames.
+        let newline = if crlf { "\r\n" } else { "\n" };
+        let payload = format!(
+            ": keep-alive{newline}{newline}data:{newline}{newline}id: first{newline}data: {{\"method\":\"notifications/tools/list_changed\"}}{newline}{newline}id: second{newline}data: {{\"method\":\"notifications/tools/list_changed\"}}{newline}{newline}"
+        );
+        let mut remaining = payload.as_bytes();
+        let mut chunks = Vec::new();
+        for size in chunk_sizes.into_iter().cycle() {
+            if remaining.is_empty() {
+                break;
+            }
+            let (chunk, rest) = remaining.split_at(size.min(remaining.len()));
+            chunks.push(Ok::<_, std::convert::Infallible>(chunk.to_vec()));
+            remaining = rest;
+        }
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        runtime.block_on(async {
+            let body = Body::from_stream(futures::stream::iter(chunks));
+            let mut stream = SseReader::new(body);
+            assert_eq!(stream.next_notification().await, "first");
+            assert_eq!(stream.next_notification().await, "second");
+        });
+    }
+}

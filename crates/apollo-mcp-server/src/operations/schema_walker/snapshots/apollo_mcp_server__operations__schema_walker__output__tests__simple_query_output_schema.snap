@@ -10,7 +10,7 @@ expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
       "properties": {
         "user": {
           "description": "Get a user by ID",
-          "oneOf": [
+          "anyOf": [
             {
               "type": "object",
               "properties": {
@@ -31,7 +31,7 @@ expression: "serde_json::to_string_pretty(&output_schema).unwrap()"
                 },
                 "email": {
                   "description": "The user's email address",
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "type": "string"
                     },

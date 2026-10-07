@@ -1,0 +1,4 @@
+type Query {
+  text: String!
+  intentionalError: String
+}

@@ -107,7 +107,7 @@ fn minify_directives(directives: &apollo_compiler::ast::DirectiveList) -> String
 fn minify_fields(
     fields: &apollo_compiler::collections::IndexMap<
         apollo_compiler::Name,
-        apollo_compiler::schema::Component<apollo_compiler::ast::FieldDefinition>,
+        apollo_compiler::Node<apollo_compiler::ast::FieldDefinition>,
     >,
 ) -> String {
     let mut result = String::new();
@@ -147,7 +147,7 @@ fn minify_fields(
 fn minify_input_fields(
     fields: &apollo_compiler::collections::IndexMap<
         apollo_compiler::Name,
-        apollo_compiler::schema::Component<apollo_compiler::ast::InputValueDefinition>,
+        apollo_compiler::Node<apollo_compiler::ast::InputValueDefinition>,
     >,
 ) -> String {
     let mut result = String::new();
@@ -213,7 +213,9 @@ fn format_type_name_with_description(
 }
 
 fn format_interfaces(
-    interfaces: &apollo_compiler::collections::IndexSet<apollo_compiler::schema::ComponentName>,
+    interfaces: &apollo_compiler::collections::IndexSet<
+        apollo_compiler::Node<apollo_compiler::Name>,
+    >,
 ) -> String {
     interfaces
         .iter()
@@ -246,10 +248,11 @@ fn shorten_scalar_names(name: &str) -> &str {
 /// Normalize description formatting
 #[allow(clippy::expect_used)]
 fn normalize_description(desc: &str) -> String {
-    // LLMs can typically process descriptions just fine without whitespace
+    // Each whitespace run collapses to a single space, and leading and trailing whitespace is
+    // removed, so descriptions stay on one line while words remain separated.
     static WHITESPACE_PATTERN: OnceLock<Regex> = OnceLock::new();
     let re = WHITESPACE_PATTERN.get_or_init(|| Regex::new(r"\s+").expect("regex pattern compiles"));
-    re.replace_all(desc, "").to_string()
+    re.replace_all(desc.trim(), " ").into_owned()
 }
 
 #[cfg(test)]
@@ -273,5 +276,45 @@ mod tests {
             .join("\n");
 
         insta::assert_snapshot!(minified);
+    }
+
+    #[test]
+    fn normalize_description_collapses_whitespace_runs() {
+        let desc = "\n\t  The rich text converted to plain text\n\t\t(non wiki),   taking the\r\n  field renderer into account.  \n";
+
+        assert_eq!(
+            normalize_description(desc),
+            "The rich text converted to plain text (non wiki), taking the field renderer into account."
+        );
+    }
+
+    #[test]
+    fn deprecation_reason_is_normalized() {
+        let schema = apollo_compiler::schema::Schema::parse(
+            r#"
+            type Query {
+              """
+                Returns the thing.
+                    Requires   opting in.
+              """
+              old: String @deprecated(reason: """
+                  Use   `new`
+                  instead.
+              """)
+              new: String
+            }
+            "#,
+            "schema.graphql",
+        )
+        .expect("Failed to parse schema")
+        .validate()
+        .expect("Failed to validate schema");
+
+        let query = schema.types.get("Query").expect("Query type exists");
+
+        assert_eq!(
+            query.minify(),
+            r#"T:Query:"Returns the thing. Requires opting in."old:s@D("Use `new` instead."),new:s"#
+        );
     }
 }

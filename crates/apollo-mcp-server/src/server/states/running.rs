@@ -1,43 +1,47 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
-use parking_lot::Mutex;
+use opentelemetry::trace::FutureExt as _;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
+#[cfg(test)]
+use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
-    GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
-    PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
-    ToolsCapability,
+    GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
 };
 use rmcp::{
-    Peer, RoleServer, ServerHandler, ServiceError,
+    RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
-    service::RequestContext,
+    service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{Instrument as _, debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
+use crate::apps::app_param_from_query;
 use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::auth::{OperationScopePolicy, ValidToken};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::server::states::telemetry::get_parent_span;
+use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
+    caching::Caching,
     custom_scalar_map::CustomScalarMap,
     errors::McpError,
     explorer::{EXPLORER_TOOL_NAME, Explorer},
@@ -51,7 +55,9 @@ use crate::{
     },
     operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
 };
-use apollo_mcp_rhai::RhaiEngine;
+use apollo_mcp_rhai::SharedRhaiEngine;
+
+use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 
 #[derive(Clone)]
 pub(super) struct Running {
@@ -68,7 +74,7 @@ pub(super) struct Running {
     pub(super) explorer_tool: Option<Explorer>,
     pub(super) validate_tool: Option<Validate>,
     pub(super) custom_scalar_map: Option<CustomScalarMap>,
-    pub(super) peers: Arc<RwLock<Vec<Peer<RoleServer>>>>,
+    pub(super) tool_list_changes: ToolListChanges,
     pub(super) cancellation_token: CancellationToken,
     pub(super) mutation_mode: MutationMode,
     pub(super) disable_type_description: bool,
@@ -81,10 +87,45 @@ pub(super) struct Running {
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
-    pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) rhai_engine: SharedRhaiEngine,
+    pub(super) caching: Caching,
+}
+
+/// Client capabilities and negotiated protocol version derived from the peer's `initialize`
+/// info, bundled so handlers that need both (app-target resolution, output-schema stripping,
+/// cache hints) take one argument instead of two.
+#[derive(Debug, Clone, Copy, Default)]
+struct PeerContext<'a> {
+    client_capabilities: Option<&'a ClientCapabilities>,
+    protocol_version: Option<&'a ProtocolVersion>,
+}
+
+#[cfg(test)]
+impl<'a> PeerContext<'a> {
+    fn with_client_capabilities(client_capabilities: &'a ClientCapabilities) -> Self {
+        Self {
+            client_capabilities: Some(client_capabilities),
+            protocol_version: None,
+        }
+    }
+
+    fn with_protocol_version(protocol_version: &'a ProtocolVersion) -> Self {
+        Self {
+            client_capabilities: None,
+            protocol_version: Some(protocol_version),
+        }
+    }
 }
 
 impl Running {
+    /// Construct an independent rmcp service sharing this application's catalog.
+    pub(super) fn for_service(&self) -> McpService {
+        McpService {
+            application: self.clone(),
+            notifications: Default::default(),
+        }
+    }
+
     /// Returns true when `enable_output_schema` is active and the negotiated
     /// protocol version supports `outputSchema` / `structuredContent` (MCP 2025-06-18+).
     fn client_supports_output_schema(&self, protocol_version: Option<&ProtocolVersion>) -> bool {
@@ -136,15 +177,11 @@ impl Running {
 
         *operations_lock = operations;
 
-        // Drop the operations lock before notifying peers. The operations are
-        // already written, so clients will see the updated list when they
-        // re-fetch. Holding the lock during notification can starve all
-        // list_tools / call_tool / initialize requests if any peer notification
-        // is slow or hangs.
+        // Publish only after the updated catalog is visible to readers.
         drop(operations_lock);
 
         // Notify MCP clients that tools have changed
-        Self::notify_tool_list_changed(self.peers.clone()).await;
+        self.tool_list_changes.publish();
     }
 
     /// Replaces the current predefined operation catalog with the latest source update.
@@ -189,18 +226,17 @@ impl Running {
         );
         *operations_lock = updated_operations;
 
-        // Drop the operations lock before notifying peers (same rationale as update_schema).
+        // Publish only after the updated catalog is visible to readers.
         drop(operations_lock);
 
         // Notify MCP clients that tools have changed
-        Self::notify_tool_list_changed(self.peers.clone()).await;
+        self.tool_list_changes.publish();
     }
 
     /// Reload Rhai scripts from the configured Rhai directory.
     /// On failure, logs the error and keeps the previous scripts.
     pub(super) fn reload_rhai_scripts(&self) {
-        let mut engine = self.rhai_engine.lock();
-        match engine.reload() {
+        match self.rhai_engine.reload() {
             Ok(()) => {
                 info!("Rhai scripts reloaded successfully");
             }
@@ -210,73 +246,22 @@ impl Running {
         }
     }
 
-    /// Notify any peers that tools have changed. Drops unreachable peers from the list.
-    ///
-    /// Locking strategy: snapshot the peer list under a **read** lock, notify
-    /// without holding any lock, then briefly take a **write** lock only to
-    /// swap in the retained list. This keeps the write-lock hold time
-    /// negligible regardless of how many peers need notifying.
-    #[tracing::instrument(skip_all)]
-    async fn notify_tool_list_changed(peers: Arc<RwLock<Vec<Peer<RoleServer>>>>) {
-        const PEER_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-        // Snapshot under read lock, then release immediately so concurrent
-        // initialize requests can register new peers without blocking.
-        let snapshot: Vec<_> = {
-            let guard = peers.read().await;
-            if guard.is_empty() {
-                return;
-            }
-            debug!(
-                "Operations changed, notifying {} peers of tool change",
-                guard.len()
-            );
-            guard.clone()
-        };
-        let snapshot_len = snapshot.len();
-
-        // Notify without holding any lock.
-        let mut retained_peers = Vec::new();
-        for peer in &snapshot {
-            if !peer.is_transport_closed() {
-                match tokio::time::timeout(PEER_NOTIFY_TIMEOUT, peer.notify_tool_list_changed())
-                    .await
-                {
-                    Ok(Ok(_)) => retained_peers.push(peer.clone()),
-                    Ok(Err(ServiceError::TransportSend(_) | ServiceError::TransportClosed)) => {
-                        error!("Failed to notify peer of tool list change - dropping peer");
-                    }
-                    Ok(Err(e)) => {
-                        error!("Failed to notify peer of tool list change {:?}", e);
-                        retained_peers.push(peer.clone());
-                    }
-                    Err(_) => {
-                        error!(
-                            "Timed out notifying peer of tool list change after {}s - dropping peer",
-                            PEER_NOTIFY_TIMEOUT.as_secs()
-                        );
-                    }
-                }
-            }
-        }
-
-        // Brief write lock: replace the snapshot portion with retained peers,
-        // preserving any peers added by concurrent initialize calls.
-        let mut guard = peers.write().await;
-        let new_peers: Vec<_> = if guard.len() > snapshot_len {
-            guard.split_off(snapshot_len)
-        } else {
-            vec![]
-        };
-        *guard = retained_peers;
-        guard.extend(new_peers);
-    }
-
     async fn list_tools_impl(
         &self,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
-        protocol_version: Option<&ProtocolVersion>,
+        peer: PeerContext<'_>,
+    ) -> Result<ListToolsResult, McpError> {
+        self.list_tools_with_protocol_max(extensions, peer, &MAX_SUPPORTED_PROTOCOL_VERSION)
+            .await
+    }
+
+    // Keep the production cap fixed at the entry point while allowing the shared
+    // implementation to be tested against a future supported protocol revision.
+    async fn list_tools_with_protocol_max(
+        &self,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
     ) -> Result<ListToolsResult, McpError> {
         let meter = &meter::METER;
         meter
@@ -299,7 +284,17 @@ impl Running {
                     })
                 });
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
+
+        let mut operation_tools: Vec<_> = self
+            .operations
+            .read()
+            .await
+            .iter()
+            .map(|op| op.as_ref().clone())
+            .collect();
+        // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
+        operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
 
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
@@ -307,11 +302,8 @@ impl Running {
 
             match app {
                 Some(app) => ListToolsResult::with_all_items(
-                    self.operations
-                        .read()
-                        .await
-                        .iter()
-                        .map(|op| op.as_ref().clone())
+                    operation_tools
+                        .into_iter()
                         .chain(
                             self.execute_tool
                                 .as_ref()
@@ -337,11 +329,8 @@ impl Running {
             }
         } else {
             ListToolsResult::with_all_items(
-                self.operations
-                    .read()
-                    .await
-                    .iter()
-                    .map(|op| op.as_ref().clone())
+                operation_tools
+                    .into_iter()
                     .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
@@ -357,13 +346,15 @@ impl Running {
                 .retain(|tool| policy.allows_tool(tool.name.as_ref(), &token_scopes));
         }
 
-        if !self.client_supports_output_schema(protocol_version) {
+        if !self.client_supports_output_schema(peer.protocol_version) {
             for tool in &mut result.tools {
                 tool.output_schema = None;
             }
         }
 
-        Ok(result)
+        Ok(self
+            .caching
+            .apply_to(result, peer.protocol_version, server_max))
     }
 
     async fn call_tool_impl(
@@ -525,6 +516,20 @@ impl Running {
     fn list_resources_impl(
         &self,
         extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourcesResult, McpError> {
+        self.list_resources_with_protocol_max(
+            extensions,
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resources_with_protocol_max(
+        &self,
+        extensions: &Extensions,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
     ) -> Result<ListResourcesResult, McpError> {
         let app_param = extract_app_param(extensions);
 
@@ -544,14 +549,55 @@ impl Running {
             vec![]
         };
 
-        Ok(ListResourcesResult::with_all_items(resources))
+        let result = ListResourcesResult::with_all_items(resources);
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
+    }
+
+    fn list_resource_templates_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        self.list_resource_templates_with_protocol_max(
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resource_templates_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // We expose no templates, but even an empty modern list requires cache hints.
+        // rmcp's default handler returns the empty list without those hints.
+        Ok(self.caching.apply_to(
+            ListResourceTemplatesResult::default(),
+            protocol_version,
+            server_max,
+        ))
     }
 
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         extensions: Extensions,
-        client_capabilities: Option<&ClientCapabilities>,
+        peer: PeerContext<'_>,
+    ) -> Result<ReadResourceResult, ErrorData> {
+        self.read_resource_with_protocol_max(
+            request,
+            extensions,
+            peer,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+        .await
+    }
+
+    async fn read_resource_with_protocol_max(
+        &self,
+        request: rmcp::model::ReadResourceRequestParams,
+        extensions: Extensions,
+        peer: PeerContext<'_>,
+        server_max: &ProtocolVersion,
     ) -> Result<ReadResourceResult, ErrorData> {
         let request_uri = Url::parse(&request.uri).map_err(|err| {
             ErrorData::resource_not_found(
@@ -560,12 +606,15 @@ impl Running {
             )
         })?;
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, client_capabilities))?;
+        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
         if let Some(app_name) = app_param {
-            let resource =
+            let (resource, origin) =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
-            Ok(ReadResourceResult::new(vec![resource]))
+            let result = ReadResourceResult::new(vec![resource]);
+            Ok(origin
+                .caching(self.caching)
+                .apply_to(result, peer.protocol_version, server_max))
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -574,10 +623,22 @@ impl Running {
         }
     }
 
-    fn list_prompts_impl(&self) -> Result<ListPromptsResult, McpError> {
-        Ok(ListPromptsResult::with_all_items(
+    fn list_prompts_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListPromptsResult, McpError> {
+        self.list_prompts_with_protocol_max(protocol_version, &MAX_SUPPORTED_PROTOCOL_VERSION)
+    }
+
+    fn list_prompts_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListPromptsResult, McpError> {
+        let result = ListPromptsResult::with_all_items(
             self.prompts.iter().map(|p| p.prompt.clone()).collect(),
-        ))
+        );
+        Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
     fn get_prompt_impl(
@@ -630,189 +691,371 @@ impl Running {
 /// deliberately when the server adopts a new spec revision — not derived
 /// from rmcp, whose `KNOWN_VERSIONS`/`LATEST` track SDK constants rather
 /// than this server's capabilities.
-pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
-/// Echoes the client-requested protocol version when this server supports
-/// it, otherwise falls back to [`MAX_SUPPORTED_PROTOCOL_VERSION`].
-///
-/// rmcp's own re-negotiation (which runs after `initialize` on every
-/// transport, keyed off [`ServerHandler::supported_protocol_versions`]) caps
-/// at the same version, so the two stay in agreement.
-fn negotiate_protocol_version(client_requested: &ProtocolVersion) -> ProtocolVersion {
-    if ProtocolVersion::KNOWN_VERSIONS.contains(client_requested)
-        && *client_requested <= MAX_SUPPORTED_PROTOCOL_VERSION
-    {
-        client_requested.clone()
-    } else {
-        // debug rather than warn: falling back is expected, handled behavior,
-        // and a pinned client would emit this on every stateless initialize.
-        debug!(
-            client_requested = %client_requested,
-            server_fallback = %MAX_SUPPORTED_PROTOCOL_VERSION,
-            "client requested unsupported protocol version; falling back to server default"
-        );
-        MAX_SUPPORTED_PROTOCOL_VERSION
-    }
+/// Transport handler with its own legacy lifecycle. Application clones cannot
+/// accidentally be served without constructing this owner.
+#[derive(Clone)]
+pub(super) struct McpService {
+    application: Running,
+    notifications: LegacyToolNotifications,
 }
 
-impl ServerHandler for Running {
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
+impl ServerHandler for McpService {
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let meter = &meter::METER;
-        let attributes = vec![
-            KeyValue::new(
-                TelemetryAttribute::ClientName.to_key(),
-                request.client_info.name.clone(),
-            ),
-            KeyValue::new(
-                TelemetryAttribute::ClientVersion.to_key(),
-                request.client_info.version.clone(),
-            ),
-        ];
-        meter
-            .u64_counter(TelemetryMetric::InitializeCount.as_str())
-            .build()
-            .add(1, &attributes);
-        // TODO: how to remove these?
-        let mut peers = self.peers.write().await;
-        peers.push(context.peer);
-        // Echo the client's requested protocol version when supported,
-        // falling back to our max supported version otherwise (#794). rmcp's
-        // handshake re-negotiates this after `initialize` on every
-        // transport, but `supported_protocol_versions` below keeps that
-        // re-negotiation capped at the same version (closes #803).
-        let mut info = self.get_info();
-        info.protocol_version = negotiate_protocol_version(&request.protocol_version);
-        Ok(info)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+            &context,
+        );
+        async {
+            let meter = &meter::METER;
+            let attributes = vec![
+                KeyValue::new(
+                    TelemetryAttribute::ClientName.to_key(),
+                    request.client_info.name.clone(),
+                ),
+                KeyValue::new(
+                    TelemetryAttribute::ClientVersion.to_key(),
+                    request.client_info.version.clone(),
+                ),
+            ];
+            meter
+                .u64_counter(TelemetryMetric::InitializeCount.as_str())
+                .build()
+                .add(1, &attributes);
+            // Negotiate rather than answering with `get_info` as-is (#794).
+            // `supported_protocol_versions` below bounds both this call and the
+            // re-negotiation rmcp runs afterwards on every transport (#803).
+            let info = self.negotiate_initialize(&request)?;
+            // rmcp's negotiate_initialize only selects versions with the legacy
+            // handshake; modern clients use discovery and per-request metadata.
+            self.notifications
+                .initialize(&self.application.tool_list_changes);
+            Ok(info)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    /// Narrows rmcp's re-negotiation (run on every transport after
-    /// `initialize`) to the versions this server implements, so it can't
-    /// override our cap at [`MAX_SUPPORTED_PROTOCOL_VERSION`] with a newer
-    /// version from rmcp's `KNOWN_VERSIONS` (e.g. `2026-07-28`'s SEP-2243
-    /// headers and discovery, which this server doesn't yet handle).
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.notifications
+            .on_initialized(context.peer, self.application.cancellation_token.clone());
+    }
+
+    /// The protocol versions this server negotiates and advertises: every
+    /// version rmcp knows, capped at [`MAX_SUPPORTED_PROTOCOL_VERSION`].
+    ///
+    /// This also narrows rmcp's re-negotiation (run on every transport after
+    /// `initialize`), so it can't advertise a newer version from rmcp's
+    /// `KNOWN_VERSIONS`.
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
-        static SUPPORTED: LazyLock<Vec<ProtocolVersion>> = LazyLock::new(|| {
-            ProtocolVersion::KNOWN_VERSIONS
-                .iter()
-                .filter(|version| **version <= MAX_SUPPORTED_PROTOCOL_VERSION)
-                .cloned()
-                .collect()
-        });
-        Cow::Borrowed(&SUPPORTED)
+        Cow::Borrowed(ProtocolVersion::known_up_to(
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        ))
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
+    fn accepted_subscription_filter(
+        &self,
+        _requested: &SubscriptionFilter,
+    ) -> Option<SubscriptionFilter> {
+        Some(SubscriptionFilter::builder().tools_list_changed().build())
+    }
+
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", apollo.mcp.request_id = %context.request_context().id),
+            context.request_context(),
+        );
+        async {
+            let shutdown = &self.application.cancellation_token;
+            // The SDK also enforces the accepted filter in SubscriptionSink. Keep
+            // our opt-in boundary explicit before allocating a catalog receiver.
+            if context.accepted().tools_list_changed != Some(true) {
+                // No supported notifications can arrive on this stream.
+                return Ok(());
+            }
+
+            let mut changes = self.application.tool_list_changes.subscribe();
+            // rmcp acknowledges before entering this handler. An initial refresh
+            // covers catalog updates during that setup window, without replaying
+            // history. Register first so updates during the send remain pending.
+            changes.mark_changed();
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+                let result = tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    result = context.sink().notify_tool_list_changed() => result,
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(
+                        SubscriptionSendError::SubscriptionClosed
+                        | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
+                    ) => return Ok(()),
+                    Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(
+                        error,
+                    ))) => {
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
+                        return Ok(());
+                    }
+                    Err(
+                        error @ (SubscriptionSendError::NotificationNotAccepted(_)
+                        | SubscriptionSendError::UnsupportedNotification(_)),
+                    ) => {
+                        // Invalid notifications indicate a handler bug; end this
+                        // subscription instead of retrying on every catalog change.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
+                        return Err(McpError::internal_error(
+                            "Failed to deliver tool list change notification",
+                            None,
+                        ));
+                    }
+                    Err(error) => {
+                        // Unknown errors may be recoverable. Keep listening so a
+                        // later catalog change can trigger another delivery attempt.
+                        // rmcp 3.3.0's notification-send path only returns the transport
+                        // errors handled above, so real-context tests cannot reach
+                        // this fallback for future SDK errors.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - keeping subscription open"
+                        );
+                    }
+                }
+            }
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
+    }
+
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let span = tracing::Span::current();
-        if let Some(args) = &request.arguments
-            && let Ok(json) = serde_json::to_string(args)
-        {
-            span.record("apollo.mcp.tool_arguments", json.as_str());
-        }
-
-        let peer_info = context.peer.peer_info();
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
-
-        let result = self
-            .call_tool_impl(request, &context.extensions, protocol_version)
-            .await;
-
-        // Strip meta before recording: _meta.structuredContent holds the unfiltered
-        // @private payload and must not be exported to the span.
-        if let Ok(r) = &result {
-            let mut stripped = r.clone();
-            stripped.meta = None;
-            if let Ok(json) = serde_json::to_string(&stripped) {
-                span.record("apollo.mcp.tool_result", json.as_str());
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            &context,
+        );
+        async {
+            let span = tracing::Span::current();
+            if let Some(args) = &request.arguments
+                && let Ok(json) = serde_json::to_string(args)
+            {
+                span.record("apollo.mcp.tool_arguments", json.as_str());
             }
-        }
 
-        result.map(Into::into)
+            let protocol_version = context.protocol_version();
+
+            let result = self
+                .application
+                .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
+                .await;
+
+            // Strip meta before recording: _meta.structuredContent holds the unfiltered
+            // @private payload and must not be exported to the span.
+            if let Ok(r) = &result {
+                let mut stripped = r.clone();
+                stripped.meta = None;
+                if let Ok(json) = serde_json::to_string(&stripped) {
+                    span.record("apollo.mcp.tool_result", json.as_str());
+                }
+            }
+
+            result.map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
-        let protocol_version = peer_info.as_ref().map(|info| &info.protocol_version);
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_tools"),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.list_tools_impl(context.extensions, client_capabilities, protocol_version)
-            .await
+            self.application
+                .list_tools_impl(context.extensions, peer)
+                .await
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        self.list_resources_impl(&context.extensions)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resources"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
+
+            self.application
+                .list_resources_impl(&context.extensions, protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
+
+            self.application
+                .list_resource_templates_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
+    }
+
     async fn read_resource(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let peer_info = context.peer.peer_info();
-        let client_capabilities = peer_info.as_ref().map(|info| &info.capabilities);
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.read_resource_impl(request, context.extensions, client_capabilities)
-            .await
-            .map(Into::into)
+            self.application
+                .read_resource_impl(request, context.extensions, peer)
+                .await
+                .map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        self.list_prompts_impl()
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_prompts"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
+
+            self.application
+                .list_prompts_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        self.get_prompt_impl(request).map(Into::into)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", apollo.mcp.prompt_name = request.name),
+            &context,
+        );
+        async { self.application.get_prompt_impl(request).map(Into::into) }
+            .instrument(span)
+            .with_context(parent_context)
+            .await
     }
 
-    // `logging` is deprecated by SEP-2577, but we still override this handler so
-    // clients that send `logging/setLevel` without checking capabilities get an
-    // empty success instead of `-32601`.
+    // SEP-2575 removes this RPC in 2026-07-28, independently of SEP-2577's
+    // deprecation of Logging. Older clients retain the compatibility no-op.
     #[allow(deprecated)]
-    #[tracing::instrument(skip_all)]
     async fn set_level(
         &self,
         request: rmcp::model::SetLevelRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        // We do not advertise the `logging` capability and do not emit
-        // `notifications/message`. This override exists only to accept
-        // `logging/setLevel` from clients that send it without checking
-        // capabilities, so they see an empty success instead of `-32601`.
-        debug!(level = ?request.level, "received logging/setLevel; no-op");
-        Ok(())
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "set_level"),
+            &context,
+        );
+        async {
+            // rmcp 3.5 dispatches this method for every version; its modern HTTP
+            // transport maps this method-not-found error to HTTP 404.
+            if context
+                .protocol_version()
+                .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+            {
+                return Err(McpError::method_not_found::<
+                    rmcp::model::SetLevelRequestMethod,
+                >());
+            }
+            // We do not advertise the `logging` capability and do not emit
+            // `notifications/message`. This override exists only to accept
+            // `logging/setLevel` from clients that send it without checking
+            // capabilities, so they see an empty success instead of `-32601`.
+            debug!(level = ?request.level, "received logging/setLevel; no-op");
+            Ok(())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::GetInfoCount.as_str())
@@ -823,31 +1066,35 @@ impl ServerHandler for Running {
         let mut tools = ToolsCapability::default();
         tools.list_changed = Some(true);
         capabilities.tools = Some(tools);
-        capabilities.resources = (!self.apps.is_empty()).then(ResourcesCapability::default);
-        capabilities.prompts = (!self.prompts.is_empty()).then(PromptsCapability::default);
+        capabilities.resources =
+            (!self.application.apps.is_empty()).then(ResourcesCapability::default);
+        capabilities.prompts =
+            (!self.application.prompts.is_empty()).then(PromptsCapability::default);
 
-        // Advertise the max supported version as the default. Our `initialize`
-        // handler negotiates the per-client value, echoing the client's requested
-        // version when supported and otherwise falling back to this one.
+        // Load-bearing: negotiation falls back to this when it cannot honor
+        // the version the client asked for.
         let protocol_version = MAX_SUPPORTED_PROTOCOL_VERSION;
 
         let mut impl_ = Implementation::new(
-            self.server_info.name().to_string(),
-            self.server_info.version().to_string(),
+            self.application.server_info.name().to_string(),
+            self.application.server_info.version().to_string(),
         );
-        if let Some(t) = self.server_info.title() {
+        if let Some(t) = self.application.server_info.title() {
             impl_ = impl_.with_title(t);
         }
-        if let Some(d) = self.server_info.description() {
+        if let Some(d) = self.application.server_info.description() {
             impl_ = impl_.with_description(d);
         }
-        if let Some(u) = self.server_info.website_url() {
+        if let Some(u) = self.application.server_info.website_url() {
             impl_ = impl_.with_website_url(u);
+        }
+        if let Some(icons) = self.application.server_info.icons() {
+            impl_ = impl_.with_icons(icons);
         }
         let mut result = InitializeResult::new(capabilities)
             .with_protocol_version(protocol_version)
             .with_server_info(impl_);
-        if let Some(instructions) = self.instructions.as_deref() {
+        if let Some(instructions) = self.application.instructions.as_deref() {
             result = result.with_instructions(instructions);
         }
         result
@@ -855,19 +1102,16 @@ impl ServerHandler for Running {
 }
 
 fn extract_app_param(extensions: &Extensions) -> Option<String> {
-    extensions
-        .get::<axum::http::request::Parts>()
-        .and_then(|parts| parts.uri.query())
-        .and_then(|query| {
-            url::form_urlencoded::parse(query.as_bytes())
-                .find(|(key, _)| key == "app")
-                .map(|(_, value)| value.into_owned())
-        })
+    app_param_from_query(
+        extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.uri.query()),
+    )
 }
 
 fn tool_not_found(name: &str) -> McpError {
     McpError::new(
-        ErrorCode::METHOD_NOT_FOUND,
+        ErrorCode::INVALID_PARAMS,
         format!("Tool {name} not found"),
         None,
     )
@@ -900,7 +1144,7 @@ mod tests {
             explorer_tool: None,
             validate_tool: None,
             custom_scalar_map: None,
-            peers: Arc::new(RwLock::new(vec![])),
+            tool_list_changes: Default::default(),
             cancellation_token: CancellationToken::new(),
             mutation_mode: MutationMode::None,
             disable_type_description: false,
@@ -912,7 +1156,8 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            rhai_engine: SharedRhaiEngine::new("rhai"),
+            caching: Caching::default(),
         }
     }
 
@@ -964,43 +1209,571 @@ mod tests {
         }
     }
 
-    mod protocol_version_negotiation {
-        use rstest::rstest;
-
+    mod protocol_2026_07_28 {
         use super::*;
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tower::ServiceExt as _;
 
-        /// Builds a version rmcp has no constant for; unknown versions are
-        /// only constructible through deserialization.
-        fn unknown_version(version: &str) -> ProtocolVersion {
-            serde_json::from_value(serde_json::json!(version)).unwrap()
+        async fn request(
+            version: &str,
+            method: &str,
+            params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let mut running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+            request_with_running(
+                running,
+                version,
+                method,
+                params,
+                uri,
+                json_response,
+                method_header,
+            )
+            .await
         }
 
-        #[rstest]
-        #[case::oldest_known(ProtocolVersion::V_2024_11_05)]
-        #[case::intermediate_known(ProtocolVersion::V_2025_06_18)]
-        #[case::max_supported(MAX_SUPPORTED_PROTOCOL_VERSION)]
-        fn echoes_known_version_at_or_below_cap(#[case] requested: ProtocolVersion) {
-            assert_eq!(negotiate_protocol_version(&requested), requested);
+        async fn request_with_running(
+            running: Running,
+            version: &str,
+            method: &str,
+            mut params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/protocolVersion": version,
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "regression-test", "version": "1"}
+            });
+            let request = http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", version);
+            let request = match method_header {
+                Some(value) => request.header("Mcp-Method", value),
+                None => request,
+            };
+            let request = match method {
+                "resources/read" => request.header("Mcp-Name", params["uri"].as_str().unwrap()),
+                "tools/call" => request.header("Mcp-Name", params["name"].as_str().unwrap()),
+                _ => request,
+            };
+            let request = request
+                .body(Body::from(
+                    json!({
+                        "jsonrpc": "2.0", "id": 42, "method": method, "params": params
+                    })
+                    .to_string(),
+                ))
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = if response.headers()[http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/event-stream")
+            {
+                let mut reader =
+                    super::super::test_support::SseReader::new(Body::new(response.into_body()));
+                super::super::test_support::next_message(&mut reader).await
+            } else {
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                serde_json::from_slice(&bytes).unwrap()
+            };
+            (status, body)
         }
 
-        #[test]
-        fn caps_known_version_above_max_supported() {
-            // rmcp has a constant for 2026-07-28, but this server doesn't
-            // implement that revision.
-            assert_eq!(
-                negotiate_protocol_version(&ProtocolVersion::V_2026_07_28),
-                MAX_SUPPORTED_PROTOCOL_VERSION
+        const APP_URI: &str = "ui://widget/transport-fixture#v1";
+        const APP_HTML: &str = "<html><body>transport fixture</body></html>";
+
+        fn resource_fixture(source: crate::apps::app::AppResourceSource) -> Running {
+            let mut running = running_with_apps(AppResource::Single(source), None, None);
+            running.apps[0].uri = APP_URI.parse().unwrap();
+            running.caching.ttl_ms = 60_000;
+            running
+        }
+
+        fn assert_resource_response(status: http::StatusCode, body: &Value, version: &str) {
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            if version == "2026-07-28" {
+                assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            } else {
+                assert!(body["result"].get("resultType").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn local_app_resources_preserve_content_and_protocol_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("resources/list", "resources/read")] method: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running =
+                resource_fixture(crate::apps::app::AppResourceSource::Local(APP_HTML.into()));
+            let params = if method == "resources/read" {
+                json!({"uri": APP_URI})
+            } else {
+                json!({})
+            };
+            let (status, body) = request_with_running(
+                running,
+                version,
+                method,
+                params,
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let items = result[if method == "resources/list" {
+                "resources"
+            } else {
+                "contents"
+            }]
+            .as_array()
+            .unwrap();
+            assert_eq!(items.len(), 1, "{body}");
+            assert_eq!(items[0]["uri"], APP_URI);
+            assert_eq!(items[0]["mimeType"], "text/html;profile=mcp-app");
+            if method == "resources/read" {
+                assert_eq!(items[0]["text"], APP_HTML);
+            }
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 60_000);
+                assert_eq!(result["cacheScope"], "private");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn remote_app_resources_preserve_content_and_are_immediately_stale(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/widget")
+                .with_status(200)
+                .with_body(APP_HTML)
+                .expect(1)
+                .create_async()
+                .await;
+            let running = resource_fixture(crate::apps::app::AppResourceSource::Remote(
+                format!("{}/widget", server.url()).parse().unwrap(),
+            ));
+            let (status, body) = request_with_running(
+                running,
+                version,
+                "resources/read",
+                json!({"uri": APP_URI}),
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            mock.assert_async().await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let contents = result["contents"].as_array().unwrap();
+            assert_eq!(contents.len(), 1, "{body}");
+            assert_eq!(contents[0]["uri"], APP_URI);
+            assert_eq!(contents[0]["mimeType"], "text/html;profile=mcp-app");
+            assert_eq!(contents[0]["text"], APP_HTML);
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 0, "{body}");
+                assert_eq!(result["cacheScope"], "private", "{body}");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", -32602)]
+        #[case::legacy("2025-11-25", -32002)]
+        #[tokio::test]
+        async fn missing_resource_is_an_error_without_contents(
+            #[case] version: &str,
+            #[case] code: i32,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/read",
+                json!({"uri": "ui://missing/does-not-exist"}),
+                uri,
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], code, "{body}");
+            assert!(
+                body.get("result").is_none(),
+                "missing resources must never return contents: {body}"
             );
         }
 
-        #[rstest]
-        #[case::future_date("2999-01-01")]
-        #[case::past_date("2020-01-01")]
-        #[case::not_a_date("not-a-version")]
-        fn falls_back_when_version_is_unknown(#[case] requested: &str) {
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_tool_is_invalid_params(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "tools/call",
+                json!({"name": "DoesNotExist", "arguments": {}}),
+                uri,
+                json_response,
+                Some("tools/call"),
+            )
+            .await;
+            // Unknown tools are an in-band error, not a malformed or unsupported request.
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32602, "{body}");
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", json!({
+            "resourceTemplates": [], "resultType": "complete",
+            "ttlMs": 60_000, "cacheScope": "private"
+        }))]
+        #[case::legacy("2025-11-25", json!({"resourceTemplates": []}))]
+        #[tokio::test]
+        async fn empty_template_list_uses_protocol_appropriate_cache_hints(
+            #[case] version: &str,
+            #[case] expected: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/templates/list",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("resources/templates/list"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            let mut result = body["result"].clone();
+            // rmcp attaches server metadata separately from the result's protocol fields.
+            result.as_object_mut().unwrap().remove("_meta");
+            assert_eq!(result, expected);
+        }
+
+        #[rstest::rstest]
+        #[case::discovery("server/discover", json!({}))]
+        #[case::tools("tools/list", json!({}))]
+        #[case::resources("resources/list", json!({}))]
+        #[case::prompts("prompts/list", json!({}))]
+        #[case::read("resources/read", json!({"uri": RESOURCE_URI}))]
+        #[tokio::test]
+        async fn successful_results_are_complete(
+            #[case] method: &str,
+            #[case] params: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                "2026-07-28",
+                method,
+                params,
+                "/mcp?app=MyApp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            if method == "resources/read" {
+                assert_eq!(body["result"]["contents"][0]["text"], "content");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_method_returns_http_not_found(#[values(false, true)] json_response: bool) {
+            let (status, body) = request(
+                "2026-07-28",
+                "unknown/method",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("unknown/method"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+        #[rstest::rstest]
+        #[case::missing(None)]
+        #[case::mismatched(Some("resources/list"))]
+        #[tokio::test]
+        async fn modern_requests_enforce_standard_method_header(#[case] header: Option<&str>) {
+            let (status, body) =
+                request("2026-07-28", "tools/list", json!({}), "/mcp", true, header).await;
+            assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
             assert_eq!(
-                negotiate_protocol_version(&unknown_version(requested)),
-                MAX_SUPPORTED_PROTOCOL_VERSION
+                body["error"]["code"],
+                rmcp::model::ErrorCode::HEADER_MISMATCH.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
+        }
+
+        /// The auth middleware exempts this `GET` from token validation on the
+        /// premise that the production transport never serves it, even with
+        /// `stateful_mode: true`.
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_get_is_method_not_allowed(#[values(false, true)] stateful_mode: bool) {
+            let running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            let service = crate::server::states::starting::build_http_service(
+                running,
+                stateful_mode,
+                &Default::default(),
+            );
+            let request = http::Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .body(Body::empty())
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::METHOD_NOT_ALLOWED);
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::default(Caching::default())]
+    #[case::custom(Caching { ttl_ms: 60_000 })]
+    #[case::zero(Caching { ttl_ms: 0 })]
+    #[tokio::test]
+    async fn configured_cache_hints_reach_all_handlers_when_protocol_supported(
+        #[case] caching: Caching,
+    ) {
+        use crate::apps::app::AppResourceSource;
+        use rmcp::model::{Prompt, ReadResourceRequestParams};
+
+        let mut running = running_with_apps(
+            AppResource::Single(AppResourceSource::Local("content".into())),
+            None,
+            None,
+        );
+        running.caching = caching;
+        running.prompts = vec![crate::prompts::PromptFile {
+            prompt: Prompt::new("test", Some("description"), None),
+            template: "content".into(),
+        }];
+        let mut extensions = Extensions::new();
+        let (parts, _) = axum::http::Request::builder()
+            .uri("http://localhost?app=MyApp")
+            .body(())
+            .unwrap()
+            .into_parts();
+        extensions.insert(parts);
+        let version = ProtocolVersion::V_2026_07_28;
+        let peer = PeerContext::with_protocol_version(&version);
+
+        let tools = running
+            .list_tools_with_protocol_max(extensions.clone(), peer, &version)
+            .await
+            .unwrap();
+        let resources = running
+            .list_resources_with_protocol_max(&extensions, Some(&version), &version)
+            .unwrap();
+        let read = running
+            .read_resource_with_protocol_max(
+                ReadResourceRequestParams::new(RESOURCE_URI),
+                extensions,
+                peer,
+                &version,
+            )
+            .await
+            .unwrap();
+        let prompts = running
+            .list_prompts_with_protocol_max(Some(&version), &version)
+            .unwrap();
+        let templates = running
+            .list_resource_templates_with_protocol_max(Some(&version), &version)
+            .unwrap();
+
+        assert!(!tools.tools.is_empty());
+        assert!(!resources.resources.is_empty());
+        assert!(!read.contents.is_empty());
+        assert!(!prompts.prompts.is_empty());
+        for (method, ttl_ms, scope) in [
+            ("tools/list", tools.ttl_ms, tools.cache_scope),
+            ("resources/list", resources.ttl_ms, resources.cache_scope),
+            ("resources/read", read.ttl_ms, read.cache_scope),
+            ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+            (
+                "resources/templates/list",
+                templates.ttl_ms,
+                templates.cache_scope,
+            ),
+        ] {
+            assert_eq!(
+                (ttl_ms, scope),
+                (Some(caching.ttl_ms), Some(CacheScope::Private)),
+                "{method}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn request_capabilities_override_legacy_info_without_leaking_to_later_requests() {
+        use crate::apps::app::{AppResourceSource, TargetedAppResource};
+        use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+
+        let mut running = running_with_apps(
+            AppResource::Targeted(TargetedAppResource {
+                openai: Some(AppResourceSource::Local("openai resource".into())),
+                mcp: Some(AppResourceSource::Local("mcp resource".into())),
+            }),
+            None,
+            None,
+        );
+        running.apps[0].tools[0].labels.tool_invocation_invoking = Some("Loading".into());
+        let legacy_info = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "2025-11-25", "capabilities": {},
+            "clientInfo": {"name": "legacy", "version": "1"}
+        }))
+        .unwrap();
+        let (server_io, _client_io) = tokio::io::duplex(4096);
+        let service =
+            rmcp::service::serve_directly(running.for_service(), server_io, Some(legacy_info));
+        let mcp_capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
+            "extensions": {"io.modelcontextprotocol/ui": {"mimeTypes": ["text/html;profile=mcp-app"]}}
+        })).unwrap();
+
+        for (capabilities, expected_resource, openai) in [
+            (Some(mcp_capabilities), "mcp resource", false),
+            (None, "openai resource", true),
+        ] {
+            let mut context =
+                RequestContext::new(rmcp::model::RequestId::Number(1), service.peer().clone());
+            let (parts, _) = http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap()
+                .into_parts();
+            context.extensions.insert(parts);
+            if let Some(capabilities) = capabilities {
+                context.meta.set_client_capabilities(capabilities);
+            }
+            let tools = running
+                .for_service()
+                .list_tools(None, context.clone())
+                .await
+                .unwrap();
+            assert_eq!(
+                tools.tools[0]
+                    .meta
+                    .as_ref()
+                    .unwrap()
+                    .contains_key("openai/toolInvocation/invoking"),
+                openai
+            );
+            let resource = running
+                .for_service()
+                .read_resource(ReadResourceRequestParams::new(RESOURCE_URI), context)
+                .await
+                .unwrap();
+            let rmcp::model::ReadResourceResponse::Complete(resource) = resource else {
+                panic!("expected resource result");
+            };
+            let ResourceContents::TextResourceContents { text, .. } = &resource.contents[0] else {
+                panic!("expected text resource");
+            };
+            assert_eq!(text, expected_resource);
+        }
+        service.cancel().await.unwrap();
+    }
+
+    mod supported_protocol_versions {
+        use super::*;
+
+        fn supported() -> Cow<'static, [ProtocolVersion]> {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            test_running(Arc::new(RwLock::new(schema)))
+                .for_service()
+                .supported_protocol_versions()
+        }
+
+        #[test]
+        fn advertises_the_max_supported_version() {
+            let supported = supported();
+
+            assert!(
+                supported.contains(&MAX_SUPPORTED_PROTOCOL_VERSION),
+                "advertised versions {supported:?} must include the server's max"
+            );
+        }
+
+        #[test]
+        fn never_advertises_a_version_above_the_max_supported() {
+            let supported = supported();
+
+            let newer: Vec<_> = supported
+                .iter()
+                .filter(|version| **version > MAX_SUPPORTED_PROTOCOL_VERSION)
+                .collect();
+
+            assert!(
+                newer.is_empty(),
+                "advertised versions newer than {MAX_SUPPORTED_PROTOCOL_VERSION}: {newer:?}"
             );
         }
     }
@@ -1248,6 +2021,8 @@ mod tests {
     }
 
     mod list_resources {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
 
         use super::*;
@@ -1267,12 +2042,37 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
             assert_eq!(resources.len(), 1);
             assert_eq!(resources[0].uri, RESOURCE_URI);
+        }
+
+        #[rstest]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        fn resource_list_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+
+            let result = running
+                .list_resources_impl(&Extensions::new(), Some(&protocol_version))
+                .unwrap();
+
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1290,7 +2090,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions)
+            .list_resources_impl(&extensions, None)
             .unwrap()
             .resources;
 
@@ -1308,7 +2108,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&Extensions::new())
+            .list_resources_impl(&Extensions::new(), None)
             .unwrap()
             .resources;
 
@@ -1330,7 +2130,7 @@ mod tests {
                 None,
                 None,
             )
-            .list_resources_impl(&extensions);
+            .list_resources_impl(&extensions, None);
 
             assert!(result.is_err());
         }
@@ -1338,6 +2138,7 @@ mod tests {
 
     mod read_resource {
         use rmcp::model::{ReadResourceRequestParams, ResourceContents};
+        use rstest::rstest;
 
         use crate::apps::{
             app::{AppResource, AppResourceSource},
@@ -1368,7 +2169,7 @@ mod tests {
                         "http://localhost:4000/resource#a_different_fragment",
                     ),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1384,10 +2185,49 @@ mod tests {
             };
             assert_eq!(text, resource_content);
             assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
-            // Meta always contains at least the "ui" key now
-            let meta = meta.expect("meta should be set");
-            assert!(meta.get("ui").is_some());
+            // Without CSP or widget settings there is no `_meta.ui` to report.
+            assert!(meta.is_none());
             assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
+        }
+
+        #[rstest]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        #[tokio::test]
+        async fn read_resource_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("abcdef".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let result = running
+                .read_resource_impl(
+                    ReadResourceRequestParams::new(
+                        "http://localhost:4000/resource#a_different_fragment",
+                    ),
+                    extensions,
+                    PeerContext::with_protocol_version(&protocol_version),
+                )
+                .await
+                .unwrap();
+
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1409,7 +2249,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/invalid_resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1434,7 +2274,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("not a uri"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1451,7 +2291,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     Extensions::new(),
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
@@ -1476,14 +2316,23 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
             assert!(result.is_err());
         }
 
+        #[rstest]
+        #[case::legacy_server(ProtocolVersion::V_2025_11_25, (None, None))]
+        #[case::modern_server(
+            ProtocolVersion::V_2026_07_28,
+            (Some(0), Some(CacheScope::Private))
+        )]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content() {
+        async fn fetch_remote_resource_downloads_content_with_protocol_cache_hints(
+            #[case] server_max: ProtocolVersion,
+            #[case] expected_hints: (Option<u64>, Option<CacheScope>),
+        ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
             let mock = server
@@ -1510,15 +2359,17 @@ mod tests {
             extensions.insert(parts);
 
             let mut resource = running
-                .read_resource_impl(
+                .read_resource_with_protocol_max(
                     ReadResourceRequestParams::new(RESOURCE_URI),
                     extensions,
-                    None,
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2026_07_28),
+                    &server_max,
                 )
                 .await
                 .expect("resource fetch failed");
 
             mock.assert();
+            assert_eq!((resource.ttl_ms, resource.cache_scope), expected_hints);
             let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
             else {
                 panic!("unexpected resource contents");
@@ -1557,7 +2408,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1630,7 +2481,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1669,7 +2520,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1707,7 +2558,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1753,7 +2604,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1802,7 +2653,7 @@ mod tests {
                 .read_resource_impl(
                     ReadResourceRequestParams::new("http://localhost:4000/resource"),
                     extensions,
-                    None,
+                    PeerContext::default(),
                 )
                 .await;
 
@@ -1811,6 +2662,8 @@ mod tests {
     }
 
     mod list_tools {
+        use rstest::rstest;
+
         use crate::apps::app::{AppResource, AppResourceSource};
         use crate::scope_requirements::OperationRequiredScopes;
         use axum_extra::headers::{Authorization, authorization::Bearer};
@@ -1855,6 +2708,82 @@ mod tests {
             )])
         }
 
+        #[rstest::rstest]
+        #[case::normal("/mcp", false)]
+        #[case::app("/mcp?app=MyApp", true)]
+        #[tokio::test]
+        async fn tool_order_is_stable_across_calls_and_reloads(
+            #[case] uri: &str,
+            #[case] app_mode: bool,
+        ) {
+            use crate::server::states::running::integration_tests::stateless_request_at_uri;
+            use serde_json::json;
+
+            let mut running = running_with_builtin_tools();
+            running.apps = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_owned())),
+                None,
+                None,
+            )
+            .apps;
+            let operations = |names: &[&str]| {
+                names
+                    .iter()
+                    .map(|name| (format!("query {name} {{ id }}"), None).into())
+                    .collect()
+            };
+            running
+                .update_operations(operations(&["alpha", "Zulu", "Alpha"]))
+                .await;
+            let mut expected = vec!["Alpha", "Zulu", "alpha", EXECUTE_TOOL_NAME];
+            if app_mode {
+                expected.push("GetId");
+            } else {
+                expected.extend([
+                    INTROSPECT_TOOL_NAME,
+                    SEARCH_TOOL_NAME,
+                    EXPLORER_TOOL_NAME,
+                    VALIDATE_TOOL_NAME,
+                ]);
+            }
+
+            async fn assert_order(running: &Running, uri: &str, expected: &[&str]) {
+                for _ in 0..3 {
+                    let response = stateless_request_at_uri(
+                        running.clone(),
+                        "2025-11-25",
+                        "tools/list",
+                        json!({}),
+                        uri,
+                    )
+                    .await;
+                    let names: Vec<_> = response["result"]["tools"]
+                        .as_array()
+                        .expect("tools/list must return tools")
+                        .iter()
+                        .map(|tool| tool["name"].as_str().unwrap())
+                        .collect();
+                    assert_eq!(names, expected);
+                }
+            }
+
+            assert_order(&running, uri, &expected).await;
+
+            let schema = Schema::parse_and_validate(
+                "type Query { id: Int, added: String }",
+                "reloaded.graphql",
+            )
+            .unwrap();
+            running.update_schema(schema.clone()).await;
+            assert_eq!(*running.schema.read().await, schema);
+            assert_order(&running, uri, &expected).await;
+
+            running
+                .update_operations(operations(&["Zulu", "Alpha", "alpha"]))
+                .await;
+            assert_order(&running, uri, &expected).await;
+        }
+
         #[tokio::test]
         async fn list_tools_without_app_parameter() {
             let running = running_with_apps(
@@ -1864,12 +2793,105 @@ mod tests {
             );
 
             let result = running
-                .list_tools_impl(Extensions::new(), None, None)
+                .list_tools_impl(Extensions::new(), PeerContext::default())
                 .await
                 .unwrap();
 
             assert_eq!(result.tools.len(), 0);
             assert_eq!(result.next_cursor, None);
+        }
+
+        #[rstest]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        #[tokio::test]
+        async fn list_tools_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_string())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+
+            let result = running
+                .list_tools_impl(
+                    Extensions::new(),
+                    PeerContext::with_protocol_version(&protocol_version),
+                )
+                .await
+                .unwrap();
+
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
+        }
+
+        fn running_with_builtin_tools() -> Running {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+            let schema = Arc::new(RwLock::new(schema));
+            let mut running = test_running(schema.clone());
+            running.execute_tool = Some(Execute::new(MutationMode::None, None));
+            running.introspect_tool = Some(Introspect::new(
+                schema.clone(),
+                Some("Query".to_string()),
+                None,
+                false,
+                None,
+            ));
+            running.validate_tool = Some(Validate::new(schema.clone(), None));
+            running.search_tool = Some(
+                Search::new(schema, false, 1, 15_000_000, false, None)
+                    .expect("search tool should index"),
+            );
+            running.explorer_tool = Some(Explorer::new("mcp-example@mcp".to_string()));
+            running
+        }
+
+        // Per-tool unit tests pin the hint policy; this one proves the listing path keeps it.
+        // Only `execute` is open-world, because only `execute` calls the GraphQL endpoint.
+        #[tokio::test]
+        #[rstest]
+        #[case::introspect(INTROSPECT_TOOL_NAME, false)]
+        #[case::search(SEARCH_TOOL_NAME, false)]
+        #[case::validate(VALIDATE_TOOL_NAME, false)]
+        #[case::explorer(EXPLORER_TOOL_NAME, false)]
+        #[case::execute(EXECUTE_TOOL_NAME, true)]
+        async fn builtin_tools_expose_annotations_in_tools_list(
+            #[case] tool_name: &str,
+            #[case] open_world: bool,
+        ) {
+            let running = running_with_builtin_tools();
+
+            let result = running
+                .list_tools_impl(Extensions::new(), PeerContext::default())
+                .await
+                .unwrap();
+
+            let annotations = result
+                .tools
+                .iter()
+                .find(|tool| tool.name == tool_name)
+                .and_then(|tool| tool.annotations.clone())
+                .unwrap_or_else(|| {
+                    panic!("{tool_name} should appear in tools/list with annotations")
+                });
+            assert_eq!(
+                (
+                    annotations.read_only_hint,
+                    annotations.destructive_hint,
+                    annotations.idempotent_hint,
+                    annotations.open_world_hint,
+                ),
+                (Some(true), Some(false), Some(true), Some(open_world))
+            );
         }
 
         #[tokio::test]
@@ -1884,16 +2906,14 @@ mod tests {
             let hidden = running
                 .list_tools_impl(
                     scope_extensions(required.clone(), true, Some(vec![])),
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
             let visible = running
                 .list_tools_impl(
                     scope_extensions(required, true, Some(vec!["app:read".to_string()])),
-                    None,
-                    None,
+                    PeerContext::default(),
                 )
                 .await
                 .unwrap();
@@ -1913,7 +2933,10 @@ mod tests {
             let required = required_scopes("GetId", &["app:read"]);
 
             let result = running
-                .list_tools_impl(scope_extensions(required, true, None), None, None)
+                .list_tools_impl(
+                    scope_extensions(required, true, None),
+                    PeerContext::default(),
+                )
                 .await
                 .unwrap();
 
@@ -1930,7 +2953,10 @@ mod tests {
             let required = required_scopes("GetId", &["app:read"]);
 
             let result = running
-                .list_tools_impl(scope_extensions(required, false, Some(vec![])), None, None)
+                .list_tools_impl(
+                    scope_extensions(required, false, Some(vec![])),
+                    PeerContext::default(),
+                )
                 .await
                 .unwrap();
 
@@ -1955,7 +2981,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
 
@@ -1980,7 +3006,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -2002,7 +3030,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2035,7 +3063,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2073,7 +3101,7 @@ mod tests {
             extensions.insert(parts);
 
             let result = running
-                .list_tools_impl(extensions, None, None)
+                .list_tools_impl(extensions, PeerContext::default())
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2116,7 +3144,10 @@ mod tests {
             client_capabilities.extensions = Some(extension_capabilities);
 
             let result = running
-                .list_tools_impl(extensions, Some(&client_capabilities), None)
+                .list_tools_impl(
+                    extensions,
+                    PeerContext::with_client_capabilities(&client_capabilities),
+                )
                 .await
                 .unwrap();
             let meta = result.tools[0].meta.as_ref().unwrap();
@@ -2153,7 +3184,9 @@ mod tests {
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
-            let result = running.list_tools_impl(extensions, None, None).await;
+            let result = running
+                .list_tools_impl(extensions, PeerContext::default())
+                .await;
 
             assert!(result.is_err());
         }
@@ -2188,8 +3221,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_03_26),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_03_26),
                 )
                 .await
                 .unwrap();
@@ -2234,8 +3266,7 @@ mod tests {
             let result = running
                 .list_tools_impl(
                     Extensions::new(),
-                    None,
-                    Some(&ProtocolVersion::V_2025_06_18),
+                    PeerContext::with_protocol_version(&ProtocolVersion::V_2025_06_18),
                 )
                 .await
                 .unwrap();
@@ -2264,7 +3295,7 @@ mod tests {
 
             let running = test_running(Arc::new(RwLock::new(schema)));
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.server_info.name, "Apollo MCP Server");
             assert_eq!(info.server_info.version, env!("CARGO_PKG_VERSION"));
@@ -2299,7 +3330,7 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert_eq!(
                 info.instructions.as_deref(),
                 Some("Prefer search before list.")
@@ -2319,6 +3350,7 @@ mod tests {
                 title: Some("Custom GraphQL Server".to_string()),
                 website_url: Some("https://my-server.example.com/docs".to_string()),
                 description: Some("A custom MCP server for testing".to_string()),
+                icons: vec![],
             };
 
             let running = Running {
@@ -2326,7 +3358,7 @@ mod tests {
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.server_info.name, "My Custom Server");
             assert_eq!(info.server_info.version, "3.0.0-beta");
@@ -2364,15 +3396,81 @@ mod tests {
                 ..test_running(Arc::clone(&schema))
             };
 
-            let info = running.get_info();
+            let info = running.for_service().get_info();
 
             assert_eq!(info.protocol_version, MAX_SUPPORTED_PROTOCOL_VERSION);
+        }
+
+        #[test]
+        fn get_info_omits_icons_by_default() {
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let running = test_running(Arc::new(RwLock::new(schema)));
+
+            let info = running.for_service().get_info();
+
+            assert_eq!(info.server_info.icons, None);
+        }
+
+        #[test]
+        fn get_info_forwards_configured_icons_with_optional_fields() {
+            use crate::server_info::{IconConfig, IconThemeConfig};
+            use rmcp::model::IconTheme;
+
+            let schema = Schema::parse("type Query { id: String }", "schema.graphql")
+                .unwrap()
+                .validate()
+                .unwrap();
+
+            let server_info = ServerInfoConfig {
+                icons: vec![
+                    IconConfig {
+                        src: "https://example.com/icon.svg".to_string(),
+                        mime_type: Some("image/svg+xml".to_string()),
+                        sizes: Some(vec!["any".to_string()]),
+                        theme: Some(IconThemeConfig::Dark),
+                    },
+                    IconConfig {
+                        src: "https://example.com/icon-48.png".to_string(),
+                        mime_type: None,
+                        sizes: None,
+                        theme: None,
+                    },
+                ],
+                ..Default::default()
+            };
+
+            let running = Running {
+                server_info,
+                ..test_running(Arc::new(RwLock::new(schema)))
+            };
+
+            let icons = running
+                .for_service()
+                .get_info()
+                .server_info
+                .icons
+                .expect("icons should be advertised when configured");
+
+            assert_eq!(icons.len(), 2);
+            assert_eq!(icons[0].src, "https://example.com/icon.svg");
+            assert_eq!(icons[0].mime_type.as_deref(), Some("image/svg+xml"));
+            assert_eq!(icons[0].sizes.as_deref(), Some(&["any".to_string()][..]));
+            assert_eq!(icons[0].theme, Some(IconTheme::Dark));
+            assert_eq!(icons[1].src, "https://example.com/icon-48.png");
+            assert!(icons[1].mime_type.is_none());
+            assert!(icons[1].sizes.is_none());
+            assert!(icons[1].theme.is_none());
         }
     }
 
     mod prompts {
         use super::*;
         use rmcp::model::{GetPromptRequestParams, Prompt, PromptArgument, Role};
+        use rstest::rstest;
 
         fn running_with_prompts(prompts: Vec<crate::prompts::PromptFile>) -> Running {
             let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -2388,7 +3486,7 @@ mod tests {
         #[test]
         fn list_prompts_empty() {
             let running = running_with_prompts(vec![]);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert!(result.prompts.is_empty());
         }
 
@@ -2399,10 +3497,28 @@ mod tests {
                 template: "Hello {{name}}!".to_string(),
             }];
             let running = running_with_prompts(prompts);
-            let result = running.list_prompts_impl().unwrap();
+            let result = running.list_prompts_impl(None).unwrap();
             assert_eq!(result.prompts.len(), 1);
             assert_eq!(result.prompts[0].name, "greeting");
             assert_eq!(result.prompts[0].description.as_deref(), Some("A greeting"));
+        }
+
+        #[rstest]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
+        #[case::legacy(ProtocolVersion::V_2025_06_18)]
+        fn list_prompts_cache_hints_gated_by_protocol_version(
+            #[case] protocol_version: ProtocolVersion,
+        ) {
+            let mut running = running_with_prompts(vec![]);
+            running.caching.ttl_ms = 60_000;
+            let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
+
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[test]
@@ -2468,14 +3584,14 @@ mod tests {
                 template: "test".to_string(),
             }];
             let running = running_with_prompts(prompts);
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert!(info.capabilities.prompts.is_some());
         }
 
         #[test]
         fn get_info_no_prompts_capability_when_empty() {
             let running = running_with_prompts(vec![]);
-            let info = running.get_info();
+            let info = running.for_service().get_info();
             assert!(info.capabilities.prompts.is_none());
         }
     }
@@ -2705,6 +3821,61 @@ mod tests {
 mod integration_tests {
     use super::*;
 
+    /// Exercise the supported sessionless transport without an initialize handshake.
+    async fn stateless_request(
+        running: Running,
+        version: &str,
+        method: &str,
+        params: Value,
+    ) -> Value {
+        stateless_request_at_uri(running, version, method, params, "/mcp").await
+    }
+
+    pub(super) async fn stateless_request_at_uri(
+        running: Running,
+        version: &str,
+        method: &str,
+        params: Value,
+        uri: &str,
+    ) -> Value {
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use tower::ServiceExt as _;
+
+        let changes = running.tool_list_changes.clone();
+        let service = StreamableHttpService::new(
+            move || Ok(running.for_service()),
+            Arc::new(LocalSessionManager::default()),
+            StreamableHttpServerConfig::default()
+                .with_legacy_session_mode(false)
+                .with_json_response(true),
+        );
+        let request = http::Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("Host", "localhost")
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json, text/event-stream")
+            .header("Mcp-Protocol-Version", version)
+            .body(Body::from(
+                serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+                    .to_string(),
+            ))
+            .unwrap();
+        let response = service.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert!(!response.headers().contains_key("Mcp-Session-Id"));
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            changes.receiver_count(),
+            0,
+            "sessionless requests must not retain a forwarder"
+        );
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
     mod output_schema_gating {
         use std::sync::Arc;
 
@@ -2754,7 +3925,7 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -2766,16 +3937,17 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
+                caching: Caching::default(),
             }
         }
 
         fn create_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
@@ -2805,49 +3977,6 @@ mod integration_tests {
                 .unwrap()
         }
 
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_tools_list_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/list"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
         async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
         where
             B: BodyExt,
@@ -2855,6 +3984,10 @@ mod integration_tests {
         {
             let bytes = response.into_body().collect().await.unwrap().to_bytes();
             let body_str = String::from_utf8_lossy(&bytes);
+
+            if let Ok(value) = serde_json::from_str(&body_str) {
+                return value;
+            }
 
             for line in body_str.lines() {
                 if let Some(data) = line.strip_prefix("data: ")
@@ -2866,56 +3999,126 @@ mod integration_tests {
             panic!("no JSON data found in SSE response");
         }
 
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
+        #[tokio::test]
+        async fn list_tools_uses_request_protocol_with_legacy_fallback() {
+            let running = create_running_with_output_schema();
+            let (server_io, _client_io) = tokio::io::duplex(4096);
+            let legacy_info = serde_json::from_value(json!({
+                "protocolVersion":"2025-03-26", "capabilities":{}, "clientInfo":{"name":"legacy", "version":"1"}
+            })).unwrap();
+            let service =
+                rmcp::service::serve_directly(running.for_service(), server_io, Some(legacy_info));
+            for (version, expected_output_schema) in [
+                (None, false),
+                (Some(ProtocolVersion::V_2025_06_18), true),
+                (None, false),
+            ] {
+                let mut context =
+                    RequestContext::new(rmcp::model::RequestId::Number(1), service.peer().clone());
+                if let Some(version) = version {
+                    context.meta.set_protocol_version(version);
+                }
+                let tools = running
+                    .for_service()
+                    .list_tools(None, context)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    tools.tools[0].output_schema.is_some(),
+                    expected_output_schema
+                );
+            }
+            service.cancel().await.unwrap();
+        }
+        #[tokio::test]
+        async fn omits_cache_hints_before_the_fields_were_supported() {
+            let mut running = create_running_with_output_schema();
+            running.caching.ttl_ms = 60_000;
+            let body =
+                super::stateless_request(running, "2025-11-25", "tools/list", json!({})).await;
+            let result = &body["result"];
+            assert!(
+                !result["tools"]
+                    .as_array()
+                    .expect("tools/list should return a tools array")
+                    .is_empty()
+            );
+            assert!(result.get("ttlMs").is_none());
+            assert!(result.get("cacheScope").is_none());
         }
 
-        async fn list_tools(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-        ) -> Vec<serde_json::Value> {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_tools_list_request(session_id))
-                .await
+        async fn request_tools_with_modern_protocol(
+            legacy_session_mode: bool,
+            metadata: Option<serde_json::Value>,
+        ) -> serde_json::Value {
+            let running = create_running_with_output_schema();
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(legacy_session_mode),
+            );
+            let mut body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}});
+            if let Some(metadata) = metadata {
+                body["params"]["_meta"] = metadata;
+            }
+            let request = Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", "2026-07-28")
+                .header("Mcp-Method", "tools/list")
+                .body(Body::from(body.to_string()))
                 .unwrap();
-            let body = extract_json_body(response).await;
-            body["result"]["tools"]
-                .as_array()
-                .expect("tools/list should return a tools array")
-                .clone()
+            let response = service.oneshot(request).await.unwrap();
+            extract_json_body(response).await
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn rejects_stateless_tools_request_without_required_metadata(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let body = request_tools_with_modern_protocol(legacy_session_mode, None).await;
+            assert_eq!(body["id"], 1);
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::INVALID_PARAMS.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn accepts_stateless_tools_request_with_modern_protocol(
+            #[values(true, false)] legacy_session_mode: bool,
+        ) {
+            let metadata = json!({
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
+            });
+            let body =
+                request_tools_with_modern_protocol(legacy_session_mode, Some(metadata)).await;
+            assert_eq!(body["id"], 1);
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete");
+            assert_eq!(body["result"]["ttlMs"], 300_000);
+            assert_eq!(body["result"]["cacheScope"], "private");
+            assert!(!body["result"]["tools"].as_array().unwrap().is_empty());
         }
 
         #[tokio::test]
         async fn excludes_output_schema_when_protocol_predates_it() {
             let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
+            let body =
+                super::stateless_request(running, "2025-03-26", "tools/list", json!({})).await;
+            let tools = body["result"]["tools"].as_array().unwrap();
 
             assert!(!tools.is_empty());
-            for tool in &tools {
+            for tool in tools {
                 assert!(
                     tool.get("outputSchema").is_none(),
                     "tool '{}' should not have outputSchema with protocol 2025-03-26",
@@ -2927,13 +4130,12 @@ mod integration_tests {
         #[tokio::test]
         async fn includes_output_schema_when_protocol_supports_it() {
             let running = create_running_with_output_schema();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
-
-            let tools = list_tools(running, session_manager, &session_id).await;
+            let body =
+                super::stateless_request(running, "2025-06-18", "tools/list", json!({})).await;
+            let tools = body["result"]["tools"].as_array().unwrap();
 
             assert!(!tools.is_empty());
-            for tool in &tools {
+            for tool in tools {
                 assert!(
                     tool.get("outputSchema").is_some(),
                     "tool '{}' should have outputSchema with protocol 2025-06-18",
@@ -2946,7 +4148,7 @@ mod integration_tests {
         async fn negotiates_down_when_client_requests_newer_version() {
             // Regression for AMS-525: a client offering a protocol version newer
             // than any rmcp implements over streamable_http must be downgraded to
-            // the max supported version rather than refused.
+            // the newest version with an initialize handshake rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
@@ -2960,7 +4162,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3005,6 +4207,7 @@ mod integration_tests {
 
             let server = tokio::spawn(async move {
                 let service = running
+                    .for_service()
                     .serve((server_r, server_w))
                     .await
                     .expect("stdio serve should complete the initialize handshake");
@@ -3038,13 +4241,9 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn stdio_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // Mirrors `stateless_caps_at_max_supported_when_client_requests_newer_known_version`
-            // for the stdio transport: rmcp's generic `serve()` negotiates through
-            // the same `supported_protocol_versions` hook (service/server.rs), a
-            // different code path from `StreamableHttpService`'s tower layer. This
-            // proves the cap holds there too, closing the one transport #803's fix
-            // didn't yet have a regression test for.
+        async fn stdio_initialize_falls_back_to_legacy_protocol() {
+            // rmcp limits initialize to revisions that support that handshake.
+            // Modern clients use discovery and per-request metadata instead.
             use rmcp::ServiceExt as _;
             use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
@@ -3056,6 +4255,7 @@ mod integration_tests {
 
             let server = tokio::spawn(async move {
                 let service = running
+                    .for_service()
                     .serve((server_r, server_w))
                     .await
                     .expect("stdio serve should complete the initialize handshake");
@@ -3082,7 +4282,7 @@ mod integration_tests {
             let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
 
             drop(reader);
@@ -3093,9 +4293,9 @@ mod integration_tests {
         fn create_stateless_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(false),
             )
@@ -3121,7 +4321,7 @@ mod integration_tests {
         #[tokio::test]
         async fn stateless_negotiates_down_when_client_requests_unknown_version() {
             // A client offering a version rmcp doesn't know must fall back to
-            // our max supported version rather than having it echoed back.
+            // the newest version with an initialize handshake rather than being echoed back.
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3134,17 +4334,12 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
         #[tokio::test]
-        async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // rmcp has a constant for 2026-07-28, but this server doesn't
-            // implement that revision (SEP-2243 headers, discovery). The
-            // stateless path must cap at the max supported version rather
-            // than advertise a version whose follow-up requests we can't
-            // handle.
+        async fn stateless_initialize_falls_back_to_legacy_protocol() {
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3157,23 +4352,13 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
         #[tokio::test]
-        async fn legacy_session_mode_enabled_still_caps_at_max_supported_when_client_requests_newer_known_version()
-         {
-            // Requesting protocol version 2026-07-28 always uses the
-            // stateless/discover lifecycle regardless of `legacy_session_mode`
-            // (SEP-2567), so this exercises the same `NegotiatingStatelessHttpService`
-            // path as `stateless_caps_at_max_supported_when_client_requests_newer_known_version`,
-            // not a distinct legacy-session handshake. This pins that enabling
-            // `legacy_session_mode` doesn't accidentally exempt that request from
-            // the cap (closes #803);
-            // `stdio_caps_at_max_supported_when_client_requests_newer_known_version`
-            // covers the one code path (rmcp's generic `serve()`) that isn't
-            // routed through `StreamableHttpService`.
+        async fn legacy_session_mode_enabled_initialize_falls_back_to_legacy_protocol() {
+            // Enabling legacy sessions does not let initialize negotiate a discovery-only revision.
             let running = create_running_with_output_schema();
             let service = create_service(running, LocalSessionManager::default().into());
 
@@ -3186,7 +4371,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3199,6 +4384,11 @@ mod integration_tests {
             // - Otherwise, update this list to acknowledge the version
             //   remains capped, and confirm stateful transports (where rmcp
             //   negotiates over our heads) still behave acceptably.
+            // - Recheck auth::oauth_validate against rmcp's HTTP
+            //   validate_standard_headers: both currently gate on the raw
+            //   MCP-Protocol-Version header using string ordering, including
+            //   for sessions. Audit non-date identifiers and ordering changes;
+            //   keep the full-handshake forged-method regression passing.
             assert_eq!(
                 ProtocolVersion::KNOWN_VERSIONS,
                 &[
@@ -3208,7 +4398,7 @@ mod integration_tests {
                     ProtocolVersion::V_2025_11_25,
                     ProtocolVersion::V_2026_07_28,
                 ],
-                "rmcp's KNOWN_VERSIONS changed; audit whether MAX_SUPPORTED_PROTOCOL_VERSION should move"
+                "rmcp's KNOWN_VERSIONS changed; audit MAX_SUPPORTED_PROTOCOL_VERSION and auth's raw-header string-ordering gate against rmcp::validate_standard_headers"
             );
         }
     }
@@ -3216,14 +4406,8 @@ mod integration_tests {
     mod structured_content_gating {
         use std::sync::Arc;
 
-        use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
-        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
-        use tower::ServiceExt;
 
         use super::*;
         use crate::operations::RawOperation;
@@ -3262,7 +4446,7 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -3274,145 +4458,9 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
+                caching: Caching::default(),
             }
-        }
-
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
-            )
-        }
-
-        fn build_initialize_request(protocol_version: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": protocol_version,
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "test-client",
-                        "version": "1.0.0"
-                    }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_call_tool_request(session_id: &str, tool_name: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 3,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": {}
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-            protocol_version: &str,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_initialize_request(protocol_version))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
-        }
-
-        async fn call_tool(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-            session_id: &str,
-            tool_name: &str,
-        ) -> serde_json::Value {
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_call_tool_request(session_id, tool_name))
-                .await
-                .unwrap();
-            extract_json_body(response).await
         }
 
         #[tokio::test]
@@ -3425,10 +4473,13 @@ mod integration_tests {
                 .await;
 
             let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-03-26").await;
-
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let body = super::stateless_request(
+                running,
+                "2025-03-26",
+                "tools/call",
+                json!({"name": "Hello", "arguments": {}}),
+            )
+            .await;
 
             mock.assert();
             let result = &body["result"];
@@ -3448,10 +4499,13 @@ mod integration_tests {
                 .await;
 
             let running = create_running_with_mock_endpoint(server.url().parse().unwrap());
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager, "2025-06-18").await;
-
-            let body = call_tool(running, session_manager, &session_id, "Hello").await;
+            let body = super::stateless_request(
+                running,
+                "2025-06-18",
+                "tools/call",
+                json!({"name": "Hello", "arguments": {}}),
+            )
+            .await;
 
             mock.assert();
             let result = &body["result"];
@@ -3471,51 +4525,17 @@ mod integration_tests {
         use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use std::sync::Arc;
-        use tokio::sync::RwLock;
         use tower::ServiceExt;
 
+        use super::super::test_support::create_test_running;
         use super::*;
-
-        fn create_test_running() -> Running {
-            let schema =
-                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
-                    .unwrap();
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![])),
-                apps: vec![],
-                prompts: vec![],
-                headers: http::HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::All,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: false,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                annotations: HashMap::new(),
-                health_check: None,
-                server_info: Default::default(),
-                instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
-            }
-        }
 
         fn create_test_service(
             stateful_mode: bool,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             let running = create_test_running();
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 LocalSessionManager::default().into(),
                 StreamableHttpServerConfig::default().with_legacy_session_mode(stateful_mode),
             )
@@ -3524,9 +4544,9 @@ mod integration_tests {
         fn create_stateful_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
@@ -3783,7 +4803,7 @@ mod integration_tests {
         }
     }
 
-    mod peer_cleanup {
+    mod legacy_notifications {
         use std::sync::Arc;
 
         use axum::body::Body;
@@ -3791,54 +4811,36 @@ mod integration_tests {
         use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
         use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
-        use tokio::sync::RwLock;
         use tower::ServiceExt;
 
+        use super::super::test_support::{SseReader, create_test_running, next_message};
         use super::*;
-
-        fn create_test_running() -> Running {
-            let schema =
-                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
-                    .unwrap();
-            Running {
-                schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![])),
-                apps: vec![],
-                prompts: vec![],
-                headers: http::HeaderMap::new(),
-                forward_headers: vec![],
-                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
-                execute_tool: None,
-                introspect_tool: None,
-                search_tool: None,
-                explorer_tool: None,
-                validate_tool: None,
-                custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
-                cancellation_token: CancellationToken::new(),
-                mutation_mode: MutationMode::All,
-                disable_type_description: false,
-                disable_schema_description: false,
-                enable_output_schema: false,
-                disable_auth_token_passthrough: false,
-                descriptions: HashMap::new(),
-                annotations: HashMap::new(),
-                health_check: None,
-                server_info: Default::default(),
-                instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
-            }
-        }
 
         fn create_service(
             running: Running,
             session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
             StreamableHttpService::new(
-                move || Ok(running.clone()),
+                move || Ok(running.for_service()),
                 session_manager,
                 StreamableHttpServerConfig::default().with_legacy_session_mode(true),
             )
+        }
+
+        struct LegacyHttp {
+            running: Running,
+            service: StreamableHttpService<McpService, LocalSessionManager>,
+        }
+
+        impl LegacyHttp {
+            fn new(running: Running) -> Self {
+                let service = create_service(running.clone(), Arc::default());
+                Self { running, service }
+            }
+
+            async fn connect(&self) -> String {
+                initialize_legacy_session(&self.service, &self.running).await
+            }
         }
 
         fn build_initialize_request() -> Request<Body> {
@@ -3847,7 +4849,7 @@ mod integration_tests {
                 "id": 1,
                 "method": "initialize",
                 "params": {
-                    "protocolVersion": "2024-11-05",
+                    "protocolVersion": "2025-11-25",
                     "capabilities": {},
                     "clientInfo": {
                         "name": "test-client",
@@ -3875,37 +4877,60 @@ mod integration_tests {
                 .unwrap()
         }
 
+        async fn initialize_legacy_session(
+            service: &StreamableHttpService<McpService, LocalSessionManager>,
+            running: &Running,
+        ) -> String {
+            let previous = running.tool_list_changes.receiver_count();
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(running.tool_list_changes.receiver_count(), previous + 1);
+
+            let response = service
+                .clone()
+                .oneshot(session_request(
+                    &session,
+                    http::Method::POST,
+                    json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            session
+        }
+
+        #[rstest::rstest]
         #[tokio::test]
-        async fn closed_peers_are_cleaned_up_on_operations_update() {
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn deleted_session_releases_forwarder_without_a_catalog_update() {
             let running = create_test_running();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
 
-            // Initialize a session — this adds a peer to running.peers
             let service = create_service(running.clone(), Arc::clone(&session_manager));
-            let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string();
+            let session_id = initialize_legacy_session(&service, &running).await;
+            let mut stream = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_get(&session_id))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            running.update_operations(vec![]).await;
+            assert_eq!(
+                next_message(&mut stream).await["method"],
+                "notifications/tools/list_changed"
+            );
 
-            // Poll until the peer is registered by the async initialize handler
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                if running.peers.read().await.len() == 1 {
-                    break;
-                }
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "peer should be registered after initialize"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-            }
-
-            // Delete the session — closes the session transport
+            // Delete an actively forwarding session, not just a pending receiver.
             let service = create_service(running.clone(), Arc::clone(&session_manager));
             let response = service
                 .oneshot(build_delete_request(&session_id))
@@ -3913,30 +4938,462 @@ mod integration_tests {
                 .unwrap();
             assert_eq!(response.status(), StatusCode::ACCEPTED);
 
-            // Poll until the transport is fully closed
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                let guard = running.peers.read().await;
-                if guard.first().is_some_and(|p| p.is_transport_closed()) {
-                    break;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .expect("session teardown must release its change receiver without another update");
+        }
+        fn session_request(session: &str, method: http::Method, body: Value) -> Request<Body> {
+            Request::builder()
+                .method(method.clone())
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Content-Type", "application/json")
+                .header("Mcp-Session-Id", session)
+                .body(if method == http::Method::GET {
+                    Body::empty()
+                } else {
+                    Body::from(body.to_string())
+                })
+                .unwrap()
+        }
+
+        fn session_get(session: &str) -> Request<Body> {
+            session_request(session, http::Method::GET, Value::Null)
+        }
+
+        fn session_post(session: &str, body: Value) -> Request<Body> {
+            session_request(session, http::Method::POST, body)
+        }
+
+        #[rstest::rstest]
+        #[case::application(false)]
+        #[case::signal(true)]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn http_shutdown_releases_an_open_notification_stream(#[case] signal_shutdown: bool) {
+            use crate::server::states::starting::{build_http_service, serve_http};
+            let running = create_test_running();
+            let shutdown = running.cancellation_token.clone();
+            let service = build_http_service(running.clone(), true, &Default::default());
+            let session = initialize_legacy_session(&service, &running).await;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let (signal, received) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(serve_http(
+                listener,
+                axum::Router::new().nest_service("/mcp", service),
+                shutdown.clone(),
+                async move {
+                    received.await.unwrap();
+                },
+            ));
+            let mut response = reqwest::Client::new()
+                .get(format!("http://{address}/mcp"))
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            running.update_operations(vec![]).await;
+            let mut received = String::new();
+            while !received.contains("notifications/tools/list_changed") {
+                let chunk = response
+                    .chunk()
+                    .await
+                    .unwrap()
+                    .expect("open notification stream");
+                received.push_str(&String::from_utf8_lossy(&chunk));
+            }
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            if signal_shutdown {
+                signal.send(()).unwrap();
+            } else {
+                shutdown.cancel();
+            }
+            server.await.unwrap().unwrap();
+            running.tool_list_changes.closed().await;
+            assert!(shutdown.is_cancelled());
+            drop(response);
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn updates_while_initialized_callback_is_delayed_are_delivered() {
+            struct DelayedService {
+                service: McpService,
+                release: Arc<tokio::sync::Semaphore>,
+                entered: tokio::sync::mpsc::UnboundedSender<()>,
+            }
+            impl ServerHandler for DelayedService {
+                fn get_info(&self) -> ServerConfig {
+                    self.service.get_info()
                 }
-                drop(guard);
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "peer transport should be closed after session delete"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                async fn initialize(
+                    &self,
+                    request: InitializeRequestParams,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<InitializeResult, McpError> {
+                    self.service.initialize(request, context).await
+                }
+                async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+                    self.entered.send(()).unwrap();
+                    self.release.acquire().await.unwrap().forget();
+                    self.service.on_initialized(context).await;
+                }
+                async fn list_tools(
+                    &self,
+                    request: Option<PaginatedRequestParams>,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<ListToolsResult, McpError> {
+                    self.service.list_tools(request, context).await
+                }
+            }
+            let running = create_test_running();
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let (entered, mut callbacks) = tokio::sync::mpsc::unbounded_channel();
+            let service = StreamableHttpService::new(
+                {
+                    let running = running.clone();
+                    let release = release.clone();
+                    move || {
+                        Ok(DelayedService {
+                            service: running.for_service(),
+                            release: release.clone(),
+                            entered: entered.clone(),
+                        })
+                    }
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            );
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            service
+                .clone()
+                .oneshot(session_post(
+                    &session,
+                    json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+                ))
+                .await
+                .unwrap();
+            callbacks.recv().await.unwrap();
+            let list = json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
+            let mut before = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_post(&session, list.clone()))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            assert!(
+                next_message(&mut before).await["result"]["tools"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty()
+            );
+            let mut stream = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_get(&session))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            running
+                .update_operations(vec![("query Hello { hello }".to_owned(), None).into()])
+                .await;
+            // The update must be retained even though delivery has not started.
+            release.add_permits(1);
+            assert_eq!(
+                next_message(&mut stream).await["method"],
+                "notifications/tools/list_changed"
+            );
+            let mut after = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_post(&session, list))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            assert_eq!(
+                next_message(&mut after).await["result"]["tools"][0]["name"],
+                "Hello"
+            );
+            service
+                .oneshot(build_delete_request(&session))
+                .await
+                .unwrap();
+            running.tool_list_changes.closed().await;
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn repeated_initialized_notifications_keep_one_forwarder() {
+            // rmcp dispatches notifications concurrently. Observe completion of
+            // each real callback rather than treating a later request as a barrier.
+            struct ObservedService {
+                running: McpService,
+                completed: tokio::sync::mpsc::UnboundedSender<()>,
+            }
+            impl ServerHandler for ObservedService {
+                fn get_info(&self) -> ServerConfig {
+                    self.running.get_info()
+                }
+
+                async fn initialize(
+                    &self,
+                    request: InitializeRequestParams,
+                    context: RequestContext<RoleServer>,
+                ) -> Result<InitializeResult, McpError> {
+                    self.running.initialize(request, context).await
+                }
+
+                async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+                    self.running.on_initialized(context).await;
+                    self.completed.send(()).unwrap();
+                }
+            }
+            let running = create_test_running();
+            let (completed, mut callbacks) = tokio::sync::mpsc::unbounded_channel();
+            let service = StreamableHttpService::new(
+                {
+                    let running = running.clone();
+                    move || {
+                        Ok(ObservedService {
+                            running: running.for_service(),
+                            completed: completed.clone(),
+                        })
+                    }
+                },
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            );
+            let response = service
+                .clone()
+                .oneshot(build_initialize_request())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let session = response.headers()["Mcp-Session-Id"]
+                .to_str()
+                .unwrap()
+                .to_owned();
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            for _ in 0..2 {
+                let response = service
+                    .clone()
+                    .oneshot(session_post(
+                        &session,
+                        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                    ))
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::ACCEPTED);
+                tokio::time::timeout(std::time::Duration::from_secs(2), callbacks.recv())
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            }
+            service
+                .oneshot(build_delete_request(&session))
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn http_clients_receive_catalog_updates_across_sse_reconnects() {
+            let mut running = create_test_running();
+            running.enable_output_schema = true;
+            let fixture = LegacyHttp::new(running.clone());
+            let service = fixture.service.clone();
+            let mut sessions = Vec::new();
+            for _ in 0..2 {
+                sessions.push(fixture.connect().await);
+            }
+            let mut streams = Vec::new();
+            for session in &sessions {
+                let response = service.clone().oneshot(session_get(session)).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                streams.push(SseReader::new(Body::new(response.into_body())));
+            }
+            running
+                .update_operations(vec![("query Hello { hello }".to_owned(), None).into()])
+                .await;
+            let mut last_event_ids = Vec::new();
+            for stream in &mut streams {
+                last_event_ids.push(stream.next_notification().await);
+            }
+            let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"});
+            let mut response = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_post(&sessions[0], list.clone()))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            let before = next_message(&mut response).await;
+            assert_eq!(before["result"]["tools"][0]["name"], "Hello");
+
+            // Closing a GET stream must not tear down a reconnectable legacy session.
+            streams.clear();
+            running
+                .update_schema(
+                    apollo_compiler::Schema::parse_and_validate(
+                        "type Query { hello: Int! }",
+                        "test",
+                    )
+                    .unwrap(),
+                )
+                .await;
+            // Resume from the last observed event, rather than replaying all history.
+            for (session, last_event_id) in sessions.iter().zip(&last_event_ids) {
+                let mut request = session_get(session);
+                request
+                    .headers_mut()
+                    .insert("Last-Event-ID", last_event_id.parse().unwrap());
+                let response = service.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK);
+                streams.push(SseReader::new(Body::new(response.into_body())));
+            }
+            for (stream, last_event_id) in streams.iter_mut().zip(&mut last_event_ids) {
+                let mut next_event_id = stream.next_notification().await;
+                // rmcp 3.2's in-memory cache replays the cursor event inclusively.
+                // That duplicate cannot establish delivery of the gap update.
+                if next_event_id == *last_event_id {
+                    next_event_id = stream.next_notification().await;
+                }
+                assert_ne!(next_event_id, *last_event_id);
+                *last_event_id = next_event_id;
             }
 
-            // Trigger update_operations which calls notify_tool_list_changed,
-            // cleaning up the now-closed peer
-            running.update_operations(vec![]).await;
-
-            assert_eq!(
-                running.peers.read().await.len(),
-                0,
-                "closed peer should be removed after update_operations"
+            let mut response = SseReader::new(Body::new(
+                service
+                    .clone()
+                    .oneshot(session_post(&sessions[0], list))
+                    .await
+                    .unwrap()
+                    .into_body(),
+            ));
+            let after = next_message(&mut response).await;
+            assert_ne!(
+                before["result"]["tools"][0]["outputSchema"],
+                after["result"]["tools"][0]["outputSchema"]
             );
+            // Delivery must also continue after the streams have reconnected.
+            running.update_operations(vec![]).await;
+            for (stream, last_event_id) in streams.iter_mut().zip(&last_event_ids) {
+                assert_ne!(stream.next_notification().await, *last_event_id);
+            }
+            for session in &sessions {
+                service
+                    .clone()
+                    .oneshot(build_delete_request(session))
+                    .await
+                    .unwrap();
+            }
+            drop(streams);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn stdio_delivers_changes_and_releases_forwarder_on_disconnect() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+            let running = create_test_running();
+            let connection = running.for_service();
+            let intermediate_clone = connection.clone();
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let server = tokio::spawn(async move {
+                connection
+                    .serve(server_io)
+                    .await
+                    .unwrap()
+                    .waiting()
+                    .await
+                    .unwrap();
+            });
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
+            let init = json!({"jsonrpc":"2.0", "id":1, "method":"initialize", "params": {
+                "protocolVersion":"2025-11-25", "capabilities":{}, "clientInfo":{"name":"test", "version":"1"}
+            }});
+            writer
+                .write_all(format!("{init}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            assert!(
+                serde_json::from_str::<Value>(&line)
+                    .unwrap()
+                    .get("result")
+                    .is_some()
+            );
+            assert_eq!(running.tool_list_changes.receiver_count(), 1);
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            drop(intermediate_clone);
+            running.update_operations(vec![]).await;
+            line.clear();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                reader.read_line(&mut line),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(&line).unwrap()["method"],
+                "notifications/tools/list_changed"
+            );
+            drop(reader);
+            drop(writer);
+            tokio::time::timeout(std::time::Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                running.tool_list_changes.closed(),
+            )
+            .await
+            .unwrap();
         }
     }
 
@@ -3944,13 +5401,12 @@ mod integration_tests {
         use std::sync::Arc;
 
         use axum::body::Body;
-        use http::{Request, StatusCode};
-        use http_body_util::BodyExt;
+        use http_body_util::BodyExt as _;
         use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
         use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
-        use tower::ServiceExt;
+        use tower::ServiceExt as _;
 
         use super::*;
 
@@ -3972,7 +5428,7 @@ mod integration_tests {
                 explorer_tool: None,
                 validate_tool: None,
                 custom_scalar_map: None,
-                peers: Arc::new(RwLock::new(vec![])),
+                tool_list_changes: Default::default(),
                 cancellation_token: CancellationToken::new(),
                 mutation_mode: MutationMode::None,
                 disable_type_description: false,
@@ -3984,141 +5440,381 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
+                caching: Caching::default(),
             }
-        }
-
-        fn create_service(
-            running: Running,
-            session_manager: Arc<LocalSessionManager>,
-        ) -> StreamableHttpService<Running, LocalSessionManager> {
-            StreamableHttpService::new(
-                move || Ok(running.clone()),
-                session_manager,
-                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
-            )
-        }
-
-        fn build_initialize_request() -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": { "name": "test-client", "version": "1.0.0" }
-                }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_notification_request(session_id: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn build_set_level_request(session_id: &str, level: &str) -> Request<Body> {
-            let body = json!({
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "logging/setLevel",
-                "params": { "level": level }
-            });
-            Request::builder()
-                .method("POST")
-                .uri("/mcp")
-                .header("Host", "localhost:8000")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Session-Id", session_id)
-                .body(Body::from(body.to_string()))
-                .unwrap()
-        }
-
-        fn extract_session_id<B>(response: &http::Response<B>) -> String {
-            response
-                .headers()
-                .get("mcp-session-id")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .to_string()
-        }
-
-        async fn extract_json_body<B>(response: http::Response<B>) -> serde_json::Value
-        where
-            B: BodyExt,
-            B::Error: std::fmt::Debug,
-        {
-            let bytes = response.into_body().collect().await.unwrap().to_bytes();
-            let body_str = String::from_utf8_lossy(&bytes);
-            for line in body_str.lines() {
-                if let Some(data) = line.strip_prefix("data: ")
-                    && let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                {
-                    return val;
-                }
-            }
-            panic!("no JSON data found in SSE response");
-        }
-
-        async fn initialize_session(
-            running: &Running,
-            session_manager: &Arc<LocalSessionManager>,
-        ) -> String {
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service.oneshot(build_initialize_request()).await.unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-            let session_id = extract_session_id(&response);
-
-            let service = create_service(running.clone(), Arc::clone(session_manager));
-            let response = service
-                .oneshot(build_notification_request(&session_id))
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-            session_id
         }
 
         #[tokio::test]
-        async fn returns_empty_success_for_any_level() {
+        async fn legacy_sessionless_request_returns_empty_success() {
             let running = create_test_running();
-            let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
-            let session_id = initialize_session(&running, &session_manager).await;
-
-            let service = create_service(running, session_manager);
-            let response = service
-                .oneshot(build_set_level_request(&session_id, "debug"))
-                .await
-                .unwrap();
-
-            assert_eq!(response.status(), StatusCode::OK);
-            let body = extract_json_body(response).await;
+            let body = super::stateless_request(
+                running,
+                "2025-11-25",
+                "logging/setLevel",
+                json!({"level": "debug"}),
+            )
+            .await;
             assert!(
                 body.get("error").is_none(),
                 "set_level should not return an error: {body}"
             );
             assert_eq!(body["result"], json!({}));
         }
+
+        fn modern_request() -> http::Request<Body> {
+            http::Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .header("Mcp-Method", "logging/setLevel")
+                .body(Body::from(json!({
+                    "jsonrpc": "2.0", "id": 42, "method": "logging/setLevel",
+                    "params": {
+                        "level": "debug",
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                            "io.modelcontextprotocol/clientCapabilities": {},
+                            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"}
+                        }
+                    }
+                }).to_string()))
+                .unwrap()
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_request_returns_http_method_not_found(
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running = create_test_running();
+            let capabilities =
+                serde_json::to_value(running.for_service().get_info().capabilities).unwrap();
+            assert!(capabilities.get("logging").is_none());
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            let response = service.oneshot(modern_request()).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn legacy_negotiated_request_returns_empty_success() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let running = create_test_running();
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
+            let server = tokio::spawn(async move {
+                running
+                    .for_service()
+                    .serve(server_io)
+                    .await
+                    .unwrap()
+                    .waiting()
+                    .await
+                    .unwrap();
+            });
+            let initialize = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"}
+                }
+            });
+            writer
+                .write_all(format!("{initialize}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 1);
+            assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+            assert!(response["result"]["capabilities"].get("logging").is_none());
+
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            let set_level = json!({
+                "jsonrpc": "2.0", "id": 2, "method": "logging/setLevel",
+                "params": {"level": "debug"}
+            });
+            writer
+                .write_all(format!("{set_level}\n").as_bytes())
+                .await
+                .unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 2);
+            assert_eq!(response["result"], json!({}));
+            assert!(response.get("error").is_none());
+
+            drop(reader);
+            drop(writer);
+            server.await.unwrap();
+        }
+    }
+
+    /// `server/discover`: called before any other request, without a session.
+    mod discover {
+        use std::sync::Arc;
+
+        use axum::body::Body;
+        use http::{Request, StatusCode};
+        use http_body_util::BodyExt;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tokio::sync::RwLock;
+        use tower::ServiceExt;
+
+        use super::*;
+        use crate::server_info::ServerInfoConfig;
+
+        /// Discovery has no top-level `serverInfo`; it lives in `_meta`.
+        const SERVER_INFO_META_KEY: &str = "io.modelcontextprotocol/serverInfo";
+
+        fn create_test_running(server_info: ServerInfoConfig) -> Running {
+            let schema =
+                apollo_compiler::Schema::parse_and_validate("type Query { hello: String }", "test")
+                    .unwrap();
+            Running {
+                schema: Arc::new(RwLock::new(schema)),
+                operations: Arc::new(RwLock::new(vec![])),
+                apps: vec![],
+                prompts: vec![],
+                headers: http::HeaderMap::new(),
+                forward_headers: vec![],
+                endpoint: url::Url::parse("http://localhost:4000").unwrap(),
+                execute_tool: None,
+                introspect_tool: None,
+                search_tool: None,
+                explorer_tool: None,
+                validate_tool: None,
+                custom_scalar_map: None,
+                tool_list_changes: Default::default(),
+                cancellation_token: CancellationToken::new(),
+                mutation_mode: MutationMode::None,
+                disable_type_description: false,
+                disable_schema_description: false,
+                enable_output_schema: false,
+                disable_auth_token_passthrough: false,
+                descriptions: HashMap::new(),
+                annotations: HashMap::new(),
+                health_check: None,
+                server_info,
+                instructions: None,
+                rhai_engine: SharedRhaiEngine::new("rhai"),
+                caching: Caching::default(),
+            }
+        }
+
+        fn create_service(
+            running: Running,
+            session_manager: Arc<LocalSessionManager>,
+        ) -> StreamableHttpService<McpService, LocalSessionManager> {
+            StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                session_manager,
+                StreamableHttpServerConfig::default().with_legacy_session_mode(true),
+            )
+        }
+
+        /// Carries no session id, so `_meta` and the `MCP-Protocol-Version`
+        /// header have to be self-contained.
+        fn build_discover_request(protocol_version: &str) -> Request<Body> {
+            let body = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": protocol_version,
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                        "io.modelcontextprotocol/clientInfo": {
+                            "name": "test-client",
+                            "version": "1.0.0"
+                        }
+                    }
+                }
+            });
+            Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost:8000")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("MCP-Protocol-Version", protocol_version)
+                // SEP-2243 standard header.
+                .header("Mcp-Method", "server/discover")
+                .body(Body::from(body.to_string()))
+                .unwrap()
+        }
+
+        async fn discover(running: Running) -> serde_json::Value {
+            let service = create_service(running, LocalSessionManager::default().into());
+            let response = service
+                .oneshot(build_discover_request(
+                    MAX_SUPPORTED_PROTOCOL_VERSION.as_str(),
+                ))
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body_str = String::from_utf8_lossy(&bytes);
+            let body: serde_json::Value = body_str
+                .lines()
+                .find_map(|line| serde_json::from_str(line.strip_prefix("data: ")?).ok())
+                .or_else(|| serde_json::from_str(&body_str).ok())
+                .unwrap_or_else(|| panic!("no JSON data found in response: {body_str}"));
+            assert_eq!(status, StatusCode::OK, "discover failed: {body}");
+            body["result"].clone()
+        }
+
+        #[tokio::test]
+        async fn returns_expected_result_shape() {
+            let running = create_test_running(ServerInfoConfig {
+                description: Some("Custom fleet description".to_string()),
+                ..Default::default()
+            });
+            let expected_capabilities =
+                serde_json::to_value(running.for_service().get_info().capabilities)
+                    .expect("capabilities serialize");
+
+            let result = discover(running).await;
+
+            assert_eq!(result["resultType"], "complete");
+            // `initialize` returns `get_info()` untouched but for the
+            // negotiated version, so this is the capability set both report.
+            assert_eq!(result["capabilities"], expected_capabilities);
+            assert!(result["ttlMs"].is_u64(), "ttlMs must be a number: {result}");
+            assert!(
+                result["cacheScope"].is_string(),
+                "cacheScope must be a string: {result}"
+            );
+
+            let server_info = &result["_meta"][SERVER_INFO_META_KEY];
+            assert_eq!(server_info["description"], "Custom fleet description");
+            assert_eq!(server_info["name"], "Apollo MCP Server");
+            assert!(
+                server_info["version"].is_string(),
+                "serverInfo must carry a version: {server_info}"
+            );
+        }
+
+        #[tokio::test]
+        async fn advertises_backward_compatible_protocol_versions() {
+            let result = discover(create_test_running(ServerInfoConfig::default())).await;
+
+            let versions: Vec<&str> = result["supportedVersions"]
+                .as_array()
+                .expect("supportedVersions must be an array")
+                .iter()
+                .map(|version| version.as_str().expect("versions are strings"))
+                .collect();
+
+            assert!(
+                versions.contains(&"2025-11-25") && versions.contains(&"2026-07-28"),
+                "must advertise modern and backward compatible versions: {versions:?}"
+            );
+            // rmcp reuses this list as the ceiling on `initialize`
+            // negotiation, so advertising a version promises we can serve it.
+            assert!(
+                !versions
+                    .iter()
+                    .any(|version| *version > MAX_SUPPORTED_PROTOCOL_VERSION.as_str()),
+                "must not advertise past our cap: {versions:?}"
+            );
+        }
+
+        /// stdio has no headers to negotiate with, so discovery as the opening
+        /// message is the only compatibility probe available there.
+        #[tokio::test]
+        async fn works_as_opener_over_stdio() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (server_r, server_w) = tokio::io::split(server_io);
+            let (client_r, mut client_w) = tokio::io::split(client_io);
+
+            let server = tokio::spawn(async move {
+                let service = create_test_running(ServerInfoConfig::default())
+                    .for_service()
+                    .serve((server_r, server_w))
+                    .await
+                    .expect("stdio serve should accept a discover opener");
+                let _ = service.waiting().await;
+            });
+
+            let mut request = json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion":
+                            MAX_SUPPORTED_PROTOCOL_VERSION.as_str(),
+                        "io.modelcontextprotocol/clientCapabilities": {},
+                    }
+                }
+            })
+            .to_string();
+            request.push('\n');
+            client_w.write_all(request.as_bytes()).await.unwrap();
+
+            let mut reader = BufReader::new(client_r);
+            let mut response_line = String::new();
+            reader.read_line(&mut response_line).await.unwrap();
+            let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
+
+            assert!(
+                body.get("error").is_none(),
+                "discover over stdio returned an error: {body}"
+            );
+            let versions = body["result"]["supportedVersions"]
+                .as_array()
+                .expect("supportedVersions must be an array");
+            assert!(versions.iter().any(|version| version == "2025-11-25"));
+
+            drop(reader);
+            drop(client_w);
+            let _ = server.await;
+        }
     }
 }
+
+#[cfg(test)]
+mod backpressure_tests;
+
+#[cfg(test)]
+pub(super) mod test_support;
+
+#[cfg(test)]
+mod method_header_tests;
+
+#[cfg(test)]
+mod subscription_tests;
+
+#[cfg(test)]
+mod schema_conformance_tests;

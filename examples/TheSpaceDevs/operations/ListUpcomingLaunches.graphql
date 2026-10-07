@@ -1,3 +1,6 @@
+"""
+List upcoming rocket launches, soonest first, with rocket, mission, and provider details
+"""
 query ListUpcomingLaunches {
   upcomingLaunches(limit: 10, ordering: "net") {
     pagination {

@@ -62,10 +62,11 @@ cargo llvm-cov --all-features --workspace --codecov --output-path codecov.json
 
 ## Workspace Structure
 
-The project is a Rust workspace with three crates:
+The project is a Rust workspace with four crates:
 
 - **apollo-mcp-server** (`crates/apollo-mcp-server/`) - Main binary. MCP protocol handler, HTTP/WebSocket transport, GraphQL execution, auth, telemetry.
 - **apollo-mcp-registry** (`crates/apollo-mcp-registry/`) - Schema and operations provider. Handles schema sources (Uplink, local files) and operation sources (Platform API collections, persisted queries, local files).
+- **apollo-mcp-rhai** (`crates/apollo-mcp-rhai/`) - Rhai scripting support. Script engine, lifecycle hook functions, and checkpoints.
 - **apollo-schema-index** (`crates/apollo-schema-index/`) - GraphQL schema indexing using Tantivy for full-text search.
 
 ## Key Architecture Patterns
@@ -87,7 +88,7 @@ The project is a Rust workspace with three crates:
 
 ## Key Dependencies
 
-- `rmcp 3.2` - MCP protocol implementation (aligned with MCP 2025-11-25)
+- `rmcp` - MCP protocol implementation (the official Rust SDK)
 - `apollo-compiler`, `apollo-federation` - GraphQL parsing and schema handling
 - `axum 0.8` - HTTP server
 - `tokio` - Async runtime

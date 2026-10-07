@@ -11,6 +11,7 @@ use serde::Deserialize;
 use url::Url;
 
 use crate::auth;
+use crate::caching::Caching;
 use crate::cors::CorsConfig;
 use crate::custom_scalar_map::CustomScalarMap;
 use crate::errors::ServerError;
@@ -79,6 +80,7 @@ pub struct Server {
     server_info: ServerInfoConfig,
     config_validator: Option<ConfigValidator>,
     instructions: Option<String>,
+    caching: Caching,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -104,7 +106,9 @@ pub enum Transport {
         #[serde(default = "Transport::default_port")]
         port: u16,
 
-        /// Enable stateful mode for session management
+        /// Enable legacy HTTP sessions for clients on protocol versions before
+        /// 2026-07-28. Sessionless requests do not receive unsolicited
+        /// notifications. Clients on 2026-07-28 or later are always sessionless.
         #[serde(default = "Transport::default_stateful_mode")]
         stateful_mode: bool,
 
@@ -174,6 +178,7 @@ impl Server {
         server_info: ServerInfoConfig,
         config_validator: Option<ConfigValidator>,
         instructions: Option<String>,
+        #[builder(default)] caching: Caching,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -216,6 +221,7 @@ impl Server {
             server_info,
             config_validator,
             instructions,
+            caching,
         }
     }
 

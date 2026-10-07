@@ -85,7 +85,8 @@ impl Search {
             allow_mutations,
             leaf_depth,
             minify,
-            tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input)),
+            tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input))
+                .annotate(super::schema_lookup_annotations()),
         })
     }
 

@@ -143,15 +143,16 @@ These fields are under the top-level `cors` key and configure Cross-Origin Resou
 
 These fields are under the top-level `health_check` key. Learn more about [health checks](/apollo-mcp-server/health-checks).
 
-| Option                        | Type       | Default     | Description                                                                        |
-| :---------------------------- | :--------- | :---------- | :--------------------------------------------------------------------------------- |
-| `enabled`                     | `bool`     | `false`     | Enable health check endpoints                                                      |
-| `path`                        | `string`   | `"/health"` | Custom health check endpoint path                                                  |
-| `readiness`                   | `object`   |             | Readiness check configuration                                                      |
-| `readiness.allowed`           | `number`   | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
-| `readiness.interval`          | `object`   |             | Readiness check interval configuration                                             |
-| `readiness.interval.sampling` | `duration` | `"5s"`      | How often to check the rejection count                                             |
-| `readiness.interval.unready`  | `duration` | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
+| Option                        | Type             | Default     | Description                                                                        |
+|:------------------------------|:-----------------|:------------|:-----------------------------------------------------------------------------------|
+| `enabled`                     | `bool`           | `false`     | Enable health check endpoints                                                      |
+| `path`                        | `string`         | `"/health"` | Custom health check endpoint path                                                  |
+| `listen`                      | `socket address` |             | Serve health checks on a separate address/port instead of the main listener        |
+| `readiness`                   | `object`         |             | Readiness check configuration                                                      |
+| `readiness.allowed`           | `number`         | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
+| `readiness.interval`          | `object`         |             | Readiness check interval configuration                                             |
+| `readiness.interval.sampling` | `duration`       | `"5s"`      | How often to check the rejection count                                             |
+| `readiness.interval.unready`  | `duration`       | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
 
 <Note>
 
@@ -204,7 +205,7 @@ These fields are under the top-level `logging` key.
 | Option     | Type                                                | Default    | Description                                                                       |
 | :--------- | :-------------------------------------------------- | :--------- | :-------------------------------------------------------------------------------- |
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
-| `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stdout`.      |
+| `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stderr` for the `stdio` transport and `stdout` for the `streamable_http` transport. |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
 
 <Caution>
@@ -257,6 +258,20 @@ A successfully fetched source update replaces the current catalog; it isn't comp
 Some MCP clients cache the tool list independently. If tools don't refresh after the polling interval, reconnect or restart your MCP client.
 
 </Tip>
+
+### Caching
+
+These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL_MS` to override the TTL through an environment variable.
+
+| Option | Type | Default | Description |
+| :----- | :--- | :------ | :---------- |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads use a `ttlMs` of `0` because their content can change outside the server. Cache scope is always `private`. Applies to supported MCP protocol versions from `2026-07-28` onward. |
+
+<Note>
+
+Clients using `2026-07-28` select the protocol through discovery and per-request metadata. Legacy clients using `initialize` retain their earlier protocol response shape without cache hints.
+
+</Note>
 
 ### Overrides
 
@@ -356,7 +371,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `stateful_mode`   | `bool`           | `true`      | Flag to enable or disable stateful mode and session management |
+| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
 <Note>
@@ -417,10 +432,13 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `allow_any_audience`              | `bool`                | `false`       | Set to `true` to skip audience validation entirely (use with caution)                                                                                                                                            |
 | `resource`                        | `string`              |               | The externally available URL pointing to this MCP server. Can be `localhost` when testing locally.                                                                                                               |
 | `resource_documentation`          | `string`              |               | Optional link to more documentation relating to this MCP server                                                                                                                                                  |
-| `scopes`                          | `List<string>`        |               | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`.                                                                    |
+| `scopes`                          | `List<string>`        | `[]`          | Global OAuth scopes supported by this MCP resource server. The server advertises them to clients and enforces them according to `scope_mode`. Empty imposes no global scope requirement.                        |
 | `scope_mode`                      | `string`              | `require_all` | Global scope enforcement mode: `disabled`, `require_all`, or `require_any`. Per-operation requirements always use all-of semantics.                                                                              |
 | `disable_auth_token_passthrough`  | `bool`                | `false`       | Disable automatic propagation of the validated Authorization header to the downstream API. When passthrough is disabled, headers forwarded via `forward_headers` are left untouched; when passthrough is active, the validated token replaces a forwarded `Authorization` header. |
-| `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | Allow unauthenticated access to MCP discovery methods (`initialize`, `tools/list`, `resources/list`). See [anonymous MCP discovery](/apollo-mcp-server/auth#anonymous-mcp-discovery).                            |
+| `skip_token_validation.methods`   | `List<string>`        | `[]`          | JSON-RPC method names that skip token validation when the request carries no `Authorization` header. Methods that name one of many items, such as `tools/call` and `resources/read`, are rejected. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation). |
+| `skip_token_validation.tools`     | `List<string>`        | `[]`          | Tool names that skip token validation when the request carries no `Authorization` header. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation).                                    |
+| `skip_token_validation.headers`   | `List<string>`        | `[]`          | HTTP header names that skip token validation when the request carries no `Authorization` header. A later layer authenticates the request. See [skipping token validation](/apollo-mcp-server/auth#skipping-token-validation). |
+| `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | **Deprecated.** Use `skip_token_validation.methods` instead. Enabling this is the same as listing `initialize`, `server/discover`, `tools/list`, and `resources/list` there. Setting both is an error.           |
 | `filter_tools_by_scope`           | `bool`                | `false`       | Filter `tools/list` using `overrides.required_scopes`. Authenticated clients see tools their token can call; anonymous discovery clients see only tools without required scopes.                           |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
 | `discovery_headers`               | `Map<string, string>` | `{}`          | Custom headers to include in OIDC discovery and JWKS requests. Useful when upstream OAuth servers or WAFs require headers like `User-Agent`. See [discovery headers](/apollo-mcp-server/auth#discovery-headers). |
@@ -478,9 +496,16 @@ transport:
     discovery_headers:
       User-Agent: apollo-mcp-server
 
-    # Allow unauthenticated clients to call MCP discovery methods
-    # (initialize, tools/list, resources/list). All other methods still require auth.
-    # allow_anonymous_mcp_discovery: false
+    # Requests that skip token validation. Each list applies only when the
+    # request carries no Authorization header. Every other request is validated.
+    # skip_token_validation:
+    #   methods:
+    #     - tools/list
+    #     - server/discover
+    #   tools:
+    #     - PublicTool
+    #   headers:
+    #     - x-api-key
 
     # Filter tools/list using overrides.required_scopes. Disabled by default.
     # filter_tools_by_scope: false
@@ -629,6 +654,7 @@ These fields are under the top-level `server_info` key and configure the server 
 | `title`       | `string` | `"Apollo MCP Server"`                                                         | Human-readable title for the server (used for display in UIs)              |
 | `website_url` | `URL`    | `"https://www.apollographql.com/docs/apollo-mcp-server"`                      | URL to the server's website or documentation                               |
 | `description` | `string` | `"A Model Context Protocol (MCP) server for exposing GraphQL APIs as tools."` | A brief description of the server                                          |
+| `icons`       | `Icon[]` |                                                                               | Icons representing the server, for clients that display one                |
 
 All fields are optional. If not specified, sensible defaults are used. This is useful when wrapping Apollo MCP Server or branding it for specific use cases.
 
@@ -639,7 +665,30 @@ server_info:
   title: "Acme MCP Server"
   website_url: "https://acme.com/mcp-docs"
   description: "MCP server for Acme Corp's GraphQL API"
+  icons:
+    - src: "https://acme.com/mcp-icon.svg"
+      mime_type: "image/svg+xml"
+      sizes: ["any"]
 ```
+
+#### Icon
+
+Each icon entry supports the fields defined by the [MCP `Icon` object](https://modelcontextprotocol.io/specification/2025-11-25/schema#icon):
+
+| Option      | Type       | Description                                                                                   |
+| :---------- | :--------- | :-------------------------------------------------------------------------------------------- |
+| `src`       | `string`   | Parseable URI of the icon, such as an HTTP or HTTPS URL or a base64-encoded `data:` URI. Required. |
+| `mime_type` | `string`   | Explicit MIME type such as `image/png` or `image/svg+xml`. Use `mime_type` in YAML; `mimeType` is not accepted. Optional. |
+| `sizes`     | `string[]` | Icon size strings. Clients expect `<WIDTH>x<HEIGHT>` (for example, `48x48`) or `any` for scalable formats. The server does not enforce these formats. Optional. |
+| `theme`     | `string`   | Background theme the icon is designed for: `light` or `dark`. Omit this field to render with either theme. Optional. |
+
+No icon is advertised by default. Clients that support icon metadata should select the most appropriate entry for their UI. Clients that do not support icons can ignore this optional field.
+
+<Note>
+
+The MCP specification makes the client responsible for refusing unsafe icon sources, such as `javascript:` URIs, and for applying appropriate security precautions when rendering an icon. The server advertises whatever you configure.
+
+</Note>
 
 ### Initialize instructions
 
