@@ -13,11 +13,12 @@ use opentelemetry_sdk::metrics::{Instrument, Stream, Temporality};
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
+    resource::EnvResourceDetector,
     trace::{RandomIdGenerator, SdkTracerProvider},
 };
 use opentelemetry_semantic_conventions::{
     SCHEMA_URL,
-    attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_VERSION},
+    attribute::{DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_NAME, SERVICE_VERSION},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -213,32 +214,110 @@ mod parsers {
     }
 }
 
-fn resource(telemetry: &Telemetry) -> Resource {
-    let service_name = telemetry
-        .service_name
-        .clone()
-        .unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
-
-    let service_version = telemetry
-        .version
-        .clone()
-        .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-
-    let deployment_env = std::env::var("ENVIRONMENT").unwrap_or_else(|_| "development".to_string());
-
-    Resource::builder()
-        .with_service_name(service_name)
-        .with_schema_url(
-            [
-                KeyValue::new(SERVICE_VERSION, service_version),
-                KeyValue::new(DEPLOYMENT_ENVIRONMENT_NAME, deployment_env),
-            ],
-            SCHEMA_URL,
-        )
-        .build()
+/// A resource attribute set both by our config and by the OpenTelemetry environment variables
+/// (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`) to different values.
+#[derive(Debug, PartialEq)]
+struct ResourceConflict {
+    attribute: &'static str,
+    source: &'static str,
+    configured: String,
+    detected: String,
 }
 
-fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow::Error> {
+/// Builds the resource shared by traces and metrics.
+///
+/// Each attribute we set resolves in the same order: our config, then the OpenTelemetry
+/// environment variables, then our default. `deployment.environment.name` has no default.
+/// Keys we don't set (e.g. `host.name`) pass through from `OTEL_RESOURCE_ATTRIBUTES`.
+fn resource(telemetry: &Telemetry) -> (Resource, Vec<ResourceConflict>) {
+    // Mirrors the SDK's own detection: `OTEL_SERVICE_NAME` beats `service.name` in
+    // `OTEL_RESOURCE_ATTRIBUTES`.
+    let mut detected =
+        Resource::builder_empty().with_detector(Box::new(EnvResourceDetector::new()));
+    if let Some(service_name) = non_empty_env_var("OTEL_SERVICE_NAME") {
+        detected = detected.with_service_name(service_name);
+    }
+    let detected = detected.build();
+
+    let candidates = [
+        (
+            SERVICE_NAME,
+            "telemetry.service_name",
+            telemetry.service_name.clone(),
+            Some(env!("CARGO_PKG_NAME")),
+        ),
+        (
+            SERVICE_VERSION,
+            "telemetry.version",
+            telemetry.version.clone(),
+            Some(env!("CARGO_PKG_VERSION")),
+        ),
+        (
+            DEPLOYMENT_ENVIRONMENT_NAME,
+            "ENVIRONMENT",
+            non_empty_env_var("ENVIRONMENT"),
+            None,
+        ),
+    ];
+
+    let mut attributes = Vec::new();
+    let mut conflicts = Vec::new();
+    for (attribute, source, configured, default) in candidates {
+        let detected = detected
+            .get(&Key::from_static_str(attribute))
+            .map(|value| value.as_str().into_owned());
+        let value = match (configured, detected) {
+            (Some(configured), Some(detected)) => {
+                if configured != detected {
+                    conflicts.push(ResourceConflict {
+                        attribute,
+                        source,
+                        configured: configured.clone(),
+                        detected,
+                    });
+                }
+                Some(configured)
+            }
+            (Some(configured), None) => Some(configured),
+            // Already on the resource via the SDK's environment detector
+            (None, Some(_)) => None,
+            (None, None) => default.map(String::from),
+        };
+        if let Some(value) = value {
+            attributes.push(KeyValue::new(attribute, value));
+        }
+    }
+
+    // `with_attributes` lets our values override the detected ones, unlike `with_schema_url`,
+    // which merges the detected resource on top, so pass it no attributes.
+    let resource = Resource::builder()
+        .with_attributes(attributes)
+        .with_schema_url([], SCHEMA_URL)
+        .build();
+
+    (resource, conflicts)
+}
+
+fn non_empty_env_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn warn_resource_conflicts(conflicts: &[ResourceConflict]) {
+    for conflict in conflicts {
+        tracing::warn!(
+            attribute = conflict.attribute,
+            configured = %conflict.configured,
+            detected = %conflict.detected,
+            "{} overrides the value from OpenTelemetry environment variables",
+            conflict.source,
+        );
+    }
+}
+
+fn init_meter_provider(
+    telemetry: &Telemetry,
+    resource: Resource,
+) -> Result<SdkMeterProvider, anyhow::Error> {
     let metrics_exporters = telemetry
         .exporters
         .as_ref()
@@ -303,7 +382,7 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
     };
 
     let meter_provider = MeterProviderBuilder::default()
-        .with_resource(resource(telemetry))
+        .with_resource(resource)
         .with_reader(reader)
         .with_view(filtered_view)
         .build();
@@ -311,7 +390,10 @@ fn init_meter_provider(telemetry: &Telemetry) -> Result<SdkMeterProvider, anyhow
     Ok(meter_provider)
 }
 
-fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyhow::Error> {
+fn init_tracer_provider(
+    telemetry: &Telemetry,
+    resource: Resource,
+) -> Result<SdkTracerProvider, anyhow::Error> {
     let tracer_exporters = telemetry
         .exporters
         .as_ref()
@@ -355,7 +437,7 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
 
     let tracer_provider = SdkTracerProvider::builder()
         .with_id_generator(RandomIdGenerator::default())
-        .with_resource(resource(telemetry))
+        .with_resource(resource)
         .with_batch_exporter(filtering_exporter)
         .with_sampler(sampler)
         .build();
@@ -365,9 +447,10 @@ fn init_tracer_provider(telemetry: &Telemetry) -> Result<SdkTracerProvider, anyh
 
 /// Initialize tracing-subscriber and return TelemetryGuard for logging and opentelemetry-related termination processing
 pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow::Error> {
+    let (resource, resource_conflicts) = resource(&config.telemetry);
     let tracer_provider = if let Some(exporters) = &config.telemetry.exporters {
         if let Some(_tracing_exporters) = &exporters.tracing {
-            init_tracer_provider(&config.telemetry)?
+            init_tracer_provider(&config.telemetry, resource.clone())?
         } else {
             SdkTracerProvider::builder().build()
         }
@@ -376,7 +459,7 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
     };
     let meter_provider = if let Some(exporters) = &config.telemetry.exporters {
         if let Some(_metrics_exporters) = &exporters.metrics {
-            init_meter_provider(&config.telemetry)?
+            init_meter_provider(&config.telemetry, resource)?
         } else {
             SdkMeterProvider::builder().build()
         }
@@ -401,6 +484,8 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
         .with(MetricsLayer::new(meter_provider.clone()))
         .with(OpenTelemetryLayer::new(tracer))
         .try_init()?;
+
+    warn_resource_conflicts(&resource_conflicts);
 
     Ok(TelemetryGuard {
         tracer_provider,
@@ -492,7 +577,7 @@ mod tests {
             }),
             None,
         );
-        let result = init_meter_provider(&config.telemetry);
+        let result = init_meter_provider(&config.telemetry, Resource::builder_empty().build());
         assert!(result.is_ok());
     }
 
@@ -511,7 +596,7 @@ mod tests {
                 omitted_attributes: None,
             }),
         );
-        let result = init_tracer_provider(&config.telemetry);
+        let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
         assert!(result.is_ok());
     }
 
@@ -533,7 +618,7 @@ mod tests {
                 omitted_attributes: None,
             }),
         );
-        let result = init_tracer_provider(&config.telemetry);
+        let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
         assert!(result.is_ok());
     }
 
@@ -555,7 +640,7 @@ mod tests {
                 omitted_attributes: None,
             }),
         );
-        let result = init_tracer_provider(&config.telemetry);
+        let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
         assert!(result.is_ok());
     }
 
@@ -729,7 +814,7 @@ mod tests {
             }),
             None,
         );
-        let result = init_meter_provider(&config.telemetry);
+        let result = init_meter_provider(&config.telemetry, Resource::builder_empty().build());
         assert!(result.is_ok());
     }
 
@@ -773,5 +858,165 @@ mod tests {
             .get("baggage")
             .expect("composite propagator should inject a baggage header");
         assert!(baggage_header.contains("userId=alice"));
+    }
+
+    fn telemetry_with(service_name: Option<&str>, version: Option<&str>) -> Telemetry {
+        Telemetry {
+            service_name: service_name.map(String::from),
+            version: version.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    fn attribute_value(resource: &Resource, attribute: &'static str) -> Option<String> {
+        resource
+            .get(&Key::from_static_str(attribute))
+            .map(|value| value.as_str().into_owned())
+    }
+
+    #[rstest]
+    #[case::service_name_from_config(Some("ours"), None, &[], SERVICE_NAME, Some("ours"))]
+    #[case::service_name_from_otel_service_name(None, None, &[("OTEL_SERVICE_NAME", "env")], SERVICE_NAME, Some("env"))]
+    #[case::service_name_from_otel_resource_attributes(None, None, &[("OTEL_RESOURCE_ATTRIBUTES", "service.name=env")], SERVICE_NAME, Some("env"))]
+    #[case::service_name_config_beats_env(Some("ours"), None, &[("OTEL_SERVICE_NAME", "env")], SERVICE_NAME, Some("ours"))]
+    #[case::service_name_defaults_to_package_name(None, None, &[], SERVICE_NAME, Some(env!("CARGO_PKG_NAME")))]
+    #[case::service_version_from_config(None, Some("ours"), &[], SERVICE_VERSION, Some("ours"))]
+    #[case::service_version_from_env(None, None, &[("OTEL_RESOURCE_ATTRIBUTES", "service.version=env")], SERVICE_VERSION, Some("env"))]
+    #[case::service_version_config_beats_env(None, Some("ours"), &[("OTEL_RESOURCE_ATTRIBUTES", "service.version=env")], SERVICE_VERSION, Some("ours"))]
+    #[case::service_version_defaults_to_package_version(None, None, &[], SERVICE_VERSION, Some(env!("CARGO_PKG_VERSION")))]
+    #[case::environment_from_environment_var(None, None, &[("ENVIRONMENT", "ours")], DEPLOYMENT_ENVIRONMENT_NAME, Some("ours"))]
+    #[case::environment_from_otel_resource_attributes(None, None, &[("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=env")], DEPLOYMENT_ENVIRONMENT_NAME, Some("env"))]
+    #[case::environment_var_beats_otel_resource_attributes(None, None, &[("ENVIRONMENT", "ours"), ("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=env")], DEPLOYMENT_ENVIRONMENT_NAME, Some("ours"))]
+    #[case::environment_omitted_when_unset(None, None, &[], DEPLOYMENT_ENVIRONMENT_NAME, None)]
+    fn resource_resolves_attribute(
+        #[case] service_name: Option<&str>,
+        #[case] version: Option<&str>,
+        #[case] env: &[(&str, &str)],
+        #[case] attribute: &'static str,
+        #[case] expected: Option<&str>,
+    ) {
+        figment::Jail::expect_with(|jail| {
+            for (name, value) in env {
+                jail.set_env(name, value);
+            }
+
+            let (resource, _) = resource(&telemetry_with(service_name, version));
+
+            assert_eq!(attribute_value(&resource, attribute).as_deref(), expected);
+            Ok(())
+        });
+    }
+
+    #[rstest]
+    #[case::service_name(Some("ours"), None, &[("OTEL_SERVICE_NAME", "env")], SERVICE_NAME, "telemetry.service_name")]
+    #[case::service_version(None, Some("ours"), &[("OTEL_RESOURCE_ATTRIBUTES", "service.version=env")], SERVICE_VERSION, "telemetry.version")]
+    #[case::environment(None, None, &[("ENVIRONMENT", "ours"), ("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=env")], DEPLOYMENT_ENVIRONMENT_NAME, "ENVIRONMENT")]
+    fn resource_reports_conflict_when_config_and_env_differ(
+        #[case] service_name: Option<&str>,
+        #[case] version: Option<&str>,
+        #[case] env: &[(&str, &str)],
+        #[case] attribute: &'static str,
+        #[case] source: &'static str,
+    ) {
+        figment::Jail::expect_with(|jail| {
+            for (name, value) in env {
+                jail.set_env(name, value);
+            }
+
+            let (_, conflicts) = resource(&telemetry_with(service_name, version));
+
+            assert_eq!(
+                conflicts,
+                vec![ResourceConflict {
+                    attribute,
+                    source,
+                    configured: "ours".to_string(),
+                    detected: "env".to_string(),
+                }]
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn resource_reports_no_conflict_when_config_and_env_agree() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OTEL_SERVICE_NAME", "same");
+            jail.set_env("ENVIRONMENT", "same");
+            jail.set_env(
+                "OTEL_RESOURCE_ATTRIBUTES",
+                "service.version=same,deployment.environment.name=same",
+            );
+
+            let (_, conflicts) = resource(&telemetry_with(Some("same"), Some("same")));
+
+            assert!(conflicts.is_empty());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn resource_passes_through_otel_resource_attributes_we_do_not_set() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env("OTEL_RESOURCE_ATTRIBUTES", "team=x,host.name=y");
+
+            let (resource, _) = resource(&telemetry_with(None, None));
+
+            assert_eq!(
+                (
+                    attribute_value(&resource, "team").as_deref(),
+                    attribute_value(&resource, "host.name").as_deref(),
+                ),
+                (Some("x"), Some("y"))
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn resource_sets_schema_url() {
+        let (resource, _) = resource(&telemetry_with(None, None));
+
+        assert_eq!(resource.schema_url(), Some(SCHEMA_URL));
+    }
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogs {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // A scoped subscriber, because `guard_is_provided_when_tracing_configured` installs the
+    // global one.
+    #[test]
+    fn warn_resource_conflicts_logs_both_values() {
+        let logs = CapturedLogs::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            warn_resource_conflicts(&[ResourceConflict {
+                attribute: SERVICE_NAME,
+                source: "telemetry.service_name",
+                configured: "ours".to_string(),
+                detected: "env".to_string(),
+            }]);
+        });
+
+        let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(logs.contains(
+            "telemetry.service_name overrides the value from OpenTelemetry environment variables attribute=\"service.name\" configured=ours detected=env"
+        ));
     }
 }
