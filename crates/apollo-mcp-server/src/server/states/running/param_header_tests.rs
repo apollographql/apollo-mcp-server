@@ -13,7 +13,12 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use super::{test_support::create_test_running, *};
-use crate::operations::ParamHeaders;
+use crate::apps::{
+    App,
+    app::{AppResource, AppResourceSource, AppTool},
+    manifest::AppLabels,
+};
+use crate::operations::{ParamHeaders, app_tool_collisions};
 
 const HEADER: &str = "Mcp-Param-Workflow-Handle";
 
@@ -81,6 +86,15 @@ fn tools_call(handle: &str, header: Option<&str>) -> Request<Body> {
 }
 
 fn tools_call_on(version: ProtocolVersion, handle: &str, header: Option<&str>) -> Request<Body> {
+    tools_call_at("/mcp", version, handle, header)
+}
+
+fn tools_call_at(
+    uri: &str,
+    version: ProtocolVersion,
+    handle: &str,
+    header: Option<&str>,
+) -> Request<Body> {
     let version = version.as_str();
     let body = json!({
         "jsonrpc": "2.0",
@@ -98,7 +112,7 @@ fn tools_call_on(version: ProtocolVersion, handle: &str, header: Option<&str>) -
     });
     let mut builder = Request::builder()
         .method("POST")
-        .uri("/mcp")
+        .uri(uri)
         .header("Host", "localhost")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")
@@ -223,6 +237,62 @@ async fn builtin_tool_name_takes_precedence_over_operation_annotation() {
     };
 
     assert!(running.for_service().get_tool(EXECUTE_TOOL_NAME).is_none());
+}
+
+/// An app whose `GetWorkflow` tool reuses the annotated operation's name.
+async fn app_reusing_operation_name(running: &Running) -> App {
+    let operation = running.operations.read().await[0].clone();
+    App {
+        name: "MyApp".to_string(),
+        description: None,
+        tools: vec![AppTool {
+            tool: Tool::new("GetWorkflow", "an app tool", rmcp::model::JsonObject::new()),
+            operation: Arc::new(operation),
+            labels: AppLabels::default(),
+            extra_outputs: None,
+        }],
+        resource: AppResource::Single(AppResourceSource::Local("content".into())),
+        uri: "http://localhost:4000/resource".parse().unwrap(),
+        prefetch_operations: vec![],
+        csp_settings: None,
+        widget_settings: None,
+    }
+}
+
+#[tokio::test]
+async fn app_tool_sharing_an_annotated_operation_name_is_reported() {
+    let running = running_with_param_header("http://localhost:4000".parse().unwrap()).await;
+    let apps = [app_reusing_operation_name(&running).await];
+
+    assert_eq!(
+        app_tool_collisions(&running.param_headers, &apps),
+        vec![("MyApp", "GetWorkflow")]
+    );
+}
+
+/// Pins the limitation the startup warning describes: `get_tool` can't see the `app`
+/// query param, so the operation's annotation applies to the app tool call too.
+#[tokio::test]
+async fn app_mode_call_to_tool_sharing_an_annotated_name_is_rejected() {
+    let mut running = running_with_param_header("http://localhost:4000".parse().unwrap()).await;
+    running.apps = vec![app_reusing_operation_name(&running).await];
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+
+    let (status, body) = send(
+        &running,
+        tools_call_at(
+            "/mcp?app=MyApp",
+            ProtocolVersion::STANDARD_HEADERS,
+            "wf-1",
+            None,
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        (status, body["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!(ErrorCode::HEADER_MISMATCH.0))
+    );
 }
 
 #[tokio::test]

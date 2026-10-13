@@ -387,6 +387,8 @@ Header names must be valid HTTP header tokens and unique within an operation, ig
 
 The header is only a reliable copy of the argument on `tools/call` requests for the annotated tool, made with protocol `2026-07-28` or later. If your proxy authorizes on the header, also reject requests with an earlier `MCP-Protocol-Version`. And disable the [`execute` tool](#introspection-tools) or gate it the same way, because it can run the same operation with any variables and no `Mcp-Param-*` header.
 
+Don't annotate an operation whose name matches a tool in an [MCP App](/apollo-mcp-server/mcp-apps). The server checks app-mode calls to that tool against the operation's annotation, so they fail with `-32020`. The server logs a warning at startup when this happens.
+
 </Caution>
 
 An annotated parameter's schema is a single flat type. A nullable variable is optional but doesn't accept `null`, and an enum lists its values inline.

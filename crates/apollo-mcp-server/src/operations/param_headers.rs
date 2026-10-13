@@ -10,6 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{Operation, schema_walker::NotHeaderPrimitive};
+use crate::apps::App;
 
 /// The JSON Schema keyword that marks a tool parameter for header mirroring.
 pub(crate) const X_MCP_HEADER: &str = "x-mcp-header";
@@ -133,6 +134,38 @@ fn unmatched_operations<'a>(
         .collect();
     unmatched.sort_unstable();
     unmatched
+}
+
+/// Warns about each configured operation that shares its name with an app tool.
+///
+/// In app mode `call_tool` runs the app tool, but rmcp's `get_tool` has no request
+/// context and checks the operation's annotations, so every such call fails with
+/// `-32020`.
+pub(crate) fn warn_app_tool_collisions(
+    param_headers: &HashMap<String, ParamHeaders>,
+    apps: &[App],
+) {
+    for (app, tool) in app_tool_collisions(param_headers, apps) {
+        tracing::warn!(
+            app,
+            tool,
+            "param_headers names an operation that shares its name with an app tool, so app-mode calls to that tool fail with -32020"
+        );
+    }
+}
+
+pub(crate) fn app_tool_collisions<'a>(
+    param_headers: &HashMap<String, ParamHeaders>,
+    apps: &'a [App],
+) -> Vec<(&'a str, &'a str)> {
+    apps.iter()
+        .flat_map(|app| {
+            app.tools
+                .iter()
+                .map(move |tool| (app.name.as_str(), tool.tool.name.as_ref()))
+        })
+        .filter(|(_, tool)| param_headers.contains_key(*tool))
+        .collect()
 }
 
 /// RFC 9110 section 5.6.2 `tchar`.

@@ -21,7 +21,7 @@ use crate::{
     introspection::tools::{
         execute::Execute, introspect::Introspect, search::Search, validate::Validate,
     },
-    operations::{MutationMode, RawOperation, warn_unmatched_operations},
+    operations::{MutationMode, RawOperation, warn_app_tool_collisions, warn_unmatched_operations},
     scope_requirements::OperationRequiredScopes,
     server::Transport,
 };
@@ -108,6 +108,7 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
+        warn_app_tool_collisions(&self.config.param_headers, &apps);
         let prompts = crate::prompts::load_from_path(&self.config.prompts_dir)
             .map_err(ServerError::Prompts)?;
         let schema = Arc::new(RwLock::new(self.schema));
