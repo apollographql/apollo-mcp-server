@@ -27,7 +27,7 @@ use crate::{
 };
 use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
-use super::{Config, Running, shutdown_signal};
+use super::{Config, Running, operation_catalog::OperationCatalog, shutdown_signal};
 
 pub(super) struct Starting {
     pub(super) config: Config,
@@ -51,6 +51,7 @@ impl Starting {
                         self.config.enable_output_schema,
                         &self.config.annotations,
                         &self.config.descriptions,
+                        &self.config.param_headers,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -164,7 +165,7 @@ impl Starting {
 
         let running = Running {
             schema,
-            operations: Arc::new(RwLock::new(operations)),
+            operations: OperationCatalog::new(operations),
             apps,
             prompts,
             headers: self.config.headers,
@@ -185,6 +186,7 @@ impl Starting {
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             descriptions: self.config.descriptions,
             annotations: self.config.annotations,
+            param_headers: self.config.param_headers,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
             instructions,
@@ -478,6 +480,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: std::collections::HashMap::new(),
             annotations: std::collections::HashMap::new(),
+            param_headers: std::collections::HashMap::new(),
             required_scopes: std::collections::HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024 * 1024,

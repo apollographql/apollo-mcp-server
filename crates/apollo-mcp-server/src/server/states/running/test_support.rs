@@ -64,7 +64,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
             .unwrap();
     Running {
         schema: Arc::new(RwLock::new(schema)),
-        operations: Arc::new(RwLock::new(vec![])),
+        operations: OperationCatalog::new(vec![]),
         apps: vec![],
         prompts: vec![],
         headers: http::HeaderMap::new(),
@@ -85,6 +85,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
         disable_auth_token_passthrough: false,
         descriptions: HashMap::new(),
         annotations: HashMap::new(),
+        param_headers: HashMap::new(),
         health_check: None,
         server_info: Default::default(),
         instructions: None,
@@ -106,12 +107,13 @@ pub(in crate::server::states) fn create_test_running_with_operation(endpoint: ur
             false,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .expect("operation should be valid");
 
     Running {
-        operations: Arc::new(RwLock::new(vec![operation])),
+        operations: OperationCatalog::new(vec![operation]),
         endpoint,
         ..create_test_running()
     }

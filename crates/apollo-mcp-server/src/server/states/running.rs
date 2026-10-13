@@ -13,7 +13,7 @@ use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
     GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
     ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
-    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, Tool, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -52,16 +52,17 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
+    operations::{AnnotationOverrides, MutationMode, Operation, ParamHeaders, RawOperation},
 };
 use apollo_mcp_rhai::SharedRhaiEngine;
 
+use super::operation_catalog::OperationCatalog;
 use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 
 #[derive(Clone)]
 pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
-    pub(super) operations: Arc<RwLock<Vec<Operation>>>,
+    pub(super) operations: OperationCatalog,
     pub(super) apps: Vec<crate::apps::App>,
     pub(super) prompts: Vec<crate::prompts::PromptFile>,
     pub(super) headers: HeaderMap,
@@ -82,6 +83,7 @@ pub(super) struct Running {
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) descriptions: HashMap<String, String>,
     pub(super) annotations: HashMap<String, AnnotationOverrides>,
+    pub(super) param_headers: HashMap<String, ParamHeaders>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
@@ -139,7 +141,7 @@ impl Running {
         debug!("Schema updated:\n{}", schema);
 
         // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
-        let mut operations_lock = self.operations.write().await;
+        let operations_lock = self.operations.write().await;
 
         // Update the operations based on the new schema. This is necessary because the MCP tool
         // input schemas and description are derived from the schema.
@@ -158,6 +160,7 @@ impl Running {
                         self.enable_output_schema,
                         &self.annotations,
                         &self.descriptions,
+                        &self.param_headers,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -174,10 +177,8 @@ impl Running {
         // Update the schema itself
         *self.schema.write().await = schema;
 
-        *operations_lock = operations;
-
         // Publish only after the updated catalog is visible to readers.
-        drop(operations_lock);
+        operations_lock.replace(operations);
 
         // Notify MCP clients that tools have changed
         self.tool_list_changes.publish();
@@ -191,7 +192,7 @@ impl Running {
         debug!("Operations updated:\n{:?}", operations);
 
         // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
-        let mut operations_lock = self.operations.write().await;
+        let operations_lock = self.operations.write().await;
 
         // Update the operations based on the current schema
         let updated_operations: Vec<Operation> = {
@@ -209,6 +210,7 @@ impl Running {
                             self.enable_output_schema,
                             &self.annotations,
                             &self.descriptions,
+                            &self.param_headers,
                         )
                         .unwrap_or_else(|error| {
                             error!("Invalid operation: {}", error);
@@ -223,10 +225,8 @@ impl Running {
             updated_operations.len(),
             serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
         );
-        *operations_lock = updated_operations;
-
         // Publish only after the updated catalog is visible to readers.
-        drop(operations_lock);
+        operations_lock.replace(updated_operations);
 
         // Notify MCP clients that tools have changed
         self.tool_list_changes.publish();
@@ -897,6 +897,12 @@ impl ServerHandler for McpService {
         .await
     }
 
+    /// Lets rmcp check `Mcp-Param-*` headers against the `x-mcp-header`
+    /// annotations of predefined operations.
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        self.application.operations.tool(name)
+    }
+
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -1111,7 +1117,7 @@ mod tests {
     fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
         Running {
             schema,
-            operations: Arc::new(RwLock::new(vec![])),
+            operations: OperationCatalog::new(vec![]),
             apps: vec![],
             prompts: vec![],
             headers: HeaderMap::new(),
@@ -1132,6 +1138,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
@@ -1165,6 +1172,7 @@ mod tests {
                             false,
                             false,
                             true,
+                            &HashMap::new(),
                             &HashMap::new(),
                             &HashMap::new(),
                         )
@@ -1768,7 +1776,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = Arc::new(RwLock::new(vec![]));
+            let operations = OperationCatalog::default();
 
             let running = Running {
                 operations: operations.clone(),
@@ -1806,7 +1814,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = Arc::new(RwLock::new(vec![]));
+            let operations = OperationCatalog::default();
 
             let descriptions = HashMap::from([(
                 "GetId".to_string(),
@@ -1842,7 +1850,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = Arc::new(RwLock::new(vec![]));
+            let operations = OperationCatalog::default();
 
             let descriptions = HashMap::from([(
                 "NonExistent".to_string(),
@@ -1878,7 +1886,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = Arc::new(RwLock::new(vec![]));
+            let operations = OperationCatalog::default();
 
             let annotations = HashMap::from([(
                 "GetId".to_string(),
@@ -1929,7 +1937,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = Arc::new(RwLock::new(vec![]));
+            let operations = OperationCatalog::default();
 
             let annotations = HashMap::from([(
                 "NonExistent".to_string(),
@@ -3077,12 +3085,13 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
@@ -3122,12 +3131,13 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
@@ -3494,12 +3504,13 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
@@ -3548,12 +3559,13 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
@@ -3621,6 +3633,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -3634,6 +3647,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                     &HashMap::new(),
                 )
@@ -3657,7 +3671,7 @@ mod tests {
             };
 
             let running = Running {
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 apps: vec![app],
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
@@ -3776,13 +3790,14 @@ mod integration_tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -3803,6 +3818,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -4297,13 +4313,14 @@ mod integration_tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
 
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![operation])),
+                operations: OperationCatalog::new(vec![operation]),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -4324,6 +4341,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -5285,7 +5303,7 @@ mod integration_tests {
                     .unwrap();
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![])),
+                operations: OperationCatalog::new(vec![]),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -5306,6 +5324,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -5469,7 +5488,7 @@ mod integration_tests {
                     .unwrap();
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: Arc::new(RwLock::new(vec![])),
+                operations: OperationCatalog::new(vec![]),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -5490,6 +5509,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info,
                 instructions: None,
@@ -5681,6 +5701,9 @@ pub(super) mod test_support;
 
 #[cfg(test)]
 mod method_header_tests;
+
+#[cfg(test)]
+mod param_header_tests;
 
 #[cfg(test)]
 mod subscription_tests;

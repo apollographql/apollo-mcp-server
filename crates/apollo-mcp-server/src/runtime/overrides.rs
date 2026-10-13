@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use apollo_mcp_server::operations::{AnnotationOverrides, MutationMode};
+use apollo_mcp_server::operations::{AnnotationOverrides, MutationMode, ParamHeaders};
 use apollo_mcp_server::scope_requirements::OperationRequiredScopes;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -45,6 +45,14 @@ pub struct Overrides {
     /// with `WWW-Authenticate: Bearer error="insufficient_scope"`.
     #[serde(default)]
     pub required_scopes: HashMap<String, OperationRequiredScopes>,
+
+    /// Optional map from operation name to SEP-2243 parameter headers. Each entry maps a
+    /// variable name (without `$`) to a header name, and the variable's tool parameter gets
+    /// an `x-mcp-header` annotation. Clients on protocol `2026-07-28` and later then send the
+    /// value in an `Mcp-Param-{name}` header as well as the body, and the server rejects a
+    /// request whose header doesn't match the body.
+    #[serde(default)]
+    pub param_headers: HashMap<String, ParamHeaders>,
 }
 
 #[cfg(test)]
@@ -215,6 +223,40 @@ mod tests {
         });
 
         let result = serde_json::from_value::<Overrides>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn param_headers_parse_from_yaml() {
+        let overrides: Overrides = serde_yaml::from_str(
+            r#"
+            param_headers:
+              GetWorkflow:
+                handle: Workflow-Handle
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            overrides.param_headers["GetWorkflow"],
+            ParamHeaders::try_from(HashMap::from([(
+                "handle".to_string(),
+                "Workflow-Handle".to_string()
+            )]))
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn param_headers_reject_invalid_header_name() {
+        let result = serde_yaml::from_str::<Overrides>(
+            r#"
+            param_headers:
+              GetWorkflow:
+                handle: "Workflow Handle"
+            "#,
+        );
+
         assert!(result.is_err());
     }
 }
