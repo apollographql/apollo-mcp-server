@@ -62,7 +62,7 @@ pub enum NotHeaderPrimitive {
     Float,
 
     #[error(
-        "custom scalar `{0}` needs a `custom_scalars` schema with type string, integer, or boolean"
+        "custom scalar `{0}` needs a flat `custom_scalars` schema with type string, integer, or boolean, and no anyOf, oneOf, allOf, or $ref"
     )]
     CustomScalar(String),
 
@@ -102,7 +102,9 @@ pub fn header_param_to_schema(
                     matches!(
                         scalar.get("type").and_then(Value::as_str),
                         Some("string" | "integer" | "boolean")
-                    )
+                    ) && ["anyOf", "oneOf", "allOf", "$ref"]
+                        .iter()
+                        .all(|keyword| scalar.get(*keyword).is_none())
                 })
                 .cloned()
                 .ok_or_else(|| NotHeaderPrimitive::CustomScalar(other.to_string()))?,

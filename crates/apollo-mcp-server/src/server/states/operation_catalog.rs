@@ -68,7 +68,8 @@ pub(super) struct CatalogWriteGuard<'a> {
 impl CatalogWriteGuard<'_> {
     /// Replaces the operations and their tool snapshot, then releases the lock.
     pub(super) fn replace(mut self, operations: Vec<Operation>) {
-        *self.tools.write().unwrap_or_else(PoisonError::into_inner) = tools_by_name(&operations);
+        let tools = tools_by_name(&operations);
+        *self.tools.write().unwrap_or_else(PoisonError::into_inner) = tools;
         *self.operations = operations;
     }
 }
@@ -81,9 +82,11 @@ impl Deref for CatalogWriteGuard<'_> {
     }
 }
 
+/// Maps each name to its first operation, the one `find_and_execute_operation` runs.
 fn tools_by_name(operations: &[Operation]) -> ToolsByName {
     operations
         .iter()
+        .rev()
         .map(|operation| {
             let tool = operation.as_ref();
             (tool.name.to_string(), tool.clone())
@@ -123,6 +126,21 @@ mod tests {
         assert_eq!(
             catalog.tool("GetId").map(|tool| tool.name.to_string()),
             Some("GetId".to_string())
+        );
+    }
+
+    #[test]
+    fn tool_uses_first_operation_with_duplicate_name() {
+        let catalog = OperationCatalog::new(vec![
+            operation("# First\nquery GetId { id }"),
+            operation("# Second\nquery GetId { id }"),
+        ]);
+
+        assert_eq!(
+            catalog
+                .tool("GetId")
+                .and_then(|tool| tool.description.map(|description| description.to_string())),
+            Some("First".to_string())
         );
     }
 

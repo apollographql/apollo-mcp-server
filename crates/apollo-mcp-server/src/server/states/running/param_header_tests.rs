@@ -18,13 +18,17 @@ use crate::operations::ParamHeaders;
 const HEADER: &str = "Mcp-Param-Workflow-Handle";
 
 async fn running_with_param_header(endpoint: url::Url) -> Running {
+    running_with_param_header_on(endpoint, "GetWorkflow").await
+}
+
+async fn running_with_param_header_on(endpoint: url::Url, operation_name: &str) -> Running {
     let schema = Schema::parse_and_validate(
         "type Query { workflow(handle: ID!): String }",
         "schema.graphql",
     )
     .unwrap();
     let param_headers = HashMap::from([(
-        "GetWorkflow".to_string(),
+        operation_name.to_string(),
         ParamHeaders::try_from(HashMap::from([(
             "handle".to_string(),
             "Workflow-Handle".to_string(),
@@ -32,7 +36,7 @@ async fn running_with_param_header(endpoint: url::Url) -> Running {
         .unwrap(),
     )]);
     let operation = RawOperation::from((
-        "query GetWorkflow($handle: ID!) { workflow(handle: $handle) }".to_string(),
+        format!("query {operation_name}($handle: ID!) {{ workflow(handle: $handle) }}"),
         None,
     ))
     .into_operation(
@@ -73,7 +77,11 @@ fn router(running: &Running) -> Router {
 }
 
 fn tools_call(handle: &str, header: Option<&str>) -> Request<Body> {
-    let version = ProtocolVersion::STANDARD_HEADERS.as_str();
+    tools_call_on(ProtocolVersion::STANDARD_HEADERS, handle, header)
+}
+
+fn tools_call_on(version: ProtocolVersion, handle: &str, header: Option<&str>) -> Request<Body> {
+    let version = version.as_str();
     let body = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -178,6 +186,43 @@ async fn base64_param_header_is_decoded_before_comparison() {
 
     graphql.assert_async().await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// The check is a SEP-2243 rule, so a request that declares an earlier protocol skips it.
+/// The docs tell proxies to require `2026-07-28` before trusting the header.
+#[tokio::test]
+async fn earlier_protocol_skips_the_param_header_check() {
+    let mut upstream = mockito::Server::new_async().await;
+    let graphql = upstream
+        .mock("POST", "/")
+        .with_header("Content-Type", "application/json")
+        .with_body(r#"{"data": {"workflow": "running"}}"#)
+        .create_async()
+        .await;
+    let running = running_with_param_header(upstream.url().parse().unwrap()).await;
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+
+    let (status, _) = send(
+        &running,
+        tools_call_on(ProtocolVersion::V_2025_11_25, "wf-1", Some("wf-2")),
+    )
+    .await;
+
+    graphql.assert_async().await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn builtin_tool_name_takes_precedence_over_operation_annotation() {
+    let running =
+        running_with_param_header_on("http://localhost:4000".parse().unwrap(), EXECUTE_TOOL_NAME)
+            .await;
+    let running = Running {
+        execute_tool: Some(Execute::new(MutationMode::None, None)),
+        ..running
+    };
+
+    assert!(running.for_service().get_tool(EXECUTE_TOOL_NAME).is_none());
 }
 
 #[tokio::test]

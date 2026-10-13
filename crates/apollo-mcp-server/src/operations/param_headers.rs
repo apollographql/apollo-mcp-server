@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::schema_walker::NotHeaderPrimitive;
+use super::{Operation, schema_walker::NotHeaderPrimitive};
 
 /// The JSON Schema keyword that marks a tool parameter for header mirroring.
 pub(crate) const X_MCP_HEADER: &str = "x-mcp-header";
@@ -104,6 +104,37 @@ impl<'de> Deserialize<'de> for ParamHeaders {
     }
 }
 
+/// Warns about each configured operation that isn't loaded. Its headers are neither
+/// annotated nor checked, which an operator relying on them would otherwise miss.
+pub(crate) fn warn_unmatched_operations(
+    param_headers: &HashMap<String, ParamHeaders>,
+    operations: &[Operation],
+) {
+    for operation in unmatched_operations(param_headers, operations) {
+        tracing::warn!(
+            operation,
+            "param_headers names an operation that isn't loaded, so its headers aren't enforced"
+        );
+    }
+}
+
+fn unmatched_operations<'a>(
+    param_headers: &'a HashMap<String, ParamHeaders>,
+    operations: &[Operation],
+) -> Vec<&'a str> {
+    let loaded: HashSet<&str> = operations
+        .iter()
+        .map(|operation| operation.as_ref().name.as_ref())
+        .collect();
+    let mut unmatched: Vec<&str> = param_headers
+        .keys()
+        .map(String::as_str)
+        .filter(|name| !loaded.contains(name))
+        .collect();
+    unmatched.sort_unstable();
+    unmatched
+}
+
 /// RFC 9110 section 5.6.2 `tchar`.
 fn is_tchar(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
@@ -111,9 +142,39 @@ fn is_tchar(byte: u8) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use apollo_compiler::Schema;
     use rstest::rstest;
 
     use super::*;
+    use crate::operations::{MutationMode, RawOperation};
+
+    #[test]
+    fn unmatched_operations_lists_configured_names_that_are_not_loaded() {
+        let schema = Schema::parse_and_validate("type Query { id: ID }", "schema.graphql").unwrap();
+        let loaded = RawOperation::from(("query GetId { id }".to_string(), None))
+            .into_operation(
+                &schema,
+                None,
+                MutationMode::None,
+                false,
+                false,
+                false,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap()
+            .unwrap();
+        let param_headers = HashMap::from([
+            ("GetId".to_string(), ParamHeaders::default()),
+            ("GetWorkFlow".to_string(), ParamHeaders::default()),
+        ]);
+
+        assert_eq!(
+            unmatched_operations(&param_headers, &[loaded]),
+            vec!["GetWorkFlow"]
+        );
+    }
 
     fn parse(json: serde_json::Value) -> Result<ParamHeaders, serde_json::Error> {
         serde_json::from_value(json)

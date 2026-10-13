@@ -36,7 +36,7 @@ use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
-use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::operations::{execute_operation, find_and_execute_operation, warn_unmatched_operations};
 use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -119,6 +119,19 @@ impl<'a> PeerContext<'a> {
 }
 
 impl Running {
+    /// Whether `call_tool` routes `name` to an enabled built-in tool, which takes
+    /// precedence over a predefined operation with the same name.
+    fn is_builtin_tool(&self, name: &str) -> bool {
+        match name {
+            INTROSPECT_TOOL_NAME => self.introspect_tool.is_some(),
+            SEARCH_TOOL_NAME => self.search_tool.is_some(),
+            EXPLORER_TOOL_NAME => self.explorer_tool.is_some(),
+            EXECUTE_TOOL_NAME => self.execute_tool.is_some(),
+            VALIDATE_TOOL_NAME => self.validate_tool.is_some(),
+            _ => false,
+        }
+    }
+
     /// Construct an independent rmcp service sharing this application's catalog.
     pub(super) fn for_service(&self) -> McpService {
         McpService {
@@ -177,6 +190,7 @@ impl Running {
         // Update the schema itself
         *self.schema.write().await = schema;
 
+        warn_unmatched_operations(&self.param_headers, &operations);
         // Publish only after the updated catalog is visible to readers.
         operations_lock.replace(operations);
 
@@ -225,6 +239,7 @@ impl Running {
             updated_operations.len(),
             serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
         );
+        warn_unmatched_operations(&self.param_headers, &updated_operations);
         // Publish only after the updated catalog is visible to readers.
         operations_lock.replace(updated_operations);
 
@@ -898,8 +913,11 @@ impl ServerHandler for McpService {
     }
 
     /// Lets rmcp check `Mcp-Param-*` headers against the `x-mcp-header`
-    /// annotations of predefined operations.
+    /// annotations of predefined operations. Built-in tools have no annotations.
     fn get_tool(&self, name: &str) -> Option<Tool> {
+        if self.application.is_builtin_tool(name) {
+            return None;
+        }
         self.application.operations.tool(name)
     }
 

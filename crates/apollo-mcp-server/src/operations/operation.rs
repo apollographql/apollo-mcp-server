@@ -5978,12 +5978,13 @@ mod tests {
                 r#"
                     scalar Handle
                     scalar Json
+                    scalar Slug
                     enum Region { US EU }
                     input Filter { id: ID }
                     type Query {
                         workflow(
                             id: ID, count: Int, flag: Boolean, region: Region, handle: Handle,
-                            json: Json, ratio: Float, ids: [ID], filter: Filter
+                            json: Json, slug: Slug, ratio: Float, ids: [ID], filter: Filter
                         ): String
                     }
                 "#,
@@ -5994,7 +5995,11 @@ mod tests {
 
         fn input_schema(variables: &str) -> Result<Value, OperationError> {
             let custom_scalars = CustomScalarMap::from_str(
-                r#"{"Handle": {"type": "string", "pattern": "^wf-"}, "Json": {"type": "object"}}"#,
+                r#"{
+                    "Handle": {"type": "string", "pattern": "^wf-"},
+                    "Json": {"type": "object"},
+                    "Slug": {"type": "string", "anyOf": [{"pattern": "^a"}, {"pattern": "^b"}]}
+                }"#,
             )
             .unwrap();
             let raw = RawOperation {
@@ -6072,6 +6077,7 @@ mod tests {
         #[case::list("$v: [ID]", NotHeaderPrimitive::List)]
         #[case::input_object("$v: Filter", NotHeaderPrimitive::NotScalar("Filter".into()))]
         #[case::object_scalar("$v: Json", NotHeaderPrimitive::CustomScalar("Json".into()))]
+        #[case::composite_scalar("$v: Slug", NotHeaderPrimitive::CustomScalar("Slug".into()))]
         fn non_primitive_variable_is_rejected(
             #[case] variables: &str,
             #[case] expected: NotHeaderPrimitive,

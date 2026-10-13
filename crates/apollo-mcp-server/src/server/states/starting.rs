@@ -21,7 +21,7 @@ use crate::{
     introspection::tools::{
         execute::Execute, introspect::Introspect, search::Search, validate::Validate,
     },
-    operations::{MutationMode, RawOperation},
+    operations::{MutationMode, RawOperation, warn_unmatched_operations},
     scope_requirements::OperationRequiredScopes,
     server::Transport,
 };
@@ -65,6 +65,7 @@ impl Starting {
             operations.len(),
             serde_json::to_string_pretty(&operations)?
         );
+        warn_unmatched_operations(&self.config.param_headers, &operations);
 
         let execute_tool = self.config.execute_introspection.then(|| {
             Execute::new(

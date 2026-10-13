@@ -19,5 +19,6 @@ pub(crate) use execution::{execute_operation, find_and_execute_operation};
 pub use mutation_mode::MutationMode;
 pub(crate) use operation::{Operation, operation_defs, operation_name};
 pub use operation_source::OperationSource;
+pub(crate) use param_headers::warn_unmatched_operations;
 pub use param_headers::{ParamHeaders, UnmirrorableReason, UnmirrorableVariable};
 pub(crate) use raw_operation::RawOperation;
