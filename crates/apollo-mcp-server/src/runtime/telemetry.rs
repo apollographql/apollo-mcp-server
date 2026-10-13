@@ -447,22 +447,18 @@ fn init_tracer_provider(
 
 /// Initialize tracing-subscriber and return TelemetryGuard for logging and opentelemetry-related termination processing
 pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow::Error> {
+    let exporters = config.telemetry.exporters.as_ref();
+    let tracing_enabled = exporters.is_some_and(|exporters| exporters.tracing.is_some());
+    let metrics_enabled = exporters.is_some_and(|exporters| exporters.metrics.is_some());
+
     let (resource, resource_conflicts) = resource(&config.telemetry);
-    let tracer_provider = if let Some(exporters) = &config.telemetry.exporters {
-        if let Some(_tracing_exporters) = &exporters.tracing {
-            init_tracer_provider(&config.telemetry, resource.clone())?
-        } else {
-            SdkTracerProvider::builder().build()
-        }
+    let tracer_provider = if tracing_enabled {
+        init_tracer_provider(&config.telemetry, resource.clone())?
     } else {
         SdkTracerProvider::builder().build()
     };
-    let meter_provider = if let Some(exporters) = &config.telemetry.exporters {
-        if let Some(_metrics_exporters) = &exporters.metrics {
-            init_meter_provider(&config.telemetry, resource)?
-        } else {
-            SdkMeterProvider::builder().build()
-        }
+    let meter_provider = if metrics_enabled {
+        init_meter_provider(&config.telemetry, resource)?
     } else {
         SdkMeterProvider::builder().build()
     };
@@ -485,7 +481,9 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
         .with(OpenTelemetryLayer::new(tracer))
         .try_init()?;
 
-    warn_resource_conflicts(&resource_conflicts);
+    if tracing_enabled || metrics_enabled {
+        warn_resource_conflicts(&resource_conflicts);
+    }
 
     Ok(TelemetryGuard {
         tracer_provider,
@@ -868,6 +866,18 @@ mod tests {
         }
     }
 
+    /// `Jail` only restores the variables it sets, so blank the ones `resource` reads to keep the
+    /// developer's or CI runner's environment out of the tests. Empty values count as unset.
+    fn clear_resource_env(jail: &mut figment::Jail) {
+        for name in [
+            "ENVIRONMENT",
+            "OTEL_SERVICE_NAME",
+            "OTEL_RESOURCE_ATTRIBUTES",
+        ] {
+            jail.set_env(name, "");
+        }
+    }
+
     fn attribute_value(resource: &Resource, attribute: &'static str) -> Option<String> {
         resource
             .get(&Key::from_static_str(attribute))
@@ -896,6 +906,7 @@ mod tests {
         #[case] expected: Option<&str>,
     ) {
         figment::Jail::expect_with(|jail| {
+            clear_resource_env(jail);
             for (name, value) in env {
                 jail.set_env(name, value);
             }
@@ -919,6 +930,7 @@ mod tests {
         #[case] source: &'static str,
     ) {
         figment::Jail::expect_with(|jail| {
+            clear_resource_env(jail);
             for (name, value) in env {
                 jail.set_env(name, value);
             }
@@ -941,6 +953,7 @@ mod tests {
     #[test]
     fn resource_reports_no_conflict_when_config_and_env_agree() {
         figment::Jail::expect_with(|jail| {
+            clear_resource_env(jail);
             jail.set_env("OTEL_SERVICE_NAME", "same");
             jail.set_env("ENVIRONMENT", "same");
             jail.set_env(
@@ -958,6 +971,7 @@ mod tests {
     #[test]
     fn resource_passes_through_otel_resource_attributes_we_do_not_set() {
         figment::Jail::expect_with(|jail| {
+            clear_resource_env(jail);
             jail.set_env("OTEL_RESOURCE_ATTRIBUTES", "team=x,host.name=y");
 
             let (resource, _) = resource(&telemetry_with(None, None));
