@@ -27,7 +27,7 @@ use crate::{
 };
 use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
-use super::{Config, Running, operation_catalog::OperationCatalog, shutdown_signal};
+use super::{Config, Running, shutdown_signal};
 
 pub(super) struct Starting {
     pub(super) config: Config,
@@ -167,7 +167,7 @@ impl Starting {
 
         let running = Running {
             schema,
-            operations: OperationCatalog::new(operations),
+            operations: Arc::new(RwLock::new(operations)),
             apps,
             prompts,
             headers: self.config.headers,

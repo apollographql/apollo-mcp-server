@@ -9,7 +9,7 @@ use rmcp::{
 use serde_json::{Value, json};
 use tokio_util::task::AbortOnDropHandle;
 
-use super::{OperationCatalog, Running, test_support::create_test_running};
+use super::{Running, test_support::create_test_running};
 use crate::{
     custom_scalar_map::CustomScalarMap,
     operations::{MutationMode, RawOperation},
@@ -85,7 +85,7 @@ fn fixture_with_schema(schema_source: &str, query: &str) -> Running {
         .unwrap();
     let mut running = create_test_running();
     running.schema = Arc::new(tokio::sync::RwLock::new(schema));
-    running.operations = OperationCatalog::new(vec![operation]);
+    running.operations = Arc::new(tokio::sync::RwLock::new(vec![operation]));
     running.custom_scalar_map = Some(scalars);
     running.enable_output_schema = true;
     running

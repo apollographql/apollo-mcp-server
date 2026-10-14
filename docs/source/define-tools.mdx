@@ -379,25 +379,19 @@ overrides:
       handle: Workflow-Handle
 ```
 
-The server adds an [`x-mcp-header`](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) annotation to the variable's tool parameter. Clients that use the Streamable HTTP transport with protocol version `2026-07-28` or later then send the value in an `Mcp-Param-Workflow-Handle` header as well as in the body. The body stays the source of truth: for a request with `MCP-Protocol-Version` `2026-07-28` or later, the server rejects a header that's missing or doesn't match the body with HTTP 400 and JSON-RPC error `-32020`. The server doesn't check requests that use an earlier protocol version.
+The server adds an [`x-mcp-header`](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http) annotation to the variable's tool parameter. Clients that use the Streamable HTTP transport with protocol version `2026-07-28` or later then send the value in an `Mcp-Param-Workflow-Handle` header as well as in the body. The body stays the source of truth: for a request with `MCP-Protocol-Version` `2026-07-28` or later, the server rejects a header that's missing or doesn't match the body with HTTP 400 and JSON-RPC error `-32020`. The server doesn't check requests that use an earlier protocol version or omit the `MCP-Protocol-Version` header.
 
 Header names must be valid HTTP header tokens and unique within an operation, ignoring case. The variable must be a `String`, `ID`, `Int`, `Boolean`, enum, or custom scalar whose [custom scalar schema](/apollo-mcp-server/custom-scalars) has type `string`, `integer`, or `boolean` and no `anyOf`, `oneOf`, `allOf`, or `$ref`. `Float`, list, and input object variables can't be headers, nor can variables whose value is fixed by an operation collection. The server doesn't load an operation whose entry breaks these rules, and logs the reason.
 
 <Caution>
 
-The header is only a reliable copy of the argument on `tools/call` requests for the annotated tool, made with protocol `2026-07-28` or later. If your proxy authorizes on the header, also reject requests with an earlier `MCP-Protocol-Version`. And disable the [`execute` tool](#introspection-tools) or gate it the same way, because it can run the same operation with any variables and no `Mcp-Param-*` header.
+The header is only a reliable copy of the argument on `tools/call` requests for the annotated tool, made with protocol `2026-07-28` or later. If your proxy authorizes on the header, also reject requests with an earlier or missing `MCP-Protocol-Version`. And disable the [`execute` tool](#introspection-tools) or gate it the same way, because it can run the same operation with any variables and no `Mcp-Param-*` header.
 
 Don't annotate an operation whose name matches a tool in an [MCP App](/apollo-mcp-server/mcp-apps). The server checks app-mode calls to that tool against the operation's annotation, so they fail with `-32020`. The server logs a warning at startup when this happens.
 
 </Caution>
 
 An annotated parameter's schema is a single flat type. A nullable variable is optional but doesn't accept `null`, and an enum lists its values inline.
-
-<Note>
-
-The server checks each tool's header annotation the first time a client calls that tool. If a later schema or operation reload changes the annotation, restart the server to apply the change.
-
-</Note>
 
 ## Generated tool schemas
 

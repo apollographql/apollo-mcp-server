@@ -64,7 +64,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
             .unwrap();
     Running {
         schema: Arc::new(RwLock::new(schema)),
-        operations: OperationCatalog::new(vec![]),
+        operations: Arc::new(RwLock::new(vec![])),
         apps: vec![],
         prompts: vec![],
         headers: http::HeaderMap::new(),
@@ -113,7 +113,7 @@ pub(in crate::server::states) fn create_test_running_with_operation(endpoint: ur
         .expect("operation should be valid");
 
     Running {
-        operations: OperationCatalog::new(vec![operation]),
+        operations: Arc::new(RwLock::new(vec![operation])),
         endpoint,
         ..create_test_running()
     }

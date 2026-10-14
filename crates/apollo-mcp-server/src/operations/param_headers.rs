@@ -6,8 +6,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rmcp::model::JsonObject;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Value, json};
 
 use super::{Operation, schema_walker::NotHeaderPrimitive};
 use crate::apps::App;
@@ -32,6 +34,17 @@ impl ParamHeaders {
     /// The annotated variable names.
     pub(crate) fn variables(&self) -> impl Iterator<Item = &str> {
         self.0.keys().map(String::as_str)
+    }
+
+    /// A tool input schema that carries only these annotations, for rmcp's
+    /// `Mcp-Param-*` check, which reads nothing else from the schema.
+    pub(crate) fn annotation_schema(&self) -> JsonObject {
+        let properties: JsonObject = self
+            .0
+            .iter()
+            .map(|(variable, header)| (variable.clone(), json!({ X_MCP_HEADER: header })))
+            .collect();
+        JsonObject::from_iter([("properties".to_string(), Value::Object(properties))])
     }
 }
 
@@ -211,6 +224,16 @@ mod tests {
 
     fn parse(json: serde_json::Value) -> Result<ParamHeaders, serde_json::Error> {
         serde_json::from_value(json)
+    }
+
+    #[test]
+    fn annotation_schema_annotates_each_variable() {
+        let headers = parse(serde_json::json!({ "handle": "Workflow-Handle" })).unwrap();
+
+        assert_eq!(
+            Value::Object(headers.annotation_schema()),
+            json!({ "properties": { "handle": { "x-mcp-header": "Workflow-Handle" } } })
+        );
     }
 
     #[test]

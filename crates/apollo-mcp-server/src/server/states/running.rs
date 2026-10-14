@@ -56,13 +56,12 @@ use crate::{
 };
 use apollo_mcp_rhai::SharedRhaiEngine;
 
-use super::operation_catalog::OperationCatalog;
 use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 
 #[derive(Clone)]
 pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
-    pub(super) operations: OperationCatalog,
+    pub(super) operations: Arc<RwLock<Vec<Operation>>>,
     pub(super) apps: Vec<crate::apps::App>,
     pub(super) prompts: Vec<crate::prompts::PromptFile>,
     pub(super) headers: HeaderMap,
@@ -154,7 +153,7 @@ impl Running {
         debug!("Schema updated:\n{}", schema);
 
         // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
-        let operations_lock = self.operations.write().await;
+        let mut operations_lock = self.operations.write().await;
 
         // Update the operations based on the new schema. This is necessary because the MCP tool
         // input schemas and description are derived from the schema.
@@ -191,8 +190,10 @@ impl Running {
         *self.schema.write().await = schema;
 
         warn_unmatched_operations(&self.param_headers, &operations);
+        *operations_lock = operations;
+
         // Publish only after the updated catalog is visible to readers.
-        operations_lock.replace(operations);
+        drop(operations_lock);
 
         // Notify MCP clients that tools have changed
         self.tool_list_changes.publish();
@@ -206,7 +207,7 @@ impl Running {
         debug!("Operations updated:\n{:?}", operations);
 
         // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
-        let operations_lock = self.operations.write().await;
+        let mut operations_lock = self.operations.write().await;
 
         // Update the operations based on the current schema
         let updated_operations: Vec<Operation> = {
@@ -240,8 +241,10 @@ impl Running {
             serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
         );
         warn_unmatched_operations(&self.param_headers, &updated_operations);
+        *operations_lock = updated_operations;
+
         // Publish only after the updated catalog is visible to readers.
-        operations_lock.replace(updated_operations);
+        drop(operations_lock);
 
         // Notify MCP clients that tools have changed
         self.tool_list_changes.publish();
@@ -912,13 +915,19 @@ impl ServerHandler for McpService {
         .await
     }
 
-    /// Lets rmcp check `Mcp-Param-*` headers against the `x-mcp-header`
-    /// annotations of predefined operations. Built-in tools have no annotations.
+    /// Lets rmcp check `Mcp-Param-*` headers. rmcp caches the answer per name for the
+    /// life of the service, so it's built from static config rather than the operations
+    /// that reloads change. Built-in tools have no annotations.
     fn get_tool(&self, name: &str) -> Option<Tool> {
         if self.application.is_builtin_tool(name) {
             return None;
         }
-        self.application.operations.tool(name)
+        let headers = self.application.param_headers.get(name)?;
+        Some(Tool::new(
+            name.to_string(),
+            "",
+            Arc::new(headers.annotation_schema()),
+        ))
     }
 
     async fn list_resources(
@@ -1135,7 +1144,7 @@ mod tests {
     fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
         Running {
             schema,
-            operations: OperationCatalog::new(vec![]),
+            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
             prompts: vec![],
             headers: HeaderMap::new(),
@@ -1794,7 +1803,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = OperationCatalog::default();
+            let operations = Arc::new(RwLock::new(vec![]));
 
             let running = Running {
                 operations: operations.clone(),
@@ -1832,7 +1841,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = OperationCatalog::default();
+            let operations = Arc::new(RwLock::new(vec![]));
 
             let descriptions = HashMap::from([(
                 "GetId".to_string(),
@@ -1868,7 +1877,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = OperationCatalog::default();
+            let operations = Arc::new(RwLock::new(vec![]));
 
             let descriptions = HashMap::from([(
                 "NonExistent".to_string(),
@@ -1904,7 +1913,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = OperationCatalog::default();
+            let operations = Arc::new(RwLock::new(vec![]));
 
             let annotations = HashMap::from([(
                 "GetId".to_string(),
@@ -1955,7 +1964,7 @@ mod tests {
                 .validate()
                 .unwrap();
 
-            let operations = OperationCatalog::default();
+            let operations = Arc::new(RwLock::new(vec![]));
 
             let annotations = HashMap::from([(
                 "NonExistent".to_string(),
@@ -3109,7 +3118,7 @@ mod tests {
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
@@ -3155,7 +3164,7 @@ mod tests {
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
@@ -3528,7 +3537,7 @@ mod tests {
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
@@ -3583,7 +3592,7 @@ mod tests {
                 .expect("operation should be valid");
 
             let running = Running {
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
                 ..test_running(Arc::new(RwLock::new(schema)))
@@ -3689,7 +3698,7 @@ mod tests {
             };
 
             let running = Running {
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 apps: vec![app],
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
@@ -3815,7 +3824,7 @@ mod integration_tests {
 
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -4338,7 +4347,7 @@ mod integration_tests {
 
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: OperationCatalog::new(vec![operation]),
+                operations: Arc::new(RwLock::new(vec![operation])),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -5321,7 +5330,7 @@ mod integration_tests {
                     .unwrap();
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: OperationCatalog::new(vec![]),
+                operations: Arc::new(RwLock::new(vec![])),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -5506,7 +5515,7 @@ mod integration_tests {
                     .unwrap();
             Running {
                 schema: Arc::new(RwLock::new(schema)),
-                operations: OperationCatalog::new(vec![]),
+                operations: Arc::new(RwLock::new(vec![])),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),

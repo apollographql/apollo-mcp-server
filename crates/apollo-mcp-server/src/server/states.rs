@@ -25,7 +25,6 @@ use crate::{
 use super::{ConfigValidator, Server, ServerEvent, ShutdownReason, Transport};
 
 mod configuring;
-mod operation_catalog;
 mod operations_configured;
 mod running;
 mod schema_configured;
@@ -473,7 +472,6 @@ mod tests {
     use reqwest::header::HeaderMap;
     use tokio::sync::RwLock;
 
-    use super::operation_catalog::OperationCatalog;
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
@@ -498,7 +496,7 @@ mod tests {
 
         Running {
             schema: Arc::new(RwLock::new(schema)),
-            operations: OperationCatalog::new(vec![]),
+            operations: Arc::new(RwLock::new(vec![])),
             apps: vec![],
             prompts: vec![],
             headers: HeaderMap::new(),

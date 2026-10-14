@@ -60,7 +60,7 @@ async fn running_with_param_header_on(endpoint: url::Url, operation_name: &str) 
 
     let mut running = create_test_running();
     *running.schema.write().await = schema;
-    running.operations = OperationCatalog::new(vec![operation]);
+    running.operations = Arc::new(RwLock::new(vec![operation]));
     running.param_headers = param_headers;
     running.endpoint = endpoint;
     running
@@ -126,7 +126,11 @@ fn tools_call_at(
 }
 
 async fn send(running: &Running, request: Request<Body>) -> (StatusCode, Value) {
-    let response = router(running).oneshot(request).await.unwrap();
+    send_to(&router(running), request).await
+}
+
+async fn send_to(router: &Router, request: Request<Body>) -> (StatusCode, Value) {
+    let response = router.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     (status, serde_json::from_slice(&bytes).unwrap())
@@ -200,6 +204,26 @@ async fn base64_param_header_is_decoded_before_comparison() {
 
     graphql.assert_async().await;
     assert_eq!(status, StatusCode::OK);
+}
+
+/// rmcp caches `get_tool` per name for the life of the service, so a call made before the
+/// operation loads must not leave the tool unchecked once a reload loads it.
+#[tokio::test]
+async fn operation_loaded_after_first_call_is_still_checked() {
+    let running = running_with_param_header("http://localhost:4000".parse().unwrap()).await;
+    let loaded = std::mem::take(&mut *running.operations.write().await);
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+    // One router, so rmcp's per-service cache sees both calls.
+    let router = router(&running);
+    send_to(&router, tools_call("wf-1", Some("wf-1"))).await;
+
+    *running.operations.write().await = loaded;
+    let (status, body) = send_to(&router, tools_call("wf-1", Some("wf-2"))).await;
+
+    assert_eq!(
+        (status, body["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!(ErrorCode::HEADER_MISMATCH.0))
+    );
 }
 
 /// The check is a SEP-2243 rule, so a request that declares an earlier protocol skips it.
