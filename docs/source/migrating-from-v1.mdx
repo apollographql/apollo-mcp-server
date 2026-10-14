@@ -1,0 +1,55 @@
+---
+title: Migrating from v1 to v2
+subtitle: Upgrade your Apollo MCP Server deployment from v1.x to v2.x
+---
+
+Apollo MCP Server v2.0 doesn't introduce any new breaking changes of its own. The major version bump reflects how much the [Model Context Protocol specification](https://modelcontextprotocol.io/specification) itself has changed since Apollo MCP Server's 1.0 release, not a break in compatibility with your existing configuration, tools, or deployments.
+
+If you're already on the latest 1.x release (1.20.0), upgrading to v2.0 should be as smooth as any minor version update:
+
+1. Review the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) for the full list of changes between your current version and v2.0.0.
+2. Update your Apollo MCP Server binary, container image, or [Apollo GraphOS Operator](./deploy#deploy-on-kubernetes-with-the-apollo-graphos-operator-recommended-for-kubernetes) version to v2.0.0.
+3. Redeploy. No changes to `config.yaml`, `APOLLO_MCP_*` environment variables, or tool and prompt definitions are required.
+
+If you're coming from an older 1.x release, breaking changes were introduced in some 1.x versions. Check the **Breaking changes since 1.0** section for what you may need to do.
+
+## Breaking changes since 1.0
+
+These changes shipped in earlier 1.x releases. If you're already running 1.20.0, you've already dealt with them and can skip this section.
+
+| Change | Introduced in | What to do |
+| --- | --- | --- |
+| Default port changed from `5000` to `8000` | **1.1.0** (2025-10-16) | If you relied on the old default, set it explicitly: `transport.port: 5000`. |
+| SSE transport removed | **1.5.0** (2026-01-21) | Change `transport.type: sse` to `transport.type: streamable_http`. |
+| Config validated at startup | **1.7.0** (2026-02-10) | A misplaced option (for example, a top-level `auth` key instead of `transport.auth`) now fails startup with an error instead of being silently ignored. Fix your `config.yaml` before upgrading. |
+| Host header validation enabled by default | **1.7.0** (2026-02-10) | Requests whose `Host` header isn't localhost or listed in `transport.host_validation.allowed_hosts` are rejected with 403. If you run behind a proxy or load balancer, add your public hostname to `allowed_hosts`. |
+| `authorization_servers` no longer normalized | **1.14.0** (2026-05-15) | Each `transport.auth.servers` entry must exactly match your auth server's `issuer` value — the server no longer adds a trailing slash or otherwise reshapes it. |
+| Nullable inputs wrapped in `anyOf: [T, null]` | **1.18.0** (2026-09-09) | Generated tool input schemas represent nullable fields as `anyOf` instead of a bare type. Update any host that reads schemas directly and any snapshot tests that assert on the old shape. |
+| `allow_anonymous_mcp_discovery` deprecated | **1.18.0** (2026-09-09) | Still works in v2, but now emits a startup warning. Migrate to `transport.auth.skip_token_validation.methods` when convenient. |
+| Stricter schema validation (apollo-compiler 2.0, GraphQL September 2025 rules) | **1.20.0** (2026-09-24) | A schema that loaded successfully before can now be rejected at startup or on hot reload. Validate your schema against the new rules before upgrading. |
+
+See the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) for the full detail and migration notes on each of these.
+
+## What's new in v2.0
+
+- **MCP protocol 2026-07-28 support**: the server now supports the 2026-07-28 revision, including `subscriptions/listen`, cache hints on resource and tool list responses, and standard request headers. Clients on earlier protocol versions continue to work unchanged.
+- **Rhai hooks run concurrently**: hook calls no longer block each other behind a single exclusive engine lock, so a hook that makes a slow HTTP call can no longer stall other in-flight tool calls.
+- **Deterministic tool ordering**: `tools/list` now returns predefined GraphQL operation tools sorted alphabetically by operation name, improving client-side tool-list caching and LLM prompt cache reuse.
+- **Separate health check listener**: `health_check.listen` lets you serve the health check on its own address/port instead of the main `streamable_http` listener.
+- **Trace context from MCP request metadata**: `traceparent`, `tracestate`, and `baggage` in a request's `_meta` now parent the request span and propagate to downstream GraphQL calls, including over stdio, where there are no HTTP headers.
+
+<Note>
+
+Clients that negotiate protocol `2026-07-28` are always sessionless, no matter how you set `transport.stateful_mode`. That protocol replaces the legacy session-based notification stream with `subscriptions/listen`, so if you rely on unsolicited tool-change notifications, make sure your client calls `subscriptions/listen` rather than assuming the old session-based stream still applies once it's on `2026-07-28`. See [`stateful_mode`](./config-file#transport) in the config reference.
+
+</Note>
+
+<Note>
+
+If your `main.rhai` script relies on variables declared at the top level to persist state across calls (for example a cached token or a counter), review the Rhai hook concurrency change in the [CHANGELOG](https://github.com/apollographql/apollo-mcp-server/blob/main/CHANGELOG.md) before upgrading. Each hook invocation now gets its own copy of those variables, so writes from one call no longer carry over to the next.
+
+</Note>
+
+## Getting help
+
+If you run into an upgrade issue, check [Apollo MCP Server GitHub issues](https://github.com/apollographql/apollo-mcp-server/issues).

@@ -1,9 +1,10 @@
 use rmcp::ErrorData;
 use rmcp::model::{MetaObject, Resource, ResourceContents};
-use serde_json::json;
+use serde_json::{Value, json};
 use url::Url;
 
 use crate::apps::app::{AppResource, AppResourceSource, AppTarget};
+use crate::caching::Caching;
 
 use super::App;
 
@@ -16,11 +17,11 @@ pub(crate) enum ResourceOrigin {
 }
 
 impl ResourceOrigin {
-    pub(crate) fn allows_cache_hints(self) -> bool {
+    pub(crate) fn caching(self, configured: Caching) -> Caching {
         match self {
-            Self::Local => true,
+            Self::Local => configured,
             // Remote content can change independently of server configuration.
-            Self::Remote => false,
+            Self::Remote => Caching { ttl_ms: 0 },
         }
     }
 }
@@ -163,8 +164,10 @@ pub(crate) async fn get_app_resource(
         }
     }
 
-    meta.get_or_insert_with(MetaObject::new)
-        .insert("ui".into(), serde_json::to_value(ui).unwrap_or_default());
+    if let Some(ui) = ui {
+        meta.get_or_insert_with(MetaObject::new)
+            .insert("ui".into(), Value::Object(ui.0));
+    }
 
     Ok((
         ResourceContents::TextResourceContents {
@@ -255,13 +258,13 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::local(ResourceOrigin::Local, true)]
-    #[case::remote(ResourceOrigin::Remote, false)]
-    fn only_local_resources_allow_cache_hints(
+    #[case::local(ResourceOrigin::Local, 60_000)]
+    #[case::remote(ResourceOrigin::Remote, 0)]
+    fn only_local_resources_use_configured_ttl(
         #[case] origin: ResourceOrigin,
-        #[case] expected: bool,
+        #[case] expected: u64,
     ) {
-        assert_eq!(origin.allows_cache_hints(), expected);
+        assert_eq!(origin.caching(Caching { ttl_ms: 60_000 }).ttl_ms, expected);
     }
 
     #[test]
@@ -412,6 +415,39 @@ mod tests {
         assert!(ui_meta.get("description").is_none());
         // MCPApps should not have openai-specific root meta keys
         assert!(meta.get("openai/widgetPrefersBorder").is_none());
+    }
+
+    #[rstest::rstest]
+    #[case::mcp(AppTarget::MCPApps)]
+    #[case::openai(AppTarget::AppsSDK)]
+    #[tokio::test]
+    async fn get_app_resource_omits_ui_meta_without_ui_settings(#[case] target: AppTarget) {
+        let app = App {
+            name: "TestApp".to_string(),
+            description: None,
+            resource: AppResource::Single(AppResourceSource::Local("test content".to_string())),
+            csp_settings: None,
+            widget_settings: None,
+            uri: "ui://widget/TestApp#hash123".parse().unwrap(),
+            tools: vec![],
+            prefetch_operations: vec![],
+        };
+
+        let result = get_app_resource(
+            &[app],
+            rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
+            "ui://widget/TestApp".parse().unwrap(),
+            &target,
+            "TestApp",
+        )
+        .await
+        .unwrap();
+
+        let ResourceContents::TextResourceContents { meta, .. } = result.0 else {
+            unreachable!()
+        };
+        // MCP Apps requires `_meta.ui` to be an object when present.
+        assert!(meta.is_none(), "{meta:?}");
     }
 
     #[tokio::test]

@@ -15,6 +15,35 @@ AI agents create unpredictable usage patterns and complex request flows that are
 
 Apollo MCP Server exports metrics and traces using the OpenTelemetry Protocol (OTLP). Application logs use the configured logging output instead of an OTLP logs exporter.
 
+MCP requests can carry W3C `traceparent`, `tracestate`, and `baggage` strings in
+`params._meta` over stdio or Streamable HTTP. A valid `_meta.traceparent` becomes
+the direct parent of the MCP handler span. Otherwise, the handler uses its HTTP
+request span as parent, or starts a new trace over stdio. The HTTP request span
+continues to use HTTP tracing headers independently. Malformed tracing metadata
+does not fail the MCP request.
+
+When `_meta.baggage` is a string, its parsed members replace HTTP baggage; an
+empty string clears baggage. Otherwise, HTTP baggage is retained. HTTP-safe
+baggage and the active span's W3C trace context propagate to downstream GraphQL
+requests, including endpoints selected by execution hooks. Baggage members with
+metadata that cannot form an HTTP header are omitted. These optional tracing
+keys work with the server's currently supported protocol versions and require
+no additional configuration.
+
+Request context stays active while a handler runs even if logging filters
+disable its tracing span. Enabled downstream spans and Rhai `trace_id` values
+continue to use the selected request trace. If the HTTP span is also filtered,
+HTTP tracing headers still provide the fallback context.
+
+Explicit HTTP headers supplied through `headers`, `forward_headers`, operation
+headers, or execution hooks keep their existing behavior. Automatic context
+injection regenerates `traceparent` and `tracestate` from the active span, but
+replaces `baggage` only when the context has baggage to inject. For example,
+`_meta.baggage: ""` clears the request's baggage context but does not remove a
+`baggage` header explicitly forwarded through `forward_headers`.
+To rely solely on automatic context propagation, avoid supplying these tracing
+headers explicitly.
+
 | Signal  | Default behavior                         | Destination                              | Correlation                                                                                         |
 | ------- | ---------------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Logs    | Enabled at `info`                        | Standard output or configured log files  | Log lines emitted inside an active span include its `trace_id`; events outside spans don't.         |
@@ -178,7 +207,7 @@ Stability is the status each metric carries in the OpenTelemetry semantic conven
 Spans are generated for the following actions:
 
 - **Incoming HTTP Requests**: The server creates a `SERVER` span for every HTTP request to the MCP endpoint. That span roots the trace unless the request carries a `traceparent` header. The server doesn't trace requests to the health check endpoint, so probes don't appear as service entry points.
-- **MCP Handler Methods**: Nested spans are created for each of the main MCP protocol methods (`initialize`, `call_tool`, `list_tools`).
+- **MCP Handler Methods**: Each implemented request handler creates a span, including tools, resources, prompts, initialization, logging, and subscriptions. Valid `_meta` trace context parents this span directly; otherwise it nests beneath the HTTP request span or starts a new trace over stdio.
 - **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
 - **Downstream GraphQL Calls**: The `execute` tool in Apollo MCP Server and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is caller-controlled, request-scoped context, not identity. Don't put secrets or personally identifiable information in baggage, and never use it for authorization. If your GraphQL endpoint crosses a trust boundary, filter baggage before forwarding it. Apollo MCP Server doesn't automatically copy baggage onto exported span attributes.
 

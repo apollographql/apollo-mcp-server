@@ -160,15 +160,16 @@ These fields are under the top-level `cors` key and configure Cross-Origin Resou
 
 These fields are under the top-level `health_check` key. Learn more about [health checks](/apollo-mcp-server/health-checks).
 
-| Option                        | Type       | Default     | Description                                                                        |
-| :---------------------------- | :--------- | :---------- | :--------------------------------------------------------------------------------- |
-| `enabled`                     | `bool`     | `false`     | Enable health check endpoints                                                      |
-| `path`                        | `string`   | `"/health"` | Custom health check endpoint path                                                  |
-| `readiness`                   | `object`   |             | Readiness check configuration                                                      |
-| `readiness.allowed`           | `number`   | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
-| `readiness.interval`          | `object`   |             | Readiness check interval configuration                                             |
-| `readiness.interval.sampling` | `duration` | `"5s"`      | How often to check the rejection count                                             |
-| `readiness.interval.unready`  | `duration` | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
+| Option                        | Type             | Default     | Description                                                                        |
+|:------------------------------|:-----------------|:------------|:-----------------------------------------------------------------------------------|
+| `enabled`                     | `bool`           | `false`     | Enable health check endpoints                                                      |
+| `path`                        | `string`         | `"/health"` | Custom health check endpoint path                                                  |
+| `listen`                      | `socket address` |             | Serve health checks on a separate address/port instead of the main listener        |
+| `readiness`                   | `object`         |             | Readiness check configuration                                                      |
+| `readiness.allowed`           | `number`         | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
+| `readiness.interval`          | `object`         |             | Readiness check interval configuration                                             |
+| `readiness.interval.sampling` | `duration`       | `"5s"`      | How often to check the rejection count                                             |
+| `readiness.interval.unready`  | `duration`       | `"10s"`     | How long to wait before recovering from unready state (default: 2 \* sampling)     |
 
 <Note>
 
@@ -236,7 +237,7 @@ These fields are under the top-level `logging` key.
 | Option     | Type                                                | Default    | Description                                                                       |
 | :--------- | :-------------------------------------------------- | :--------- | :-------------------------------------------------------------------------------- |
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
-| `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stdout`.      |
+| `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stderr` for the `stdio` transport and `stdout` for the `streamable_http` transport. |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
 
 <Caution>
@@ -296,11 +297,11 @@ These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL
 
 | Option | Type | Default | Description |
 | :----- | :--- | :------ | :---------- |
-| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads omit cache hints. Cache scope is always `private` when hints are provided. Requires negotiation of MCP protocol version `2026-07-28` or newer; see the following availability note. |
+| `ttl_ms` | `u64` | `300000` | Freshness lifetime in milliseconds for cache hints on `tools/list`, `resources/list`, `resources/templates/list`, `resources/read`, and `prompts/list` responses. Remote app resource reads use a `ttlMs` of `0` because their content can change outside the server. Cache scope is always `private`. Applies to supported MCP protocol versions from `2026-07-28` onward. |
 
 <Note>
 
-Cache hints are currently inactive: Apollo MCP Server negotiates MCP protocol versions up to `2025-11-25`. The `caching.ttl_ms` setting doesn't currently change client caching behavior because the required protocol revision isn't supported.
+Clients using `2026-07-28` select the protocol through discovery and per-request metadata. Legacy clients using `initialize` retain their earlier protocol response shape without cache hints.
 
 </Note>
 
@@ -402,7 +403,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions. When disabled, requests are sessionless and unsolicited tool-change notifications are unavailable. |
+| `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
 <Note>

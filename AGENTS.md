@@ -88,7 +88,7 @@ The project is a Rust workspace with four crates:
 
 ## Key Dependencies
 
-- `rmcp 3.3` - MCP protocol implementation (aligned with MCP 2025-11-25)
+- `rmcp` - MCP protocol implementation (the official Rust SDK)
 - `apollo-compiler`, `apollo-federation` - GraphQL parsing and schema handling
 - `axum 0.8` - HTTP server
 - `tokio` - Async runtime

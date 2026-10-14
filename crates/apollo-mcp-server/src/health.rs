@@ -6,6 +6,7 @@
 
 use std::{
     collections::HashMap,
+    net::SocketAddr,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -101,6 +102,11 @@ pub struct HealthCheckConfig {
     /// Defaults to /health
     pub path: String,
 
+    /// Optionally serve the health check on its own address/port instead of the main
+    /// transport's listener. Defaults to unset, which serves the health check on the same
+    /// port as the rest of the server.
+    pub listen: Option<SocketAddr>,
+
     /// Optionally specify readiness configuration
     pub readiness: ReadinessConfig,
 }
@@ -110,6 +116,7 @@ impl Default for HealthCheckConfig {
         Self {
             enabled: false,
             path: "/health".to_string(),
+            listen: None,
             readiness: Default::default(),
         }
     }
@@ -213,10 +220,12 @@ impl HealthCheck {
         (health, status_code)
     }
 
-    /// Enable health check router.
+    /// Build a router containing just the health check endpoint.
     ///
-    /// Creates a router with the health check endpoint and merges it with the provided router.
-    pub fn enable_router(&self, router: Router) -> Router {
+    /// Used on its own when `HealthCheckConfig::listen` is set, so the health check is served
+    /// on its own socket instead of being merged into the main router. See [`Self::enable_router`]
+    /// for the merged case.
+    pub fn router(&self) -> Router {
         /// Health check endpoint handler
         async fn health_endpoint(
             State(health_check): State<HealthCheck>,
@@ -230,11 +239,16 @@ impl HealthCheck {
             Ok((status_code, Json(json!(health))))
         }
 
-        let health_router = Router::new()
+        Router::new()
             .route(&self.config.path, get(health_endpoint))
-            .with_state(self.clone());
+            .with_state(self.clone())
+    }
 
-        router.merge(health_router)
+    /// Enable health check router.
+    ///
+    /// Creates a router with the health check endpoint and merges it with the provided router.
+    pub fn enable_router(&self, router: Router) -> Router {
+        router.merge(self.router())
     }
 }
 
@@ -254,6 +268,7 @@ mod tests {
         let config = HealthCheckConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.path, "/health");
+        assert_eq!(config.listen, None);
         assert_eq!(config.readiness.allowed, 100);
         assert_eq!(config.readiness.interval.sampling, Duration::from_secs(5));
         assert!(config.readiness.interval.unready.is_none());
@@ -412,6 +427,41 @@ mod tests {
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
             assert_eq!(res.status(), StatusCode::OK);
+        }
+    }
+
+    mod router {
+        use super::*;
+        use axum::{body::Body, http::Request};
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+
+        #[tokio::test]
+        async fn serves_the_health_endpoint_standalone() {
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let app = health_check.router();
+
+            let req = Request::builder()
+                .uri("/health")
+                .body(Body::empty())
+                .unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::OK);
+            let body = res.into_body().collect().await.unwrap().to_bytes();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["status"], "UP");
+        }
+
+        #[tokio::test]
+        async fn does_not_expose_any_other_routes() {
+            let health_check = HealthCheck::new(HealthCheckConfig::default());
+            let app = health_check.router();
+
+            let req = Request::builder().uri("/mcp").body(Body::empty()).unwrap();
+            let res = app.oneshot(req).await.unwrap();
+
+            assert_eq!(res.status(), StatusCode::NOT_FOUND);
         }
     }
 }

@@ -29,6 +29,10 @@ The optional [`validate` tool](#introspection-tools) validates an agent-supplied
 
 ## Define GraphQL operations for tools
 
+In `tools/list`, predefined GraphQL operation tools appear first, alphabetically by operation name using case-sensitive lexicographic ordering (for example, `Alpha`, `Zulu`, `alpha`). With unique operation names, the same operation set retains this order across repeated calls, schema reloads, and operation reloads, regardless of source order. Operations with equal names retain their source order. Built-in and app tools follow in their existing order.
+
+Deterministic ordering supports client-side tool-list caching and LLM prompt cache reuse. Schema reloads can still change tool descriptions or generated schemas; the guarantee applies to ordering.
+
 ### From operation files
 
 An operation file is a `.graphql` file containing a single GraphQL operation.
@@ -623,7 +627,7 @@ The output side follows the same conventions as the input side, with a few diffe
 
 - Nullable fields and lists are wrapped in `anyOf` with `null`. Object fields are `required` when their GraphQL type is non-nullable.
 - `ID` is `{"oneOf": [{"type": "string"}, {"type": "integer"}]}`, since servers may return either.
-- A union field with inline fragments becomes an `anyOf` of one object schema per fragment. For an interface field, fields from inline fragments are merged into a single object schema. `__typename`, when selected, is a plain string and isn't a discriminator.
+- Union and interface fields combine selections that apply to the same concrete type with `allOf` and use `anyOf` for different selection patterns. The generator follows nested, named, and inline fragments, including inline fragments without a type condition. A fallback accepts members with no matching fragment. A response can contain fragment-selected keys from only one compatible member pattern; unrelated keys remain allowed. `__typename`, when selected, is a plain string and isn't a discriminator.
 - Fields marked `@private` are omitted from the schema. See the [`@private` directive](/apollo-mcp-server/mcp-apps-reference#private-directive) for details.
 
 MCP clients that validate `structuredContent` against `outputSchema` reject responses that don't match. The schema aims to accept every response the operation can produce, but it is derived from the operation text and the GraphQL schema alone, so two kinds of valid response currently fail validation:

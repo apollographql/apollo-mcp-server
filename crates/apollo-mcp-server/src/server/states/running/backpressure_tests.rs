@@ -29,7 +29,7 @@ struct ObservedService {
     initialized: mpsc::UnboundedSender<Peer<RoleServer>>,
 }
 impl ServerHandler for ObservedService {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         self.inner.get_info()
     }
     async fn initialize(

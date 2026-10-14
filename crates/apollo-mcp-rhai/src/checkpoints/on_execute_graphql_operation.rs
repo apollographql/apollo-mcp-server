@@ -9,7 +9,7 @@ use tracing::{error, warn};
 use url::Url;
 
 use crate::{
-    engine::RhaiEngine,
+    shared_engine::SharedRhaiEngine,
     shared_mut::{SharedMut, WithMut},
     types::{RhaiErrorCode, RhaiHeaderMap, RhaiHttpParts},
 };
@@ -69,7 +69,7 @@ impl OnExecuteGraphqlOperationContext {
 }
 
 pub fn on_execute_graphql_operation(
-    engine: &Arc<Mutex<RhaiEngine>>,
+    engine: &SharedRhaiEngine,
     endpoint: &Url,
     headers: &HeaderMap,
     axum_parts: Option<&Parts>,
@@ -77,10 +77,10 @@ pub fn on_execute_graphql_operation(
     trace_id: impl FnOnce() -> String,
 ) -> Result<(Url, HeaderMap), McpError> {
     let hook_name = "on_execute_graphql_operation";
-    let mut engine_guard = engine.lock();
+    let engine = engine.current();
 
     // Exit early if method doesn't exist, allow us to skip some more expensive cloning later in this method
-    if !engine_guard.ast_has_function(hook_name) {
+    if !engine.ast_has_function(hook_name) {
         return Ok((endpoint.clone(), headers.clone()));
     }
 
@@ -97,7 +97,7 @@ pub fn on_execute_graphql_operation(
 
     let shared_context = Arc::new(Mutex::new(context));
 
-    engine_guard
+    engine
         .execute_hook(hook_name, (shared_context.clone(),))
         // TODO: How much of this could be made generic and/or moved into execute_hook?
         .map_err(|err| match *err {
@@ -139,23 +139,16 @@ pub fn on_execute_graphql_operation(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use http::HeaderMap;
     use http::request::Parts;
-    use parking_lot::Mutex;
     use rmcp::model::ErrorCode;
     use url::Url;
 
     use super::on_execute_graphql_operation;
-    use crate::engine::RhaiEngine;
+    use crate::shared_engine::SharedRhaiEngine;
 
-    fn create_engine(script: &str) -> Arc<Mutex<RhaiEngine>> {
-        let mut engine = RhaiEngine::new("rhai");
-        engine
-            .load_from_string(script)
-            .expect("Script should compile");
-        Arc::new(Mutex::new(engine))
+    fn create_engine(script: &str) -> SharedRhaiEngine {
+        SharedRhaiEngine::from_script("rhai", script).expect("Script should compile")
     }
 
     fn create_parts(method: &str, uri: &str, headers: HeaderMap) -> Parts {

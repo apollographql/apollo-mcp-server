@@ -4,30 +4,30 @@ use std::sync::Arc;
 
 use apollo_compiler::{Schema, validation::Valid};
 use opentelemetry::KeyValue;
-use parking_lot::Mutex;
+use opentelemetry::trace::FutureExt as _;
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 #[cfg(test)]
 use rmcp::model::CacheScope;
 use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
-    GetPromptResult, Implementation, ListPromptsResult, ListResourcesResult, PromptMessage,
-    PromptsCapability, ReadResourceResponse, ReadResourceResult, ResourcesCapability, Role,
-    SubscriptionFilter, ToolsCapability,
+    GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
+    ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
         InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerInfo,
+        ServerCapabilities, ServerConfig,
     },
     service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
 use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{Instrument as _, debug, error, info};
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -37,7 +37,7 @@ use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_to
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
 use crate::operations::{execute_operation, find_and_execute_operation};
-use crate::server::states::telemetry::get_parent_span;
+use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
     caching::Caching,
@@ -54,7 +54,7 @@ use crate::{
     },
     operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
 };
-use apollo_mcp_rhai::RhaiEngine;
+use apollo_mcp_rhai::SharedRhaiEngine;
 
 use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 
@@ -86,7 +86,7 @@ pub(super) struct Running {
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
     pub(super) instructions: Option<String>,
-    pub(super) rhai_engine: Arc<Mutex<RhaiEngine>>,
+    pub(super) rhai_engine: SharedRhaiEngine,
     pub(super) caching: Caching,
 }
 
@@ -235,8 +235,7 @@ impl Running {
     /// Reload Rhai scripts from the configured Rhai directory.
     /// On failure, logs the error and keeps the previous scripts.
     pub(super) fn reload_rhai_scripts(&self) {
-        let mut engine = self.rhai_engine.lock();
-        match engine.reload() {
+        match self.rhai_engine.reload() {
             Ok(()) => {
                 info!("Rhai scripts reloaded successfully");
             }
@@ -272,17 +271,24 @@ impl Running {
         let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
+        let mut operation_tools: Vec<_> = self
+            .operations
+            .read()
+            .await
+            .iter()
+            .map(|op| op.as_ref().clone())
+            .collect();
+        // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
+        operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
+
         // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
                 Some(app) => ListToolsResult::with_all_items(
-                    self.operations
-                        .read()
-                        .await
-                        .iter()
-                        .map(|op| op.as_ref().clone())
+                    operation_tools
+                        .into_iter()
                         .chain(
                             self.execute_tool
                                 .as_ref()
@@ -308,11 +314,8 @@ impl Running {
             }
         } else {
             ListToolsResult::with_all_items(
-                self.operations
-                    .read()
-                    .await
-                    .iter()
-                    .map(|op| op.as_ref().clone())
+                operation_tools
+                    .into_iter()
                     .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
@@ -529,6 +532,30 @@ impl Running {
         Ok(self.caching.apply_to(result, protocol_version, server_max))
     }
 
+    fn list_resource_templates_impl(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        self.list_resource_templates_with_protocol_max(
+            protocol_version,
+            &MAX_SUPPORTED_PROTOCOL_VERSION,
+        )
+    }
+
+    fn list_resource_templates_with_protocol_max(
+        &self,
+        protocol_version: Option<&ProtocolVersion>,
+        server_max: &ProtocolVersion,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        // We expose no templates, but even an empty modern list requires cache hints.
+        // rmcp's default handler returns the empty list without those hints.
+        Ok(self.caching.apply_to(
+            ListResourceTemplatesResult::default(),
+            protocol_version,
+            server_max,
+        ))
+    }
+
     async fn read_resource_impl(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
@@ -564,12 +591,9 @@ impl Running {
             let (resource, origin) =
                 get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
             let result = ReadResourceResult::new(vec![resource]);
-            Ok(if origin.allows_cache_hints() {
-                self.caching
-                    .apply_to(result, peer.protocol_version, server_max)
-            } else {
-                result
-            })
+            Ok(origin
+                .caching(self.caching)
+                .apply_to(result, peer.protocol_version, server_max))
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Resource not found for URI: {}", request.uri),
@@ -646,7 +670,7 @@ impl Running {
 /// deliberately when the server adopts a new spec revision — not derived
 /// from rmcp, whose `KNOWN_VERSIONS`/`LATEST` track SDK constants rather
 /// than this server's capabilities.
-pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2025_11_25;
+pub(crate) const MAX_SUPPORTED_PROTOCOL_VERSION: ProtocolVersion = ProtocolVersion::V_2026_07_28;
 
 /// Transport handler with its own legacy lifecycle. Application clones cannot
 /// accidentally be served without constructing this owner.
@@ -657,56 +681,44 @@ pub(super) struct McpService {
 }
 
 impl ServerHandler for McpService {
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version))]
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        // rmcp 3.3 gap: validate_standard_headers exempts initialize, including
-        // requests declaring STANDARD_HEADERS or later. Auth can admit those
-        // requests using Mcp-Method without reading the body, so reject a forged
-        // discovery header here before initializing the application lifecycle.
-        if let Some(parts) = context.extensions.get::<http::request::Parts>() {
-            let mut values = parts
-                .headers
-                .get_all(rmcp::transport::common::http_header::HEADER_MCP_METHOD)
-                .iter();
-            if let Some(value) = values.next()
-                && (value != "initialize" || values.next().is_some())
-            {
-                return Err(ErrorData::header_mismatch(
-                    "Mcp-Method must be initialize when supplied for an initialize request",
-                    None,
-                ));
-            }
-        }
-        let meter = &meter::METER;
-        let attributes = vec![
-            KeyValue::new(
-                TelemetryAttribute::ClientName.to_key(),
-                request.client_info.name.clone(),
-            ),
-            KeyValue::new(
-                TelemetryAttribute::ClientVersion.to_key(),
-                request.client_info.version.clone(),
-            ),
-        ];
-        meter
-            .u64_counter(TelemetryMetric::InitializeCount.as_str())
-            .build()
-            .add(1, &attributes);
-        // Negotiate rather than answering with `get_info` as-is (#794).
-        // `supported_protocol_versions` below bounds both this call and the
-        // re-negotiation rmcp runs afterwards on every transport (#803).
-        let info = self.negotiate_initialize(&request)?;
-        // The modern branch becomes reachable when the production cap lifts;
-        // the subscription test wrapper does not exercise this negotiation.
-        if info.protocol_version < ProtocolVersion::V_2026_07_28 {
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+            &context,
+        );
+        async {
+            let meter = &meter::METER;
+            let attributes = vec![
+                KeyValue::new(
+                    TelemetryAttribute::ClientName.to_key(),
+                    request.client_info.name.clone(),
+                ),
+                KeyValue::new(
+                    TelemetryAttribute::ClientVersion.to_key(),
+                    request.client_info.version.clone(),
+                ),
+            ];
+            meter
+                .u64_counter(TelemetryMetric::InitializeCount.as_str())
+                .build()
+                .add(1, &attributes);
+            // Negotiate rather than answering with `get_info` as-is (#794).
+            // `supported_protocol_versions` below bounds both this call and the
+            // re-negotiation rmcp runs afterwards on every transport (#803).
+            let info = self.negotiate_initialize(&request)?;
+            // rmcp's negotiate_initialize only selects versions with the legacy
+            // handshake; modern clients use discovery and per-request metadata.
             self.notifications
                 .initialize(&self.application.tool_list_changes);
+            Ok(info)
         }
-        Ok(info)
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
@@ -719,8 +731,7 @@ impl ServerHandler for McpService {
     ///
     /// This also narrows rmcp's re-negotiation (run on every transport after
     /// `initialize`), so it can't advertise a newer version from rmcp's
-    /// `KNOWN_VERSIONS`. Subscription handling is staged separately from
-    /// advertising full `2026-07-28` support.
+    /// `KNOWN_VERSIONS`.
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
         Cow::Borrowed(ProtocolVersion::known_up_to(
             &MAX_SUPPORTED_PROTOCOL_VERSION,
@@ -731,211 +742,299 @@ impl ServerHandler for McpService {
         &self,
         _requested: &SubscriptionFilter,
     ) -> Option<SubscriptionFilter> {
-        // rmcp permits the discovery lifecycle with older protocol versions,
-        // so version negotiation alone does not keep subscriptions staged.
-        if MAX_SUPPORTED_PROTOCOL_VERSION < ProtocolVersion::V_2026_07_28 {
-            return None;
-        }
         Some(SubscriptionFilter::builder().tools_list_changed().build())
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(context.request_context()), fields(apollo.mcp.request_id = %context.request_context().id))]
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
-        let shutdown = &self.application.cancellation_token;
-        // The SDK also enforces the accepted filter in SubscriptionSink. Keep
-        // our opt-in boundary explicit before allocating a catalog receiver.
-        if context.accepted().tools_list_changed != Some(true) {
-            // No supported notifications can arrive on this stream.
-            return Ok(());
-        }
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", apollo.mcp.request_id = %context.request_context().id),
+            context.request_context(),
+        );
+        async {
+            let shutdown = &self.application.cancellation_token;
+            // The SDK also enforces the accepted filter in SubscriptionSink. Keep
+            // our opt-in boundary explicit before allocating a catalog receiver.
+            if context.accepted().tools_list_changed != Some(true) {
+                // No supported notifications can arrive on this stream.
+                return Ok(());
+            }
 
-        let mut changes = self.application.tool_list_changes.subscribe();
-        // rmcp acknowledges before entering this handler. An initial refresh
-        // covers catalog updates during that setup window, without replaying
-        // history. Register first so updates during the send remain pending.
-        changes.mark_changed();
-        loop {
-            tokio::select! {
-                biased;
-                _ = context.cancelled() => return Ok(()),
-                _ = shutdown.cancelled() => return Ok(()),
-                changed = changes.changed() => {
-                    if changed.is_err() {
+            let mut changes = self.application.tool_list_changes.subscribe();
+            // rmcp acknowledges before entering this handler. An initial refresh
+            // covers catalog updates during that setup window, without replaying
+            // history. Register first so updates during the send remain pending.
+            changes.mark_changed();
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    changed = changes.changed() => {
+                        if changed.is_err() {
+                            return Ok(());
+                        }
+                    }
+                }
+                let result = tokio::select! {
+                    biased;
+                    _ = context.cancelled() => return Ok(()),
+                    _ = shutdown.cancelled() => return Ok(()),
+                    result = context.sink().notify_tool_list_changed() => result,
+                };
+                match result {
+                    Ok(()) => {}
+                    Err(
+                        SubscriptionSendError::SubscriptionClosed
+                        | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
+                    ) => return Ok(()),
+                    Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(
+                        error,
+                    ))) => {
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
                         return Ok(());
+                    }
+                    Err(
+                        error @ (SubscriptionSendError::NotificationNotAccepted(_)
+                        | SubscriptionSendError::UnsupportedNotification(_)),
+                    ) => {
+                        // Invalid notifications indicate a handler bug; end this
+                        // subscription instead of retrying on every catalog change.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - stopping subscription delivery"
+                        );
+                        return Err(McpError::internal_error(
+                            "Failed to deliver tool list change notification",
+                            None,
+                        ));
+                    }
+                    Err(error) => {
+                        // Unknown errors may be recoverable. Keep listening so a
+                        // later catalog change can trigger another delivery attempt.
+                        // rmcp 3.3.0's notification-send path only returns the transport
+                        // errors handled above, so real-context tests cannot reach
+                        // this fallback for future SDK errors.
+                        error!(
+                            ?error,
+                            "Failed to deliver tool list change - keeping subscription open"
+                        );
                     }
                 }
             }
-            let result = tokio::select! {
-                biased;
-                _ = context.cancelled() => return Ok(()),
-                _ = shutdown.cancelled() => return Ok(()),
-                result = context.sink().notify_tool_list_changed() => result,
-            };
-            match result {
-                Ok(()) => {}
-                Err(
-                    SubscriptionSendError::SubscriptionClosed
-                    | SubscriptionSendError::Service(rmcp::ServiceError::TransportClosed),
-                ) => return Ok(()),
-                Err(SubscriptionSendError::Service(rmcp::ServiceError::TransportSend(error))) => {
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - stopping subscription delivery"
-                    );
-                    return Ok(());
-                }
-                Err(
-                    error @ (SubscriptionSendError::NotificationNotAccepted(_)
-                    | SubscriptionSendError::UnsupportedNotification(_)),
-                ) => {
-                    // Invalid notifications indicate a handler bug; end this
-                    // subscription instead of retrying on every catalog change.
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - stopping subscription delivery"
-                    );
-                    return Err(McpError::internal_error(
-                        "Failed to deliver tool list change notification",
-                        None,
-                    ));
-                }
-                Err(error) => {
-                    // Unknown errors may be recoverable. Keep listening so a
-                    // later catalog change can trigger another delivery attempt.
-                    // rmcp 3.3.0's notification-send path only returns the transport
-                    // errors handled above, so real-context tests cannot reach
-                    // this fallback for future SDK errors.
-                    error!(
-                        ?error,
-                        "Failed to deliver tool list change - keeping subscription open"
-                    );
-                }
-            }
         }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context), fields(apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty))]
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let span = tracing::Span::current();
-        if let Some(args) = &request.arguments
-            && let Ok(json) = serde_json::to_string(args)
-        {
-            span.record("apollo.mcp.tool_arguments", json.as_str());
-        }
-
-        let protocol_version = context.protocol_version();
-
-        let result = self
-            .application
-            .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
-            .await;
-
-        // Strip meta before recording: _meta.structuredContent holds the unfiltered
-        // @private payload and must not be exported to the span.
-        if let Ok(r) = &result {
-            let mut stripped = r.clone();
-            stripped.meta = None;
-            if let Ok(json) = serde_json::to_string(&stripped) {
-                span.record("apollo.mcp.tool_result", json.as_str());
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            &context,
+        );
+        async {
+            let span = tracing::Span::current();
+            if let Some(args) = &request.arguments
+                && let Ok(json) = serde_json::to_string(args)
+            {
+                span.record("apollo.mcp.tool_arguments", json.as_str());
             }
-        }
 
-        result.map(Into::into)
+            let protocol_version = context.protocol_version();
+
+            let result = self
+                .application
+                .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
+                .await;
+
+            // Strip meta before recording: _meta.structuredContent holds the unfiltered
+            // @private payload and must not be exported to the span.
+            if let Ok(r) = &result {
+                let mut stripped = r.clone();
+                stripped.meta = None;
+                if let Ok(json) = serde_json::to_string(&stripped) {
+                    span.record("apollo.mcp.tool_result", json.as_str());
+                }
+            }
+
+            result.map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, parent = get_parent_span(&context))]
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let client_capabilities = context.client_capabilities();
-        let protocol_version = context.protocol_version();
-        let peer = PeerContext {
-            client_capabilities: client_capabilities.as_ref(),
-            protocol_version: protocol_version.as_ref(),
-        };
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_tools"),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.application
-            .list_tools_impl(context.extensions, peer)
-            .await
+            self.application
+                .list_tools_impl(context.extensions, peer)
+                .await
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let protocol_version = context.protocol_version();
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resources"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
 
-        self.application
-            .list_resources_impl(&context.extensions, protocol_version.as_ref())
+            self.application
+                .list_resources_impl(&context.extensions, protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()))]
+    async fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListResourceTemplatesResult, McpError> {
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
+
+            self.application
+                .list_resource_templates_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
+    }
+
     async fn read_resource(
         &self,
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let client_capabilities = context.client_capabilities();
-        let protocol_version = context.protocol_version();
-        let peer = PeerContext {
-            client_capabilities: client_capabilities.as_ref(),
-            protocol_version: protocol_version.as_ref(),
-        };
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+            &context,
+        );
+        async {
+            let client_capabilities = context.client_capabilities();
+            let protocol_version = context.protocol_version();
+            let peer = PeerContext {
+                client_capabilities: client_capabilities.as_ref(),
+                protocol_version: protocol_version.as_ref(),
+            };
 
-        self.application
-            .read_resource_impl(request, context.extensions, peer)
-            .await
-            .map(Into::into)
+            self.application
+                .read_resource_impl(request, context.extensions, peer)
+                .await
+                .map(Into::into)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all)]
     async fn list_prompts(
         &self,
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let protocol_version = context.protocol_version();
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "list_prompts"),
+            &context,
+        );
+        async {
+            let protocol_version = context.protocol_version();
 
-        self.application
-            .list_prompts_impl(protocol_version.as_ref())
+            self.application
+                .list_prompts_impl(protocol_version.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    #[tracing::instrument(skip_all, fields(apollo.mcp.prompt_name = request.name))]
     async fn get_prompt(
         &self,
         request: GetPromptRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        self.application.get_prompt_impl(request).map(Into::into)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", apollo.mcp.prompt_name = request.name),
+            &context,
+        );
+        async { self.application.get_prompt_impl(request).map(Into::into) }
+            .instrument(span)
+            .with_context(parent_context)
+            .await
     }
 
-    // `logging` is deprecated by SEP-2577, but we still override this handler so
-    // clients that send `logging/setLevel` without checking capabilities get an
-    // empty success instead of `-32601`.
+    // SEP-2575 removes this RPC in 2026-07-28, independently of SEP-2577's
+    // deprecation of Logging. Older clients retain the compatibility no-op.
     #[allow(deprecated)]
-    #[tracing::instrument(skip_all)]
     async fn set_level(
         &self,
         request: rmcp::model::SetLevelRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        // We do not advertise the `logging` capability and do not emit
-        // `notifications/message`. This override exists only to accept
-        // `logging/setLevel` from clients that send it without checking
-        // capabilities, so they see an empty success instead of `-32601`.
-        debug!(level = ?request.level, "received logging/setLevel; no-op");
-        Ok(())
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "set_level"),
+            &context,
+        );
+        async {
+            // rmcp 3.5 dispatches this method for every version; its modern HTTP
+            // transport maps this method-not-found error to HTTP 404.
+            if context
+                .protocol_version()
+                .is_some_and(|version| version >= ProtocolVersion::V_2026_07_28)
+            {
+                return Err(McpError::method_not_found::<
+                    rmcp::model::SetLevelRequestMethod,
+                >());
+            }
+            // We do not advertise the `logging` capability and do not emit
+            // `notifications/message`. This override exists only to accept
+            // `logging/setLevel` from clients that send it without checking
+            // capabilities, so they see an empty success instead of `-32601`.
+            debug!(level = ?request.level, "received logging/setLevel; no-op");
+            Ok(())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         let meter = &meter::METER;
         meter
             .u64_counter(TelemetryMetric::GetInfoCount.as_str())
@@ -991,7 +1090,7 @@ fn extract_app_param(extensions: &Extensions) -> Option<String> {
 
 fn tool_not_found(name: &str) -> McpError {
     McpError::new(
-        ErrorCode::METHOD_NOT_FOUND,
+        ErrorCode::INVALID_PARAMS,
         format!("Tool {name} not found"),
         None,
     )
@@ -1036,7 +1135,7 @@ mod tests {
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
-            rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+            rhai_engine: SharedRhaiEngine::new("rhai"),
             caching: Caching::default(),
         }
     }
@@ -1086,6 +1185,388 @@ mod tests {
         Running {
             apps: vec![app],
             ..test_running(Arc::new(RwLock::new(schema)))
+        }
+    }
+
+    mod protocol_2026_07_28 {
+        use super::*;
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
+        use serde_json::json;
+        use tower::ServiceExt as _;
+
+        async fn request(
+            version: &str,
+            method: &str,
+            params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let mut running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            running.caching.ttl_ms = 60_000;
+            request_with_running(
+                running,
+                version,
+                method,
+                params,
+                uri,
+                json_response,
+                method_header,
+            )
+            .await
+        }
+
+        async fn request_with_running(
+            running: Running,
+            version: &str,
+            method: &str,
+            mut params: Value,
+            uri: &str,
+            json_response: bool,
+            method_header: Option<&str>,
+        ) -> (http::StatusCode, Value) {
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            params["_meta"] = json!({
+                "io.modelcontextprotocol/protocolVersion": version,
+                "io.modelcontextprotocol/clientCapabilities": {},
+                "io.modelcontextprotocol/clientInfo": {"name": "regression-test", "version": "1"}
+            });
+            let request = http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", version);
+            let request = match method_header {
+                Some(value) => request.header("Mcp-Method", value),
+                None => request,
+            };
+            let request = match method {
+                "resources/read" => request.header("Mcp-Name", params["uri"].as_str().unwrap()),
+                "tools/call" => request.header("Mcp-Name", params["name"].as_str().unwrap()),
+                _ => request,
+            };
+            let request = request
+                .body(Body::from(
+                    json!({
+                        "jsonrpc": "2.0", "id": 42, "method": method, "params": params
+                    })
+                    .to_string(),
+                ))
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            let status = response.status();
+            let body = if response.headers()[http::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/event-stream")
+            {
+                let mut reader =
+                    super::super::test_support::SseReader::new(Body::new(response.into_body()));
+                super::super::test_support::next_message(&mut reader).await
+            } else {
+                let bytes = response.into_body().collect().await.unwrap().to_bytes();
+                serde_json::from_slice(&bytes).unwrap()
+            };
+            (status, body)
+        }
+
+        const APP_URI: &str = "ui://widget/transport-fixture#v1";
+        const APP_HTML: &str = "<html><body>transport fixture</body></html>";
+
+        fn resource_fixture(source: crate::apps::app::AppResourceSource) -> Running {
+            let mut running = running_with_apps(AppResource::Single(source), None, None);
+            running.apps[0].uri = APP_URI.parse().unwrap();
+            running.caching.ttl_ms = 60_000;
+            running
+        }
+
+        fn assert_resource_response(status: http::StatusCode, body: &Value, version: &str) {
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            if version == "2026-07-28" {
+                assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            } else {
+                assert!(body["result"].get("resultType").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn local_app_resources_preserve_content_and_protocol_cache_hints(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("resources/list", "resources/read")] method: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running =
+                resource_fixture(crate::apps::app::AppResourceSource::Local(APP_HTML.into()));
+            let params = if method == "resources/read" {
+                json!({"uri": APP_URI})
+            } else {
+                json!({})
+            };
+            let (status, body) = request_with_running(
+                running,
+                version,
+                method,
+                params,
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let items = result[if method == "resources/list" {
+                "resources"
+            } else {
+                "contents"
+            }]
+            .as_array()
+            .unwrap();
+            assert_eq!(items.len(), 1, "{body}");
+            assert_eq!(items[0]["uri"], APP_URI);
+            assert_eq!(items[0]["mimeType"], "text/html;profile=mcp-app");
+            if method == "resources/read" {
+                assert_eq!(items[0]["text"], APP_HTML);
+            }
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 60_000);
+                assert_eq!(result["cacheScope"], "private");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn remote_app_resources_preserve_content_and_are_immediately_stale(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let mut server = mockito::Server::new_async().await;
+            let mock = server
+                .mock("GET", "/widget")
+                .with_status(200)
+                .with_body(APP_HTML)
+                .expect(1)
+                .create_async()
+                .await;
+            let running = resource_fixture(crate::apps::app::AppResourceSource::Remote(
+                format!("{}/widget", server.url()).parse().unwrap(),
+            ));
+            let (status, body) = request_with_running(
+                running,
+                version,
+                "resources/read",
+                json!({"uri": APP_URI}),
+                "/mcp?app=MyApp&appTarget=mcp",
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            mock.assert_async().await;
+            assert_resource_response(status, &body, version);
+            let result = &body["result"];
+            let contents = result["contents"].as_array().unwrap();
+            assert_eq!(contents.len(), 1, "{body}");
+            assert_eq!(contents[0]["uri"], APP_URI);
+            assert_eq!(contents[0]["mimeType"], "text/html;profile=mcp-app");
+            assert_eq!(contents[0]["text"], APP_HTML);
+            if version == "2026-07-28" {
+                assert_eq!(result["ttlMs"], 0, "{body}");
+                assert_eq!(result["cacheScope"], "private", "{body}");
+            } else {
+                assert!(result.get("ttlMs").is_none(), "{body}");
+                assert!(result.get("cacheScope").is_none(), "{body}");
+            }
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", -32602)]
+        #[case::legacy("2025-11-25", -32002)]
+        #[tokio::test]
+        async fn missing_resource_is_an_error_without_contents(
+            #[case] version: &str,
+            #[case] code: i32,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/read",
+                json!({"uri": "ui://missing/does-not-exist"}),
+                uri,
+                json_response,
+                Some("resources/read"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], code, "{body}");
+            assert!(
+                body.get("result").is_none(),
+                "missing resources must never return contents: {body}"
+            );
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_tool_is_invalid_params(
+            #[values("2026-07-28", "2025-11-25")] version: &str,
+            #[values("/mcp", "/mcp?app=MyApp")] uri: &str,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "tools/call",
+                json!({"name": "DoesNotExist", "arguments": {}}),
+                uri,
+                json_response,
+                Some("tools/call"),
+            )
+            .await;
+            // Unknown tools are an in-band error, not a malformed or unsupported request.
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32602, "{body}");
+        }
+
+        #[rstest::rstest]
+        #[case::modern("2026-07-28", json!({
+            "resourceTemplates": [], "resultType": "complete",
+            "ttlMs": 60_000, "cacheScope": "private"
+        }))]
+        #[case::legacy("2025-11-25", json!({"resourceTemplates": []}))]
+        #[tokio::test]
+        async fn empty_template_list_uses_protocol_appropriate_cache_hints(
+            #[case] version: &str,
+            #[case] expected: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                version,
+                "resources/templates/list",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("resources/templates/list"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            let mut result = body["result"].clone();
+            // rmcp attaches server metadata separately from the result's protocol fields.
+            result.as_object_mut().unwrap().remove("_meta");
+            assert_eq!(result, expected);
+        }
+
+        #[rstest::rstest]
+        #[case::discovery("server/discover", json!({}))]
+        #[case::tools("tools/list", json!({}))]
+        #[case::resources("resources/list", json!({}))]
+        #[case::prompts("prompts/list", json!({}))]
+        #[case::read("resources/read", json!({"uri": RESOURCE_URI}))]
+        #[tokio::test]
+        async fn successful_results_are_complete(
+            #[case] method: &str,
+            #[case] params: Value,
+            #[values(false, true)] json_response: bool,
+        ) {
+            let (status, body) = request(
+                "2026-07-28",
+                method,
+                params,
+                "/mcp?app=MyApp",
+                json_response,
+                Some(method),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::OK, "{body}");
+            assert_eq!(body["id"], 42);
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete", "{body}");
+            if method == "resources/read" {
+                assert_eq!(body["result"]["contents"][0]["text"], "content");
+            }
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn unknown_method_returns_http_not_found(#[values(false, true)] json_response: bool) {
+            let (status, body) = request(
+                "2026-07-28",
+                "unknown/method",
+                json!({}),
+                "/mcp",
+                json_response,
+                Some("unknown/method"),
+            )
+            .await;
+            assert_eq!(status, http::StatusCode::NOT_FOUND, "{body}");
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+        #[rstest::rstest]
+        #[case::missing(None)]
+        #[case::mismatched(Some("resources/list"))]
+        #[tokio::test]
+        async fn modern_requests_enforce_standard_method_header(#[case] header: Option<&str>) {
+            let (status, body) =
+                request("2026-07-28", "tools/list", json!({}), "/mcp", true, header).await;
+            assert_eq!(status, http::StatusCode::BAD_REQUEST, "{body}");
+            assert_eq!(
+                body["error"]["code"],
+                rmcp::model::ErrorCode::HEADER_MISMATCH.0,
+                "{body}"
+            );
+            assert!(body.get("result").is_none());
+        }
+
+        /// The auth middleware exempts this `GET` from token validation on the
+        /// premise that the production transport never serves it, even with
+        /// `stateful_mode: true`.
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_get_is_method_not_allowed(#[values(false, true)] stateful_mode: bool) {
+            let running = running_with_apps(
+                AppResource::Single(crate::apps::app::AppResourceSource::Local("content".into())),
+                None,
+                None,
+            );
+            let service = crate::server::states::starting::build_http_service(
+                running,
+                stateful_mode,
+                &Default::default(),
+            );
+            let request = http::Request::builder()
+                .method("GET")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .body(Body::empty())
+                .unwrap();
+            let response = service.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::METHOD_NOT_ALLOWED);
         }
     }
 
@@ -1139,6 +1620,9 @@ mod tests {
         let prompts = running
             .list_prompts_with_protocol_max(Some(&version), &version)
             .unwrap();
+        let templates = running
+            .list_resource_templates_with_protocol_max(Some(&version), &version)
+            .unwrap();
 
         assert!(!tools.tools.is_empty());
         assert!(!resources.resources.is_empty());
@@ -1149,6 +1633,11 @@ mod tests {
             ("resources/list", resources.ttl_ms, resources.cache_scope),
             ("resources/read", read.ttl_ms, read.cache_scope),
             ("prompts/list", prompts.ttl_ms, prompts.cache_scope),
+            (
+                "resources/templates/list",
+                templates.ttl_ms,
+                templates.cache_scope,
+            ),
         ] {
             assert_eq!(
                 (ttl_ms, scope),
@@ -1541,7 +2030,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn resource_list_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
@@ -1557,7 +2046,12 @@ mod tests {
                 .list_resources_impl(&Extensions::new(), Some(&protocol_version))
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1670,14 +2164,13 @@ mod tests {
             };
             assert_eq!(text, resource_content);
             assert_eq!(mime_type.unwrap(), "text/html;profile=mcp-app");
-            // Meta always contains at least the "ui" key now
-            let meta = meta.expect("meta should be set");
-            assert!(meta.get("ui").is_some());
+            // Without CSP or widget settings there is no `_meta.ui` to report.
+            assert!(meta.is_none());
             assert_eq!(uri, "http://localhost:4000/resource#a_different_fragment");
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn read_resource_cache_hints_gated_by_protocol_version(
@@ -1708,7 +2201,12 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[tokio::test]
@@ -1804,10 +2302,15 @@ mod tests {
         }
 
         #[rstest]
+        #[case::legacy_server(ProtocolVersion::V_2025_11_25, (None, None))]
+        #[case::modern_server(
+            ProtocolVersion::V_2026_07_28,
+            (Some(0), Some(CacheScope::Private))
+        )]
         #[tokio::test]
-        async fn fetch_remote_resource_downloads_content_without_cache_hints(
-            #[values(MAX_SUPPORTED_PROTOCOL_VERSION, ProtocolVersion::V_2026_07_28)]
-            server_max: ProtocolVersion,
+        async fn fetch_remote_resource_downloads_content_with_protocol_cache_hints(
+            #[case] server_max: ProtocolVersion,
+            #[case] expected_hints: (Option<u64>, Option<CacheScope>),
         ) {
             let mut server = mockito::Server::new_async().await;
             let body = "<html>remote</html>";
@@ -1845,7 +2348,7 @@ mod tests {
                 .expect("resource fetch failed");
 
             mock.assert();
-            assert_eq!((resource.ttl_ms, resource.cache_scope), (None, None));
+            assert_eq!((resource.ttl_ms, resource.cache_scope), expected_hints);
             let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
             else {
                 panic!("unexpected resource contents");
@@ -2144,6 +2647,82 @@ mod tests {
 
         use super::*;
 
+        #[rstest::rstest]
+        #[case::normal("/mcp", false)]
+        #[case::app("/mcp?app=MyApp", true)]
+        #[tokio::test]
+        async fn tool_order_is_stable_across_calls_and_reloads(
+            #[case] uri: &str,
+            #[case] app_mode: bool,
+        ) {
+            use crate::server::states::running::integration_tests::stateless_request_at_uri;
+            use serde_json::json;
+
+            let mut running = running_with_builtin_tools();
+            running.apps = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".to_owned())),
+                None,
+                None,
+            )
+            .apps;
+            let operations = |names: &[&str]| {
+                names
+                    .iter()
+                    .map(|name| (format!("query {name} {{ id }}"), None).into())
+                    .collect()
+            };
+            running
+                .update_operations(operations(&["alpha", "Zulu", "Alpha"]))
+                .await;
+            let mut expected = vec!["Alpha", "Zulu", "alpha", EXECUTE_TOOL_NAME];
+            if app_mode {
+                expected.push("GetId");
+            } else {
+                expected.extend([
+                    INTROSPECT_TOOL_NAME,
+                    SEARCH_TOOL_NAME,
+                    EXPLORER_TOOL_NAME,
+                    VALIDATE_TOOL_NAME,
+                ]);
+            }
+
+            async fn assert_order(running: &Running, uri: &str, expected: &[&str]) {
+                for _ in 0..3 {
+                    let response = stateless_request_at_uri(
+                        running.clone(),
+                        "2025-11-25",
+                        "tools/list",
+                        json!({}),
+                        uri,
+                    )
+                    .await;
+                    let names: Vec<_> = response["result"]["tools"]
+                        .as_array()
+                        .expect("tools/list must return tools")
+                        .iter()
+                        .map(|tool| tool["name"].as_str().unwrap())
+                        .collect();
+                    assert_eq!(names, expected);
+                }
+            }
+
+            assert_order(&running, uri, &expected).await;
+
+            let schema = Schema::parse_and_validate(
+                "type Query { id: Int, added: String }",
+                "reloaded.graphql",
+            )
+            .unwrap();
+            running.update_schema(schema.clone()).await;
+            assert_eq!(*running.schema.read().await, schema);
+            assert_order(&running, uri, &expected).await;
+
+            running
+                .update_operations(operations(&["Zulu", "Alpha", "alpha"]))
+                .await;
+            assert_order(&running, uri, &expected).await;
+        }
+
         #[tokio::test]
         async fn list_tools_without_app_parameter() {
             let running = running_with_apps(
@@ -2162,7 +2741,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         #[tokio::test]
         async fn list_tools_cache_hints_gated_by_protocol_version(
@@ -2183,7 +2762,12 @@ mod tests {
                 .await
                 .unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         fn running_with_builtin_tools() -> Running {
@@ -2789,7 +3373,7 @@ mod tests {
         }
 
         #[rstest]
-        #[case::above_server_cap(ProtocolVersion::V_2026_07_28)]
+        #[case::modern(ProtocolVersion::V_2026_07_28)]
         #[case::legacy(ProtocolVersion::V_2025_06_18)]
         fn list_prompts_cache_hints_gated_by_protocol_version(
             #[case] protocol_version: ProtocolVersion,
@@ -2798,7 +3382,12 @@ mod tests {
             running.caching.ttl_ms = 60_000;
             let result = running.list_prompts_impl(Some(&protocol_version)).unwrap();
 
-            assert_eq!((result.ttl_ms, result.cache_scope), (None, None));
+            let expected = if protocol_version == ProtocolVersion::V_2026_07_28 {
+                (Some(60_000), Some(rmcp::model::CacheScope::Private))
+            } else {
+                (None, None)
+            };
+            assert_eq!((result.ttl_ms, result.cache_scope), expected);
         }
 
         #[test]
@@ -3108,6 +3697,16 @@ mod integration_tests {
         method: &str,
         params: Value,
     ) -> Value {
+        stateless_request_at_uri(running, version, method, params, "/mcp").await
+    }
+
+    pub(super) async fn stateless_request_at_uri(
+        running: Running,
+        version: &str,
+        method: &str,
+        params: Value,
+        uri: &str,
+    ) -> Value {
         use axum::body::Body;
         use http_body_util::BodyExt as _;
         use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -3124,7 +3723,7 @@ mod integration_tests {
         );
         let request = http::Request::builder()
             .method("POST")
-            .uri("/mcp")
+            .uri(uri)
             .header("Host", "localhost")
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
@@ -3207,7 +3806,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -3317,7 +3916,7 @@ mod integration_tests {
             assert!(result.get("cacheScope").is_none());
         }
 
-        async fn request_tools_with_future_protocol(
+        async fn request_tools_with_modern_protocol(
             legacy_session_mode: bool,
             metadata: Option<serde_json::Value>,
         ) -> serde_json::Value {
@@ -3350,7 +3949,7 @@ mod integration_tests {
         async fn rejects_stateless_tools_request_without_required_metadata(
             #[values(true, false)] legacy_session_mode: bool,
         ) {
-            let body = request_tools_with_future_protocol(legacy_session_mode, None).await;
+            let body = request_tools_with_modern_protocol(legacy_session_mode, None).await;
             assert_eq!(body["id"], 1);
             assert_eq!(
                 body["error"]["code"],
@@ -3362,7 +3961,7 @@ mod integration_tests {
 
         #[rstest::rstest]
         #[tokio::test]
-        async fn rejects_stateless_tools_request_with_unsupported_protocol(
+        async fn accepts_stateless_tools_request_with_modern_protocol(
             #[values(true, false)] legacy_session_mode: bool,
         ) {
             let metadata = json!({
@@ -3371,14 +3970,13 @@ mod integration_tests {
                 "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0.0"}
             });
             let body =
-                request_tools_with_future_protocol(legacy_session_mode, Some(metadata)).await;
+                request_tools_with_modern_protocol(legacy_session_mode, Some(metadata)).await;
             assert_eq!(body["id"], 1);
-            assert_eq!(
-                body["error"]["code"],
-                rmcp::model::ErrorCode::UNSUPPORTED_PROTOCOL_VERSION.0,
-                "{body}"
-            );
-            assert!(body.get("result").is_none());
+            assert!(body.get("error").is_none(), "{body}");
+            assert_eq!(body["result"]["resultType"], "complete");
+            assert_eq!(body["result"]["ttlMs"], 300_000);
+            assert_eq!(body["result"]["cacheScope"], "private");
+            assert!(!body["result"]["tools"].as_array().unwrap().is_empty());
         }
 
         #[tokio::test]
@@ -3419,7 +4017,7 @@ mod integration_tests {
         async fn negotiates_down_when_client_requests_newer_version() {
             // Regression for AMS-525: a client offering a protocol version newer
             // than any rmcp implements over streamable_http must be downgraded to
-            // the max supported version rather than refused.
+            // the newest version with an initialize handshake rather than refused.
             let running = create_running_with_output_schema();
             let session_manager: Arc<LocalSessionManager> = LocalSessionManager::default().into();
             let service = create_service(running, Arc::clone(&session_manager));
@@ -3433,7 +4031,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3512,13 +4110,9 @@ mod integration_tests {
         }
 
         #[tokio::test]
-        async fn stdio_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // Mirrors `stateless_caps_at_max_supported_when_client_requests_newer_known_version`
-            // for the stdio transport: rmcp's generic `serve()` negotiates through
-            // the same `supported_protocol_versions` hook (service/server.rs), a
-            // different code path from `StreamableHttpService`'s tower layer. This
-            // proves the cap holds there too, closing the one transport #803's fix
-            // didn't yet have a regression test for.
+        async fn stdio_initialize_falls_back_to_legacy_protocol() {
+            // rmcp limits initialize to revisions that support that handshake.
+            // Modern clients use discovery and per-request metadata instead.
             use rmcp::ServiceExt as _;
             use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 
@@ -3557,7 +4151,7 @@ mod integration_tests {
             let body: serde_json::Value = serde_json::from_str(&response_line).unwrap();
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
 
             drop(reader);
@@ -3596,7 +4190,7 @@ mod integration_tests {
         #[tokio::test]
         async fn stateless_negotiates_down_when_client_requests_unknown_version() {
             // A client offering a version rmcp doesn't know must fall back to
-            // our max supported version rather than having it echoed back.
+            // the newest version with an initialize handshake rather than being echoed back.
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3609,17 +4203,12 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
         #[tokio::test]
-        async fn stateless_caps_at_max_supported_when_client_requests_newer_known_version() {
-            // Subscription support is staged, but advertising 2026-07-28
-            // remains a separate rollout of the complete revision.
-            // The stateless path must cap at the max supported version rather
-            // than advertise a version whose follow-up requests we can't
-            // handle.
+        async fn stateless_initialize_falls_back_to_legacy_protocol() {
             let running = create_running_with_output_schema();
             let service = create_stateless_service(running, LocalSessionManager::default().into());
 
@@ -3632,23 +4221,13 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
         #[tokio::test]
-        async fn legacy_session_mode_enabled_still_caps_at_max_supported_when_client_requests_newer_known_version()
-         {
-            // Requesting protocol version 2026-07-28 always uses the
-            // stateless/discover lifecycle regardless of `legacy_session_mode`
-            // (SEP-2567), so this exercises the same `NegotiatingStatelessHttpService`
-            // path as `stateless_caps_at_max_supported_when_client_requests_newer_known_version`,
-            // not a distinct legacy-session handshake. This pins that enabling
-            // `legacy_session_mode` doesn't accidentally exempt that request from
-            // the cap (closes #803);
-            // `stdio_caps_at_max_supported_when_client_requests_newer_known_version`
-            // covers the one code path (rmcp's generic `serve()`) that isn't
-            // routed through `StreamableHttpService`.
+        async fn legacy_session_mode_enabled_initialize_falls_back_to_legacy_protocol() {
+            // Enabling legacy sessions does not let initialize negotiate a discovery-only revision.
             let running = create_running_with_output_schema();
             let service = create_service(running, LocalSessionManager::default().into());
 
@@ -3661,7 +4240,7 @@ mod integration_tests {
             let body = extract_json_body(response).await;
             assert_eq!(
                 body["result"]["protocolVersion"],
-                MAX_SUPPORTED_PROTOCOL_VERSION.as_str()
+                ProtocolVersion::LATEST_WITH_INITIALIZE.as_str()
             );
         }
 
@@ -3748,7 +4327,7 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -4321,7 +4900,7 @@ mod integration_tests {
                 entered: tokio::sync::mpsc::UnboundedSender<()>,
             }
             impl ServerHandler for DelayedService {
-                fn get_info(&self) -> ServerInfo {
+                fn get_info(&self) -> ServerConfig {
                     self.service.get_info()
                 }
                 async fn initialize(
@@ -4442,7 +5021,7 @@ mod integration_tests {
                 completed: tokio::sync::mpsc::UnboundedSender<()>,
             }
             impl ServerHandler for ObservedService {
-                fn get_info(&self) -> ServerInfo {
+                fn get_info(&self) -> ServerConfig {
                     self.running.get_info()
                 }
 
@@ -4690,8 +5269,13 @@ mod integration_tests {
     mod logging_setlevel {
         use std::sync::Arc;
 
+        use axum::body::Body;
+        use http_body_util::BodyExt as _;
+        use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
+        use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
         use serde_json::json;
         use tokio::sync::RwLock;
+        use tower::ServiceExt as _;
 
         use super::*;
 
@@ -4725,13 +5309,13 @@ mod integration_tests {
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
 
         #[tokio::test]
-        async fn returns_empty_success_for_any_level() {
+        async fn legacy_sessionless_request_returns_empty_success() {
             let running = create_test_running();
             let body = super::stateless_request(
                 running,
@@ -4745,6 +5329,118 @@ mod integration_tests {
                 "set_level should not return an error: {body}"
             );
             assert_eq!(body["result"], json!({}));
+        }
+
+        fn modern_request() -> http::Request<Body> {
+            http::Request::builder()
+                .method("POST")
+                .uri("/mcp")
+                .header("Host", "localhost")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", "2026-07-28")
+                .header("Mcp-Method", "logging/setLevel")
+                .body(Body::from(json!({
+                    "jsonrpc": "2.0", "id": 42, "method": "logging/setLevel",
+                    "params": {
+                        "level": "debug",
+                        "_meta": {
+                            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                            "io.modelcontextprotocol/clientCapabilities": {},
+                            "io.modelcontextprotocol/clientInfo": {"name": "test", "version": "1"}
+                        }
+                    }
+                }).to_string()))
+                .unwrap()
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        async fn modern_request_returns_http_method_not_found(
+            #[values(false, true)] json_response: bool,
+        ) {
+            let running = create_test_running();
+            let capabilities =
+                serde_json::to_value(running.for_service().get_info().capabilities).unwrap();
+            assert!(capabilities.get("logging").is_none());
+            let service = StreamableHttpService::new(
+                move || Ok(running.for_service()),
+                Arc::new(LocalSessionManager::default()),
+                StreamableHttpServerConfig::default()
+                    .with_legacy_session_mode(false)
+                    .with_json_response(json_response),
+            );
+            let response = service.oneshot(modern_request()).await.unwrap();
+            assert_eq!(response.status(), http::StatusCode::NOT_FOUND);
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body["id"], 42);
+            assert_eq!(body["error"]["code"], -32601);
+            assert!(body.get("result").is_none());
+        }
+
+        #[rstest::rstest]
+        #[tokio::test]
+        #[timeout(std::time::Duration::from_secs(10))]
+        async fn legacy_negotiated_request_returns_empty_success() {
+            use rmcp::ServiceExt as _;
+            use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+
+            let running = create_test_running();
+            let (server_io, client_io) = tokio::io::duplex(4096);
+            let (reader, mut writer) = tokio::io::split(client_io);
+            let mut reader = BufReader::new(reader);
+            let server = tokio::spawn(async move {
+                running
+                    .for_service()
+                    .serve(server_io)
+                    .await
+                    .unwrap()
+                    .waiting()
+                    .await
+                    .unwrap();
+            });
+            let initialize = json!({
+                "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25", "capabilities": {},
+                    "clientInfo": {"name": "test", "version": "1"}
+                }
+            });
+            writer
+                .write_all(format!("{initialize}\n").as_bytes())
+                .await
+                .unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 1);
+            assert_eq!(response["result"]["protocolVersion"], "2025-11-25");
+            assert!(response["result"]["capabilities"].get("logging").is_none());
+
+            let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+            writer
+                .write_all(format!("{initialized}\n").as_bytes())
+                .await
+                .unwrap();
+            let set_level = json!({
+                "jsonrpc": "2.0", "id": 2, "method": "logging/setLevel",
+                "params": {"level": "debug"}
+            });
+            writer
+                .write_all(format!("{set_level}\n").as_bytes())
+                .await
+                .unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let response: Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], 2);
+            assert_eq!(response["result"], json!({}));
+            assert!(response.get("error").is_none());
+
+            drop(reader);
+            drop(writer);
+            server.await.unwrap();
         }
     }
 
@@ -4797,7 +5493,7 @@ mod integration_tests {
                 health_check: None,
                 server_info,
                 instructions: None,
-                rhai_engine: Arc::new(parking_lot::Mutex::new(RhaiEngine::new("rhai"))),
+                rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
             }
         }
@@ -4907,8 +5603,8 @@ mod integration_tests {
                 .collect();
 
             assert!(
-                versions.contains(&"2025-11-25"),
-                "must advertise 2025-11-25 for backward compat: {versions:?}"
+                versions.contains(&"2025-11-25") && versions.contains(&"2026-07-28"),
+                "must advertise modern and backward compatible versions: {versions:?}"
             );
             // rmcp reuses this list as the ceiling on `initialize`
             // negotiation, so advertising a version promises we can serve it.
@@ -4988,3 +5684,6 @@ mod method_header_tests;
 
 #[cfg(test)]
 mod subscription_tests;
+
+#[cfg(test)]
+mod schema_conformance_tests;

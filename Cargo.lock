@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-registry"
-version = "1.20.0"
+version = "2.0.0"
 dependencies = [
  "derive_more",
  "educe",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-rhai"
-version = "1.20.0"
+version = "2.0.0"
 dependencies = [
  "hex",
  "http",
@@ -231,7 +231,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-mcp-server"
-version = "1.20.0"
+version = "2.0.0"
 dependencies = [
  "anyhow",
  "apollo-compiler 2.0.0-beta.1",
@@ -325,7 +325,7 @@ dependencies = [
 
 [[package]]
 name = "apollo-schema-index"
-version = "1.20.0"
+version = "2.0.0"
 dependencies = [
  "apollo-compiler 2.0.0-beta.1",
  "enumset",
@@ -3931,9 +3931,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "3.3.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b88db56b8ae316560e9e868b6b978ea940f27cb883323fc90e07435e44158f5c"
+checksum = "ab5023804cbe0304cbe06197ac16e645a0a0d0ffa2953bf735c15c2fa0213350"
 dependencies = [
  "async-trait",
  "base64 0.23.0",
@@ -3963,9 +3963,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "3.3.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "873b730df6f0a9b74b13eb514e0dca4c2db0d8b68b74af98a2e9bf3f9d436585"
+checksum = "a1da498700030856ba63114bceefa30ba21f5e278cb975e5b9de3529fe842b40"
 dependencies = [
  "darling 0.24.1",
  "proc-macro2",

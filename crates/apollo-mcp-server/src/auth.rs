@@ -20,7 +20,9 @@ use networked_key_resolver::{CachedJwks, InflightMap, IssuerFetchState, Networke
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use rmcp::{
     model::ProtocolVersion,
-    transport::common::http_header::{HEADER_MCP_METHOD, HEADER_MCP_PROTOCOL_VERSION},
+    transport::common::http_header::{
+        HEADER_MCP_METHOD, HEADER_MCP_NAME, HEADER_MCP_PROTOCOL_VERSION,
+    },
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -288,7 +290,7 @@ impl SkipTokenValidation {
         self.headers.iter().any(|name| headers.contains_key(name))
     }
 
-    fn matches_body(&self, peek: &JsonRpcBodyPeek, app_qualified: bool) -> bool {
+    fn matches_peek(&self, peek: &JsonRpcPeek, app_qualified: bool) -> bool {
         self.matches_method(&peek.method) || self.matches_tool(peek, app_qualified)
     }
 
@@ -296,7 +298,7 @@ impl SkipTokenValidation {
         self.methods.iter().any(|allowed| allowed == method)
     }
 
-    fn matches_tool(&self, peek: &JsonRpcBodyPeek, app_qualified: bool) -> bool {
+    fn matches_tool(&self, peek: &JsonRpcPeek, app_qualified: bool) -> bool {
         if peek.method != TOOL_CALL_METHOD {
             return false;
         }
@@ -483,10 +485,11 @@ struct AuthState {
     /// `allow_anonymous_mcp_discovery` flag already folded in.
     skip_token_validation: Arc<SkipTokenValidation>,
     /// Whether the streamable-HTTP transport serves the `GET` server-to-client
-    /// stream (`true`) or not (`false`, `stateful_mode: false`). A stateless
-    /// transport answers that `GET` with 405 regardless of a credential, so
-    /// gating it here would only add a 401 a client may read as "this server
-    /// requires authentication for everything".
+    /// stream to legacy-protocol clients (`true`) or not (`false`,
+    /// `stateful_mode: false`). A `GET` the transport serves statelessly, which
+    /// includes every `GET` on protocol 2026-07-28 or later, gets 405
+    /// regardless of a credential, so gating it here would only add a 401 a
+    /// client may read as "this server requires authentication for everything".
     stateful_mode: bool,
 }
 
@@ -656,10 +659,11 @@ const DEPRECATED_ANONYMOUS_DISCOVERY_METHODS: &[&str] = &[
 /// token regardless of what this peek would have found.
 const PEEK_BODY_LIMIT: usize = 16 * 1024;
 
-/// Struct for deserializing the JSON-RPC `method` and optional `params.name`
-/// from a request body. Used by both the method/tool skip lists and per-operation scope checks.
+/// The JSON-RPC `method` and optional `params.name` of a request, read from its
+/// body or its SEP-2243 headers. Used by both the method/tool skip lists and
+/// per-operation scope checks.
 #[derive(Deserialize)]
-struct JsonRpcBodyPeek {
+struct JsonRpcPeek {
     method: String,
     params: Option<JsonRpcParams>,
 }
@@ -669,7 +673,75 @@ struct JsonRpcParams {
     name: Option<String>,
 }
 
-async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCode> {
+impl JsonRpcPeek {
+    /// Reads the peek from `Mcp-Method` and, for `tools/call`, `Mcp-Name`.
+    /// Returns `None` when either is malformed, or when a `tools/call` has no
+    /// usable `Mcp-Name`. rmcp rejects repeated headers, so reading the first is
+    /// safe.
+    ///
+    /// An encoded (`=?...`) name is never trusted, so auth cannot read a name
+    /// that differs from the one rmcp decodes. Tool names are limited to ASCII
+    /// letters, digits, `_`, `-`, and `.`, so a conforming client never encodes
+    /// one.
+    fn from_headers(headers: &HeaderMap) -> Option<Self> {
+        let method = headers.get(HEADER_MCP_METHOD)?.to_str().ok()?.to_owned();
+        let params = if method == TOOL_CALL_METHOD {
+            let name = headers.get(HEADER_MCP_NAME)?.to_str().ok()?;
+            if name.starts_with("=?") {
+                return None;
+            }
+            Some(JsonRpcParams {
+                name: Some(name.to_owned()),
+            })
+        } else {
+            None
+        };
+        Some(Self { method, params })
+    }
+}
+
+/// Whether rmcp will reject this request if its `Mcp-Method` / `Mcp-Name`
+/// headers disagree with its body, which is what makes them safe to decide on.
+///
+/// rmcp checks them only at STANDARD_HEADERS and later, comparing the raw
+/// version header as a string. The known-version allowlist fails closed for
+/// versions rmcp would compare wrongly; rmcp_known_versions_audit requires
+/// rechecking this when the SDK's known versions change.
+fn standard_headers_enforced(request: &Request) -> bool {
+    request.method() == Method::POST
+        && request.headers().contains_key(HEADER_MCP_METHOD)
+        && request
+            .headers()
+            .get(HEADER_MCP_PROTOCOL_VERSION)
+            .and_then(|value| value.to_str().ok())
+            .filter(|version| {
+                ProtocolVersion::KNOWN_VERSIONS
+                    .iter()
+                    .any(|known| known.as_str() == *version)
+            })
+            .is_some_and(|version| version >= ProtocolVersion::STANDARD_HEADERS.as_str())
+}
+
+/// Whether this request names a protocol version without the `initialize`
+/// handshake (2026-07-28 or later), which rmcp always serves statelessly
+/// whatever `stateful_mode` says.
+///
+/// A missing header is legacy, as in rmcp. The known-version allowlist fails
+/// closed, so an unrecognized version stays gated.
+fn uses_stateless_protocol(request: &Request) -> bool {
+    request
+        .headers()
+        .get(HEADER_MCP_PROTOCOL_VERSION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|version| {
+            ProtocolVersion::KNOWN_VERSIONS
+                .iter()
+                .find(|known| known.as_str() == version)
+        })
+        .is_some_and(|version| !version.has_initialize())
+}
+
+async fn extract_body(request: &mut Request) -> Result<JsonRpcPeek, StatusCode> {
     let body = std::mem::take(request.body_mut());
 
     let bytes = axum::body::to_bytes(body, PEEK_BODY_LIMIT)
@@ -679,7 +751,7 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
         )
         .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
 
-    let peek = serde_json::from_slice::<JsonRpcBodyPeek>(&bytes)
+    let peek = serde_json::from_slice::<JsonRpcPeek>(&bytes)
         .inspect_err(
             |e| tracing::error!(error = %e, "Failed to parse request body in oauth middleware"),
         )
@@ -697,7 +769,7 @@ async fn extract_body(request: &mut Request) -> Result<JsonRpcBodyPeek, StatusCo
 /// to non-`tools/call` methods, requests without a tool name, or tools with no entry in
 /// `required_scopes` — those are governed only by the global scope requirement.
 fn missing_scopes_for_operation<'a>(
-    peek: &JsonRpcBodyPeek,
+    peek: &JsonRpcPeek,
     required_scopes: &'a HashMap<String, OperationRequiredScopes>,
     token_scopes: &[String],
 ) -> Option<&'a OperationRequiredScopes> {
@@ -758,9 +830,11 @@ async fn oauth_validate(
     };
 
     // See AuthState::stateful_mode's doc for why a stateless GET is exempt
-    // here. Stateful mode's GET carries real traffic and stays gated below
-    // like any other request.
-    if !auth_state.stateful_mode && request.method() == Method::GET {
+    // here. A legacy-protocol GET in stateful mode carries real traffic and
+    // stays gated below like any other request.
+    if request.method() == Method::GET
+        && (!auth_state.stateful_mode || uses_stateless_protocol(&request))
+    {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
         return Ok(response);
@@ -782,61 +856,48 @@ async fn oauth_validate(
     // whether this request targets an app.
     let app_qualified = app_param_from_query(request.uri().query()).is_some();
 
-    // rmcp 3.3 gap: supplied Mcp-Method headers are checked against the body only
-    // at STANDARD_HEADERS and later. Match its version gate here; older clients
-    // still need the body peek. rmcp also exempts initialize, so McpService's
-    // initialize handler checks that header locally before doing any work.
-    // This intentionally mirrors validate_standard_headers' raw-header string
-    // comparison, not context.protocol_version() or KNOWN_VERSIONS positions.
-    // The allowlist fails closed for unknown versions; rmcp_known_versions_audit
-    // requires rechecking this contract when the SDK's known versions change.
-    let method_header_applies = token.is_none()
-        && request.method() == Method::POST
-        && request.headers().contains_key(HEADER_MCP_METHOD)
-        && request
-            .headers()
-            .get(HEADER_MCP_PROTOCOL_VERSION)
-            .and_then(|value| value.to_str().ok())
-            .filter(|version| {
-                ProtocolVersion::KNOWN_VERSIONS
-                    .iter()
-                    .any(|known| known.as_str() == *version)
-            })
-            .is_some_and(|version| version >= ProtocolVersion::STANDARD_HEADERS.as_str());
-    if method_header_applies {
-        let mut values = request.headers().get_all(HEADER_MCP_METHOD).iter();
-        let method = values.next().and_then(|value| value.to_str().ok());
-        let Some(method) = method.filter(|_| values.next().is_none()) else {
-            tracing::Span::current().record("reason", "invalid_method_header");
+    // Malformed headers can't grant tokenless access, but a tokened request
+    // can still be scoped from the body.
+    let header_peek = if standard_headers_enforced(&request) {
+        let peek = JsonRpcPeek::from_headers(request.headers());
+        if peek.is_none() && token.is_none() {
+            tracing::Span::current().record("reason", "invalid_mcp_headers");
             tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
             return Err(unauthorized_error());
-        };
-        if skip.matches_method(method) {
+        }
+        peek
+    } else {
+        None
+    };
+
+    // A tokenless request with trusted headers is decided here. A nonmatching
+    // header must not fall back to an allowed method in the body.
+    if token.is_none()
+        && let Some(peek) = &header_peek
+    {
+        if skip.matches_peek(peek, app_qualified) {
             let response = next.run(request).await;
             tracing::Span::current().record("status_code", response.status().as_u16());
             return Ok(response);
         }
-        // Only a tool-name exception can still match. A nonmatching header must
-        // not fall back to an allowed method in the body, or force a body read.
-        if method != TOOL_CALL_METHOD || skip.tools.is_empty() || app_qualified {
-            // A reason names what an operator should go inspect. A deployment
-            // with no skip lists has no such rule to inspect: its tokenless
-            // requests fail for the token alone.
-            let reason = if skip.needs_body() {
-                "method_header_not_permitted"
-            } else {
-                "missing_token"
-            };
-            tracing::Span::current().record("reason", reason);
-            tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
-            return Err(unauthorized_error());
-        }
+        // A reason names what an operator should go inspect. A deployment
+        // with no skip lists has no such rule to inspect: its tokenless
+        // requests fail for the token alone.
+        let reason = if skip.needs_body() {
+            "method_header_not_permitted"
+        } else {
+            "missing_token"
+        };
+        tracing::Span::current().record("reason", reason);
+        tracing::Span::current().record("status_code", StatusCode::UNAUTHORIZED.as_u16());
+        return Err(unauthorized_error());
     }
 
-    // Extract the body once if we need to inspect the JSON-RPC method for either
-    // the method and tool skip lists or per-operation scope checks.
+    // Without trusted headers, extract the body once if we need to inspect the
+    // JSON-RPC method for either the skip lists or per-operation scope checks.
     let peek_for_skip = token.is_none() && skip.needs_body();
-    let body_peek = if request.method() == http::Method::POST
+    let body_peek = if header_peek.is_none()
+        && request.method() == http::Method::POST
         && (peek_for_skip || !auth_state.required_scopes.is_empty())
     {
         match extract_body(&mut request).await {
@@ -868,13 +929,9 @@ async fn oauth_validate(
     };
 
     if peek_for_skip
-        && body_peek.as_ref().is_some_and(|peek| {
-            if method_header_applies {
-                skip.matches_tool(peek, app_qualified)
-            } else {
-                skip.matches_body(peek, app_qualified)
-            }
-        })
+        && body_peek
+            .as_ref()
+            .is_some_and(|peek| skip.matches_peek(peek, app_qualified))
     {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
@@ -947,7 +1004,7 @@ async fn oauth_validate(
 
     // Per-operation requirements add to the global check and always require
     // every listed scope, independently of the global `scope_mode`.
-    if let Some(required) = body_peek.as_ref().and_then(|peek| {
+    if let Some(required) = header_peek.or(body_peek).as_ref().and_then(|peek| {
         missing_scopes_for_operation(peek, &auth_state.required_scopes, &valid_token.scopes)
     }) {
         let challenge_scopes = required.challenge_scopes();
@@ -1072,6 +1129,85 @@ mod tests {
             .layer(from_fn_with_state(auth_state, oauth_validate))
     }
 
+    fn tool_call_body(tool: &str) -> Body {
+        Body::from(format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}"}}}}"#
+        ))
+    }
+
+    /// A body that fails the test if polled, proving auth decided from headers.
+    fn unpolled_body() -> Body {
+        Body::from_stream(futures::stream::poll_fn(
+            |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
+                panic!("auth must decide from the headers without polling the body")
+            },
+        ))
+    }
+
+    /// A mock authorization server and a valid token it signed. Mockito drops
+    /// a route with its handle, so keep this alive while the token is used.
+    struct MockIssuer {
+        server: mockito::ServerGuard,
+        _routes: [mockito::Mock; 2],
+        token: String,
+    }
+
+    async fn mock_issuer(scope: &str) -> MockIssuer {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+
+        let mut server = mockito::Server::new_async().await;
+        let kid = "test-kid";
+        let secret = b"hs512-integration-test-signing-secret";
+
+        let metadata = format!(
+            r#"{{"issuer":"{url}","jwks_uri":"{url}/jwks","id_token_signing_alg_values_supported":["HS512"]}}"#,
+            url = server.url()
+        );
+        let discovery = server
+            .mock("GET", "/.well-known/oauth-authorization-server")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(metadata)
+            .create_async()
+            .await;
+
+        // Symmetric (`oct`) JWK whose secret matches the signing key below.
+        let jwk_set = format!(
+            r#"{{"keys":[{{"kty":"oct","alg":"HS512","use":"sig","kid":"{kid}","k":"{k}"}}]}}"#,
+            k = URL_SAFE_NO_PAD.encode(secret)
+        );
+        let jwks = server
+            .mock("GET", "/jwks")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(jwk_set)
+            .create_async()
+            .await;
+
+        let exp = chrono::Utc::now().timestamp() + 1000;
+        let claims = serde_json::json!({
+            "aud": "test-audience",
+            "exp": exp,
+            "sub": "test-user",
+            "scope": scope,
+        });
+        let header = {
+            let mut h = Header::new(Algorithm::HS512);
+            h.kid = Some(kid.to_string());
+            h
+        };
+        let token =
+            encode(&header, &claims, &EncodingKey::from_secret(secret)).expect("encode JWT");
+
+        MockIssuer {
+            server,
+            _routes: [discovery, jwks],
+            token,
+        }
+    }
+
     // Covers the interaction between `stateful_mode` and the `GET` server-
     // to-client stream: a stateless transport never serves that route
     // (rmcp answers 405 regardless of a credential), so gating it with a 401
@@ -1106,6 +1242,30 @@ mod tests {
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
             assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        /// Protocol 2026-07-28 removed sessions, so rmcp serves its `GET`
+        /// statelessly (405) even when `stateful_mode` is `true`. Legacy,
+        /// missing, and unrecognized versions keep the stateful gating.
+        #[rstest::rstest]
+        #[case::modern(Some("2026-07-28"), StatusCode::METHOD_NOT_ALLOWED)]
+        #[case::legacy(Some("2025-11-25"), StatusCode::UNAUTHORIZED)]
+        #[case::missing(None, StatusCode::UNAUTHORIZED)]
+        #[case::unknown(Some("2099-01-01"), StatusCode::UNAUTHORIZED)]
+        #[case::malformed(Some("not-a-version"), StatusCode::UNAUTHORIZED)]
+        #[tokio::test]
+        async fn stateful_unauthenticated_get_is_gated_by_protocol_version(
+            #[case] version: Option<&str>,
+            #[case] expected: StatusCode,
+        ) {
+            let config = test_config();
+            let app = test_router_get_unhandled(config, /* stateful_mode */ true);
+            let mut req = Request::builder().method("GET").uri("/test");
+            if let Some(version) = version {
+                req = req.header(HEADER_MCP_PROTOCOL_VERSION, version);
+            }
+            let res = app.oneshot(req.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(res.status(), expected);
         }
 
         /// Confirms the bypass added in `oauth_validate` is scoped to `GET`:
@@ -1199,59 +1359,17 @@ mod tests {
         }
 
         async fn valid_token_with_insufficient_scopes_response() -> (StatusCode, String) {
-            let mut server = mockito::Server::new_async().await;
-            let kid = "test-kid";
-            let secret = b"hs512-integration-test-signing-secret";
-
-            let discovery = format!(
-                r#"{{"issuer":"{url}","jwks_uri":"{url}/jwks","id_token_signing_alg_values_supported":["HS512"]}}"#,
-                url = server.url()
-            );
-            let _discovery = server
-                .mock("GET", "/.well-known/oauth-authorization-server")
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(discovery)
-                .create_async()
-                .await;
-
-            // Symmetric (`oct`) JWK whose secret matches the signing key below.
-            let jwks = format!(
-                r#"{{"keys":[{{"kty":"oct","alg":"HS512","use":"sig","kid":"{kid}","k":"{k}"}}]}}"#,
-                k = URL_SAFE_NO_PAD.encode(secret)
-            );
-            let _jwks = server
-                .mock("GET", "/jwks")
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(jwks)
-                .create_async()
-                .await;
-
             // A genuinely valid token that carries `read` but not the required `write`.
-            let exp = chrono::Utc::now().timestamp() + 1000;
-            let claims = serde_json::json!({
-                "aud": "test-audience",
-                "exp": exp,
-                "sub": "test-user",
-                "scope": "read",
-            });
-            let header = {
-                let mut h = Header::new(Algorithm::HS512);
-                h.kid = Some(kid.to_string());
-                h
-            };
-            let token =
-                encode(&header, &claims, &EncodingKey::from_secret(secret)).expect("encode JWT");
+            let issuer = mock_issuer("read").await;
 
             let mut config = test_config();
-            config.servers = vec![server.url()];
+            config.servers = vec![issuer.server.url()];
             config.scopes = vec!["write".to_string()];
             let app = test_router(config);
 
             let req = Request::builder()
                 .uri("/test")
-                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .header(AUTHORIZATION, format!("Bearer {}", issuer.token))
                 .body(Body::empty())
                 .unwrap();
             let res = app.oneshot(req).await.unwrap();
@@ -2337,12 +2455,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             Body::from(format!(r#"{{"jsonrpc":"2.0","id":1,"method":"{method}"}}"#))
         }
 
-        fn tool_call_body(tool: &str) -> Body {
-            Body::from(format!(
-                r#"{{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{{"name":"{tool}"}}}}"#
-            ))
-        }
-
         fn post_request(body: Body) -> Request<Body> {
             Request::builder()
                 .method("POST")
@@ -2446,12 +2558,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                         OperationRequiredScopes::new(vec![vec!["read".into()]]).unwrap(),
                     )]),
                 );
-                let body = Body::from_stream(futures::stream::poll_fn(
-                    |_| -> std::task::Poll<Option<Result<axum::body::Bytes, std::io::Error>>> {
-                        panic!("auth must decide from the header without polling the body")
-                    },
-                ));
-                let response = app.oneshot(request(method, body)).await.unwrap();
+                let response = app.oneshot(request(method, unpolled_body())).await.unwrap();
                 assert_eq!(response.status(), expected);
             }
 
@@ -2495,11 +2602,17 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 assert_eq!(app.oneshot(req).await.unwrap().status(), StatusCode::OK);
             }
 
+            /// Only a legacy-protocol `GET` is served in stateful mode, so that
+            /// is the one a method header must not unlock.
             #[tokio::test]
             async fn method_header_does_not_bypass_stateful_get_auth() {
                 let app = skip_router(skip(&["tools/list"], &[], &[]));
                 let mut req = request("tools/list", Body::empty());
                 *req.method_mut() = Method::GET;
+                req.headers_mut().insert(
+                    HEADER_MCP_PROTOCOL_VERSION,
+                    HeaderValue::from_static(ProtocolVersion::V_2025_11_25.as_str()),
+                );
                 assert_eq!(
                     app.oneshot(req).await.unwrap().status(),
                     StatusCode::UNAUTHORIZED
@@ -2507,18 +2620,25 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             }
 
             #[rstest]
-            #[case("Public", "/mcp", StatusCode::OK)]
-            #[case("Protected", "/mcp", StatusCode::UNAUTHORIZED)]
-            #[case("Public", "/mcp?app=example", StatusCode::UNAUTHORIZED)]
+            #[case::listed(&["Public"], "/mcp", StatusCode::OK)]
+            #[case::encoded(&["=?base64?UHVibGlj?="], "/mcp", StatusCode::UNAUTHORIZED)]
+            #[case::unlisted(&["Protected"], "/mcp", StatusCode::UNAUTHORIZED)]
+            #[case::app_qualified(&["Public"], "/mcp?app=example", StatusCode::UNAUTHORIZED)]
+            #[case::missing(&[], "/mcp", StatusCode::UNAUTHORIZED)]
+            #[case::encoded_other_casing(&["=?BASE64?UHVibGlj?="], "/mcp", StatusCode::UNAUTHORIZED)]
             #[tokio::test]
-            async fn tool_name_still_comes_from_body(
-                #[case] tool: &str,
+            async fn tool_name_comes_from_name_header(
+                #[case] names: &[&str],
                 #[case] uri: &str,
                 #[case] expected: StatusCode,
             ) {
                 let app = skip_router(skip(&[], &["Public"], &[]));
-                let mut req = request("tools/call", tool_call_body(tool));
+                let mut req = request("tools/call", unpolled_body());
                 *req.uri_mut() = uri.parse().unwrap();
+                for name in names {
+                    req.headers_mut()
+                        .append(HEADER_MCP_NAME, HeaderValue::from_str(name).unwrap());
+                }
                 assert_eq!(app.oneshot(req).await.unwrap().status(), expected);
             }
 
@@ -2546,20 +2666,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 );
             }
 
-            #[rstest]
-            #[case::malformed(false)]
-            #[case::duplicate(true)]
             #[tokio::test]
-            async fn malformed_or_duplicate_header_cannot_grant_access(#[case] duplicate: bool) {
+            async fn malformed_header_cannot_grant_access() {
                 let app = skip_router(skip(&["tools/list"], &[], &[]));
                 let mut req = request("tools/list", method_body("tools/list"));
-                if duplicate {
-                    req.headers_mut()
-                        .append(HEADER_MCP_METHOD, HeaderValue::from_static("tools/list"));
-                } else {
-                    req.headers_mut()
-                        .insert(HEADER_MCP_METHOD, HeaderValue::from_bytes(b"\xff").unwrap());
-                }
+                req.headers_mut()
+                    .insert(HEADER_MCP_METHOD, HeaderValue::from_bytes(b"\xff").unwrap());
                 assert_eq!(
                     app.oneshot(req).await.unwrap().status(),
                     StatusCode::UNAUTHORIZED
@@ -3143,8 +3255,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             )])
         }
 
-        fn tools_call_peek(op: &str) -> JsonRpcBodyPeek {
-            JsonRpcBodyPeek {
+        fn tools_call_peek(op: &str) -> JsonRpcPeek {
+            JsonRpcPeek {
                 method: "tools/call".to_string(),
                 params: Some(JsonRpcParams {
                     name: Some(op.to_string()),
@@ -3251,7 +3363,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
         #[test]
         fn returns_none_for_non_tools_call_method() {
-            let peek = JsonRpcBodyPeek {
+            let peek = JsonRpcPeek {
                 method: "tools/list".to_string(),
                 params: None,
             };
@@ -3266,6 +3378,67 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let empty = HashMap::new();
             let result = missing_scopes_for_operation(&peek, &empty, &[]);
             assert!(result.is_none());
+        }
+
+        mod from_standard_headers {
+            use super::*;
+            use rstest::rstest;
+
+            /// Sends a `tools/call` with a valid token that lacks `sensitive:read`.
+            async fn send(version: &str, names: &[&str], body: Body) -> StatusCode {
+                let issuer = mock_issuer("read").await;
+                let mut config = test_config();
+                config.servers = vec![issuer.server.url()];
+                config.scopes = vec![];
+                let mut auth_state = test_auth_state(config);
+                auth_state.required_scopes = Arc::new(required());
+                let app = Router::new()
+                    .route("/mcp", post(|| async { "ok" }))
+                    .layer(from_fn_with_state(auth_state, oauth_validate));
+
+                let mut req = Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(AUTHORIZATION, format!("Bearer {}", issuer.token))
+                    .header(HEADER_MCP_PROTOCOL_VERSION, version)
+                    .header(HEADER_MCP_METHOD, "tools/call")
+                    .body(body)
+                    .unwrap();
+                for name in names {
+                    req.headers_mut()
+                        .append(HEADER_MCP_NAME, HeaderValue::from_str(name).unwrap());
+                }
+                app.oneshot(req).await.unwrap().status()
+            }
+
+            #[rstest]
+            #[case::restricted("RestrictedOp", StatusCode::FORBIDDEN)]
+            #[case::unrestricted("PublicOp", StatusCode::OK)]
+            #[tokio::test]
+            async fn name_header_decides_without_reading_the_body(
+                #[case] name: &str,
+                #[case] expected: StatusCode,
+            ) {
+                let version = ProtocolVersion::STANDARD_HEADERS.as_str();
+                assert_eq!(send(version, &[name], unpolled_body()).await, expected);
+            }
+
+            #[rstest]
+            #[case::older_version("2025-11-25", &["PublicOp"])]
+            #[case::missing_name(ProtocolVersion::STANDARD_HEADERS.as_str(), &[])]
+            #[case::encoded_name(
+                ProtocolVersion::STANDARD_HEADERS.as_str(),
+                &["=?BASE64?UmVzdHJpY3RlZE9w?="]
+            )]
+            #[tokio::test]
+            async fn untrusted_headers_fall_back_to_the_body(
+                #[case] version: &str,
+                #[case] names: &[&str],
+            ) {
+                // The body names the restricted operation: 403 proves it decided.
+                let status = send(version, names, tool_call_body("RestrictedOp")).await;
+                assert_eq!(status, StatusCode::FORBIDDEN);
+            }
         }
     }
 }

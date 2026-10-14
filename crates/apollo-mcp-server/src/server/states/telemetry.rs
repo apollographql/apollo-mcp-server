@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -24,6 +25,7 @@ use opentelemetry_semantic_conventions::attribute::{
     OTEL_STATUS_CODE, SERVER_ADDRESS, SERVER_PORT, USER_AGENT_ORIGINAL,
 };
 use rmcp::RoleServer;
+use rmcp::model::RequestMetaObject;
 use rmcp::service::RequestContext;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -328,6 +330,77 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
         .unwrap_or_else(tracing::Span::none)
 }
 
+/// Prepare the handler span and retain its parent context for poll-scoped
+/// attachment even when the span is filtered. Set the parent before entry:
+/// the OTel layer starts spans on entry, after which parentage cannot change.
+pub(super) fn with_request_context(
+    span: tracing::Span,
+    context: &RequestContext<RoleServer>,
+) -> (tracing::Span, OtelContext) {
+    let http_parent = get_parent_span(context).context();
+    let http_parent = if http_parent.span().span_context().is_valid() {
+        http_parent
+    } else {
+        context
+            .extensions
+            .get::<axum::http::request::Parts>()
+            .and_then(|parts| parts.extensions.get::<OtelContext>())
+            .cloned()
+            .unwrap_or_default()
+    };
+    let parent = request_parent_context(&context.meta, &http_parent);
+    // Disabled spans cannot accept a parent, but the future must still attach
+    // it so enabled downstream spans and Rhai hooks see this request's context.
+    let _ = span.set_parent(parent.clone());
+    (span, parent)
+}
+
+/// Whether `value` is text an inbound HTTP header could carry, which is all
+/// `HeaderExtractor` reads. Metadata strings are held to the same set because
+/// the trace-context propagator re-injects tracestate values unchanged.
+fn is_http_header_text(value: &str) -> bool {
+    HeaderValue::from_str(value).is_ok_and(|value| value.to_str().is_ok())
+}
+
+fn request_parent_context(meta: &RequestMetaObject, http_parent: &OtelContext) -> OtelContext {
+    let baggage = meta.get_baggage().map(normalize_baggage_list);
+    let carrier: HashMap<String, String> = [
+        ("traceparent", meta.get_traceparent()),
+        (
+            "tracestate",
+            meta.get_tracestate()
+                .filter(|tracestate| is_http_header_text(tracestate)),
+        ),
+        ("baggage", baggage.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| value.map(|value| (key.to_owned(), value.to_owned())))
+    .collect();
+
+    // Extract independently of ambient/HTTP context: tracestate must never be
+    // grafted onto a different trace when the metadata traceparent is invalid.
+    let extracted = global::get_text_map_propagator(|propagator| {
+        propagator.extract_with_context(&OtelContext::new(), &carrier)
+    });
+    let parent = if extracted.span().span_context().is_valid() {
+        extracted.clone()
+    } else {
+        http_parent.clone()
+    };
+    let baggage = if meta.get_baggage().is_some() {
+        extracted.baggage()
+    } else {
+        http_parent.baggage()
+    };
+    let baggage: Vec<_> = baggage
+        .iter()
+        .map(|(key, (value, metadata))| {
+            KeyValueMetadata::new(key.clone(), value.clone(), metadata.clone())
+        })
+        .collect();
+    sanitize_baggage_for_http_injection(parent.with_baggage(baggage))
+}
+
 /// Returns the current OpenTelemetry trace ID as a lowercase 32-character
 /// hex string, or an empty string when no trace context is active.
 ///
@@ -335,11 +408,7 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
 /// layer, so callers (including Rhai scripts) can correlate the values they
 /// emit with the rest of the server's output.
 pub fn current_trace_id() -> String {
-    let trace_id = tracing::Span::current()
-        .context()
-        .span()
-        .span_context()
-        .trace_id();
+    let trace_id = OtelContext::current().span().span_context().trace_id();
     if trace_id == TraceId::INVALID {
         String::new()
     } else {
@@ -492,6 +561,56 @@ mod tests {
     #[test]
     fn current_trace_id_is_empty_when_no_active_span() {
         assert_eq!(current_trace_id(), "");
+    }
+
+    #[test]
+    fn request_context_is_restored_between_polls_and_on_cancellation() {
+        use opentelemetry::trace::FutureExt as _;
+        use std::future::Future as _;
+
+        global::set_text_map_propagator(w3c_text_map_propagator());
+        let mut meta = RequestMetaObject::new();
+        meta.set_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+        meta.set_baggage("source=request");
+        let parent = request_parent_context(&meta, &OtelContext::new());
+
+        // An unrelated active context must survive both suspension and dropping
+        // the pending request. No thread-local attachment is held across await.
+        let ambient =
+            OtelContext::new().with_baggage([opentelemetry::KeyValue::new("source", "ambient")]);
+        let _ambient = ambient.attach();
+        let assert_ambient = || {
+            assert_eq!(current_trace_id(), "");
+            assert_eq!(
+                OtelContext::current()
+                    .baggage()
+                    .get("source")
+                    .unwrap()
+                    .as_str(),
+                "ambient"
+            );
+        };
+        let body = std::future::poll_fn(|_| {
+            assert_eq!(current_trace_id(), "4bf92f3577b34da6a3ce929d0e0e4736");
+            assert_eq!(
+                OtelContext::current()
+                    .baggage()
+                    .get("source")
+                    .unwrap()
+                    .as_str(),
+                "request"
+            );
+            Poll::<()>::Pending
+        });
+        let mut request = Box::pin(body.with_context(parent));
+        let waker = futures::task::noop_waker();
+        let mut task_context = Context::from_waker(&waker);
+        assert!(request.as_mut().poll(&mut task_context).is_pending());
+        assert_ambient();
+        assert!(request.as_mut().poll(&mut task_context).is_pending());
+        assert_ambient();
+        drop(request);
+        assert_ambient();
     }
 
     #[test]
