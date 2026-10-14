@@ -74,6 +74,8 @@ items:
         href: "./guides/dev-to-prod-workflows"
       - label: "Authorization with Auth0"
         href: "./guides/auth-auth0"
+      - label: "Authorization with WorkOS"
+        href: "./guides/auth-workos"
   - label: "Releases"
     children:
       - label: "Migrate from v1 to v2"
