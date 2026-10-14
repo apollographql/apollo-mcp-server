@@ -45,6 +45,8 @@ pub(super) struct StateMachine {}
 /// Common configuration options for the states
 struct Config {
     rhai_dir: PathBuf,
+    apps_dir: PathBuf,
+    prompts_dir: PathBuf,
     transport: Transport,
     endpoint: Url,
     headers: HeaderMap,
@@ -103,6 +105,8 @@ impl StateMachine {
         let mut state = State::Configuring(Configuring {
             config: Config {
                 rhai_dir: server.rhai_dir,
+                apps_dir: server.apps_dir,
+                prompts_dir: server.prompts_dir,
                 transport: server.transport,
                 endpoint: server.endpoint,
                 headers: server.headers,
@@ -521,6 +525,8 @@ mod tests {
     fn test_config() -> Config {
         Config {
             rhai_dir: PathBuf::from("rhai"),
+            apps_dir: PathBuf::from("apps"),
+            prompts_dir: PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {
                 auth: None,
                 address: "127.0.0.1".parse().unwrap(),

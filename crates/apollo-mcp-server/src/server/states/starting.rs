@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use apollo_compiler::{Name, Schema, ast::OperationType, validation::Valid};
@@ -98,7 +97,7 @@ impl Starting {
             })
             .flatten();
         let apps = crate::apps::load_from_path(
-            Path::new("apps"),
+            &self.config.apps_dir,
             &self.schema,
             self.config.custom_scalar_map.as_ref(),
             self.config.mutation_mode,
@@ -107,8 +106,8 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
-        let prompts =
-            crate::prompts::load_from_path(Path::new("prompts")).map_err(ServerError::Prompts)?;
+        let prompts = crate::prompts::load_from_path(&self.config.prompts_dir)
+            .map_err(ServerError::Prompts)?;
         let schema = Arc::new(RwLock::new(self.schema));
         let introspect_tool = self.config.introspect_introspection.then(|| {
             Introspect::new(
@@ -448,6 +447,8 @@ mod tests {
     fn config(port: u16, health_check: HealthCheckConfig) -> Config {
         Config {
             rhai_dir: std::path::PathBuf::from("rhai"),
+            apps_dir: std::path::PathBuf::from("apps"),
+            prompts_dir: std::path::PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {
                 auth: None,
                 address: "127.0.0.1".parse().unwrap(),

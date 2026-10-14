@@ -164,6 +164,8 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
     Ok(Server::builder()
         .maybe_config_path(config_path.map(Path::to_path_buf))
         .rhai_dir(config.rhai.scripts_dir)
+        .apps_dir(config.apps.path)
+        .prompts_dir(config.prompts.path)
         .transport(config.transport)
         .schema_source(schema_source)
         .operation_source(operation_source)
