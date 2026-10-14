@@ -27,8 +27,18 @@ async fn running_with_param_header(endpoint: url::Url) -> Running {
 }
 
 async fn running_with_param_header_on(endpoint: url::Url, operation_name: &str) -> Running {
+    running_with_typed_param_header(endpoint, operation_name, "ID!", "workflow").await
+}
+
+/// Annotates `$handle: {handle_type}`, passed to the `Query` field `field` that accepts it.
+async fn running_with_typed_param_header(
+    endpoint: url::Url,
+    operation_name: &str,
+    handle_type: &str,
+    field: &str,
+) -> Running {
     let schema = Schema::parse_and_validate(
-        "type Query { workflow(handle: ID!): String }",
+        "type Query { workflow(handle: ID!): String count(handle: Int!): String flag(handle: Boolean!): String }",
         "schema.graphql",
     )
     .unwrap();
@@ -41,7 +51,7 @@ async fn running_with_param_header_on(endpoint: url::Url, operation_name: &str) 
         .unwrap(),
     )]);
     let operation = RawOperation::from((
-        format!("query {operation_name}($handle: ID!) {{ workflow(handle: $handle) }}"),
+        format!("query {operation_name}($handle: {handle_type}) {{ {field}(handle: $handle) }}"),
         None,
     ))
     .into_operation(
@@ -81,20 +91,25 @@ fn router(running: &Running) -> Router {
     )
 }
 
-fn tools_call(handle: &str, header: Option<&str>) -> Request<Body> {
+fn tools_call(handle: impl Into<Value>, header: Option<&str>) -> Request<Body> {
     tools_call_on(ProtocolVersion::STANDARD_HEADERS, handle, header)
 }
 
-fn tools_call_on(version: ProtocolVersion, handle: &str, header: Option<&str>) -> Request<Body> {
+fn tools_call_on(
+    version: ProtocolVersion,
+    handle: impl Into<Value>,
+    header: Option<&str>,
+) -> Request<Body> {
     tools_call_at("/mcp", version, handle, header)
 }
 
 fn tools_call_at(
     uri: &str,
     version: ProtocolVersion,
-    handle: &str,
+    handle: impl Into<Value>,
     header: Option<&str>,
 ) -> Request<Body> {
+    let handle = handle.into();
     let version = version.as_str();
     let body = json!({
         "jsonrpc": "2.0",
@@ -154,6 +169,62 @@ async fn matching_param_header_runs_the_operation() {
     assert_eq!(
         (status, body["result"]["isError"].clone()),
         (StatusCode::OK, json!(false))
+    );
+}
+
+/// rmcp compares the header text with the body value's JSON text, so non-string
+/// parameters match without the property `type` that `get_tool` leaves out.
+#[rstest::rstest]
+#[case::int("Int!", "count", json!(42), "42")]
+#[case::boolean("Boolean!", "flag", json!(true), "true")]
+#[tokio::test]
+async fn non_string_param_header_matching_the_body_runs_the_operation(
+    #[case] handle_type: &str,
+    #[case] field: &str,
+    #[case] handle: Value,
+    #[case] header: &str,
+) {
+    let mut upstream = mockito::Server::new_async().await;
+    let graphql = upstream
+        .mock("POST", "/")
+        .with_header("Content-Type", "application/json")
+        .with_body(format!(r#"{{"data": {{"{field}": "ok"}}}}"#))
+        .create_async()
+        .await;
+    let running = running_with_typed_param_header(
+        upstream.url().parse().unwrap(),
+        "GetWorkflow",
+        handle_type,
+        field,
+    )
+    .await;
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+
+    let (status, body) = send(&running, tools_call(handle, Some(header))).await;
+
+    graphql.assert_async().await;
+    assert_eq!(
+        (status, body["result"]["isError"].clone()),
+        (StatusCode::OK, json!(false))
+    );
+}
+
+#[tokio::test]
+async fn mismatched_int_param_header_is_rejected() {
+    let running = running_with_typed_param_header(
+        "http://localhost:4000".parse().unwrap(),
+        "GetWorkflow",
+        "Int!",
+        "count",
+    )
+    .await;
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+
+    let (status, body) = send(&running, tools_call(42, Some("43"))).await;
+
+    assert_eq!(
+        (status, body["error"]["code"].clone()),
+        (StatusCode::BAD_REQUEST, json!(ErrorCode::HEADER_MISMATCH.0))
     );
 }
 
