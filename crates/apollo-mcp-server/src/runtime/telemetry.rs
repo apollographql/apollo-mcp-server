@@ -230,8 +230,9 @@ struct ResourceConflict {
 /// environment variables, then our default. `deployment.environment.name` has no default.
 /// Keys we don't set (e.g. `host.name`) pass through from `OTEL_RESOURCE_ATTRIBUTES`.
 fn resource(telemetry: &Telemetry) -> (Resource, Vec<ResourceConflict>) {
-    // Mirrors the SDK's own detection: `OTEL_SERVICE_NAME` beats `service.name` in
-    // `OTEL_RESOURCE_ATTRIBUTES`.
+    // Per the OpenTelemetry spec, `OTEL_SERVICE_NAME` beats `service.name` in
+    // `OTEL_RESOURCE_ATTRIBUTES`. `Resource::builder()` gets this backwards, so every value we
+    // resolve below is set explicitly rather than left to its detectors.
     let mut detected =
         Resource::builder_empty().with_detector(Box::new(EnvResourceDetector::new()));
     if let Some(service_name) = non_empty_env_var("OTEL_SERVICE_NAME") {
@@ -278,10 +279,7 @@ fn resource(telemetry: &Telemetry) -> (Resource, Vec<ResourceConflict>) {
                 }
                 Some(configured)
             }
-            (Some(configured), None) => Some(configured),
-            // Already on the resource via the SDK's environment detector
-            (None, Some(_)) => None,
-            (None, None) => default.map(String::from),
+            (configured, detected) => configured.or(detected).or(default.map(String::from)),
         };
         if let Some(value) = value {
             attributes.push(KeyValue::new(attribute, value));
@@ -888,6 +886,7 @@ mod tests {
     #[case::service_name_from_config(Some("ours"), None, &[], SERVICE_NAME, Some("ours"))]
     #[case::service_name_from_otel_service_name(None, None, &[("OTEL_SERVICE_NAME", "env")], SERVICE_NAME, Some("env"))]
     #[case::service_name_from_otel_resource_attributes(None, None, &[("OTEL_RESOURCE_ATTRIBUTES", "service.name=env")], SERVICE_NAME, Some("env"))]
+    #[case::otel_service_name_beats_otel_resource_attributes(None, None, &[("OTEL_SERVICE_NAME", "a"), ("OTEL_RESOURCE_ATTRIBUTES", "service.name=b")], SERVICE_NAME, Some("a"))]
     #[case::service_name_config_beats_env(Some("ours"), None, &[("OTEL_SERVICE_NAME", "env")], SERVICE_NAME, Some("ours"))]
     #[case::service_name_defaults_to_package_name(None, None, &[], SERVICE_NAME, Some(env!("CARGO_PKG_NAME")))]
     #[case::service_version_from_config(None, Some("ours"), &[], SERVICE_VERSION, Some("ours"))]
