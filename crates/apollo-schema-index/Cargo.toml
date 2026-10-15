@@ -7,7 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-description = "GraphQL schema indexing"
+description = "GraphQL schema indexing. Internal to apollo-mcp-server; not a stable public API."
 
 [dependencies]
 apollo-compiler.workspace = true

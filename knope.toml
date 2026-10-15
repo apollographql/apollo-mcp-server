@@ -1,6 +1,9 @@
 [package]
 versioned_files = [
     "Cargo.toml",
+    { path = "Cargo.toml", dependency = "apollo-mcp-registry" },
+    { path = "Cargo.toml", dependency = "apollo-mcp-rhai" },
+    { path = "Cargo.toml", dependency = "apollo-schema-index" },
     { path = "Cargo.lock", dependency = "apollo-mcp-server" },
     { path = "Cargo.lock", dependency = "apollo-mcp-registry" },
     { path = "Cargo.lock", dependency = "apollo-schema-index" },
