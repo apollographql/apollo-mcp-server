@@ -26,7 +26,7 @@ bash e2e/conformance/run.sh --revision 2026-07-28
 The command installs the exact package versions in `package-lock.json`, builds
 the production `apollo-mcp-server` binary, and starts it with local schema,
 operations, prompts, and a GraphQL endpoint. It runs
-`@modelcontextprotocol/conformance@0.2.0-alpha.11 server --requirements
+`@modelcontextprotocol/conformance@0.2.0-alpha.12 server --requirements
 <revision>`. The default is `2025-11-25`; only these two revisions are accepted.
 No external API, credentials, or production code changes are
 needed. Node 22 and the repository's Rust toolchain are required. Ports 4100

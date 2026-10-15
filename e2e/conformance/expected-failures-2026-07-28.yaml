@@ -1,4 +1,4 @@
-# Observed with conformance 0.2.0-alpha.11. These 24 failed checks need
+# Observed with conformance 0.2.0-alpha.12. These 24 failed checks need
 # fixture capabilities unavailable through the production server configuration.
 # Three additional checks emit warnings and are listed separately below.
 # Caching and wire-schema failures are deliberately not baselined.
