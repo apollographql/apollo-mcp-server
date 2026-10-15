@@ -546,6 +546,83 @@ async fn metadata_parents_each_http_handler(
     );
 }
 
+/// A legacy-protocol request on an established session, continuing [`HTTP_TRACEPARENT`].
+fn session_request(session: &http::HeaderValue, body: Value) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/mcp")
+        .header("Host", "localhost")
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Mcp-Protocol-Version", "2025-11-25")
+        .header("mcp-session-id", session)
+        .header("traceparent", HTTP_TRACEPARENT)
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+/// On a stateful session, rmcp dispatches requests to the session's worker task, so a handler
+/// span parents to the HTTP request span only if the handler names it explicitly.
+#[rstest::rstest]
+#[case::tools("tools/list", json!({}), "list_tools")]
+#[case::resources("resources/list", json!({}), "list_resources")]
+#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
+#[case::prompts("prompts/list", json!({}), "list_prompts")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[tokio::test]
+async fn http_request_span_parents_each_session_handler(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let spans = ExportedSpans::capture();
+    let router = production_router(create_test_running());
+    let initialized = router.clone().oneshot(mcp_request("/mcp")).await.unwrap();
+    let session = initialized.headers()["mcp-session-id"].clone();
+    initialized.into_body().collect().await.unwrap();
+    let mut notification = session_request(
+        &session,
+        json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    );
+    // Keep the header's span ID unique to the request under test.
+    notification.headers_mut().remove("traceparent");
+    let notified = router.clone().oneshot(notification).await.unwrap();
+    assert_eq!(notified.status(), StatusCode::ACCEPTED);
+    notified.into_body().collect().await.unwrap();
+
+    let response = router
+        .oneshot(session_request(
+            &session,
+            json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params}),
+        ))
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+
+    let spans = spans.collect();
+    let request = spans
+        .iter()
+        .find(|span| span.parent_span_id.to_string() == "bbbbbbbbbbbbbbbb")
+        .expect("the SERVER span continuing the traceparent header");
+    let handler = named(&spans, name);
+    assert_eq!(
+        (handler.parent_span_id, handler.span_context.trace_id()),
+        (
+            request.span_context.span_id(),
+            request.span_context.trace_id()
+        )
+    );
+    // Only SERVER spans start a trace here; anything else without a parent lost its request.
+    let orphans: Vec<_> = spans
+        .iter()
+        .filter(|span| span.span_kind != SpanKind::Server && span.parent_span_id == SpanId::INVALID)
+        .map(|span| &span.name)
+        .collect();
+    assert!(orphans.is_empty(), "spans without a parent: {orphans:?}");
+}
+
 #[rstest::rstest]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
