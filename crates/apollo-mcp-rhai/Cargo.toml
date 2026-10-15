@@ -1,6 +1,6 @@
 [package]
 name = "apollo-mcp-rhai"
-description = "Rhai scripting support for Apollo MCP Server"
+description = "Rhai scripting support for Apollo MCP Server. Internal to apollo-mcp-server; not a stable public API."
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true

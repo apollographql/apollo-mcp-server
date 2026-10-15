@@ -269,3 +269,39 @@ jobs:
       - run: knope release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crates:
+    # Only stable releases go to crates.io, never experimental (workflow_call) builds
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    needs: [get-version, release]
+    runs-on: ubuntu-latest
+    # Must match the Trusted Publisher configured for each crate on crates.io
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Authenticate with crates.io (Trusted Publishing)
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ needs.get-version.outputs.version }}
+        run: |
+          set -euo pipefail
+          version="${VERSION#v}"
+          # Dependencies first. Skips crates already live so a failed run can be re-run.
+          for crate in apollo-mcp-registry apollo-mcp-rhai apollo-schema-index apollo-mcp-server; do
+            if curl -sf -A "apollo-mcp-server-release-ci (github.com/apollographql/apollo-mcp-server)" \
+              "https://crates.io/api/v1/crates/${crate}/${version}" > /dev/null; then
+              echo "${crate}@${version} is already on crates.io, skipping"
+            else
+              cargo publish --locked -p "${crate}"
+            fi
+          done
