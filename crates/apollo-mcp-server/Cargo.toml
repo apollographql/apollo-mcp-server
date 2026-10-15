@@ -2,7 +2,7 @@
 name = "apollo-mcp-server"
 authors.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
@@ -103,6 +103,8 @@ toml = "1.0.0"
 
 [features]
 experimental_rhai = ["apollo-mcp-rhai/experimental_rhai"]
+# Internal tool that prints the config JSON Schema; kept out of `cargo install`
+config-schema = []
 
 [lints]
 workspace = true
@@ -115,3 +117,4 @@ path = "src/main.rs"
 name = "config-schema"
 path = "src/config_schema.rs"
 test = false
+required-features = ["config-schema"]

@@ -10,15 +10,15 @@ members = [
 [workspace.package]
 authors = ["Apollo <opensource@apollographql.com>"]
 edition = "2024"
-license-file = "LICENSE"
+license = "MIT"
 repository = "https://github.com/apollographql/apollo-mcp-server"
 rust-version = "1.92.0"
 version = "2.0.0"
 
 [workspace.dependencies]
-apollo-mcp-registry = { path = "crates/apollo-mcp-registry", version = "2.0.0" }
-apollo-mcp-rhai = { path = "crates/apollo-mcp-rhai", version = "2.0.0" }
-apollo-schema-index = { path = "crates/apollo-schema-index", version = "2.0.0" }
+apollo-mcp-registry = { path = "crates/apollo-mcp-registry", version = "=2.0.0" }
+apollo-mcp-rhai = { path = "crates/apollo-mcp-rhai", version = "=2.0.0" }
+apollo-schema-index = { path = "crates/apollo-schema-index", version = "=2.0.0" }
 apollo-compiler = "=2.0.0-beta.1"
 apollo-federation = "2.12.0"
 futures = { version = "0.3.31", features = ["thread-pool"] }

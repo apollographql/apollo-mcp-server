@@ -2,7 +2,7 @@
 name = "apollo-mcp-registry"
 authors.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
