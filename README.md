@@ -5,6 +5,7 @@
 </div>
 
 ![version](https://img.shields.io/github/v/release/apollographql/apollo-mcp-server)
+[![crates.io](https://img.shields.io/crates/v/apollo-mcp-server)](https://crates.io/crates/apollo-mcp-server)
 ![ci workflow status](https://img.shields.io/github/actions/workflow/status/apollographql/apollo-mcp-server/ci.yml)
 ![release binaries workflow status](https://img.shields.io/github/actions/workflow/status/apollographql/apollo-mcp-server/release-bins.yml?label=release%20binaries)
 ![release container workflow status](https://img.shields.io/github/actions/workflow/status/apollographql/apollo-mcp-server/release-container.yml?label=release%20container)
