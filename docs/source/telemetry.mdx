@@ -140,6 +140,25 @@ telemetry:
         protocol: "http/protobuf"           # Generally more reliable than gRPC
 ```
 
+##### Resource attributes
+
+The server reads the standard OpenTelemetry environment variables. `OTEL_SERVICE_NAME` sets `service.name`, and `OTEL_RESOURCE_ATTRIBUTES` sets any resource attribute:
+
+```bash
+export OTEL_SERVICE_NAME=apollo-mcp-server
+export OTEL_RESOURCE_ATTRIBUTES="deployment.environment.name=production,team=platform"
+```
+
+For `service.name`, `service.version`, and `deployment.environment.name`, values resolve in this order:
+
+1. Server config: `telemetry.service_name`, `telemetry.version`, and the `ENVIRONMENT` variable
+2. `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`
+3. Defaults: the package name for `service.name` and the package version for `service.version`. `deployment.environment.name` has no default.
+
+If the server config and an OpenTelemetry variable set different values, the server logs a warning at startup.
+
+The server doesn't set `host.name`. Set it with `OTEL_RESOURCE_ATTRIBUTES` (for example, from the Kubernetes downward API) or with a resource processor in your collector.
+
 ##### Performance considerations
 
 - **Protocol choice**: `http/protobuf` is often more reliable through firewalls and load balancers than `grpc`
@@ -149,7 +168,7 @@ telemetry:
 
 ##### Resource correlation
 
-- The `ENVIRONMENT` variable automatically tags all telemetry with `deployment.environment.name`
+- Set `ENVIRONMENT` to tag all telemetry with `deployment.environment.name`. If nothing sets it, the attribute is omitted.
 - Use consistent `service_name` across all your Apollo infrastructure (Router, subgraphs, MCP server)
 - Set `version` to track releases and correlate issues with deployments
 - Log lines emitted inside active spans include the span's `trace_id`, enabling trace-to-log correlation. Metrics use resource attributes and metric labels instead of per-request trace IDs.
