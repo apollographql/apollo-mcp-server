@@ -39,23 +39,20 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
 1. For the **Identifier** field, Auth0 recommends using a URL. MCP clients send this value as the `resource` parameter, and Auth0 puts it in the `aud` claim of the access token. For this guide, use `http://127.0.0.1:8000/mcp`, the URL of your MCP server.
 1. Leave the defaults for the rest of the fields and click **Create**.
 1. On the new API's **Permissions** tab, add a permission named `read:users` with a description like `Read users`, then click **Add**. The MCP server requires this scope in [Step 2](#step-2-configure-the-mcp-server-for-authorization). Auth0 only includes scopes in an access token when the API defines them.
+1. On the API's **Settings** tab, find **Default Permissions for third-party applications**. Set **User-delegated Access** to **Authorized - Pick and choose permissions.**, select `read:users`, and click **Save**. MCP clients register as third-party applications, and third-party applications can only get the permissions you select here.
+
+   ![The Default Permissions for third-party applications section of an Auth0 API with User-delegated Access authorized for read:users](../images/auth0-third-party-permissions.png)
 
 #### Configure the tenant for MCP clients
 
 1. Navigate to **Settings** -> **Advanced**. Changes to the toggles on this tab take effect immediately.
 1. Toggle on **Resource Parameter Compatibility Profile**. MCP clients identify your MCP server with the standard `resource` parameter, but by default Auth0 only reads its own `audience` parameter. With this profile, Auth0 uses `resource` when a request has no `audience`, so it issues a JWT for your API.
 1. Toggle on **Client ID Metadata Document (CIMD) Registration**. With CIMD, an MCP client uses an HTTPS URL as its client ID, and Auth0 fetches the client's metadata from that URL. The MCP specification recommends CIMD.
-1. Toggle on **Dynamic Client Registration (DCR)** too. DCR lets a client register itself and get a new client ID. This guide's clients need it: MCP Inspector uses DCR unless you configure a CIMD metadata URL for it, and `mcp-remote`, which Goose uses in [Step 5](#step-5-make-requests-with-an-mcp-client-goose), supports only DCR. For more information, see the Auth0 documentation on [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
+1. Toggle on **Dynamic Client Registration (DCR)** too, and keep **Dynamic Client Registration (DCR) Security Mode** set to **Strict**, which Auth0 recommends. DCR lets a client register itself and get a new client ID. This guide's clients need it: MCP Inspector uses DCR unless you configure a CIMD metadata URL for it, and `mcp-remote`, which Goose uses in [Step 5](#step-5-make-requests-with-an-mcp-client-goose), supports only DCR. For more information, see the Auth0 documentation on [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
 
-   ![The Dynamic Client Registration, Resource Parameter Compatibility Profile, and Client ID Metadata Document settings turned on in the Auth0 Advanced tab](../images/auth0-registration.png)
+   ![The Dynamic Client Registration settings in Strict mode, with Resource Parameter Compatibility Profile and Client ID Metadata Document turned on in the Auth0 Advanced tab](../images/auth0-registration.png)
 
 1. Toggle on **Enable Application Connections**. New applications, including the ones MCP clients register, then get access to your existing connections.
-
-<Note>
-
-Auth0 creates DCR applications in the **Permissive** security mode by default. If you set **Dynamic Client Registration (DCR) Security Mode** to **Strict**, you must explicitly grant each registered application access to your API.
-
-</Note>
 
 <Note>
 
@@ -69,7 +66,7 @@ The Auth0 Connection is the method users use to sign in. This guide uses the def
 
 1. Navigate to **Authentication** -> **Database** and select **Username-Password-Authentication**.
 1. Click **Try Connection** and sign up with an email and a password. You use these credentials to sign in later.
-1. On the **Settings** tab, toggle on **Promote Connection to Domain Level**. Applications that MCP clients register are third-party applications, and they can only use domain-level connections.
+1. On the **Settings** tab, toggle on **Promote Connection to Domain Level** and click **Save**. Applications that MCP clients register are third-party applications, and they can only use domain-level connections.
 
    ![The Promote Connection to Domain Level setting on an Auth0 database connection](../images/auth0-promote-connection.png)
 
@@ -120,6 +117,8 @@ Configure your GraphOS Router to validate JWTs issued by Auth0. This involves se
        jwt:
          jwks:
            - url: https://<AUTH0 DOMAIN>/.well-known/jwks.json
+             audiences:
+               - http://127.0.0.1:8000/mcp # Only accept tokens issued for this API
    homepage:
      enabled: false
    sandbox:
@@ -276,6 +275,8 @@ Then, continue with the following steps:
   - Solution: In your Auth0 dashboard, go to **Settings** -> **Advanced** and check that **Dynamic Client Registration (DCR)** is on. MCP Inspector (without a CIMD metadata URL) and `mcp-remote` fail if only **Client ID Metadata Document (CIMD) Registration** is on.
 - **Issue**: Client registration fails with `403` and `"errorCode":"too_many_entities"`
   - Solution: Your tenant reached its application limit. Every DCR registration creates a new third-party application, so repeated testing fills the tenant quickly. Delete the applications you no longer need under **Applications** -> **Applications**.
+- **Issue**: The Auth0 error page says `Client "tpc_..." is not authorized to access resource server "http://127.0.0.1:8000/mcp"`
+  - Solution: On your Auth0 API's **Settings** tab, check that **Default Permissions for third-party applications** authorizes **User-delegated Access** for `read:users`, and that you saved the change.
 - **Issue**: Client registration succeeds, but you can't sign in with your username and password
   - Solution: Check that **Promote Connection to Domain Level** is on for the **Username-Password-Authentication** connection.
 

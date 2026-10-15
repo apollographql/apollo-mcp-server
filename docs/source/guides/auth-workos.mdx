@@ -108,7 +108,7 @@ Configure the MCP server to use AuthKit for authentication.
 
 <Note>
 
-This configuration doesn't set `scopes`. WorkOS access tokens don't include a `scope` claim. They carry roles and permissions in the `role`, `roles`, and `permissions` claims instead. If you set `scopes`, the MCP server rejects every WorkOS token with `403 Forbidden`. For more information, see [Configure scope enforcement](/apollo-mcp-server/auth#configure-scope-enforcement).
+This configuration doesn't set `scopes`, so the MCP server doesn't require any scope. AuthKit access tokens include a `scope` claim with the scopes the client was granted, for example `openid`. If you configure `scopes`, every value must appear in that claim. Otherwise, the MCP server returns `403 Forbidden` with an `insufficient_scope` error. For more information, see [Configure scope enforcement](/apollo-mcp-server/auth#configure-scope-enforcement).
 
 </Note>
 
@@ -131,6 +131,8 @@ Configure your GraphOS Router to validate JWTs issued by AuthKit. This involves 
        jwt:
          jwks:
            - url: https://<AUTHKIT DOMAIN>/oauth2/jwks
+             audiences:
+               - http://127.0.0.1:8000/mcp # Only accept tokens issued for this resource
    homepage:
      enabled: false
    sandbox:
@@ -283,7 +285,7 @@ Then, continue with the following steps:
 #### MCP Server returns `403 Forbidden`
 
 - **Issue**: Every tool call fails with `403 Forbidden` and an `insufficient_scope` error
-  - Solution: Remove `scopes` from the `auth` configuration. WorkOS access tokens don't include a `scope` claim, so a global scope requirement always fails.
+  - Solution: Check that every value in `scopes` appears in the access token's `scope` claim. You can see the claim by decoding the token, for example on the **Auth** tab in MCP Inspector. To turn off the global scope requirement, remove `scopes` from the `auth` configuration.
 
 #### Client registration fails
 
