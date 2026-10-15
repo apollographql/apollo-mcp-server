@@ -22,7 +22,17 @@ See [the documentation](https://www.apollographql.com/docs/apollo-mcp-server/) f
 
 ## Installation
 
-You can either build this server from source, if you have Rust installed on your workstation, or you can follow the [installation guide](https://www.apollographql.com/docs/apollo-mcp-server/run). To build from source, run `cargo build` from the root of this repository and the server will be built in the `target/debug` directory.
+You can either build this server from source, if you have Rust installed on your workstation, or you can follow the [installation guide](https://www.apollographql.com/docs/apollo-mcp-server/run).
+
+To install the latest release from crates.io, run:
+
+```sh
+cargo install --locked apollo-mcp-server
+```
+
+`--locked` builds with the same dependency versions that were tested for the release.
+
+To build from this repository instead, run `cargo build` from its root and the server will be built in the `target/debug` directory.
 
 ## Getting started
 
