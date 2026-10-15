@@ -435,6 +435,7 @@ produce this `inputSchema`:
         {
           "type": "array",
           "items": {
+            "type": "string",
             "$ref": "#/definitions/Status"
           }
         },
@@ -447,6 +448,7 @@ produce this `inputSchema`:
     "range": {
       "anyOf": [
         {
+          "type": "object",
           "$ref": "#/definitions/DateRange"
         },
         {
