@@ -42,7 +42,7 @@ The current workflow deliberately runs the production binary.
   `server-session-lifecycle`, and `server-sse-polling` do not emit
   `wire-schema-valid` in the legacy run. Modern `server-stateless`,
   `server-sse-multiple-streams`, `dns-rebinding-protection`, and the skipped
-  `tasks-status-notifications` scenario also lack wire checks in alpha.11.
+  `tasks-status-notifications` scenario also lack wire checks in alpha.12.
   Full wire coverage for these scenarios needs
   upstream instrumentation or a suite upgrade. SDK validation in our separate
   resource checks does not fill that gap. All wire checks that are emitted

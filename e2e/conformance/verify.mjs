@@ -9,7 +9,7 @@ export async function verifyResults(results, baseline, revision) {
   ), 'utf8'));
   const expected = [...requirements.server, ...requirements.not_scored
     .filter((entry) => entry.leg === 'server').map((entry) => entry.scenario)];
-  // alpha.11 uses raw HTTP/SSE in these scenarios without wire-schema
+  // alpha.12 uses raw HTTP/SSE in these scenarios without wire-schema
   // instrumentation. Keep this explicit so missing checks elsewhere fail.
   const uninstrumented = new Set(revision === '2025-11-25'
     ? ['server-sse-multiple-streams', 'dns-rebinding-protection',

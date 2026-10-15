@@ -1,4 +1,4 @@
-# Observed on 2026-09-18 with rmcp 3.3.0 and conformance 0.2.0-alpha.11.
+# Observed on 2026-10-15 with rmcp 3.5.1 and conformance 0.2.0-alpha.12.
 # These are unsupported fixture behaviors, not established spec violations.
 # Scope every exception to a check so wire-schema validation stays enforced.
 server:
