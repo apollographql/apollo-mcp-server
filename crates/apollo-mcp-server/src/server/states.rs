@@ -17,7 +17,7 @@ use crate::{
     errors::{OperationError, ServerError},
     headers::ForwardHeaders,
     health::HealthCheckConfig,
-    operations::{AnnotationOverrides, MutationMode},
+    operations::{AnnotationOverrides, MutationMode, ParamHeaders},
     scope_requirements::OperationRequiredScopes,
     server_info::ServerInfoConfig,
 };
@@ -70,6 +70,7 @@ struct Config {
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
     annotations: HashMap<String, AnnotationOverrides>,
+    param_headers: HashMap<String, ParamHeaders>,
     required_scopes: HashMap<String, OperationRequiredScopes>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
@@ -130,6 +131,7 @@ impl StateMachine {
                 disable_auth_token_passthrough: server.disable_auth_token_passthrough,
                 descriptions: server.descriptions,
                 annotations: server.annotations,
+                param_headers: server.param_headers,
                 required_scopes: server.required_scopes,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
@@ -469,6 +471,7 @@ mod tests {
     use apollo_mcp_registry::uplink::schema::SchemaState;
     use reqwest::header::HeaderMap;
     use tokio::sync::RwLock;
+
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
@@ -514,6 +517,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
@@ -556,6 +560,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             required_scopes: HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024,

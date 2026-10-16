@@ -96,6 +96,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .unwrap();
@@ -131,6 +132,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .unwrap(),
@@ -142,6 +144,7 @@ mod tests {
                     true,
                     true,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                     &HashMap::new(),
                 )

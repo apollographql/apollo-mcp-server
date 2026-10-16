@@ -11,7 +11,7 @@ use apollo_compiler::{
     ast::{Type, Value as GraphQLValue},
     schema::ExtendedType,
 };
-use schemars::Schema;
+use schemars::{Schema, json_schema};
 use serde_json::{Map, Number, Value};
 
 use crate::custom_scalar_map::CustomScalarMap;
@@ -50,6 +50,74 @@ pub fn type_to_schema(
         r#type,
         schema,
     )
+}
+
+/// Why a variable type can't be mirrored into an `Mcp-Param-*` header.
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum NotHeaderPrimitive {
+    #[error("list types can't be mirrored into a header")]
+    List,
+
+    #[error("Float maps to JSON Schema `number`, which header parameters don't allow")]
+    Float,
+
+    #[error(
+        "custom scalar `{0}` needs a flat `custom_scalars` schema with type string, integer, or boolean, and no anyOf, oneOf, allOf, or $ref"
+    )]
+    CustomScalar(String),
+
+    #[error("`{0}` is not a scalar or enum type")]
+    NotScalar(String),
+}
+
+/// Convert a GraphQL variable type into a flat JSON Schema for a header-mirrored parameter.
+///
+/// SEP-2243 allows `x-mcp-header` only on a property whose own `type` is `string`,
+/// `integer`, or `boolean`, and never under `anyOf` or `$ref`. Unlike [`type_to_schema`],
+/// this inlines enum values instead of referencing a definition and omits the `null`
+/// branch of a nullable type, which stays optional by its absence from `required`.
+pub fn header_param_to_schema(
+    r#type: &Type,
+    schema: &GraphQLSchema,
+    custom_scalar_map: Option<&CustomScalarMap>,
+    description: Option<String>,
+    default_value: Option<&GraphQLValue>,
+) -> Result<Schema, NotHeaderPrimitive> {
+    let (Type::Named(name) | Type::NonNullNamed(name)) = r#type else {
+        return Err(NotHeaderPrimitive::List);
+    };
+    let flat = match name.as_str() {
+        "String" | "ID" => json_schema!({"type": "string"}),
+        "Int" => json_schema!({"type": "integer"}),
+        "Boolean" => json_schema!({"type": "boolean"}),
+        "Float" => return Err(NotHeaderPrimitive::Float),
+        other => match schema.types.get(other) {
+            Some(ExtendedType::Enum(r#enum)) => json_schema!({
+                "type": "string",
+                "enum": r#enum.values.values().map(|value| value.value.as_str()).collect::<Vec<_>>(),
+            }),
+            Some(ExtendedType::Scalar(_)) => custom_scalar_map
+                .and_then(|map| map.get(other))
+                .filter(|scalar| {
+                    matches!(
+                        scalar.get("type").and_then(Value::as_str),
+                        Some("string" | "integer" | "boolean")
+                    ) && ["anyOf", "oneOf", "allOf", "$ref"]
+                        .iter()
+                        .all(|keyword| scalar.get(*keyword).is_none())
+                })
+                .cloned()
+                .ok_or_else(|| NotHeaderPrimitive::CustomScalar(other.to_string()))?,
+            _ => return Err(NotHeaderPrimitive::NotScalar(other.to_string())),
+        },
+    };
+
+    Ok(with_default(
+        with_desc(flat, &description),
+        default_value,
+        r#type,
+        schema,
+    ))
 }
 
 /// Modifies a schema to include the default value from the GraphQL definition, if any.

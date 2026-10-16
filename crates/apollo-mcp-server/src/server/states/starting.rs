@@ -21,7 +21,7 @@ use crate::{
     introspection::tools::{
         execute::Execute, introspect::Introspect, search::Search, validate::Validate,
     },
-    operations::{MutationMode, RawOperation},
+    operations::{MutationMode, RawOperation, warn_app_tool_collisions, warn_unmatched_operations},
     scope_requirements::OperationRequiredScopes,
     server::Transport,
 };
@@ -51,6 +51,7 @@ impl Starting {
                         self.config.enable_output_schema,
                         &self.config.annotations,
                         &self.config.descriptions,
+                        &self.config.param_headers,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -64,6 +65,7 @@ impl Starting {
             operations.len(),
             serde_json::to_string_pretty(&operations)?
         );
+        warn_unmatched_operations(&self.config.param_headers, &operations);
 
         let execute_tool = self.config.execute_introspection.then(|| {
             Execute::new(
@@ -106,6 +108,7 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
+        warn_app_tool_collisions(&self.config.param_headers, &apps);
         let prompts = crate::prompts::load_from_path(&self.config.prompts_dir)
             .map_err(ServerError::Prompts)?;
         let schema = Arc::new(RwLock::new(self.schema));
@@ -185,6 +188,7 @@ impl Starting {
             disable_auth_token_passthrough: self.config.disable_auth_token_passthrough,
             descriptions: self.config.descriptions,
             annotations: self.config.annotations,
+            param_headers: self.config.param_headers,
             health_check: health_check.clone(),
             server_info: self.config.server_info.clone(),
             instructions,
@@ -478,6 +482,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: std::collections::HashMap::new(),
             annotations: std::collections::HashMap::new(),
+            param_headers: std::collections::HashMap::new(),
             required_scopes: std::collections::HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024 * 1024,

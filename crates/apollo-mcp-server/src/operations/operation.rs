@@ -22,8 +22,10 @@ use crate::{
 };
 
 use super::{
-    AnnotationOverrides, MutationMode, RawOperation,
+    AnnotationOverrides, MutationMode, ParamHeaders, RawOperation, UnmirrorableReason,
+    UnmirrorableVariable,
     executable_descriptions::{non_blank_description, strip_executable_descriptions},
+    param_headers::X_MCP_HEADER,
     private_fields::{
         PrivateFieldTree, collect_named_fragments, collect_private_fields, strip_private_directives,
     },
@@ -78,6 +80,7 @@ impl Operation {
         enable_output_schema: bool,
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
         description_overrides: &HashMap<String, String>,
+        param_headers: &HashMap<String, ParamHeaders>,
     ) -> Result<Option<Self>, OperationError> {
         if let Some((document, operation, comments)) = operation_defs(
             &raw_operation.source_text,
@@ -119,14 +122,21 @@ impl Operation {
                     )
                 });
 
-            let mut object = serde_json::to_value(get_json_schema(
-                &operation,
-                tree_shaker.argument_descriptions(),
-                &variable_description_overrides,
-                graphql_schema,
-                custom_scalar_map,
-                raw_operation.variables.as_ref(),
-            ))?;
+            let mut object = serde_json::to_value(
+                get_json_schema(
+                    &operation,
+                    tree_shaker.argument_descriptions(),
+                    &variable_description_overrides,
+                    graphql_schema,
+                    custom_scalar_map,
+                    raw_operation.variables.as_ref(),
+                    param_headers.get(&operation_name),
+                )
+                .map_err(|source| OperationError::ParamHeader {
+                    operation: operation_name.clone(),
+                    source,
+                })?,
+            )?;
 
             // make sure that the properties field exists since schemas::ObjectValidation is
             // configured to skip empty maps (in the case where there are no input args)
@@ -626,19 +636,35 @@ fn get_json_schema(
     graphql_schema: &GraphqlSchema,
     custom_scalar_map: Option<&CustomScalarMap>,
     variable_overrides: Option<&HashMap<String, Value>>,
-) -> Schema {
+    param_headers: Option<&ParamHeaders>,
+) -> Result<Schema, UnmirrorableVariable> {
     // Default initialize the schema with the bare minimum needed to be a valid object
     let mut schema = json_schema!({"type": "object", "properties": {}});
     let mut definitions = Map::new();
+    let is_fixed = |variable_name: &str| {
+        variable_overrides
+            .map(|o| o.contains_key(variable_name))
+            .unwrap_or_default()
+    };
+
+    for variable in param_headers.into_iter().flat_map(ParamHeaders::variables) {
+        let declared = operation.variables.iter().any(|v| v.name == variable);
+        let reason = match (declared, is_fixed(variable)) {
+            (false, _) => UnmirrorableReason::Undeclared,
+            (true, true) => UnmirrorableReason::Fixed,
+            (true, false) => continue,
+        };
+        return Err(UnmirrorableVariable {
+            variable: variable.to_string(),
+            reason,
+        });
+    }
 
     // TODO: Can this be unwrapped to use `schema_walker::walk` instead? This functionality is doubled
     // in some cases.
-    operation.variables.iter().for_each(|variable| {
+    for variable in &operation.variables {
         let variable_name = variable.name.to_string();
-        if !variable_overrides
-            .map(|o| o.contains_key(&variable_name))
-            .unwrap_or_default()
-        {
+        if !is_fixed(&variable_name) {
             // use overridden description if there is one, otherwise use the schema description
             let description = argument_descriptions_overrides
                 .get(&variable_name)
@@ -650,14 +676,33 @@ fn get_json_schema(
                         .map(|d| d.join("#"))
                 });
 
-            let nested = schema_walker::type_to_schema(
-                variable.ty.as_ref(),
-                graphql_schema,
-                &mut definitions,
-                custom_scalar_map,
-                description,
-                variable.default_value.as_deref(),
-            );
+            let nested = match param_headers.and_then(|headers| headers.get(&variable_name)) {
+                Some(header) => {
+                    let mut nested = schema_walker::header_param_to_schema(
+                        variable.ty.as_ref(),
+                        graphql_schema,
+                        custom_scalar_map,
+                        description,
+                        variable.default_value.as_deref(),
+                    )
+                    .map_err(|reason| UnmirrorableVariable {
+                        variable: variable_name.clone(),
+                        reason: reason.into(),
+                    })?;
+                    nested
+                        .ensure_object()
+                        .insert(X_MCP_HEADER.to_string(), header.into());
+                    nested
+                }
+                None => schema_walker::type_to_schema(
+                    variable.ty.as_ref(),
+                    graphql_schema,
+                    &mut definitions,
+                    custom_scalar_map,
+                    description,
+                    variable.default_value.as_deref(),
+                ),
+            };
             schema
                 .ensure_object()
                 .entry("properties")
@@ -676,7 +721,7 @@ fn get_json_schema(
                     .push(variable_name.into());
             }
         }
-    });
+    }
 
     // Add the definitions to the overall schema if needed
     if !definitions.is_empty() {
@@ -685,7 +730,7 @@ fn get_json_schema(
             .insert("definitions".to_string(), definitions.into());
     }
 
-    schema
+    Ok(schema)
 }
 
 #[cfg(test)]
@@ -792,6 +837,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -950,6 +996,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1000,6 +1047,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -1145,6 +1193,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -1312,6 +1361,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1461,6 +1511,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -1636,6 +1687,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -1793,6 +1845,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -1988,6 +2041,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2149,6 +2203,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -2291,6 +2346,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2320,6 +2376,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         );
@@ -2354,6 +2411,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r#"
         Err(
@@ -2383,6 +2441,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         );
         insta::assert_debug_snapshot!(operation, @r"
         Err(
@@ -2409,6 +2468,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -2554,6 +2614,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -2706,6 +2767,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -2864,6 +2926,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3135,6 +3198,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3224,6 +3288,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3259,6 +3324,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3284,6 +3350,7 @@ mod tests {
             false,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3315,6 +3382,7 @@ mod tests {
             true,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3351,6 +3419,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3402,6 +3471,7 @@ mod tests {
             true,
             true,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3574,6 +3644,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3711,6 +3782,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3752,6 +3824,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3806,6 +3879,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3863,6 +3937,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3891,6 +3966,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -3914,6 +3990,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -3959,6 +4036,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
             .unwrap()
             .unwrap();
@@ -4000,6 +4078,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4024,6 +4103,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4052,6 +4132,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4078,6 +4159,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4121,6 +4203,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4177,6 +4260,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4206,6 +4290,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4262,6 +4347,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4291,6 +4377,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4518,6 +4605,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -4722,6 +4810,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .is_none()
@@ -4746,6 +4835,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .ok()
             .unwrap()
@@ -4768,6 +4858,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -4903,6 +4994,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5034,6 +5126,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5274,6 +5367,7 @@ mod tests {
             false,
             &HashMap::new(),
             &description_overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5300,6 +5394,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5338,6 +5433,7 @@ mod tests {
             false,
             &HashMap::new(),
             &description_overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5362,6 +5458,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5390,6 +5487,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5414,6 +5512,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5445,6 +5544,7 @@ mod tests {
             false,
             &HashMap::new(),
             &description_overrides,
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5472,6 +5572,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5496,6 +5597,7 @@ mod tests {
             false,
             false,
             false,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5530,6 +5632,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5550,6 +5653,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
             )
@@ -5583,6 +5687,7 @@ mod tests {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5612,6 +5717,7 @@ mod tests {
             false,
             false,
             true,
+            &HashMap::new(),
             &HashMap::new(),
             &HashMap::new(),
         )
@@ -5644,6 +5750,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .unwrap();
@@ -5662,6 +5769,7 @@ mod tests {
                 false,
                 false,
                 true,
+                &HashMap::new(),
                 &HashMap::new(),
                 &HashMap::new(),
             )
@@ -5700,6 +5808,7 @@ mod tests {
                 true,
                 &HashMap::new(),
                 &HashMap::new(),
+                &HashMap::new(),
             )
             .unwrap()
             .unwrap();
@@ -5735,6 +5844,7 @@ mod tests {
             false,
             false,
             &overrides,
+            &HashMap::new(),
             &HashMap::new(),
         )
         .unwrap()
@@ -5773,6 +5883,7 @@ mod tests {
             false,
             &overrides,
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5806,6 +5917,7 @@ mod tests {
             false,
             &overrides,
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5831,6 +5943,7 @@ mod tests {
             false,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();
@@ -5845,5 +5958,171 @@ mod tests {
             "operations hit external API"
         );
         assert_eq!(ann.title, None);
+    }
+
+    mod param_headers {
+        use rstest::rstest;
+        use serde_json::json;
+
+        use super::*;
+        use crate::{
+            errors::OperationError,
+            operations::{
+                ParamHeaders, UnmirrorableReason, UnmirrorableVariable,
+                schema_walker::NotHeaderPrimitive,
+            },
+        };
+
+        static SCHEMA: LazyLock<Valid<Schema>> = LazyLock::new(|| {
+            Schema::parse_and_validate(
+                r#"
+                    scalar Handle
+                    scalar Json
+                    scalar Slug
+                    enum Region { US EU }
+                    input Filter { id: ID }
+                    type Query {
+                        workflow(
+                            id: ID, count: Int, flag: Boolean, region: Region, handle: Handle,
+                            json: Json, slug: Slug, ratio: Float, ids: [ID], filter: Filter
+                        ): String
+                    }
+                "#,
+                "schema.graphql",
+            )
+            .unwrap()
+        });
+
+        fn input_schema(variables: &str) -> Result<Value, OperationError> {
+            let custom_scalars = CustomScalarMap::from_str(
+                r#"{
+                    "Handle": {"type": "string", "pattern": "^wf-"},
+                    "Json": {"type": "object"},
+                    "Slug": {"type": "string", "anyOf": [{"pattern": "^a"}, {"pattern": "^b"}]}
+                }"#,
+            )
+            .unwrap();
+            let raw = RawOperation {
+                source_text: format!("query GetWorkflow({variables}) {{ workflow }}"),
+                headers: None,
+                variables: Some(HashMap::from([("fixed".to_string(), json!("value"))])),
+                source_path: None,
+            };
+            let param_headers = HashMap::from([(
+                "GetWorkflow".to_string(),
+                ParamHeaders::try_from(HashMap::from([("v".to_string(), "Value".to_string())]))
+                    .unwrap(),
+            )]);
+            let operation = Operation::from_raw(
+                raw,
+                &SCHEMA,
+                Some(&custom_scalars),
+                MutationMode::None,
+                false,
+                false,
+                false,
+                &HashMap::new(),
+                &HashMap::new(),
+                &param_headers,
+            )?
+            .unwrap();
+            Ok(Value::Object(operation.tool.input_schema.as_ref().clone()))
+        }
+
+        fn header_schema(variables: &str) -> Result<Value, OperationError> {
+            input_schema(variables).map(|schema| schema["properties"]["v"].clone())
+        }
+
+        fn rejection(variables: &str) -> UnmirrorableReason {
+            match header_schema(variables) {
+                Err(OperationError::ParamHeader {
+                    source: UnmirrorableVariable { reason, .. },
+                    ..
+                }) => reason,
+                other => panic!("expected a param header error, got {other:?}"),
+            }
+        }
+
+        #[rstest]
+        #[case::id("$v: ID!", json!({"type": "string", "x-mcp-header": "Value"}))]
+        #[case::nullable_int("$v: Int", json!({"type": "integer", "x-mcp-header": "Value"}))]
+        #[case::boolean_default(
+            "$v: Boolean = true",
+            json!({"type": "boolean", "default": true, "x-mcp-header": "Value"})
+        )]
+        #[case::nullable_enum(
+            "$v: Region",
+            json!({"type": "string", "enum": ["US", "EU"], "x-mcp-header": "Value"})
+        )]
+        #[case::custom_scalar(
+            "$v: Handle!",
+            json!({"type": "string", "pattern": "^wf-", "x-mcp-header": "Value"})
+        )]
+        fn primitive_variable_gets_flat_annotated_schema(
+            #[case] variables: &str,
+            #[case] expected: Value,
+        ) {
+            assert_eq!(header_schema(variables).unwrap(), expected);
+        }
+
+        #[test]
+        fn nullable_variable_stays_optional() {
+            let schema = input_schema("$v: String, $id: ID!").unwrap();
+
+            assert_eq!(schema["required"], json!(["id"]));
+        }
+
+        #[rstest]
+        #[case::float("$v: Float", NotHeaderPrimitive::Float)]
+        #[case::list("$v: [ID]", NotHeaderPrimitive::List)]
+        #[case::input_object("$v: Filter", NotHeaderPrimitive::NotScalar("Filter".into()))]
+        #[case::object_scalar("$v: Json", NotHeaderPrimitive::CustomScalar("Json".into()))]
+        #[case::composite_scalar("$v: Slug", NotHeaderPrimitive::CustomScalar("Slug".into()))]
+        fn non_primitive_variable_is_rejected(
+            #[case] variables: &str,
+            #[case] expected: NotHeaderPrimitive,
+        ) {
+            assert_eq!(rejection(variables), UnmirrorableReason::Type(expected));
+        }
+
+        #[test]
+        fn undeclared_variable_is_rejected() {
+            assert_eq!(rejection("$other: ID"), UnmirrorableReason::Undeclared);
+        }
+
+        #[test]
+        fn fixed_variable_is_rejected() {
+            let raw = RawOperation {
+                source_text: "query GetWorkflow($fixed: ID) { workflow(id: $fixed) }".into(),
+                headers: None,
+                variables: Some(HashMap::from([("fixed".to_string(), json!("value"))])),
+                source_path: None,
+            };
+            let param_headers = HashMap::from([(
+                "GetWorkflow".to_string(),
+                ParamHeaders::try_from(HashMap::from([("fixed".to_string(), "Fixed".to_string())]))
+                    .unwrap(),
+            )]);
+
+            let error = Operation::from_raw(
+                raw,
+                &SCHEMA,
+                None,
+                MutationMode::None,
+                false,
+                false,
+                false,
+                &HashMap::new(),
+                &HashMap::new(),
+                &param_headers,
+            )
+            .unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                "Operation GetWorkflow: variable `$fixed` can't be mirrored into a header: \
+                 the operation's `variables` fix its value, so it is not a tool parameter"
+            );
+        }
     }
 }
