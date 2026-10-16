@@ -269,3 +269,28 @@ jobs:
       - run: knope release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Releases made with GITHUB_TOKEN can't trigger other workflows,
+  # so a `release: published` listener never runs. Notify skills from here instead.
+  # Experimental releases are skipped.
+  # Handled by https://github.com/apollographql/skills/blob/main/.github/workflows/ai-skill-sync.yml
+  notify-skills:
+    needs: [get-version, release]
+    if: ${{ !inputs.version }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch to skills repo
+        uses: peter-evans/repository-dispatch@v4
+        with:
+          token: ${{ secrets.SKILLS_REPO_TOKEN }}
+          repository: apollographql/skills
+          event-type: product-update
+          client-payload: |-
+            {
+              "product": "apollo-mcp-server",
+              "version": ${{ toJSON(needs.get-version.outputs.version) }},
+              "repository": ${{ toJSON(github.repository) }},
+              "sender": ${{ toJSON(github.actor) }}
+            }
