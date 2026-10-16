@@ -108,7 +108,7 @@ Configure the MCP server to use AuthKit for authentication.
 
 <Note>
 
-This configuration doesn't set `scopes`, so the MCP server doesn't require any scope. AuthKit access tokens include a `scope` claim with the scopes the client was granted, for example `openid`. If you configure `scopes`, every value must appear in that claim. Otherwise, the MCP server returns `403 Forbidden` with an `insufficient_scope` error. For more information, see [Configure scope enforcement](/apollo-mcp-server/auth#configure-scope-enforcement).
+This configuration doesn't set `scopes`, so the MCP server doesn't require any scope. AuthKit access tokens include a `scope` claim with the scopes the client was granted, for example `openid`. If you configure `scopes`, every value must appear in that claim. Otherwise, the MCP server returns `403 Forbidden` with an `insufficient_scope` error. AuthKit grants only the standard OpenID Connect scopes (`openid`, `profile`, `email`, and `offline_access`), so you can't use `scopes` to require API-specific permissions. For more information, see [Configure scope enforcement](/apollo-mcp-server/auth#configure-scope-enforcement).
 
 </Note>
 
