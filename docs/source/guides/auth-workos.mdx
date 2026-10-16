@@ -22,7 +22,7 @@ This guide uses [WorkOS AuthKit](https://workos.com/docs/authkit/mcp) as the Ide
    curl -sSL https://rover.apollo.dev/nix/latest | sh
    ```
 
-### Step 1: Set up the WorkOS Identity Provider
+### Step 1: Set up the WorkOS identity provider
 
 [Create a WorkOS account](https://dashboard.workos.com/signup). This guide uses the default **Staging** environment.
 
@@ -76,7 +76,7 @@ AuthKit hosts the sign-in page for your users. This guide uses email and passwor
 
 Your WorkOS setup is now complete. You have an AuthKit domain, a resource indicator for the MCP server, and a user to sign in with.
 
-### Step 2: Configure the MCP Server for authorization
+### Step 2: Configure the MCP server for authorization
 
 Configure the MCP server to use AuthKit for authentication.
 
@@ -158,7 +158,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
 1. Retrieve the values for `YOUR_APOLLO_KEY` and `YOUR_APOLLO_GRAPH_REF` from the modal and click **Finish later**.
 
-#### Run the MCP Server and router
+#### Run the MCP server and router
 
 1. Back in your terminal, in the root of the project directory, replace and run the following command to start the MCP Server and the router together:
 
@@ -222,7 +222,7 @@ You can also use the guided OAuth flow in MCP Inspector to test authentication. 
 
 </ExpansionPanel>
 
-### Step 5: Make requests with an MCP Client (Goose)
+### Step 5: Make requests with an MCP client (Goose)
 
 We'll use [Goose](https://block.github.io/goose/) as our MCP Client. Goose allows you to choose between many different LLMs and provides some built-in functionality for connecting to MCP servers, called [Extensions](https://block.github.io/goose/docs/getting-started/using-extensions).
 
@@ -248,9 +248,9 @@ Then, continue with the following steps:
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
 
-#### MCP Server Won't Start
+#### MCP server won't start
 
 - **Error**: "Port 8000 is already in use"
   - Solution: Kill any existing processes using port 8000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
@@ -262,7 +262,7 @@ Then, continue with the following steps:
 - **Error**: "What URL is your subgraph running on?" question in terminal
   - Solution: Verify that the file path for your config files is correct. You should run the `rover dev` command from the root of the example project directory and the file paths should be relative to that root.
 
-#### MCP Inspector Connection Issues
+#### MCP Inspector connection issues
 
 - **Error**: "Failed to connect to server"
   - Solution: Ensure the MCP server is running (check terminal output)
@@ -293,7 +293,7 @@ Then, continue with the following steps:
   - Solution: In MCP Inspector, open the **Authentication** panel in the sidebar. Clear out any values in the **Header Name** and **Bearer Token** fields. Then try connecting again.
   - Solution: In MCP Inspector, select **Clear OAuth State** and try connecting again.
 
-### Getting Help
+### Getting help
 
 If you're still having issues:
 

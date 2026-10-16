@@ -22,7 +22,7 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
    curl -sSL https://rover.apollo.dev/nix/latest | sh
    ```
 
-### Step 1: Set up the Auth0 Identity Provider
+### Step 1: Set up the Auth0 identity provider
 
 [Create an Auth0 account](https://auth0.com/).
 
@@ -61,7 +61,7 @@ You don't need to set a tenant-wide **Default Audience** under **Settings** -> *
 
 </Note>
 
-#### Set up the Auth0 Connection
+#### Set up the Auth0 connection
 
 The Auth0 Connection is the method users use to sign in. This guide uses the default **Username-Password-Authentication** connection.
 
@@ -73,7 +73,7 @@ The Auth0 Connection is the method users use to sign in. This guide uses the def
 
 Your Auth0 setup is now complete. You have an API with a permission, client registration for MCP clients, and a connection for authentication.
 
-### Step 2: Configure the MCP Server for authorization
+### Step 2: Configure the MCP server for authorization
 
 Configure the MCP server to use the Auth0 instance for authentication.
 
@@ -151,7 +151,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
 1. Retrieve the values for `YOUR_APOLLO_KEY` and `YOUR_APOLLO_GRAPH_REF` from the modal and click **Finish later**.
 
-#### Run the MCP Server and router
+#### Run the MCP server and router
 
 1. Back in your terminal, in the root of the project directory, replace and run the following command to start the MCP Server and the router together:
 
@@ -215,7 +215,7 @@ You can also use the guided OAuth flow in MCP Inspector to test authentication. 
 
 </ExpansionPanel>
 
-### Step 5: Make requests with an MCP Client (Goose)
+### Step 5: Make requests with an MCP client (Goose)
 
 We'll use [Goose](https://block.github.io/goose/) as our MCP Client. Goose allows you to choose between many different LLMs and provides some built-in functionality for connecting to MCP servers, called [Extensions](https://block.github.io/goose/docs/getting-started/using-extensions).
 
@@ -241,9 +241,9 @@ Then, continue with the following steps:
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
 
-#### MCP Server Won't Start
+#### MCP server won't start
 
 - **Error**: "Port 8000 is already in use"
   - Solution: Kill any existing processes using port 8000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
@@ -263,7 +263,7 @@ Then, continue with the following steps:
 - **Issue**: Requests fail with `403 Forbidden` and an `insufficient_scope` error
   - Solution: Check that every scope in the `scopes` configuration is a permission on your Auth0 API's **Permissions** tab. Auth0 leaves scopes that the API doesn't define out of the access token.
 
-#### MCP Inspector Connection Issues
+#### MCP Inspector connection issues
 
 - **Error**: "Failed to connect to server"
   - Solution: Ensure the MCP server is running (check terminal output)
@@ -287,7 +287,7 @@ Then, continue with the following steps:
   - Solution: In MCP Inspector, open the **Authentication** panel in the sidebar. Clear out any values in the **Header Name** and **Bearer Token** fields. Then try connecting again.
   - Solution: In MCP Inspector, select **Clear OAuth State** and try connecting again.
 
-### Getting Help
+### Getting help
 
 If you're still having issues:
 
