@@ -43,17 +43,11 @@ MCP clients must identify themselves to AuthKit before they start the OAuth flow
 
 1. In the WorkOS Dashboard, navigate to **Connect** -> **Configuration**.
 1. In the **MCP Auth** section, click **Manage**.
-1. Under **Registration mechanisms**, select **Client ID Metadata Document**.
-1. Select **Dynamic Client Registration** too. This guide's clients need it: MCP Inspector uses DCR unless you configure a CIMD metadata URL for it, and `mcp-remote`, which Goose uses in [Step 5](#step-5-make-requests-with-an-mcp-client-goose), supports only DCR.
+1. Under **Registration mechanisms**, select **Client ID Metadata Document** and **Dynamic Client Registration**.
+  - You should select the registration mechanism your MCP clients support. MCP Inspector uses DCR unless you configure a CIMD metadata URL for it. `mcp-remote` supports only DCR.
 1. Click **Save changes**.
 
 ![The MCP Auth dialog in the WorkOS Dashboard with Client ID Metadata Document and Dynamic Client Registration selected](../images/workos-mcp-auth.png)
-
-<Note>
-
-If all of your MCP clients support CIMD, you can leave **Dynamic Client Registration** cleared. AuthKit then accepts only clients that identify themselves with a metadata document URL.
-
-</Note>
 
 #### Add the MCP server as a resource indicator
 
