@@ -100,40 +100,35 @@ fn tools_call_on(
     handle: impl Into<Value>,
     header: Option<&str>,
 ) -> Request<Body> {
-    tools_call_at("/mcp", version, handle, header)
+    tools_call_at("/mcp", Some(version), handle, header)
 }
 
+/// With no `version`, the request declares no protocol in either the header or `_meta`.
 fn tools_call_at(
     uri: &str,
-    version: ProtocolVersion,
+    version: Option<ProtocolVersion>,
     handle: impl Into<Value>,
     header: Option<&str>,
 ) -> Request<Body> {
-    let handle = handle.into();
-    let version = version.as_str();
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "tools/call",
-        "params": {
-            "_meta": {
-                "io.modelcontextprotocol/protocolVersion": version,
-                "io.modelcontextprotocol/clientCapabilities": {},
-                "io.modelcontextprotocol/clientInfo": {"name": "param-header-test", "version": "1"}
-            },
-            "name": "GetWorkflow",
-            "arguments": {"handle": handle}
-        }
-    });
+    let mut params = json!({"name": "GetWorkflow", "arguments": {"handle": handle.into()}});
     let mut builder = Request::builder()
         .method("POST")
         .uri(uri)
         .header("Host", "localhost")
         .header("Content-Type", "application/json")
         .header("Accept", "application/json, text/event-stream")
-        .header("MCP-Protocol-Version", version)
         .header("Mcp-Method", "tools/call")
         .header("Mcp-Name", "GetWorkflow");
+    if let Some(version) = version {
+        let version = version.as_str();
+        params["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": version,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "param-header-test", "version": "1"}
+        });
+        builder = builder.header("MCP-Protocol-Version", version);
+    }
+    let body = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
     if let Some(header) = header {
         builder = builder.header(HEADER, header);
     }
@@ -321,6 +316,26 @@ async fn earlier_protocol_skips_the_param_header_check() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// Pins the missing-`MCP-Protocol-Version` case the docs tell proxies to reject. rmcp
+/// rejects a `_meta` version without the header, so the request leaves out both.
+#[tokio::test]
+async fn missing_protocol_version_skips_the_param_header_check() {
+    let mut upstream = mockito::Server::new_async().await;
+    let graphql = upstream
+        .mock("POST", "/")
+        .with_header("Content-Type", "application/json")
+        .with_body(r#"{"data": {"workflow": "running"}}"#)
+        .create_async()
+        .await;
+    let running = running_with_param_header(upstream.url().parse().unwrap()).await;
+    let _shutdown = running.cancellation_token.clone().drop_guard();
+
+    let (status, _) = send(&running, tools_call_at("/mcp", None, "wf-1", Some("wf-2"))).await;
+
+    graphql.assert_async().await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn builtin_tool_name_takes_precedence_over_operation_annotation() {
     let running =
@@ -377,7 +392,7 @@ async fn app_mode_call_to_tool_sharing_an_annotated_name_is_rejected() {
         &running,
         tools_call_at(
             "/mcp?app=MyApp",
-            ProtocolVersion::STANDARD_HEADERS,
+            Some(ProtocolVersion::STANDARD_HEADERS),
             "wf-1",
             None,
         ),
