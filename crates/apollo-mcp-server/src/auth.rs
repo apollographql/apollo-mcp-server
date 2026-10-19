@@ -3265,16 +3265,22 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         }
 
         fn rate_limited_app() -> Router {
+            rate_limited_app_with(rate_limit::RateLimitState::for_test(0, 1, 0, 10))
+        }
+
+        fn rate_limited_app_with(state: rate_limit::RateLimitState) -> Router {
             let config = test_config();
             let base = Router::new().route("/test", get(|| async { "ok" }));
             config
-                .enable_middleware_with_rate_limit_state(
-                    base,
-                    HashMap::new(),
-                    true,
-                    rate_limit::RateLimitState::for_test(0, 1, 0, 10),
-                )
+                .enable_middleware_with_rate_limit_state(base, HashMap::new(), true, state)
                 .unwrap()
+        }
+
+        fn anonymous_request(uri: &str) -> Request<Body> {
+            let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
+            let addr: SocketAddr = "203.0.113.7:12345".parse().unwrap();
+            req.extensions_mut().insert(ConnectInfo(addr));
+            req
         }
 
         #[tokio::test]
@@ -3299,19 +3305,40 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
         #[tokio::test]
         async fn metadata_endpoint_not_rate_limited() {
-            let app = rate_limited_app();
-            // The second request would be limited if this route shared the
-            // protected router's one-request test bucket.
-            for _ in 0..2 {
-                let mut req = Request::builder()
-                    .uri("/.well-known/oauth-protected-resource")
-                    .body(Body::empty())
-                    .unwrap();
-                let addr: SocketAddr = "203.0.113.7:12345".parse().unwrap();
-                req.extensions_mut().insert(ConnectInfo(addr));
-                let res = app.clone().oneshot(req).await.unwrap();
-                assert_eq!(res.status(), StatusCode::OK);
-            }
+            // Peer fuse of one request. The same peer is limited on a
+            // protected route but never on the metadata route.
+            let app = rate_limited_app_with(rate_limit::RateLimitState::for_test(0, 1, 0, 1));
+            let metadata = "/.well-known/oauth-protected-resource";
+
+            let first = app
+                .clone()
+                .oneshot(anonymous_request(metadata))
+                .await
+                .unwrap();
+            let second = app
+                .clone()
+                .oneshot(anonymous_request(metadata))
+                .await
+                .unwrap();
+            let protected = app
+                .clone()
+                .oneshot(anonymous_request("/test"))
+                .await
+                .unwrap();
+            let protected_again = app
+                .clone()
+                .oneshot(anonymous_request("/test"))
+                .await
+                .unwrap();
+
+            assert_eq!(
+                (first.status(), second.status()),
+                (StatusCode::OK, StatusCode::OK)
+            );
+            assert_eq!(
+                (protected.status(), protected_again.status()),
+                (StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS)
+            );
         }
     }
 
