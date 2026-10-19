@@ -310,4 +310,63 @@ mod tests {
             "Should contain Mutation type definition"
         );
     }
+
+    async fn introspect_texts(
+        schema: Arc<RwLock<Valid<Schema>>>,
+        minify: bool,
+        type_name: &str,
+        depth: usize,
+    ) -> Vec<String> {
+        let introspect = Introspect::new(
+            schema,
+            Some("Query".to_string()),
+            Some("Mutation".to_string()),
+            minify,
+            None,
+        );
+
+        introspect
+            .execute(Input {
+                type_name: type_name.to_string(),
+                depth,
+            })
+            .await
+            .expect("Introspect execution failed")
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                ContentBlock::Text(text) => Some(text.text.trim_end().to_string()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[rstest]
+    #[case::minified(true, "U:SearchResult:User,Post,Comment,Tag")]
+    #[case::not_minified(false, "union SearchResult = User | Post | Comment | Tag")]
+    #[tokio::test]
+    async fn introspect_union_depth_1_lists_all_members(
+        schema: Arc<RwLock<Valid<Schema>>>,
+        #[case] minify: bool,
+        #[case] expected: &str,
+    ) {
+        let texts = introspect_texts(schema, minify, "SearchResult", 1).await;
+
+        assert_eq!(texts, vec![expected.to_string()]);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn introspect_union_depth_2_includes_member_types(schema: Arc<RwLock<Valid<Schema>>>) {
+        let texts = introspect_texts(schema, false, "SearchResult", 2).await;
+
+        assert!(texts.contains(&"union SearchResult = User | Post | Comment | Tag".to_string()));
+        for member in ["User", "Post", "Comment", "Tag"] {
+            let prefix = format!("type {member} ");
+            assert!(
+                texts.iter().any(|text| text.starts_with(&prefix)),
+                "expected definition of {member} in {texts:?}"
+            );
+        }
+    }
 }
