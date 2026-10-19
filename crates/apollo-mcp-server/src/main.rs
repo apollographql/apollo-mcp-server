@@ -189,6 +189,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .enable_output_schema(config.overrides.enable_output_schema)
         .descriptions(config.overrides.descriptions)
         .annotations(config.overrides.annotations)
+        .param_headers(config.overrides.param_headers)
         .required_scopes(config.overrides.required_scopes)
         .disable_auth_token_passthrough(disable_auth_token_passthrough)
         .custom_scalar_map(

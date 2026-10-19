@@ -13,7 +13,7 @@ use rmcp::model::{
     CallToolResponse, ClientCapabilities, Extensions, GetPromptRequestParams, GetPromptResponse,
     GetPromptResult, Implementation, ListPromptsResult, ListResourceTemplatesResult,
     ListResourcesResult, PromptMessage, PromptsCapability, ReadResourceResponse,
-    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, ToolsCapability,
+    ReadResourceResult, ResourcesCapability, Role, SubscriptionFilter, Tool, ToolsCapability,
 };
 use rmcp::{
     RoleServer, ServerHandler,
@@ -36,7 +36,7 @@ use crate::apps::resource::{attach_resource_mime_type, get_app_resource};
 use crate::apps::tool::{attach_tool_metadata, find_and_execute_app_tool, make_tool_private};
 use crate::generated::telemetry::{TelemetryAttribute, TelemetryMetric};
 use crate::meter;
-use crate::operations::{execute_operation, find_and_execute_operation};
+use crate::operations::{execute_operation, find_and_execute_operation, warn_unmatched_operations};
 use crate::server::states::telemetry::{get_parent_span, with_request_context};
 use crate::server_info::ServerInfoConfig;
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
         search::{SEARCH_TOOL_NAME, Search},
         validate::{VALIDATE_TOOL_NAME, Validate},
     },
-    operations::{AnnotationOverrides, MutationMode, Operation, RawOperation},
+    operations::{AnnotationOverrides, MutationMode, Operation, ParamHeaders, RawOperation},
 };
 use apollo_mcp_rhai::SharedRhaiEngine;
 
@@ -82,6 +82,7 @@ pub(super) struct Running {
     pub(super) disable_auth_token_passthrough: bool,
     pub(super) descriptions: HashMap<String, String>,
     pub(super) annotations: HashMap<String, AnnotationOverrides>,
+    pub(super) param_headers: HashMap<String, ParamHeaders>,
     pub(super) health_check: Option<HealthCheck>,
     pub(super) server_info: ServerInfoConfig,
     /// MCP initialize-response instructions (optional).
@@ -117,6 +118,19 @@ impl<'a> PeerContext<'a> {
 }
 
 impl Running {
+    /// Whether `call_tool` routes `name` to an enabled built-in tool, which takes
+    /// precedence over a predefined operation with the same name.
+    fn is_builtin_tool(&self, name: &str) -> bool {
+        match name {
+            INTROSPECT_TOOL_NAME => self.introspect_tool.is_some(),
+            SEARCH_TOOL_NAME => self.search_tool.is_some(),
+            EXPLORER_TOOL_NAME => self.explorer_tool.is_some(),
+            EXECUTE_TOOL_NAME => self.execute_tool.is_some(),
+            VALIDATE_TOOL_NAME => self.validate_tool.is_some(),
+            _ => false,
+        }
+    }
+
     /// Construct an independent rmcp service sharing this application's catalog.
     pub(super) fn for_service(&self) -> McpService {
         McpService {
@@ -158,6 +172,7 @@ impl Running {
                         self.enable_output_schema,
                         &self.annotations,
                         &self.descriptions,
+                        &self.param_headers,
                     )
                     .unwrap_or_else(|error| {
                         error!("Invalid operation: {}", error);
@@ -174,6 +189,7 @@ impl Running {
         // Update the schema itself
         *self.schema.write().await = schema;
 
+        warn_unmatched_operations(&self.param_headers, &operations);
         *operations_lock = operations;
 
         // Publish only after the updated catalog is visible to readers.
@@ -209,6 +225,7 @@ impl Running {
                             self.enable_output_schema,
                             &self.annotations,
                             &self.descriptions,
+                            &self.param_headers,
                         )
                         .unwrap_or_else(|error| {
                             error!("Invalid operation: {}", error);
@@ -223,6 +240,7 @@ impl Running {
             updated_operations.len(),
             serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
         );
+        warn_unmatched_operations(&self.param_headers, &updated_operations);
         *operations_lock = updated_operations;
 
         // Publish only after the updated catalog is visible to readers.
@@ -897,6 +915,21 @@ impl ServerHandler for McpService {
         .await
     }
 
+    /// Lets rmcp check `Mcp-Param-*` headers. rmcp caches the answer per name for the
+    /// life of the service, so it's built from static config rather than the operations
+    /// that reloads change. Built-in tools have no annotations.
+    fn get_tool(&self, name: &str) -> Option<Tool> {
+        if self.application.is_builtin_tool(name) {
+            return None;
+        }
+        let headers = self.application.param_headers.get(name)?;
+        Some(Tool::new(
+            name.to_string(),
+            "",
+            Arc::new(headers.annotation_schema()),
+        ))
+    }
+
     async fn list_resources(
         &self,
         _request: Option<PaginatedRequestParams>,
@@ -1132,6 +1165,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
@@ -1165,6 +1199,7 @@ mod tests {
                             false,
                             false,
                             true,
+                            &HashMap::new(),
                             &HashMap::new(),
                             &HashMap::new(),
                         )
@@ -3077,6 +3112,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -3120,6 +3156,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                     &HashMap::new(),
                 )
@@ -3494,6 +3531,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -3546,6 +3584,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                     &HashMap::new(),
                 )
@@ -3621,6 +3660,7 @@ mod tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -3634,6 +3674,7 @@ mod tests {
                     false,
                     false,
                     true,
+                    &HashMap::new(),
                     &HashMap::new(),
                     &HashMap::new(),
                 )
@@ -3776,6 +3817,7 @@ mod integration_tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -3803,6 +3845,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -4297,6 +4340,7 @@ mod integration_tests {
                     true,
                     &HashMap::new(),
                     &HashMap::new(),
+                    &HashMap::new(),
                 )
                 .unwrap()
                 .expect("operation should be valid");
@@ -4324,6 +4368,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -5306,6 +5351,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info: Default::default(),
                 instructions: None,
@@ -5490,6 +5536,7 @@ mod integration_tests {
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
+                param_headers: HashMap::new(),
                 health_check: None,
                 server_info,
                 instructions: None,
@@ -5681,6 +5728,9 @@ pub(super) mod test_support;
 
 #[cfg(test)]
 mod method_header_tests;
+
+#[cfg(test)]
+mod param_header_tests;
 
 #[cfg(test)]
 mod subscription_tests;

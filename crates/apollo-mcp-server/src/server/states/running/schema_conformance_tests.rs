@@ -79,6 +79,7 @@ fn fixture_with_schema(schema_source: &str, query: &str) -> Running {
             true,
             &HashMap::new(),
             &HashMap::new(),
+            &HashMap::new(),
         )
         .unwrap()
         .unwrap();

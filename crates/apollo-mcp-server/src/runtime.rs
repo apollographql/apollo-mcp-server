@@ -460,6 +460,7 @@ mod test {
                     descriptions: {},
                     annotations: {},
                     required_scopes: {},
+                    param_headers: {},
                 },
                 prompts: PromptsConfig {
                     path: "prompts",
