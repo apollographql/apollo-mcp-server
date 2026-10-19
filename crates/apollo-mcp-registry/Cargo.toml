@@ -2,12 +2,12 @@
 name = "apollo-mcp-registry"
 authors.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
 
-description = "Registry providing schema and operations to the MCP Server"
+description = "Registry providing schema and operations to the MCP Server. Internal to apollo-mcp-server; not a stable public API."
 
 [dependencies]
 derive_more = { version = "2.0.1", default-features = false, features = [
