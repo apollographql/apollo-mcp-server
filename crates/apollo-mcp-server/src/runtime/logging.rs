@@ -159,7 +159,7 @@ impl Logging {
                     (
                         BoxMakeWriter::new(non_blocking_appender),
                         Some(guard),
-                        false,
+                        logging.ansi == AnsiMode::Always,
                     )
                 })
                 .unwrap_or_else(|| {
@@ -262,90 +262,66 @@ mod tests {
         assert!(guard.is_none());
     }
 
-    fn env(no_color: Option<&'static str>) -> AnsiEnv<'static> {
+    fn env(
+        no_color: Option<&'static str>,
+        force_color: Option<&'static str>,
+        clicolor_force: Option<&'static str>,
+    ) -> AnsiEnv<'static> {
         AnsiEnv {
             no_color: no_color.map(OsStr::new),
-            ..AnsiEnv::default()
+            force_color: force_color.map(OsStr::new),
+            clicolor_force: clicolor_force.map(OsStr::new),
         }
     }
 
-    #[test]
-    fn ansi_is_enabled_for_terminal_output() {
-        assert!(should_use_ansi(AnsiMode::Auto, true, env(None)));
+    #[rstest]
+    #[case::terminal(AnsiMode::Auto, true, env(None, None, None), true)]
+    #[case::non_terminal(AnsiMode::Auto, false, env(None, None, None), false)]
+    #[case::no_color(AnsiMode::Auto, true, env(Some("1"), None, None), false)]
+    #[case::empty_no_color(AnsiMode::Auto, true, env(Some(""), None, None), true)]
+    #[case::force_color(AnsiMode::Auto, false, env(None, Some("1"), None), true)]
+    #[case::force_color_zero(AnsiMode::Auto, false, env(None, Some("0"), None), false)]
+    #[case::empty_force_color(AnsiMode::Auto, false, env(None, Some(""), None), false)]
+    #[case::clicolor_force(AnsiMode::Auto, false, env(None, None, Some("1")), true)]
+    #[case::clicolor_force_zero(AnsiMode::Auto, false, env(None, None, Some("0")), false)]
+    #[case::empty_clicolor_force(AnsiMode::Auto, false, env(None, None, Some("")), false)]
+    #[case::no_color_over_force_color(
+        AnsiMode::Auto,
+        false,
+        env(Some("1"), Some("1"), None),
+        false
+    )]
+    #[case::no_color_over_clicolor_force(
+        AnsiMode::Auto,
+        false,
+        env(Some("1"), None, Some("1")),
+        false
+    )]
+    #[case::always_non_terminal(AnsiMode::Always, false, env(None, None, None), true)]
+    #[case::always_over_no_color(AnsiMode::Always, true, env(Some("1"), None, None), true)]
+    #[case::never_terminal(AnsiMode::Never, true, env(None, None, None), false)]
+    #[case::never_over_force_color(AnsiMode::Never, false, env(None, Some("1"), Some("1")), false)]
+    fn should_use_ansi_decision(
+        #[case] mode: AnsiMode,
+        #[case] is_terminal: bool,
+        #[case] env: AnsiEnv<'static>,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(should_use_ansi(mode, is_terminal, env), expected);
+    }
+
+    #[rstest]
+    #[case::auto("ansi: auto", AnsiMode::Auto)]
+    #[case::always("ansi: always", AnsiMode::Always)]
+    #[case::never("ansi: never", AnsiMode::Never)]
+    #[case::default("{}", AnsiMode::Auto)]
+    fn ansi_mode_deserializes(#[case] yaml: &str, #[case] expected: AnsiMode) {
+        let logging: Logging = serde_yaml::from_str(yaml).expect("valid logging config");
+        assert_eq!(logging.ansi, expected);
     }
 
     #[test]
-    fn ansi_is_disabled_for_non_terminal_output() {
-        assert!(!should_use_ansi(AnsiMode::Auto, false, env(None)));
-    }
-
-    #[test]
-    fn ansi_is_disabled_when_no_color_is_set() {
-        assert!(!should_use_ansi(AnsiMode::Auto, true, env(Some("1"))));
-    }
-
-    #[test]
-    fn ansi_is_enabled_when_no_color_is_empty() {
-        assert!(should_use_ansi(AnsiMode::Auto, true, env(Some(""))));
-    }
-
-    #[test]
-    fn ansi_is_enabled_for_non_terminal_when_force_color_is_set() {
-        let env = AnsiEnv {
-            force_color: Some(OsStr::new("1")),
-            ..AnsiEnv::default()
-        };
-        assert!(should_use_ansi(AnsiMode::Auto, false, env));
-    }
-
-    #[test]
-    fn ansi_is_enabled_for_non_terminal_when_clicolor_force_is_set() {
-        let env = AnsiEnv {
-            clicolor_force: Some(OsStr::new("1")),
-            ..AnsiEnv::default()
-        };
-        assert!(should_use_ansi(AnsiMode::Auto, false, env));
-    }
-
-    #[test]
-    fn force_color_of_zero_does_not_force_ansi_on() {
-        let env = AnsiEnv {
-            force_color: Some(OsStr::new("0")),
-            ..AnsiEnv::default()
-        };
-        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
-    }
-
-    #[test]
-    fn force_color_of_empty_string_does_not_force_ansi_on() {
-        let env = AnsiEnv {
-            force_color: Some(OsStr::new("")),
-            ..AnsiEnv::default()
-        };
-        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
-    }
-
-    #[test]
-    fn no_color_takes_precedence_over_force_color() {
-        let env = AnsiEnv {
-            no_color: Some(OsStr::new("1")),
-            force_color: Some(OsStr::new("1")),
-            ..AnsiEnv::default()
-        };
-        assert!(!should_use_ansi(AnsiMode::Auto, false, env));
-    }
-
-    #[test]
-    fn always_mode_ignores_terminal_detection_and_no_color() {
-        assert!(should_use_ansi(AnsiMode::Always, false, env(Some("1"))));
-    }
-
-    #[test]
-    fn never_mode_ignores_terminal_detection_and_force_color() {
-        let env = AnsiEnv {
-            force_color: Some(OsStr::new("1")),
-            ..AnsiEnv::default()
-        };
-        assert!(!should_use_ansi(AnsiMode::Never, true, env));
+    fn ansi_mode_rejects_unknown_value() {
+        assert!(serde_yaml::from_str::<Logging>("ansi: sometimes").is_err());
     }
 }
