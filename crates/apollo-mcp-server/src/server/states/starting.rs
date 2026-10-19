@@ -290,20 +290,15 @@ pub(super) async fn serve_http(
     shutdown: CancellationToken,
     signal: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    // Expose the peer socket address so middleware (e.g. the
-    // per-IP rate limiter) can key on the client address.
-    axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async move {
-        tokio::select! {
-            _ = signal => {},
-            _ = shutdown.cancelled() => {},
-        }
-        shutdown.cancel();
-    })
-    .await
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = signal => {},
+                _ = shutdown.cancelled() => {},
+            }
+            shutdown.cancel();
+        })
+        .await
 }
 
 fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
@@ -436,13 +431,9 @@ impl ListenerBuilder {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use axum::{
         body::Body,
-        extract::ConnectInfo,
         http::{Request, StatusCode},
-        routing::get,
     };
     use http::HeaderMap;
     use tower::ServiceExt;
@@ -518,36 +509,6 @@ mod tests {
         ));
         let running = starting.start();
         assert!(running.await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn streamable_http_supplies_connect_info() {
-        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .await
-            .unwrap();
-        let address = listener.local_addr().unwrap();
-        let cancellation = CancellationToken::new();
-        let router = axum::Router::new().route(
-            "/",
-            get(|ConnectInfo(peer): ConnectInfo<SocketAddr>| async move { peer.ip().to_string() }),
-        );
-        let server = tokio::spawn(serve_http(
-            listener,
-            router,
-            cancellation.clone(),
-            std::future::pending(),
-        ));
-
-        let body = reqwest::get(format!("http://{address}"))
-            .await
-            .unwrap()
-            .text()
-            .await
-            .unwrap();
-        cancellation.cancel();
-        server.await.unwrap().unwrap();
-
-        assert_eq!(body, Ipv4Addr::LOCALHOST.to_string());
     }
 
     #[tokio::test]

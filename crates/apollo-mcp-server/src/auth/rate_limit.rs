@@ -1,18 +1,21 @@
-//! Credential and peer rate limiting applied before OAuth token validation.
+//! Per-credential rate limiting applied before OAuth token validation.
 //!
-//! A low per-credential limit isolates clients that reuse one bearer token,
-//! including clients sharing a reverse proxy. A higher per-peer safety fuse
-//! bounds clients that rotate fabricated credentials. Both layers run before
-//! JWT parsing or JWKS work.
+//! Each bearer credential gets its own token bucket, so one client that
+//! replays a token cannot make the server validate it more than a fixed
+//! number of times per second. The check runs before JWT parsing or JWKS work.
+//!
+//! There is no per-peer limit. Behind a reverse proxy or load balancer the
+//! connection address identifies the proxy, not the client, so keying on it
+//! would make unrelated clients share one bucket. A per-client limit that
+//! understands trusted proxies is planned as a follow-up.
 
 use std::collections::{HashMap, hash_map::RandomState};
 use std::hash::{BuildHasher, Hash};
-use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{ConnectInfo, Request, State},
+    extract::{Request, State},
     http::{StatusCode, header::AUTHORIZATION},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -27,17 +30,14 @@ use super::log_throttle::LogThrottle;
 
 const CREDENTIAL_REQUESTS_PER_SECOND: u32 = 10;
 const CREDENTIAL_BURST: u32 = 50;
-const PEER_REQUESTS_PER_SECOND: u32 = 500;
-const PEER_BURST: u32 = 1_000;
 
-/// Hard cap on keys tracked by each limiter. When a map is full and a new
-/// key arrives, fully-refilled buckets are evicted. If the map remains full,
-/// the new key is allowed untracked so the limiter cannot become the denial
-/// of service. The other limiter still applies independently.
+/// Hard cap on tracked keys. When the map is full and a new key arrives,
+/// fully-refilled buckets are evicted. If the map remains full, the new key
+/// is allowed untracked so the limiter cannot become the denial of service.
 const MAX_TRACKED_KEYS: usize = 50_000;
 
-/// Minimum time between eviction sweeps for each map. This prevents key churn
-/// from forcing an O(n) scan on every request.
+/// Minimum time between eviction sweeps. This prevents key churn from forcing
+/// an O(n) scan on every request.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy)]
@@ -138,14 +138,6 @@ where
         }
     }
 
-    fn refund(&self, key: K, now: Instant) {
-        let mut state = self.buckets.lock();
-        if let Some(bucket) = state.map.get_mut(&key) {
-            refill(bucket, self.rate, self.burst, now);
-            bucket.tokens = (bucket.tokens + 1.0).min(self.burst);
-        }
-    }
-
     #[cfg(test)]
     fn tracked_keys(&self) -> usize {
         self.buckets.lock().map.len()
@@ -160,17 +152,17 @@ fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
     bucket.last_refill = now;
 }
 
+/// Which limiter produced an event. Recorded as the `rate_limit_kind`
+/// metric attribute so a future per-peer limiter can share the counters.
 #[derive(Clone, Copy)]
 enum RejectionKind {
     Credential,
-    Peer,
 }
 
 impl RejectionKind {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Credential => "credential",
-            Self::Peer => "peer",
         }
     }
 }
@@ -178,10 +170,7 @@ impl RejectionKind {
 #[derive(Default)]
 struct RateLimitReporter {
     credential: LogThrottle,
-    peer: LogThrottle,
     credential_capacity: LogThrottle,
-    peer_capacity: LogThrottle,
-    missing_peer: LogThrottle,
 }
 
 impl RateLimitReporter {
@@ -199,22 +188,12 @@ impl RateLimitReporter {
 
         let window = match kind {
             RejectionKind::Credential => &self.credential,
-            RejectionKind::Peer => &self.peer,
         };
         if let Some(suppressed) = window.record(now) {
             tracing::warn!(
                 rate_limit_kind = kind.as_str(),
                 suppressed,
                 "request rate limited"
-            );
-        }
-    }
-
-    fn record_missing_peer(&self, now: Instant) {
-        if let Some(suppressed) = self.missing_peer.record(now) {
-            tracing::error!(
-                suppressed,
-                "rate limiter could not determine peer address; peer safety fuse skipped"
             );
         }
     }
@@ -233,7 +212,6 @@ impl RateLimitReporter {
 
         let window = match kind {
             RejectionKind::Credential => &self.credential_capacity,
-            RejectionKind::Peer => &self.peer_capacity,
         };
         if let Some(suppressed) = window.record(now) {
             tracing::error!(
@@ -246,43 +224,36 @@ impl RateLimitReporter {
     }
 }
 
-/// Shared state for both rate-limit layers.
+/// Shared state for the rate-limit layer.
 #[derive(Clone)]
 pub(crate) struct RateLimitState {
     credential_limiter: Arc<KeyedRateLimiter<u64>>,
-    peer_limiter: Arc<KeyedRateLimiter<IpAddr>>,
     credential_hasher: RandomState,
     reporter: Arc<RateLimitReporter>,
 }
 
 impl RateLimitState {
     pub(crate) fn new() -> Self {
-        Self::with_limits(
-            Limits::new(CREDENTIAL_REQUESTS_PER_SECOND, CREDENTIAL_BURST),
-            Limits::new(PEER_REQUESTS_PER_SECOND, PEER_BURST),
-        )
+        Self::with_limits(Limits::new(
+            CREDENTIAL_REQUESTS_PER_SECOND,
+            CREDENTIAL_BURST,
+        ))
     }
 
-    fn with_limits(credential: Limits, peer: Limits) -> Self {
+    fn with_limits(credential: Limits) -> Self {
         Self {
             credential_limiter: Arc::new(KeyedRateLimiter::new(credential)),
-            peer_limiter: Arc::new(KeyedRateLimiter::new(peer)),
             credential_hasher: RandomState::new(),
             reporter: Arc::new(RateLimitReporter::default()),
         }
     }
 
     #[cfg(test)]
-    pub(super) fn for_test(
-        credential_requests_per_second: u32,
-        credential_burst: u32,
-        peer_requests_per_second: u32,
-        peer_burst: u32,
-    ) -> Self {
-        Self::with_limits(
-            Limits::new(credential_requests_per_second, credential_burst),
-            Limits::new(peer_requests_per_second, peer_burst),
-        )
+    pub(super) fn for_test(credential_requests_per_second: u32, credential_burst: u32) -> Self {
+        Self::with_limits(Limits::new(
+            credential_requests_per_second,
+            credential_burst,
+        ))
     }
 }
 
@@ -304,54 +275,30 @@ fn too_many_requests() -> Response {
         .into_response()
 }
 
-/// Enforces the bearer-credential limit followed by the aggregate peer fuse.
-/// Credential-rejected requests do not consume the proxy's shared peer budget.
-/// Requests without a bearer credential are subject only to the peer fuse
-/// because rejecting them in OAuth middleware is inexpensive.
+/// Enforces the bearer-credential limit. Requests without a bearer credential
+/// pass through; the OAuth middleware decides them (401, or admitted by a
+/// `skip_token_validation` rule) without any token validation.
 pub(crate) async fn rate_limit(
     State(state): State<RateLimitState>,
     request: Request,
     next: Next,
 ) -> Response {
+    let Some(fingerprint) = credential_fingerprint(&request, &state.credential_hasher) else {
+        return next.run(request).await;
+    };
+
     let now = Instant::now();
-    let fingerprint = credential_fingerprint(&request, &state.credential_hasher);
-
-    if let Some(fingerprint) = fingerprint {
-        match state.credential_limiter.check(fingerprint, now) {
-            LimitOutcome::Allowed => {}
-            LimitOutcome::Rejected => {
-                state
-                    .reporter
-                    .record_rejection(RejectionKind::Credential, now);
-                return too_many_requests();
-            }
-            LimitOutcome::AllowedUntracked => state
+    match state.credential_limiter.check(fingerprint, now) {
+        LimitOutcome::Allowed => {}
+        LimitOutcome::Rejected => {
+            state
                 .reporter
-                .record_capacity_exhausted(RejectionKind::Credential, now),
+                .record_rejection(RejectionKind::Credential, now);
+            return too_many_requests();
         }
-    }
-
-    let peer = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|connect_info| connect_info.0.ip().to_canonical());
-
-    if let Some(peer) = peer {
-        match state.peer_limiter.check(peer, now) {
-            LimitOutcome::Allowed => {}
-            LimitOutcome::Rejected => {
-                if let Some(fingerprint) = fingerprint {
-                    state.credential_limiter.refund(fingerprint, now);
-                }
-                state.reporter.record_rejection(RejectionKind::Peer, now);
-                return too_many_requests();
-            }
-            LimitOutcome::AllowedUntracked => state
-                .reporter
-                .record_capacity_exhausted(RejectionKind::Peer, now),
-        }
-    } else {
-        state.reporter.record_missing_peer(now);
+        LimitOutcome::AllowedUntracked => state
+            .reporter
+            .record_capacity_exhausted(RejectionKind::Credential, now),
     }
 
     next.run(request).await
@@ -504,47 +451,44 @@ mod tests {
         use axum::{
             Router,
             body::Body,
-            extract::ConnectInfo,
             http::{Request, StatusCode, header::AUTHORIZATION},
             middleware::from_fn_with_state,
             routing::get,
         };
-        use std::net::SocketAddr;
         use tower::ServiceExt;
 
-        fn app(credential: (u32, u32), peer: (u32, u32)) -> Router {
-            let state = RateLimitState::for_test(credential.0, credential.1, peer.0, peer.1);
+        fn app(requests_per_second: u32, burst: u32) -> Router {
+            let state = RateLimitState::for_test(requests_per_second, burst);
             Router::new()
                 .route("/test", get(|| async { "ok" }))
                 .layer(from_fn_with_state(state, rate_limit))
         }
 
-        fn request(peer: Option<&str>, credential: Option<&str>) -> Request<Body> {
+        fn request(authorization: Option<&str>) -> Request<Body> {
             let mut request = Request::builder().uri("/test").body(Body::empty()).unwrap();
-            if let Some(peer) = peer {
-                let address = SocketAddr::new(peer.parse().unwrap(), 12_345);
-                request.extensions_mut().insert(ConnectInfo(address));
-            }
-            if let Some(credential) = credential {
-                request.headers_mut().insert(
-                    AUTHORIZATION,
-                    format!("Bearer {credential}").parse().unwrap(),
-                );
+            if let Some(authorization) = authorization {
+                request
+                    .headers_mut()
+                    .insert(AUTHORIZATION, authorization.parse().unwrap());
             }
             request
         }
 
+        fn bearer(token: &str) -> String {
+            format!("Bearer {token}")
+        }
+
         #[tokio::test]
         async fn credential_limit_returns_429_with_retry_after() {
-            let app = app((0, 1), (0, 10));
+            let app = app(0, 1);
             let first = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .oneshot(request(Some(&bearer("token-a"))))
                 .await
                 .unwrap();
             let limited = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .oneshot(request(Some(&bearer("token-a"))))
                 .await
                 .unwrap();
 
@@ -557,144 +501,76 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn credentials_behind_one_peer_are_limited_independently() {
-            let app = app((0, 1), (0, 10));
+        async fn credentials_are_limited_independently() {
+            let app = app(0, 1);
             let first = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .oneshot(request(Some(&bearer("token-a"))))
                 .await
                 .unwrap();
-            let second = app
+            let limited = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
+                .oneshot(request(Some(&bearer("token-a"))))
+                .await
+                .unwrap();
+            let other = app
+                .clone()
+                .oneshot(request(Some(&bearer("token-b"))))
                 .await
                 .unwrap();
 
             assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(second.status(), StatusCode::OK);
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(other.status(), StatusCode::OK);
         }
 
         #[tokio::test]
-        async fn credential_rejections_do_not_consume_shared_peer_budget() {
-            let app = app((0, 1), (0, 2));
+        async fn bearer_scheme_is_case_insensitive_and_whitespace_tolerant() {
+            let app = app(0, 1);
             let first = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
+                .oneshot(request(Some("Bearer token-a")))
                 .await
                 .unwrap();
-            let credential_limited = app
+            let limited = app
                 .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
-                .await
-                .unwrap();
-            let other_credential = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
+                .oneshot(request(Some("bearer  token-a")))
                 .await
                 .unwrap();
 
             assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(credential_limited.status(), StatusCode::TOO_MANY_REQUESTS);
-            assert_eq!(other_credential.status(), StatusCode::OK);
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
         }
 
         #[tokio::test]
-        async fn peer_rejections_do_not_consume_credential_budget() {
-            let app = app((0, 1), (0, 1));
-            let first = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-a")))
-                .await
-                .unwrap();
-            let peer_limited = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-b")))
-                .await
-                .unwrap();
-            let same_credential_from_other_peer = app
-                .clone()
-                .oneshot(request(Some("10.0.0.2"), Some("token-b")))
-                .await
-                .unwrap();
-
-            assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(peer_limited.status(), StatusCode::TOO_MANY_REQUESTS);
-            assert_eq!(same_credential_from_other_peer.status(), StatusCode::OK);
+        async fn requests_without_bearer_credentials_pass_through() {
+            let app = app(0, 1);
+            for authorization in [
+                None,
+                Some("Basic dXNlcjpwYXNz"),
+                Some("token-without-scheme"),
+            ] {
+                for _ in 0..3 {
+                    let response = app.clone().oneshot(request(authorization)).await.unwrap();
+                    assert_eq!(response.status(), StatusCode::OK, "{authorization:?}");
+                }
+            }
         }
 
         #[tokio::test]
-        async fn rotating_credentials_hit_peer_fuse() {
-            let app = app((0, 10), (0, 2));
-            for credential in ["token-a", "token-b"] {
+        async fn rotating_credentials_each_get_a_fresh_bucket() {
+            // Known gap: with no per-peer limit, a client that invents a new
+            // token per request is never limited here. Each token still costs
+            // one bounded validation, and the kid-miss JWKS guard still applies.
+            let app = app(0, 1);
+            for token in ["token-a", "token-b", "token-c"] {
                 let response = app
                     .clone()
-                    .oneshot(request(Some("10.0.0.1"), Some(credential)))
+                    .oneshot(request(Some(&bearer(token))))
                     .await
                     .unwrap();
-                assert_eq!(response.status(), StatusCode::OK);
+                assert_eq!(response.status(), StatusCode::OK, "{token}");
             }
-
-            let limited = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), Some("token-c")))
-                .await
-                .unwrap();
-            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-        }
-
-        #[tokio::test]
-        async fn forwarded_for_does_not_split_peer_fuse() {
-            let app = app((0, 10), (0, 1));
-            let mut first = request(Some("10.0.0.1"), Some("token-a"));
-            first
-                .headers_mut()
-                .insert("x-forwarded-for", "198.51.100.4".parse().unwrap());
-            let mut second = request(Some("10.0.0.1"), Some("token-b"));
-            second
-                .headers_mut()
-                .insert("x-forwarded-for", "198.51.100.5".parse().unwrap());
-
-            let first = app.clone().oneshot(first).await.unwrap();
-            let limited = app.clone().oneshot(second).await.unwrap();
-
-            assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-        }
-
-        #[tokio::test]
-        async fn missing_peer_still_uses_credential_limit() {
-            let app = app((0, 1), (0, 1));
-            let first = app
-                .clone()
-                .oneshot(request(None, Some("token-a")))
-                .await
-                .unwrap();
-            let limited = app
-                .clone()
-                .oneshot(request(None, Some("token-a")))
-                .await
-                .unwrap();
-
-            assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-        }
-
-        #[tokio::test]
-        async fn requests_without_bearer_credentials_use_peer_fuse() {
-            let app = app((0, 1), (0, 1));
-            let first = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), None))
-                .await
-                .unwrap();
-            let limited = app
-                .clone()
-                .oneshot(request(Some("10.0.0.1"), None))
-                .await
-                .unwrap();
-
-            assert_eq!(first.status(), StatusCode::OK);
-            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
         }
     }
 }

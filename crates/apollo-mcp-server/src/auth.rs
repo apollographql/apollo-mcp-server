@@ -3252,35 +3252,25 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
     mod rate_limit_integration {
         use super::*;
-        use axum::extract::ConnectInfo;
-        use std::net::SocketAddr;
 
-        fn request_from(ip: &str) -> Request<Body> {
-            let mut req = Request::builder().uri("/test").body(Body::empty()).unwrap();
-            let addr: SocketAddr = format!("{ip}:12345").parse().unwrap();
-            req.extensions_mut().insert(ConnectInfo(addr));
+        fn request_with_token(uri: &str) -> Request<Body> {
+            let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
             req.headers_mut()
                 .insert(AUTHORIZATION, "Bearer invalid-token".parse().unwrap());
             req
         }
 
         fn rate_limited_app() -> Router {
-            rate_limited_app_with(rate_limit::RateLimitState::for_test(0, 1, 0, 10))
-        }
-
-        fn rate_limited_app_with(state: rate_limit::RateLimitState) -> Router {
             let config = test_config();
             let base = Router::new().route("/test", get(|| async { "ok" }));
             config
-                .enable_middleware_with_rate_limit_state(base, HashMap::new(), true, state)
+                .enable_middleware_with_rate_limit_state(
+                    base,
+                    HashMap::new(),
+                    true,
+                    rate_limit::RateLimitState::for_test(0, 1),
+                )
                 .unwrap()
-        }
-
-        fn anonymous_request(uri: &str) -> Request<Body> {
-            let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
-            let addr: SocketAddr = "203.0.113.7:12345".parse().unwrap();
-            req.extensions_mut().insert(ConnectInfo(addr));
-            req
         }
 
         #[tokio::test]
@@ -3288,12 +3278,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let app = rate_limited_app();
             let first = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request_with_token("/test"))
                 .await
                 .unwrap();
             let limited = app
                 .clone()
-                .oneshot(request_from("203.0.113.7"))
+                .oneshot(request_with_token("/test"))
                 .await
                 .unwrap();
 
@@ -3305,29 +3295,29 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
         #[tokio::test]
         async fn metadata_endpoint_not_rate_limited() {
-            // Peer fuse of one request. The same peer is limited on a
+            // One-request credential bucket. The same token is limited on a
             // protected route but never on the metadata route.
-            let app = rate_limited_app_with(rate_limit::RateLimitState::for_test(0, 1, 0, 1));
+            let app = rate_limited_app();
             let metadata = "/.well-known/oauth-protected-resource";
 
             let first = app
                 .clone()
-                .oneshot(anonymous_request(metadata))
+                .oneshot(request_with_token(metadata))
                 .await
                 .unwrap();
             let second = app
                 .clone()
-                .oneshot(anonymous_request(metadata))
+                .oneshot(request_with_token(metadata))
                 .await
                 .unwrap();
             let protected = app
                 .clone()
-                .oneshot(anonymous_request("/test"))
+                .oneshot(request_with_token("/test"))
                 .await
                 .unwrap();
             let protected_again = app
                 .clone()
-                .oneshot(anonymous_request("/test"))
+                .oneshot(request_with_token("/test"))
                 .await
                 .unwrap();
 

@@ -1,5 +1,29 @@
 # OAuth rate-limit benchmark and rollout plan
 
+## Decision record
+
+**2026-10-19.** The per-peer safety fuse was removed from this change before
+merge. The shipped limiter keys on the bearer credential only.
+
+- Step 2 of this plan ran on 2026-10-16. One hot-cache invalid-signature RS256
+  validation costs 158.7 µs of CPU in a release build on one Linux vCPU, so the
+  proposed 500 requests/second peer fuse bounded one peer at about 8% of a vCPU
+  and sat about 12x below process saturation. A production-like tracing
+  subscriber added no measurable cost once the log throttle engaged.
+- In the recommended Kubernetes deployment the connection address is the
+  ingress or node, not the client. A per-peer fuse keyed on it would be shared
+  by every client behind that address, and one credential-less client could
+  exhaust it for the others. The protection it added did not justify that.
+- A per-client limit that understands trusted proxies is the planned follow-up,
+  once production metrics show what proxy setups and CPU limits customers run.
+
+Everything below this section was written for the two-layer design: the
+purpose, the deliverables, Steps 3 through 6, Phase 2, the result record
+template, and the final checklist. It is kept unchanged as the reference for
+the trusted-proxy follow-up and should be read as that follow-up's plan, not
+as open pre-merge work for this change. For this change, the pre-merge gate is
+the credential limiter's own tests plus the Step 2 result above.
+
 ## Purpose
 
 This document is the implementation plan for validating and tuning the fixed OAuth rate-limit defaults before broad release. It is intentionally detailed enough for an engineer or an LLM coding agent to generate the benchmark harness, run it safely, interpret the results, and carry the work through post-merge validation.
@@ -27,20 +51,21 @@ At the time this plan was written, the rate limiter is implemented in:
 - `crates/apollo-mcp-server/src/auth.rs`
 - `crates/apollo-mcp-server/src/auth/valid_token.rs`
 
-The fixed, process-local defaults are:
+The fixed, process-local default is:
 
 | Layer | Sustained rate | Burst | Key |
 | --- | ---: | ---: | --- |
 | Credential | 10 requests/second | 50 requests | Process-randomized bearer-token fingerprint |
-| Peer safety fuse | 500 requests/second | 1,000 requests | Direct connection peer IP |
 
-The peer fuse deliberately ignores forwarded client-IP headers. All traffic through one reverse proxy, load balancer, or shared NAT therefore shares a single peer bucket. Distinct bearer credentials still have independent credential buckets.
+The peer safety fuse this plan was written around (500 requests/second, burst
+1,000, keyed on the direct connection peer IP) was removed before merge. See the
+decision record at the top of this document.
 
-Both bucket maps are capped at 50,000 entries. A new key fails open when its map is full and no idle bucket can be evicted; the other limiter continues to apply. Rejections and fail-open capacity events are observable through:
+The bucket map is capped at 50,000 entries. A new key fails open when the map is full and no idle bucket can be evicted. Rejections and fail-open capacity events are observable through:
 
 - `apollo.mcp.auth.rate_limit.count`
 - `apollo.mcp.auth.rate_limit.overflow.count`
-- The `apollo.mcp.rate_limit_kind` attribute (`credential` or `peer`)
+- The `apollo.mcp.rate_limit_kind` attribute (currently always `credential`)
 - Warning and error logs emitted immediately, then at most once every 60 seconds per category with a `suppressed` count
 
 Attacker-influenced token-validation warnings use the same 60-second baseline per warning category. This interval is provisional and must be evaluated as part of the pre-merge benchmark.
