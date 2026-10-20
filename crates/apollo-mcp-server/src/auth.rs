@@ -3268,67 +3268,31 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     base,
                     HashMap::new(),
                     true,
-                    rate_limit::RateLimitState::for_test(0, 1),
+                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
                 )
                 .unwrap()
         }
 
-        #[tokio::test]
-        async fn over_limit_returns_429_before_auth() {
-            let app = rate_limited_app();
-            let first = app
-                .clone()
-                .oneshot(request_with_token("/test"))
+        async fn status(app: &Router, uri: &str) -> StatusCode {
+            app.clone()
+                .oneshot(request_with_token(uri))
                 .await
-                .unwrap();
-            let limited = app
-                .clone()
-                .oneshot(request_with_token("/test"))
-                .await
-                .unwrap();
-
-            assert_eq!(
-                (first.status(), limited.status()),
-                (StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS)
-            );
+                .unwrap()
+                .status()
         }
 
         #[tokio::test]
-        async fn metadata_endpoint_not_rate_limited() {
-            // One-request credential bucket. The same token is limited on a
-            // protected route but never on the metadata route.
+        async fn over_limit_returns_429_before_auth_and_metadata_is_exempt() {
+            // One-request credential bucket. The same token is never limited on
+            // the metadata route, then limited on the protected route before
+            // the OAuth middleware validates it.
             let app = rate_limited_app();
             let metadata = "/.well-known/oauth-protected-resource";
 
-            let first = app
-                .clone()
-                .oneshot(request_with_token(metadata))
-                .await
-                .unwrap();
-            let second = app
-                .clone()
-                .oneshot(request_with_token(metadata))
-                .await
-                .unwrap();
-            let protected = app
-                .clone()
-                .oneshot(request_with_token("/test"))
-                .await
-                .unwrap();
-            let protected_again = app
-                .clone()
-                .oneshot(request_with_token("/test"))
-                .await
-                .unwrap();
-
-            assert_eq!(
-                (first.status(), second.status()),
-                (StatusCode::OK, StatusCode::OK)
-            );
-            assert_eq!(
-                (protected.status(), protected_again.status()),
-                (StatusCode::UNAUTHORIZED, StatusCode::TOO_MANY_REQUESTS)
-            );
+            assert_eq!(status(&app, metadata).await, StatusCode::OK);
+            assert_eq!(status(&app, metadata).await, StatusCode::OK);
+            assert_eq!(status(&app, "/test").await, StatusCode::UNAUTHORIZED);
+            assert_eq!(status(&app, "/test").await, StatusCode::TOO_MANY_REQUESTS);
         }
     }
 

@@ -44,19 +44,8 @@ pub(super) trait KeyResolver {
     async fn resolve_key(&self, server: &Url, key_id: &str) -> Option<(Jwk, String)>;
 }
 
-enum TokenValidationWarning<'a> {
-    MissingJwkAlgorithm,
-    UnsupportedJwkAlgorithm(jwk::KeyAlgorithm),
-    MissingAudience,
-    MissingIssuer,
-    IssuerMismatch {
-        token_issuer: &'a str,
-        server_issuer: &'a str,
-    },
-    ValidationFailed(&'a jsonwebtoken::errors::Error),
-}
-
 /// Coalesces attacker-influenced token-validation warnings across requests.
+/// Each kind has its own throttle so noise in one cannot hide another.
 #[derive(Default)]
 pub(super) struct TokenValidationReporter {
     missing_jwk_algorithm: LogThrottle,
@@ -65,62 +54,6 @@ pub(super) struct TokenValidationReporter {
     missing_issuer: LogThrottle,
     issuer_mismatch: LogThrottle,
     validation_failed: LogThrottle,
-}
-
-impl TokenValidationReporter {
-    fn record(&self, warning: TokenValidationWarning<'_>) {
-        let throttle = match &warning {
-            TokenValidationWarning::MissingJwkAlgorithm => &self.missing_jwk_algorithm,
-            TokenValidationWarning::UnsupportedJwkAlgorithm(_) => &self.unsupported_jwk_algorithm,
-            TokenValidationWarning::MissingAudience => &self.missing_audience,
-            TokenValidationWarning::MissingIssuer => &self.missing_issuer,
-            TokenValidationWarning::IssuerMismatch { .. } => &self.issuer_mismatch,
-            TokenValidationWarning::ValidationFailed(_) => &self.validation_failed,
-        };
-        let Some(suppressed) = throttle.record(Instant::now()) else {
-            return;
-        };
-
-        match warning {
-            TokenValidationWarning::MissingJwkAlgorithm => tracing::warn!(
-                validation_warning_kind = "missing_jwk_algorithm",
-                suppressed,
-                "Skipping JWK with no algorithm specified"
-            ),
-            TokenValidationWarning::UnsupportedJwkAlgorithm(algorithm) => tracing::warn!(
-                validation_warning_kind = "unsupported_jwk_algorithm",
-                ?algorithm,
-                suppressed,
-                "Skipping JWT signed by unsupported algorithm"
-            ),
-            TokenValidationWarning::MissingAudience => tracing::warn!(
-                validation_warning_kind = "missing_audience",
-                suppressed,
-                "Token is missing the required `aud` claim"
-            ),
-            TokenValidationWarning::MissingIssuer => tracing::warn!(
-                validation_warning_kind = "missing_issuer",
-                suppressed,
-                "Token is missing the required `iss` claim"
-            ),
-            TokenValidationWarning::IssuerMismatch {
-                token_issuer,
-                server_issuer,
-            } => tracing::warn!(
-                validation_warning_kind = "issuer_mismatch",
-                token_issuer,
-                server_issuer,
-                suppressed,
-                "Token `iss` does not match the issuer of the server that signed it"
-            ),
-            TokenValidationWarning::ValidationFailed(error) => tracing::warn!(
-                validation_warning_kind = "validation_failed",
-                error = %error,
-                suppressed,
-                "Token failed validation"
-            ),
-        }
-    }
 }
 
 /// Validates bearer JWTs against the configured audiences and authorization
@@ -156,13 +89,25 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
 
             let validation = {
                 let Some(alg) = jwk.alg else {
-                    self.reporter
-                        .record(TokenValidationWarning::MissingJwkAlgorithm);
+                    if let Some(suppressed) =
+                        self.reporter.missing_jwk_algorithm.record(Instant::now())
+                    {
+                        tracing::warn!(suppressed, "Skipping JWK with no algorithm specified");
+                    }
                     continue;
                 };
                 let Some(algorithm) = jwt_algorithm(alg) else {
-                    self.reporter
-                        .record(TokenValidationWarning::UnsupportedJwkAlgorithm(alg));
+                    if let Some(suppressed) = self
+                        .reporter
+                        .unsupported_jwk_algorithm
+                        .record(Instant::now())
+                    {
+                        tracing::warn!(
+                            algorithm = ?alg,
+                            suppressed,
+                            "Skipping JWT signed by unsupported algorithm"
+                        );
+                    }
                     continue;
                 };
                 let mut val = Validation::new(algorithm);
@@ -186,8 +131,11 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                     // own audience check when the claim is absent from the raw JWT,
                     // so we enforce it here.
                     if !self.allow_any_audience && token_data.claims.aud.is_empty() {
-                        self.reporter
-                            .record(TokenValidationWarning::MissingAudience);
+                        if let Some(suppressed) =
+                            self.reporter.missing_audience.record(Instant::now())
+                        {
+                            tracing::warn!(suppressed, "Token is missing the required `aud` claim");
+                        }
                         break;
                     }
                     if !self.issuers.is_empty() {
@@ -196,7 +144,14 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         // skips its own issuer check when the claim is absent from the
                         // raw JWT, so we enforce it here.
                         let Some(token_issuer) = token_data.claims.iss.as_deref() else {
-                            self.reporter.record(TokenValidationWarning::MissingIssuer);
+                            if let Some(suppressed) =
+                                self.reporter.missing_issuer.record(Instant::now())
+                            {
+                                tracing::warn!(
+                                    suppressed,
+                                    "Token is missing the required `iss` claim"
+                                );
+                            }
                             break;
                         };
 
@@ -206,11 +161,16 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         // by one configured server from being accepted while claiming
                         // a different configured server's issuer.
                         if discovered_issuer != token_issuer {
-                            self.reporter
-                                .record(TokenValidationWarning::IssuerMismatch {
+                            if let Some(suppressed) =
+                                self.reporter.issuer_mismatch.record(Instant::now())
+                            {
+                                tracing::warn!(
                                     token_issuer,
-                                    server_issuer: &discovered_issuer,
-                                });
+                                    server_issuer = %discovered_issuer,
+                                    suppressed,
+                                    "Token `iss` does not match the issuer of the server that signed it"
+                                );
+                            }
                             break;
                         }
                     }
@@ -219,9 +179,12 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         scopes: token_data.claims.scopes(),
                     });
                 }
-                Err(error) => self
-                    .reporter
-                    .record(TokenValidationWarning::ValidationFailed(&error)),
+                Err(error) => {
+                    if let Some(suppressed) = self.reporter.validation_failed.record(Instant::now())
+                    {
+                        tracing::warn!(error = %error, suppressed, "Token failed validation");
+                    }
+                }
             };
         }
 

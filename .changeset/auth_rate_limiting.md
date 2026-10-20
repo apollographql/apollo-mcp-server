@@ -17,7 +17,7 @@ the client, so a per-IP limit would make unrelated clients share one bucket. A
 per-client limit that understands trusted proxies is planned as a follow-up.
 
 Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and
-capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`, both
-labelled with `rate_limit_kind`. Repeated token-validation warnings are now
-summarised at most once every 60 seconds with a count of suppressed events,
-instead of one log line per failed request.
+capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`.
+Repeated token-validation warnings are now summarised at most once every 60
+seconds with a count of suppressed events, instead of one log line per failed
+request.
