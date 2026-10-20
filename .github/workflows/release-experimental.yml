@@ -46,9 +46,9 @@ jobs:
           git config --global user.name GitHub Actions
           git config user.email github-actions@github.com
 
-      - uses: knope-dev/action@v2.1.0
+      - uses: knope-dev/action@v2.1.2
         with:
-          version: 0.22.1
+          version: 0.23.1
 
       - run: knope prepare-experimental-release --override-version ${{ inputs.version }} --verbose
         env:
