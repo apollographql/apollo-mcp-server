@@ -936,6 +936,7 @@ impl ServerHandler for McpService {
                 record_tool_result(&span, &result);
                 return result.map(Into::into);
             };
+            let owner = request_principal(&context.extensions);
             let mut application = self.application.clone();
             // The worker must not own its runtime: that would keep the task
             // manager alive through its own stored worker on teardown.
@@ -961,7 +962,7 @@ impl ServerHandler for McpService {
                     _ = tokio::time::sleep(tasks.delay()) => {},
                 }
             }
-            match tasks.detach(execution) {
+            match tasks.detach(owner, execution) {
                 Ok(task) => Ok(CallToolResponse::Task(task)),
                 Err(pending) => pending.await.map(Into::into),
             }
@@ -974,50 +975,45 @@ impl ServerHandler for McpService {
     async fn get_task(
         &self,
         request: rmcp::model::GetTaskParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::GetTaskResult, McpError> {
         let tasks = self
             .application
             .tasks
             .as_ref()
             .ok_or_else(McpError::method_not_found::<rmcp::model::GetTaskMethod>)?;
+        let owner = request_principal(&context.extensions);
         tasks
-            .manager()
-            .get_task(&request.task_id)
+            .get(&request.task_id, owner.as_ref())
             .map(rmcp::model::GetTaskResult::new)
-            .map_err(task_lookup_error)
     }
 
     async fn cancel_task(
         &self,
         request: rmcp::model::CancelTaskParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
         let tasks = self
             .application
             .tasks
             .as_ref()
             .ok_or_else(McpError::method_not_found::<rmcp::model::CancelTaskMethod>)?;
-        tasks
-            .manager()
-            .cancel_task(&request.task_id)
-            .map_err(task_lookup_error)
+        let owner = request_principal(&context.extensions);
+        tasks.cancel(&request.task_id, owner.as_ref())
     }
 
     async fn update_task(
         &self,
         request: rmcp::model::UpdateTaskParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
         let tasks = self
             .application
             .tasks
             .as_ref()
             .ok_or_else(McpError::method_not_found::<rmcp::model::UpdateTaskMethod>)?;
-        tasks
-            .manager()
-            .update_task(&request.task_id, request.input_responses)
-            .map_err(task_lookup_error)
+        let owner = request_principal(&context.extensions);
+        tasks.update(&request.task_id, owner.as_ref(), request.input_responses)
     }
 
     async fn list_tools(
@@ -1248,13 +1244,6 @@ impl ServerHandler for McpService {
     }
 }
 
-// rmcp includes the unknown task ID in its error, and logs handler errors at
-// WARN. These lookup methods only fail for missing/expired tasks; keep bearer
-// handles out of both that log path and client-visible diagnostics.
-fn task_lookup_error(_: McpError) -> McpError {
-    McpError::invalid_params("Task not found or expired", None)
-}
-
 // Strip meta before recording: _meta.structuredContent holds the unfiltered
 // @private payload and must not be exported to the span.
 fn record_tool_result(span: &tracing::Span, result: &Result<CallToolResult, McpError>) {
@@ -1265,6 +1254,13 @@ fn record_tool_result(span: &tracing::Span, result: &Result<CallToolResult, McpE
             span.record("apollo.mcp.tool_result", json.as_str());
         }
     }
+}
+
+fn request_principal(extensions: &Extensions) -> Option<crate::auth::Principal> {
+    extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<crate::auth::ValidToken>())
+        .map(|token| token.principal.clone())
 }
 
 fn extract_app_param(extensions: &Extensions) -> Option<String> {

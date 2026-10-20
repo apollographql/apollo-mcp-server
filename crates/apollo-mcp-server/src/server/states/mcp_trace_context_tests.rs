@@ -125,6 +125,7 @@ async fn http_tool_call_with_filter(
                 ..Default::default()
             },
             running.cancellation_token.clone(),
+            false,
         ));
     }
     let runtime = running.tasks.clone();

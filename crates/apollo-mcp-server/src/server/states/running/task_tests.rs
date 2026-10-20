@@ -17,6 +17,7 @@ use tokio_util::task::AbortOnDropHandle;
 use tower::ServiceExt as _;
 
 use super::{test_support::create_test_running_with_operation, *};
+use crate::auth::{Principal, ValidToken};
 use crate::server::states::tasks::TaskRuntime;
 use crate::tasks::TasksConfig;
 
@@ -69,6 +70,10 @@ impl Upstream {
     }
 
     fn running(&self, delay: u64) -> Running {
+        self.running_with_owners(delay, false)
+    }
+
+    fn running_with_owners(&self, delay: u64, require_owner: bool) -> Running {
         let mut running = create_test_running_with_operation(self.endpoint.clone());
         running.enable_output_schema = true;
         running.headers.insert(
@@ -82,6 +87,7 @@ impl Upstream {
                 ..Default::default()
             },
             running.cancellation_token.clone(),
+            require_owner,
         ));
         running
     }
@@ -97,10 +103,22 @@ fn message(method: &str, mut params: Value, tasks: bool) -> Value {
 }
 
 async fn http(running: &Running, method: &str, params: Value, tasks: bool) -> Value {
-    http_at(running, "/mcp", method, params, tasks).await
+    http_at(running, "/mcp", None, method, params, tasks).await
 }
 
-async fn http_at(running: &Running, uri: &str, method: &str, params: Value, tasks: bool) -> Value {
+/// A request the auth middleware has already validated for `principal`.
+async fn http_as(running: &Running, principal: &Principal, method: &str, params: Value) -> Value {
+    http_at(running, "/mcp", Some(principal), method, params, true).await
+}
+
+async fn http_at(
+    running: &Running,
+    uri: &str,
+    principal: Option<&Principal>,
+    method: &str,
+    params: Value,
+    tasks: bool,
+) -> Value {
     // A new handler is constructed on every request: task ownership must be
     // application-wide, not tied to this handler or the response connection.
     let app = running.clone();
@@ -129,6 +147,13 @@ async fn http_at(running: &Running, uri: &str, method: &str, params: Value, task
         .header("x-tenant-id", "tenant-one");
     if let Some(name) = name {
         request = request.header("Mcp-Name", name);
+    }
+    if let Some(principal) = principal {
+        request = request.extension(ValidToken {
+            token: headers::Authorization::bearer("token").unwrap(),
+            scopes: vec![],
+            principal: principal.clone(),
+        });
     }
     let response = service
         .oneshot(
@@ -221,6 +246,46 @@ async fn http_detaches_once_and_preserves_results(#[case] graphql_error: bool) {
 #[rstest::rstest]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
+async fn tasks_are_bound_to_the_creating_principal() {
+    let mut upstream = Upstream::new(json!({"data":{"hello":"world"}})).await;
+    let running = upstream.running_with_owners(0, true);
+    let principal = |subject: &str| Principal {
+        issuer: Some("https://idp.example.com".into()),
+        subject: subject.into(),
+    };
+    let (alice, mallory) = (principal("alice"), principal("mallory"));
+    let handle = http_as(&running, &alice, "tools/call", json!({"name":"Hello"})).await;
+    let id = &handle["result"]["taskId"];
+    upstream.requests.recv().await.unwrap();
+    let unknown = http_as(&running, &mallory, "tasks/get", json!({"taskId":"unknown"})).await;
+    assert!(unknown["error"].is_object());
+    for method in ["tasks/get", "tasks/cancel", "tasks/update"] {
+        let params = json!({"taskId":id,"inputResponses":{}});
+        assert_eq!(
+            http_as(&running, &mallory, method, params).await["error"],
+            unknown["error"],
+            "{method} must not reveal another principal's task"
+        );
+    }
+    upstream.release.add_permits(1);
+    let result = loop {
+        let result = http_as(&running, &alice, "tasks/get", json!({"taskId":id})).await;
+        if result["result"]["status"] != "working" {
+            break result;
+        }
+        tokio::task::yield_now().await;
+    };
+    assert_eq!(result["result"]["status"], "completed");
+    assert_eq!(
+        result["result"]["result"]["structuredContent"]["data"]["hello"],
+        "world"
+    );
+    running.tasks.as_ref().unwrap().shutdown().await;
+}
+
+#[rstest::rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(10))]
 async fn http_cancel_releases_started_upstream_request() {
     let mut upstream = Upstream::new(json!({"data":{"hello":"world"}})).await;
     let running = upstream.running(0);
@@ -243,19 +308,21 @@ async fn http_cancel_releases_started_upstream_request() {
 }
 
 #[rstest::rstest]
-#[case::fast(true, true, 60_000)]
-#[case::disabled(false, true, 0)]
-#[case::unsupported(true, false, 0)]
+#[case::fast(true, true, 60_000, false)]
+#[case::disabled(false, true, 0, false)]
+#[case::unsupported(true, false, 0, false)]
+#[case::tokenless_with_auth(true, true, 0, true)]
 #[tokio::test]
 #[timeout(std::time::Duration::from_secs(10))]
 async fn synchronous_compatibility(
     #[case] enabled: bool,
     #[case] supported: bool,
     #[case] delay: u64,
+    #[case] require_owner: bool,
 ) {
     let upstream = Upstream::new(json!({"data":{"hello":"world"}})).await;
     upstream.release.add_permits(1);
-    let mut running = upstream.running(delay);
+    let mut running = upstream.running_with_owners(delay, require_owner);
     if !enabled {
         running.tasks = None;
     }
@@ -395,6 +462,7 @@ async fn capacity_falls_back_to_same_execution_and_shutdown_releases_upstream() 
             ..Default::default()
         },
         running.cancellation_token.clone(),
+        false,
     ));
     let first = http(&running, "tools/call", json!({"name":"Hello"}), true).await;
     upstream.requests.recv().await.unwrap();
@@ -495,6 +563,7 @@ async fn app_task_keeps_scoped_result_shape() {
     let handle = http_at(
         &running,
         "/mcp?app=TaskApp",
+        None,
         "tools/call",
         json!({"name":"Hello"}),
         true,

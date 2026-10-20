@@ -195,7 +195,16 @@ impl Starting {
             rhai_engine: engine,
             caching: self.config.caching,
             tasks: self.config.tasks.enabled.then(|| {
-                super::tasks::TaskRuntime::new(self.config.tasks, cancellation_token.clone())
+                // With auth, a task belongs to the token identity that created it.
+                let require_owner = matches!(
+                    &self.config.transport,
+                    Transport::StreamableHttp { auth: Some(_), .. }
+                );
+                super::tasks::TaskRuntime::new(
+                    self.config.tasks,
+                    cancellation_token.clone(),
+                    require_owner,
+                )
             }),
         };
 

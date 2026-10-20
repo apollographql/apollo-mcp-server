@@ -15,6 +15,16 @@ use url::Url;
 pub(crate) struct ValidToken {
     pub(crate) token: Authorization<Bearer>,
     pub(crate) scopes: Vec<String>,
+    pub(crate) principal: Principal,
+}
+
+/// The identity a validated token was issued for. Unlike the bearer token, it
+/// stays the same across token refreshes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Default))]
+pub(crate) struct Principal {
+    pub(crate) issuer: Option<String>,
+    pub(crate) subject: String,
 }
 
 impl Deref for ValidToken {
@@ -129,9 +139,14 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                             break;
                         }
                     }
+                    let principal = Principal {
+                        issuer: token_data.claims.iss.clone(),
+                        subject: token_data.claims.sub.clone(),
+                    };
                     return Some(ValidToken {
                         token,
                         scopes: token_data.claims.scopes(),
+                        principal,
                     });
                 }
                 Err(e) => warn!("Token failed validation with error: {e}"),
@@ -249,7 +264,7 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{Claims, KeyResolver, TokenValidator, ValidToken, jwt_algorithm};
+    use super::{Claims, KeyResolver, Principal, TokenValidator, ValidToken, jwt_algorithm};
 
     /// A single upstream server in the stub resolver: its URL, the one
     /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
@@ -589,7 +604,15 @@ mod test {
             TestTokenValidator::single(vec![], vec![], true, (key_id, jwk), server);
 
         let token = jwt.token().to_string();
-        assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
+        let valid = test_validator.validate(jwt).await.unwrap();
+        assert_eq!(valid.0.token(), token);
+        assert_eq!(
+            valid.principal,
+            Principal {
+                issuer: None,
+                subject: "test user".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -780,14 +803,11 @@ mod test {
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
+        let valid = test_validator.validate(jwt).await.expect("valid token");
+        assert_eq!(valid.token.token(), token);
         assert_eq!(
-            test_validator
-                .validate(jwt)
-                .await
-                .expect("valid token")
-                .token
-                .token(),
-            token
+            valid.principal.issuer.as_deref(),
+            Some("https://auth.example.com")
         );
     }
 

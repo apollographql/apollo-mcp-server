@@ -11,7 +11,7 @@ use futures::{FutureExt as _, future::BoxFuture};
 use parking_lot::Mutex;
 use rmcp::{
     ErrorData,
-    model::{CallToolResult, CreateTaskResult},
+    model::{CallToolResult, CreateTaskResult, DetailedTask, InputResponses},
     task_manager::{TaskExit, TaskManager, TaskOptions},
 };
 use tokio_util::{
@@ -19,13 +19,19 @@ use tokio_util::{
     task::{AbortOnDropHandle, TaskTracker},
 };
 
-use crate::tasks::TasksConfig;
+use crate::{auth::Principal, tasks::TasksConfig};
 
 pub(super) type Execution = BoxFuture<'static, Result<CallToolResult, ErrorData>>;
 
-// Admitted task IDs, each mapped to when it stops counting against capacity:
-// `None` while running, then the end of rmcp's terminal-result retention.
-type Slots = Arc<Mutex<HashMap<String, Option<Instant>>>>;
+type Slots = Arc<Mutex<HashMap<String, Slot>>>;
+
+/// An admitted task's owner and capacity reservation.
+struct Slot {
+    owner: Option<Principal>,
+    // When the task stops counting against capacity: `None` while running,
+    // then the end of rmcp's terminal-result retention.
+    until: Option<Instant>,
+}
 
 #[derive(Clone)]
 pub(super) struct TaskRuntime {
@@ -35,6 +41,9 @@ pub(super) struct TaskRuntime {
 
 struct Inner {
     config: TasksConfig,
+    // Set when auth is enabled. A tokenless call stays synchronous: it could
+    // not authenticate the `tasks/*` requests needed to read its result.
+    require_owner: bool,
     manager: TaskManager,
     // Locked across admission and shutdown to serialize them.
     slots: Slots,
@@ -50,10 +59,15 @@ impl Drop for Inner {
 }
 
 impl TaskRuntime {
-    pub(super) fn new(config: TasksConfig, shutdown: CancellationToken) -> Self {
+    pub(super) fn new(
+        config: TasksConfig,
+        shutdown: CancellationToken,
+        require_owner: bool,
+    ) -> Self {
         let stop = shutdown.child_token();
         let inner = Arc::new(Inner {
             config,
+            require_owner,
             manager: TaskManager::new(),
             slots: Slots::default(),
             stop: stop.clone(),
@@ -80,16 +94,24 @@ impl TaskRuntime {
         Duration::from_millis(self.inner.config.detach_after_ms)
     }
 
+    #[cfg(test)]
     pub(super) fn manager(&self) -> &TaskManager {
         &self.inner.manager
     }
 
     /// Return ownership unchanged when admission fails. The caller keeps waiting
     /// on the same execution, including any upstream side effects already begun.
-    pub(super) fn detach(&self, execution: Execution) -> Result<CreateTaskResult, Execution> {
+    pub(super) fn detach(
+        &self,
+        owner: Option<Principal>,
+        execution: Execution,
+    ) -> Result<CreateTaskResult, Execution> {
+        if self.inner.require_owner && owner.is_none() {
+            return Err(execution);
+        }
         let mut slots = self.inner.slots.lock();
         let now = Instant::now();
-        slots.retain(|_, until| until.is_none_or(|until| until > now));
+        slots.retain(|_, slot| slot.until.is_none_or(|until| until > now));
         if self.inner.stop.is_cancelled() || slots.len() >= self.inner.config.max_tasks.get() {
             return Err(execution);
         }
@@ -102,13 +124,13 @@ impl TaskRuntime {
         // worker is accounted for during teardown.
         let task = self.inner.manager.spawn(options, |context| {
             // Created outside the worker so dropping it unpolled still releases.
-            let slot = Slot {
+            let release = Release {
                 slots: self.inner.slots.clone(),
                 id: context.task_id().to_owned(),
                 retention: Duration::from_millis(ttl_ms),
             };
             Box::pin(self.inner.workers.track_future(async move {
-                let _slot = slot;
+                let _release = release;
                 tokio::select! {
                     biased;
                     _ = stop.cancelled() => Err(TaskExit::Cancelled),
@@ -124,8 +146,49 @@ impl TaskRuntime {
         });
         // A finished worker's slot update waits on this lock, so it cannot
         // precede the insert.
-        slots.insert(task.task_id.clone(), None);
+        slots.insert(task.task_id.clone(), Slot { owner, until: None });
         Ok(CreateTaskResult::new(task))
+    }
+
+    pub(super) fn get(
+        &self,
+        task_id: &str,
+        owner: Option<&Principal>,
+    ) -> Result<DetailedTask, ErrorData> {
+        self.owned(task_id, owner, |manager| manager.get_task(task_id))
+    }
+
+    pub(super) fn cancel(&self, task_id: &str, owner: Option<&Principal>) -> Result<(), ErrorData> {
+        self.owned(task_id, owner, |manager| manager.cancel_task(task_id))
+    }
+
+    pub(super) fn update(
+        &self,
+        task_id: &str,
+        owner: Option<&Principal>,
+        responses: InputResponses,
+    ) -> Result<(), ErrorData> {
+        self.owned(task_id, owner, |manager| {
+            manager.update_task(task_id, responses)
+        })
+    }
+
+    fn owned<T>(
+        &self,
+        task_id: &str,
+        owner: Option<&Principal>,
+        lookup: impl FnOnce(&TaskManager) -> Result<T, ErrorData>,
+    ) -> Result<T, ErrorData> {
+        let owned = self
+            .inner
+            .slots
+            .lock()
+            .get(task_id)
+            .is_some_and(|slot| slot.owner.as_ref() == owner);
+        if !owned {
+            return Err(task_lookup_error());
+        }
+        lookup(&self.inner.manager).map_err(|_| task_lookup_error())
     }
 
     pub(super) async fn shutdown(&self) {
@@ -140,18 +203,25 @@ impl TaskRuntime {
     }
 }
 
+// Unknown, expired, and other principals' tasks share one error, so a lookup
+// can't confirm that someone else's task exists. rmcp's own error includes the
+// task ID and is logged at WARN; it must not reach logs or clients.
+fn task_lookup_error() -> ErrorData {
+    ErrorData::invalid_params("Task not found or expired", None)
+}
+
 /// Every worker exit (completion, cancellation, TTL abort) starts the same
 /// retention window rmcp applies to its terminal result.
-struct Slot {
+struct Release {
     slots: Slots,
     id: String,
     retention: Duration,
 }
 
-impl Drop for Slot {
+impl Drop for Release {
     fn drop(&mut self) {
-        if let Some(until) = self.slots.lock().get_mut(&self.id) {
-            *until = Some(Instant::now() + self.retention);
+        if let Some(slot) = self.slots.lock().get_mut(&self.id) {
+            slot.until = Some(Instant::now() + self.retention);
         }
     }
 }
@@ -170,7 +240,15 @@ mod tests {
                 ..Default::default()
             },
             CancellationToken::new(),
+            false,
         )
+    }
+
+    fn principal(issuer: &str, subject: &str) -> Principal {
+        Principal {
+            issuer: Some(issuer.to_string()),
+            subject: subject.to_string(),
+        }
     }
 
     #[rstest::rstest]
@@ -181,10 +259,13 @@ mod tests {
         let dropped = CancellationToken::new();
         let guard = dropped.clone().drop_guard();
         let task = runtime
-            .detach(Box::pin(async move {
-                let _guard = guard;
-                futures::future::pending().await
-            }))
+            .detach(
+                None,
+                Box::pin(async move {
+                    let _guard = guard;
+                    futures::future::pending().await
+                }),
+            )
             .ok()
             .unwrap();
         let callers = (0..10)
@@ -192,7 +273,7 @@ mod tests {
                 let runtime = runtime.clone();
                 tokio::spawn(async move {
                     let execution = runtime
-                        .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                        .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                         .expect_err("at capacity");
                     // Failed admission returns the original future, still executable.
                     assert!(execution.await.is_ok());
@@ -215,14 +296,14 @@ mod tests {
         }
         assert!(
             runtime
-                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_err()
         );
         runtime.shutdown().await;
         assert!(runtime.manager().get_task(&task.task.task_id).is_err());
         assert!(
             runtime
-                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_err()
         );
     }
@@ -237,11 +318,14 @@ mod tests {
         let guard = dropped.clone().drop_guard();
         let ready = started.clone();
         let task = runtime
-            .detach(Box::pin(async move {
-                let _guard = guard;
-                ready.cancel();
-                futures::future::pending().await
-            }))
+            .detach(
+                None,
+                Box::pin(async move {
+                    let _guard = guard;
+                    ready.cancel();
+                    futures::future::pending().await
+                }),
+            )
             .ok()
             .unwrap();
         started.cancelled().await;
@@ -259,7 +343,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
         assert!(
             runtime
-                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_ok()
         );
         runtime.shutdown().await;
@@ -276,11 +360,14 @@ mod tests {
         let ready = started.clone();
         assert!(
             runtime
-                .detach(Box::pin(async move {
-                    let _guard = guard;
-                    ready.cancel();
-                    futures::future::pending().await
-                }))
+                .detach(
+                    None,
+                    Box::pin(async move {
+                        let _guard = guard;
+                        ready.cancel();
+                        futures::future::pending().await
+                    })
+                )
                 .is_ok()
         );
         started.cancelled().await;
@@ -296,10 +383,13 @@ mod tests {
     async fn failures_reach_terminal_state_and_release_capacity(#[case] panic: bool) {
         let runtime = runtime(1, 50);
         let task = runtime
-            .detach(Box::pin(async move {
-                assert!(!panic, "test worker panic");
-                Err(ErrorData::invalid_params("bad input", None))
-            }))
+            .detach(
+                None,
+                Box::pin(async move {
+                    assert!(!panic, "test worker panic");
+                    Err(ErrorData::invalid_params("bad input", None))
+                }),
+            )
             .ok()
             .unwrap();
         loop {
@@ -312,15 +402,63 @@ mod tests {
         }
         assert!(
             runtime
-                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_err()
         );
         tokio::time::sleep(Duration::from_millis(60)).await;
         assert!(
             runtime
-                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_ok()
         );
+        runtime.shutdown().await;
+    }
+
+    #[rstest::rstest]
+    #[tokio::test]
+    #[timeout(Duration::from_secs(10))]
+    async fn tasks_are_visible_only_to_their_owner() {
+        let runtime = TaskRuntime::new(
+            TasksConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            CancellationToken::new(),
+            true,
+        );
+        let execution = runtime
+            .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
+            .expect_err("an owner is required");
+        assert!(execution.await.is_ok());
+
+        let owner = principal("https://idp.example.com", "alice");
+        let task = runtime
+            .detach(Some(owner.clone()), Box::pin(futures::future::pending()))
+            .ok()
+            .unwrap();
+        let id = task.task.task_id.as_str();
+        let unknown = runtime.get("unknown", Some(&owner)).unwrap_err();
+        for other in [
+            None,
+            Some(principal("https://idp.example.com", "mallory")),
+            Some(principal("https://other.example.com", "alice")),
+        ] {
+            let other = other.as_ref();
+            assert_eq!(runtime.get(id, other).unwrap_err(), unknown);
+            assert_eq!(runtime.cancel(id, other).unwrap_err(), unknown);
+            assert_eq!(
+                runtime.update(id, other, Default::default()).unwrap_err(),
+                unknown
+            );
+        }
+        assert_eq!(
+            runtime.get(id, Some(&owner)).unwrap().status(),
+            TaskStatus::Working
+        );
+        runtime
+            .update(id, Some(&owner), Default::default())
+            .unwrap();
+        runtime.cancel(id, Some(&owner)).unwrap();
         runtime.shutdown().await;
     }
 }

@@ -328,7 +328,7 @@ When a call becomes a task, the GraphQL request keeps running in the background 
 
 <Note>
 
-Tasks are held in server memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task. Task IDs act as bearer tokens: any client that passes the endpoint's authentication and knows a task ID can read or cancel that task. Once Tasks is enabled, rmcp's debug and trace logs are suppressed until the process exits, because they include full protocol payloads, task IDs among them.
+Tasks are held in server memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task. With [`auth`](#auth) enabled, only the token identity (issuer and subject) that created a task can read, update, or cancel it, and calls admitted without a token through `skip_token_validation` always respond synchronously. Without `auth`, task IDs act as bearer tokens: any client that knows a task ID can read or cancel that task. Once Tasks is enabled, rmcp's debug and trace logs are suppressed until the process exits, because they include full protocol payloads, task IDs among them.
 
 </Note>
 
