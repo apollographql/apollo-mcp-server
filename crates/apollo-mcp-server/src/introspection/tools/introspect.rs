@@ -78,7 +78,9 @@ impl Introspect {
                 },
             ),
             None => {
-                return Ok(CallToolResult::success(vec![]));
+                return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
+                    "Type `{type_name}` not found in the schema"
+                ))]));
             }
         }
         let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
@@ -308,6 +310,41 @@ mod tests {
         assert!(
             content.contains("type Mutation"),
             "Should contain Mutation type definition"
+        );
+    }
+
+    #[rstest]
+    #[case::unknown("NoSuchType")]
+    #[case::wrong_case("mutation")]
+    #[tokio::test]
+    async fn introspect_unknown_type_returns_error(
+        schema: Arc<RwLock<Valid<Schema>>>,
+        #[case] type_name: &str,
+    ) {
+        let introspect = Introspect::new(
+            schema,
+            Some("Query".to_string()),
+            Some("Mutation".to_string()),
+            false,
+            None,
+        );
+
+        let result = introspect
+            .execute(Input {
+                type_name: type_name.to_string(),
+                depth: 1,
+            })
+            .await
+            .expect("Introspect execution failed");
+
+        assert_eq!(result.is_error, Some(true));
+        assert!(
+            matches!(
+                result.content.as_slice(),
+                [ContentBlock::Text(text)] if text.text.contains(&format!("`{type_name}`"))
+            ),
+            "Error should name the unknown type, got {:?}",
+            result.content
         );
     }
 }
