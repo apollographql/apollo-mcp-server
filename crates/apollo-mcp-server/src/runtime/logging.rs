@@ -320,6 +320,36 @@ mod tests {
         assert_eq!(logging.ansi, expected);
     }
 
+    #[rstest]
+    #[case::auto(AnsiMode::Auto, false)]
+    #[case::always(AnsiMode::Always, true)]
+    #[case::never(AnsiMode::Never, false)]
+    fn log_file_uses_ansi_only_when_always(#[case] ansi: AnsiMode, #[case] expected: bool) {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logging = Logging {
+            path: Some(dir.path().to_path_buf()),
+            ansi,
+            ..Logging::default()
+        };
+        let (layer, guard) =
+            Logging::logging_layer(&logging, ConsoleStream::Stdout).expect("logging layer");
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+            tracing::info!("hello");
+        });
+        drop(guard);
+
+        let file = std::fs::read_dir(dir.path())
+            .expect("log dir")
+            .next()
+            .expect("log file")
+            .expect("dir entry");
+        let contents = std::fs::read_to_string(file.path()).expect("log contents");
+        assert!(contents.contains("hello"));
+        assert_eq!(contents.contains('\x1b'), expected);
+    }
+
     #[test]
     fn ansi_mode_rejects_unknown_value() {
         assert!(serde_yaml::from_str::<Logging>("ansi: sometimes").is_err());
