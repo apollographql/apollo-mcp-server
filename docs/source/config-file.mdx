@@ -42,6 +42,7 @@ All fields are optional.
 | `rhai`            | `Rhai`                |                          | Rhai scripting configuration                                     |
 | `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
 | `server_info`     | `ServerInfo`          |                          | Server metadata configuration                                    |
+| `tasks`           | `Tasks`               |                          | [MCP Tasks](#tasks) configuration                                |
 | `transport`       | `Transport`           |                          | The type of server transport to use                              |
 | `telemetry`       | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
 
@@ -307,6 +308,27 @@ These fields are under the top-level `caching` key. Set `APOLLO_MCP_CACHING__TTL
 <Note>
 
 Clients using `2026-07-28` select the protocol through discovery and per-request metadata. Legacy clients using `initialize` retain their earlier protocol response shape without cache hints.
+
+</Note>
+
+### Tasks
+
+These fields are under the top-level `tasks` key. Each one can be overridden with an environment variable, such as `APOLLO_MCP_TASKS__ENABLED=true`.
+
+| Option | Type | Default | Description |
+| :----- | :--- | :------ | :---------- |
+| `enabled` | `bool` | `false` | Return [MCP Tasks](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) handles for slow GraphQL tool calls. |
+| `detach_after_ms` | `u64` | `1000` | How long a call runs before it returns a task handle instead of its result. `0` returns a handle immediately. |
+| `ttl_ms` | `u64` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. Finished results are kept for another `ttl_ms`. Must be positive. |
+| `max_tasks` | `u64` | `1000` | Maximum number of running and retained tasks. At the limit, new calls run synchronously. Must be positive. |
+
+Tasks apply to operation tools, app tools, and `execute`, including the mutations your configuration allows. Utility tools such as `introspect`, `search`, and `validate` always respond synchronously. So does every call from a client that doesn't declare the `io.modelcontextprotocol/tasks` capability.
+
+When a call becomes a task, the GraphQL request keeps running in the background and isn't sent again. Clients poll `tasks/get` for its status and final result. `tasks/cancel` stops the upstream request but can't undo side effects that the GraphQL API has already performed.
+
+<Note>
+
+Tasks are held in server memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task. Task IDs act as bearer tokens: any client that passes the endpoint's authentication and knows a task ID can read or cancel that task. While Tasks is enabled, rmcp's debug and trace logs are suppressed because they include full protocol payloads, task IDs among them.
 
 </Note>
 

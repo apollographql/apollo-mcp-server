@@ -86,7 +86,7 @@ async fn http_tool_call(
     forward_headers: Vec<String>,
     version: &str,
 ) -> (Vec<SpanData>, HashMap<String, String>) {
-    http_tool_call_with_filter(meta, forward_headers, version, "trace").await
+    http_tool_call_with_filter(meta, forward_headers, version, "trace", false).await
 }
 
 async fn http_tool_call_with_filter(
@@ -94,10 +94,15 @@ async fn http_tool_call_with_filter(
     forward_headers: Vec<String>,
     version: &str,
     filter: &str,
+    tasks: bool,
 ) -> (Vec<SpanData>, HashMap<String, String>) {
     if version == "2026-07-28" {
         meta["io.modelcontextprotocol/protocolVersion"] = json!(version);
-        meta["io.modelcontextprotocol/clientCapabilities"] = json!({});
+        meta["io.modelcontextprotocol/clientCapabilities"] = if tasks {
+            json!({"extensions":{"io.modelcontextprotocol/tasks":{}}})
+        } else {
+            json!({})
+        };
     }
     let spans = ExportedSpans::capture_with_filter(tracing_subscriber::EnvFilter::new(filter));
     let mut graphql = mockito::Server::new_async().await;
@@ -112,6 +117,17 @@ async fn http_tool_call_with_filter(
         .await;
     let mut running = create_test_running_with_operation(graphql.url().parse().unwrap());
     running.forward_headers = forward_headers;
+    if tasks {
+        running.tasks = Some(crate::server::states::tasks::TaskRuntime::new(
+            crate::tasks::TasksConfig {
+                enabled: true,
+                detach_after_ms: 0,
+                ..Default::default()
+            },
+            running.cancellation_token.clone(),
+        ));
+    }
+    let runtime = running.tasks.clone();
     let scripts = tempfile::tempdir().unwrap();
     std::fs::write(
         scripts.path().join("main.rhai"),
@@ -153,7 +169,14 @@ async fn http_tool_call_with_filter(
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    response.into_body().collect().await.unwrap();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    if let Some(runtime) = runtime {
+        assert!(std::str::from_utf8(&body).unwrap().contains("taskId"));
+        while runtime.manager().running_task_count() > 0 {
+            tokio::task::yield_now().await;
+        }
+        runtime.shutdown().await;
+    }
     endpoint.assert_async().await;
     let headers = rx.try_recv().expect("GraphQL request was captured");
     let spans = spans.collect();
@@ -251,7 +274,7 @@ async fn filtered_handler_preserves_request_context(
     #[case] filter: &str,
     #[case] http_span: HttpSpan,
 ) {
-    let (spans, headers) = http_tool_call_with_filter(meta, vec![], version, filter).await;
+    let (spans, headers) = http_tool_call_with_filter(meta, vec![], version, filter, false).await;
     assert!(!spans.iter().any(|span| span.name == "call_tool"));
     let execute = named(&spans, "execute");
     let client = named(&spans, "mcp-graphql-client");
@@ -787,4 +810,33 @@ async fn formatted_handler_logs_retain_http_scope_with_metadata_otel_parent() {
             && line.contains("close")),
         "HTTP close lost accepted session scope: {logs}"
     );
+}
+
+#[rstest::rstest]
+#[case("trace", true)]
+#[case(HANDLER_OFF, false)]
+#[case(STATES_OFF, false)]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(10))]
+async fn detached_tasks_preserve_metadata_and_rhai_context(
+    #[case] filter: &str,
+    #[case] handler_enabled: bool,
+) {
+    let (spans, headers) = http_tool_call_with_filter(
+        json!({"traceparent":TRACEPARENT,"baggage":"source=task"}),
+        vec![],
+        "2026-07-28",
+        filter,
+        true,
+    )
+    .await;
+    let execute = named(&spans, "execute");
+    assert_eq!(execute.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
+    assert_eq!(headers["x-hook-trace-id"], REMOTE_TRACE_ID);
+    assert_eq!(headers["baggage"], "source=task");
+    if handler_enabled {
+        assert_downstream_context(&spans, &headers);
+    } else {
+        assert_eq!(execute.parent_span_id.to_string(), REMOTE_SPAN_ID);
+    }
 }

@@ -206,6 +206,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .maybe_config_validator(config_validator)
         .maybe_instructions(config.instructions)
         .caching(config.caching)
+        .tasks(config.tasks)
         .build())
 }
 

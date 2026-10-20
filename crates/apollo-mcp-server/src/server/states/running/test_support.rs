@@ -91,6 +91,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
         instructions: None,
         rhai_engine: SharedRhaiEngine::new("rhai"),
         caching: Default::default(),
+        tasks: Default::default(),
     }
 }
 

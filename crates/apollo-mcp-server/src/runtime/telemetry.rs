@@ -472,8 +472,17 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
     global::set_text_map_propagator(w3c_text_map_propagator());
     global::set_tracer_provider(tracer_provider.clone());
 
+    // rmcp debug/trace events include complete request and response payloads,
+    // including bearer task IDs. Apply a hard filter rather than an overridable
+    // RUST_LOG directive when the tasks extension is enabled.
+    let tasks_enabled = config.tasks.enabled;
     tracing_subscriber::registry()
         .with(logging_layer)
+        .with(tracing_subscriber::filter::filter_fn(move |metadata| {
+            !tasks_enabled
+                || !metadata.target().starts_with("rmcp")
+                || *metadata.level() <= tracing::Level::INFO
+        }))
         .with(env_filter)
         .with(MetricsLayer::new(meter_provider.clone()))
         .with(OpenTelemetryLayer::new(tracer))
