@@ -1,6 +1,11 @@
 //! Application ownership around rmcp's task state machine.
 
-use std::{collections::HashSet, panic::AssertUnwindSafe, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    panic::AssertUnwindSafe,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use futures::{FutureExt as _, future::BoxFuture};
 use parking_lot::Mutex;
@@ -18,17 +23,21 @@ use crate::tasks::TasksConfig;
 
 pub(super) type Execution = BoxFuture<'static, Result<CallToolResult, ErrorData>>;
 
+// Admitted task IDs, each mapped to when it stops counting against capacity:
+// `None` while running, then the end of rmcp's terminal-result retention.
+type Slots = Arc<Mutex<HashMap<String, Option<Instant>>>>;
+
 #[derive(Clone)]
 pub(super) struct TaskRuntime {
     inner: Arc<Inner>,
-    _sweeper: Arc<AbortOnDropHandle<()>>,
+    _sweeper: Arc<AbortOnDropHandle<Option<()>>>,
 }
 
 struct Inner {
     config: TasksConfig,
     manager: TaskManager,
-    // Serializes admission with shutdown; includes retained terminal results.
-    ids: Mutex<HashSet<String>>,
+    // Locked across admission and shutdown to serialize them.
+    slots: Slots,
     stop: CancellationToken,
     workers: TaskTracker,
 }
@@ -46,32 +55,21 @@ impl TaskRuntime {
         let inner = Arc::new(Inner {
             config,
             manager: TaskManager::new(),
-            ids: Mutex::new(HashSet::new()),
+            slots: Slots::default(),
             stop: stop.clone(),
             workers: TaskTracker::new(),
         });
-        // Spawn only after construction: upgrading a cyclic Arc during its
-        // construction can fail if the sweeper runs on another runtime thread.
         let weak = Arc::downgrade(&inner);
-        let sweeper = tokio::spawn(async move {
+        // rmcp expires tasks only from its own entry points, so abandoned work
+        // needs a periodic call to reach its TTL.
+        let sweeper = tokio::spawn(stop.run_until_cancelled_owned(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
-                tokio::select! {
-                    biased;
-                    _ = stop.cancelled() => {
-                        if let Some(inner) = weak.upgrade() {
-                            inner.ids.lock().clear();
-                            inner.manager.shutdown();
-                        }
-                        break;
-                    }
-                    _ = interval.tick() => {
-                        let Some(inner) = weak.upgrade() else { break };
-                        inner.ids.lock().retain(|id| inner.manager.get_task(id).is_ok());
-                    }
-                }
+                interval.tick().await;
+                let Some(inner) = weak.upgrade() else { break };
+                inner.manager.running_task_count();
             }
-        });
+        }));
         Self {
             inner,
             _sweeper: Arc::new(AbortOnDropHandle::new(sweeper)),
@@ -89,19 +87,28 @@ impl TaskRuntime {
     /// Return ownership unchanged when admission fails. The caller keeps waiting
     /// on the same execution, including any upstream side effects already begun.
     pub(super) fn detach(&self, execution: Execution) -> Result<CreateTaskResult, Execution> {
-        let mut ids = self.inner.ids.lock();
-        ids.retain(|id| self.inner.manager.get_task(id).is_ok());
-        if self.inner.stop.is_cancelled() || ids.len() >= self.inner.config.max_tasks.get() {
+        let mut slots = self.inner.slots.lock();
+        let now = Instant::now();
+        slots.retain(|_, until| until.is_none_or(|until| until > now));
+        if self.inner.stop.is_cancelled() || slots.len() >= self.inner.config.max_tasks.get() {
             return Err(execution);
         }
         let stop = self.inner.stop.clone();
+        let ttl_ms = self.inner.config.ttl_ms.get();
         let options = TaskOptions::new()
-            .with_ttl_ms(self.inner.config.ttl_ms.get())
+            .with_ttl_ms(ttl_ms)
             .with_poll_interval_ms(1_000);
         // Tracking is established before spawn, so even an unpolled/aborted
         // worker is accounted for during teardown.
         let task = self.inner.manager.spawn(options, |context| {
+            // Created outside the worker so dropping it unpolled still releases.
+            let slot = Slot {
+                slots: self.inner.slots.clone(),
+                id: context.task_id().to_owned(),
+                retention: Duration::from_millis(ttl_ms),
+            };
             Box::pin(self.inner.workers.track_future(async move {
+                let _slot = slot;
                 tokio::select! {
                     biased;
                     _ = stop.cancelled() => Err(TaskExit::Cancelled),
@@ -115,19 +122,37 @@ impl TaskRuntime {
                 }
             }))
         });
-        ids.insert(task.task_id.clone());
+        // A finished worker's slot update waits on this lock, so it cannot
+        // precede the insert.
+        slots.insert(task.task_id.clone(), None);
         Ok(CreateTaskResult::new(task))
     }
 
     pub(super) async fn shutdown(&self) {
         self.inner.stop.cancel();
         {
-            let mut ids = self.inner.ids.lock();
+            let mut slots = self.inner.slots.lock();
             self.inner.manager.shutdown();
-            ids.clear();
+            slots.clear();
         }
         self.inner.workers.close();
         self.inner.workers.wait().await;
+    }
+}
+
+/// Every worker exit (completion, cancellation, TTL abort) starts the same
+/// retention window rmcp applies to its terminal result.
+struct Slot {
+    slots: Slots,
+    id: String,
+    retention: Duration,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        if let Some(until) = self.slots.lock().get_mut(&self.id) {
+            *until = Some(Instant::now() + self.retention);
+        }
     }
 }
 
@@ -268,8 +293,8 @@ mod tests {
     #[case::panic(true)]
     #[tokio::test]
     #[timeout(Duration::from_secs(10))]
-    async fn failures_reach_terminal_state(#[case] panic: bool) {
-        let runtime = runtime(1, 300_000);
+    async fn failures_reach_terminal_state_and_release_capacity(#[case] panic: bool) {
+        let runtime = runtime(1, 50);
         let task = runtime
             .detach(Box::pin(async move {
                 assert!(!panic, "test worker panic");
@@ -285,6 +310,17 @@ mod tests {
             }
             tokio::task::yield_now().await;
         }
+        assert!(
+            runtime
+                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .is_err()
+        );
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        assert!(
+            runtime
+                .detach(Box::pin(async { Ok(CallToolResult::default()) }))
+                .is_ok()
+        );
         runtime.shutdown().await;
     }
 }
