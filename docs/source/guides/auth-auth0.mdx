@@ -47,7 +47,7 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
 
 1. Navigate to **Settings** -> **Advanced**. Changes to the toggles on this tab take effect immediately.
 1. Toggle on **Resource Parameter Compatibility Profile**. MCP clients identify your MCP server with the standard `resource` parameter, but by default Auth0 only reads its own `audience` parameter. With this profile, Auth0 uses `resource` when a request has no `audience`, so it issues a JWT for your API.
-1. Toggle on **Client ID Metadata Document (CIMD) Registration**. With CIMD, an MCP client uses an HTTPS URL as its client ID, and Auth0 fetches the client's metadata from that URL. The MCP specification recommends CIMD.
+1. Toggle on **Client ID Metadata Document (CIMD) Registration**. With CIMD, an MCP client uses an HTTPS URL as its client ID, and that URL hosts the client's metadata. The MCP specification recommends CIMD. Auth0 only accepts CIMD clients that you import first. For more information, see [Import CIMD clients](#import-cimd-clients).
 1. Toggle on **Dynamic Client Registration (DCR)** and keep **Dynamic Client Registration (DCR) Security Mode** set to **Strict**, which Auth0 recommends. DCR lets a client register itself and get a new client ID. 
   - You should select the registration mechanism your MCP clients support. MCP Inspector uses DCR unless you configure a CIMD metadata URL for it. `mcp-remote` supports only DCR. For more information, see the Auth0 documentation on [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
 
@@ -60,6 +60,19 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
 You don't need to set a tenant-wide **Default Audience** under **Settings** -> **General**. A default audience applies to every authorization request in the tenant, which can change the behavior of your other applications. The Resource Parameter Compatibility Profile scopes the audience to the MCP server that the client requests.
 
 </Note>
+
+#### Import CIMD clients
+
+Unlike DCR, Auth0 doesn't register a CIMD client the first time it signs in. Before an MCP client can use CIMD, import it into your tenant:
+
+1. Navigate to **Applications** -> **Applications** and click **Create application**.
+1. Select **Import from URL**.
+1. Enter the client's metadata URL, which is the HTTPS URL that the client uses as its client ID. Click **Preview**.
+1. Check the metadata that Auth0 shows, then click **Create**.
+
+Auth0 creates the client as a third-party application in Strict mode, so the default permissions you set on your API apply to it. Repeat these steps for each CIMD client you want to allow.
+
+This guide's clients use DCR, so you don't need to import anything to follow the rest of the guide.
 
 #### Set up the Auth0 connection
 
@@ -274,6 +287,8 @@ Then, continue with the following steps:
 
 - **Issue**: MCP Inspector or Goose fails at the client registration step
   - Solution: In your Auth0 dashboard, go to **Settings** -> **Advanced** and check that **Dynamic Client Registration (DCR)** is on. MCP Inspector (without a CIMD metadata URL) and `mcp-remote` fail if only **Client ID Metadata Document (CIMD) Registration** is on.
+- **Issue**: The Auth0 error page says `invalid_request: Unknown client: https://...`
+  - Solution: The client uses CIMD, and you haven't imported it. Follow the steps in [Import CIMD clients](#import-cimd-clients).
 - **Issue**: Client registration fails with `403` and `"errorCode":"too_many_entities"`
   - Solution: Your tenant reached its application limit. Every DCR registration creates a new third-party application, so repeated testing fills the tenant quickly. Delete the applications you no longer need under **Applications** -> **Applications**.
 - **Issue**: The Auth0 error page says `Client "tpc_..." is not authorized to access resource server "http://127.0.0.1:8000/mcp"`
