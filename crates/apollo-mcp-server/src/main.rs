@@ -87,6 +87,9 @@ fn load_config(config_path: Option<&std::path::Path>) -> anyhow::Result<runtime:
 /// Build a Server from the current configuration.
 fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server> {
     let config = load_config(config_path)?;
+    if config.tasks.enabled {
+        runtime::telemetry::suppress_rmcp_debug();
+    }
 
     let config_validator: Option<ConfigValidator> = config_path.map(|p| {
         let path = p.to_path_buf();
