@@ -285,7 +285,12 @@ If MCP Inspector connects without sending you to Okta, it reused tokens from an 
 
 ### Use other MCP clients
 
-To connect another MCP client, create an app integration for it the same way you did for MCP Inspector. Use that client's redirect URIs, and enter its client ID in the client's configuration. Each MCP client has its own way to accept a pre-registered client ID, and some clients don't accept one. Check the documentation of your MCP client.
+To connect another MCP client with a pre-registered client, create an app integration for it with that client's redirect URIs. The application type depends on whether the client accepts a client secret:
+
+- **The client accepts a client secret**: Create a **Web Application**, the same way you did for MCP Inspector, and enter both the client ID and the client secret in the client's configuration. A Web Application is a confidential client, so Okta rejects a token request without the secret with `invalid_client`.
+- **The client accepts only a client ID**: Create a **Native Application**. A Native Application is a public client. It has no client secret and uses PKCE instead. Enter only its client ID in the client's configuration.
+
+Each MCP client has its own way to accept a pre-registered client ID, and some clients don't accept one. Check the documentation of your MCP client. If your client supports CIMD, you can [register its CIMD URL](#register-cimd-clients) instead.
 
 ## Troubleshooting
 
