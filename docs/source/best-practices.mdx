@@ -83,7 +83,7 @@ Metrics don't include per-request trace IDs. Use them for aggregate monitoring, 
 
 ## Review per-operation scope requirements when tools change
 
-Use global OAuth scopes as a server-wide baseline and `overrides.required_scopes` for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check.
+Use global OAuth scopes as a server-wide baseline and `overrides.required_scopes` for tools that need additional permissions. Per-operation keys are matched exactly against MCP tool names, and only listed tools receive the additional check. If you enable the `execute` tool, list it too. Otherwise an ad-hoc query can reach data that a scoped operation protects.
 
 During deployment, compare the configured keys with the live `tools/list` response. Repeat this review whenever operations are added, removed, renamed, or hot-reloaded. A new or mismatched tool name remains governed only by the global scope requirement because the server doesn't reject or warn about unknown `required_scopes` keys.
 

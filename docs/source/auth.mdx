@@ -210,6 +210,23 @@ The client can use this response to initiate targeted re-authorization and retry
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
 
+An operation's entry applies only to that operation's tool. When the `execute` tool is enabled, an agent can send an ad-hoc query that reads the same data as a listed operation, and that query is governed only by the global requirement. To require scopes for ad-hoc queries, add an entry for the `execute` tool:
+
+```yaml title="mcp.yaml"
+introspection:
+  execute:
+    enabled: true
+overrides:
+  required_scopes:
+    GetUser:
+      - user:read
+    execute:
+      - user:read
+      - admin
+```
+
+The `execute` entry applies to every call to the tool, regardless of what the query requests.
+
 The server doesn't validate `required_scopes` keys against the current tool list and doesn't warn about unknown keys, so a misspelled or stale key doesn't protect the intended tool, and a newly added or renamed tool remains governed only by the global requirement until you update the map.
 
 <Caution>
