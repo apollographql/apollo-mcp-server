@@ -210,7 +210,7 @@ The client can use this response to initiate targeted re-authorization and retry
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
 
-An operation's entry applies only to that operation's tool. When the `execute` tool is enabled, an agent can send an ad hoc query that reads the same data as a listed operation, and that query is governed only by the global requirement. To require scopes for ad hoc queries, add an entry for the `execute` tool:
+An operation's entry applies only to that operation's tool. When the `execute` tool is enabled, an agent can send an ad-hoc query that reads the same data as a listed operation, and that query is governed only by the global requirement. To require scopes for ad-hoc queries, add an entry for the `execute` tool:
 
 ```yaml title="mcp.yaml"
 introspection:
