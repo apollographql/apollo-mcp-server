@@ -78,8 +78,14 @@ impl Introspect {
                 },
             ),
             None => {
+                let hint = schema
+                    .types
+                    .keys()
+                    .find(|name| name.eq_ignore_ascii_case(type_name))
+                    .map(|name| format!(". Did you mean `{name}`?"))
+                    .unwrap_or_default();
                 return Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                    "Type `{type_name}` not found in the schema"
+                    "Type `{type_name}` not found in the schema{hint}"
                 ))]));
             }
         }
@@ -314,12 +320,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unknown("NoSuchType")]
-    #[case::wrong_case("mutation")]
+    #[case::unknown("NoSuchType", "Type `NoSuchType` not found in the schema")]
+    #[case::wrong_case(
+        "mutation",
+        "Type `mutation` not found in the schema. Did you mean `Mutation`?"
+    )]
     #[tokio::test]
     async fn introspect_unknown_type_returns_error(
         schema: Arc<RwLock<Valid<Schema>>>,
         #[case] type_name: &str,
+        #[case] message: &str,
     ) {
         let introspect = Introspect::new(
             schema,
@@ -337,14 +347,9 @@ mod tests {
             .await
             .expect("Introspect execution failed");
 
-        assert_eq!(result.is_error, Some(true));
-        assert!(
-            matches!(
-                result.content.as_slice(),
-                [ContentBlock::Text(text)] if text.text.contains(&format!("`{type_name}`"))
-            ),
-            "Error should name the unknown type, got {:?}",
-            result.content
+        assert_eq!(
+            result,
+            CallToolResult::error(vec![ContentBlock::text(message)])
         );
     }
 }
