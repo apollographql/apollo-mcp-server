@@ -246,7 +246,7 @@ mod tests {
 
     fn principal(issuer: &str, subject: &str) -> Principal {
         Principal {
-            issuer: Some(issuer.to_string()),
+            issuer: issuer.to_string(),
             subject: subject.to_string(),
         }
     }

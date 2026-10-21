@@ -250,7 +250,7 @@ async fn tasks_are_bound_to_the_creating_principal() {
     let mut upstream = Upstream::new(json!({"data":{"hello":"world"}})).await;
     let running = upstream.running_with_owners(0, true);
     let principal = |subject: &str| Principal {
-        issuer: Some("https://idp.example.com".into()),
+        issuer: "https://idp.example.com".into(),
         subject: subject.into(),
     };
     let (alice, mallory) = (principal("alice"), principal("mallory"));

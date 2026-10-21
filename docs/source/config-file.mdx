@@ -318,9 +318,9 @@ These fields are under the top-level `tasks` key. Each one can be overridden wit
 | Option | Type | Default | Description |
 | :----- | :--- | :------ | :---------- |
 | `enabled` | `bool` | `false` | Return [MCP Tasks](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) handles for slow GraphQL tool calls. |
-| `detach_after_ms` | `u64` | `1000` | How long a call runs before it returns a task handle instead of its result. `0` returns a handle immediately. |
-| `ttl_ms` | `u64` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. Finished results are kept for another `ttl_ms`. Must be positive. |
-| `max_tasks` | `u64` | `1000` | Maximum number of running and retained tasks. At the limit, new calls run synchronously. Must be positive. |
+| `detach_after_ms` | `number` | `1000` | How long a call runs before it returns a task handle instead of its result. `0` returns a handle immediately. |
+| `ttl_ms` | `number` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. Finished results are kept for another `ttl_ms`. Must be positive. |
+| `max_tasks` | `number` | `1000` | Maximum number of running and retained tasks. At the limit, new calls run synchronously. Must be positive. |
 
 Tasks apply to operation tools, app tools, and `execute`, including the mutations your configuration allows. Utility tools such as `introspect`, `search`, and `validate` always respond synchronously. So does every call from a client that doesn't declare the `io.modelcontextprotocol/tasks` capability.
 
