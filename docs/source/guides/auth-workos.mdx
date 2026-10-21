@@ -135,7 +135,7 @@ Configure your GraphOS Router to validate JWTs issued by AuthKit. This involves 
      introspection: true
    ```
 
-   With this configuration, the router requires authentication for all requests. If a request doesn't include an Authorization token, the router returns an `UNAUTHENTICATED` error.
+   With this configuration, the router requires authentication for all requests. If a request doesn't include an Authorization token, the router returns an `unauthenticated` error with the `AUTH_ERROR` code.
 
 #### Retrieve your GraphOS license credentials for auth
 
@@ -171,11 +171,11 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
 1. Test the router by navigating to `http://localhost:4000` in your browser. You should see the Explorer, where you can run GraphQL queries against the router.
 
-1. Remember, the router is configured to require authentication on all requests. Any operations without a valid Authorization token returns an `UNAUTHENTICATED` error. Run the operation:
+1. Remember, the router is configured to require authentication on all requests. Any operation without a valid Authorization token returns an `unauthenticated` error. Run the operation:
 
    ```graphql
    query GetAstronautsCurrentlyInSpace {
-     astronauts(filters: { inSpace: true, search: "" }) {
+     astronauts(inSpace: true, search: "") {
        results {
          id
          name
@@ -186,7 +186,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
    }
    ```
 
-1. You should see an `UNAUTHENTICATED` error, which means the router is correctly enforcing authentication.
+1. You should see an `unauthenticated` error with the `AUTH_ERROR` code, which means the router is correctly enforcing authentication.
 
 ### Step 4: Make requests with MCP Inspector
 
@@ -196,31 +196,16 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
    npx @modelcontextprotocol/inspector
    ```
 
-   The browser should open automatically with a proxy auth token.
+   Open the MCP Inspector URL that the command prints, `http://localhost:6274`.
 
-1. In the MCP Inspector, select `Streamable HTTP` as the Transport Type and enter `http://127.0.0.1:8000/mcp` as the URL.
-1. Click **Connect**. This triggers the OAuth flow, and you are redirected to the AuthKit sign-in page.
+1. Click **Add Servers** -> **+ Add manually**.
+1. For **Server ID**, enter `apollo-workos`. For **Transport**, select `streamable-http`. For **URL**, enter `http://127.0.0.1:8000/mcp`. Click **Add**.
+1. Turn on the switch on the `apollo-workos` server card. This triggers the OAuth flow, and you are redirected to the AuthKit sign-in page.
 1. Sign in with the user you created in the WorkOS Dashboard and allow MCP Inspector access.
-1. After you connect, the browser redirects back to MCP Inspector.
-1. Click **List Tools** to see the available tools.
-1. Select the `GetAstronautsCurrentlyInSpace` tool listed and click **Run Tool**.
+1. After the browser redirects back to MCP Inspector, the server card shows **Connected**.
+1. Select the **Tools** view at the top of the page to see the available tools.
+1. Select the `GetAstronautsCurrentlyInSpace` tool and click **Execute Tool**.
 1. You should see the results of the query, which means the authentication is working correctly.
-
-You can select the **Auth** tab in MCP Inspector to see the details of the authenticated user and the access token.
-
-<ExpansionPanel title="Alternative: Guided OAuth flow in MCP Inspector">
-
-You can also use the guided OAuth flow in MCP Inspector to test authentication. This gives you a detailed look into each step the client does to connect to the server.
-
-1. Click **Open Auth Settings**.
-1. In the **OAuth Flow Progress** section, click **Continue** to start the **Metadata Discovery** step.
-1. Click **Continue** to start the **Client Registration** step. Expand the **Registered Client Information** step to note the `client_id` value.
-1. Click **Continue** to start the **Preparing Authorization** step. Click the link to open up a new tab to authorize MCP Inspector.
-1. Copy the authorization code and return to MCP Inspector.
-1. Paste the code in the next step **Request Authorization and acquire authorization code** then click **Continue**.
-1. Click **Continue** to start the **Token Request** step. This completes the authentication flow.
-
-</ExpansionPanel>
 
 ### Step 5: Make requests with an MCP client (Goose)
 
@@ -279,7 +264,7 @@ Then, continue with the following steps:
 #### MCP Server returns `403 Forbidden`
 
 - **Issue**: Every tool call fails with `403 Forbidden` and an `insufficient_scope` error
-  - Solution: Check that every value in `scopes` appears in the access token's `scope` claim. You can see the claim by decoding the token, for example on the **Auth** tab in MCP Inspector. To turn off the global scope requirement, remove `scopes` from the `auth` configuration.
+  - Solution: Check that every value in `scopes` appears in the access token's `scope` claim. You can see the claim by decoding the access token. To turn off the global scope requirement, remove `scopes` from the `auth` configuration.
 
 #### Client registration fails
 
@@ -290,8 +275,8 @@ Then, continue with the following steps:
 ### Infinite loop during OAuth flow
 
 - **Issue**: After signing in to AuthKit, MCP Inspector keeps refreshing and doesn't complete the OAuth flow
-  - Solution: In MCP Inspector, open the **Authentication** panel in the sidebar. Clear out any values in the **Header Name** and **Bearer Token** fields. Then try connecting again.
-  - Solution: In MCP Inspector, select **Clear OAuth State** and try connecting again.
+  - Solution: On the server card, click **Settings**. Under **Custom Headers**, remove any `Authorization` header. Then try connecting again.
+  - Solution: On the server card, click **Settings**. Under **OAuth Settings**, click **Clear stored OAuth state** and try connecting again.
 
 ### Getting help
 
