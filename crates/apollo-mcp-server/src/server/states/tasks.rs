@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     panic::AssertUnwindSafe,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -28,9 +28,9 @@ type Slots = Arc<Mutex<HashMap<String, Slot>>>;
 /// An admitted task's owner and capacity reservation.
 struct Slot {
     owner: Option<Principal>,
-    // When the task stops counting against capacity: `None` while running,
+    // When the task stops counting against capacity: unset while running,
     // then the end of rmcp's terminal-result retention.
-    until: Option<Instant>,
+    until: Arc<OnceLock<Instant>>,
 }
 
 #[derive(Clone)]
@@ -111,7 +111,7 @@ impl TaskRuntime {
         }
         let mut slots = self.inner.slots.lock();
         let now = Instant::now();
-        slots.retain(|_, slot| slot.until.is_none_or(|until| until > now));
+        slots.retain(|_, slot| slot.until.get().is_none_or(|until| *until > now));
         if self.inner.stop.is_cancelled() || slots.len() >= self.inner.config.max_tasks.get() {
             return Err(execution);
         }
@@ -120,13 +120,13 @@ impl TaskRuntime {
         let options = TaskOptions::new()
             .with_ttl_ms(ttl_ms)
             .with_poll_interval_ms(1_000);
+        let until = Arc::new(OnceLock::new());
         // Tracking is established before spawn, so even an unpolled/aborted
         // worker is accounted for during teardown.
         let task = self.inner.manager.spawn(options, |context| {
             // Created outside the worker so dropping it unpolled still releases.
             let release = Release {
-                slots: self.inner.slots.clone(),
-                id: context.task_id().to_owned(),
+                until: until.clone(),
                 retention: Duration::from_millis(ttl_ms),
             };
             Box::pin(self.inner.workers.track_future(async move {
@@ -144,9 +144,7 @@ impl TaskRuntime {
                 }
             }))
         });
-        // A finished worker's slot update waits on this lock, so it cannot
-        // precede the insert.
-        slots.insert(task.task_id.clone(), Slot { owner, until: None });
+        slots.insert(task.task_id.clone(), Slot { owner, until });
         Ok(CreateTaskResult::new(task))
     }
 
@@ -211,18 +209,17 @@ fn task_lookup_error() -> ErrorData {
 }
 
 /// Every worker exit (completion, cancellation, TTL abort) starts the same
-/// retention window rmcp applies to its terminal result.
+/// retention window rmcp applies to its terminal result. It never takes the
+/// slots lock: tokio drops a future spawned during runtime shutdown inline, on
+/// the thread that holds that lock in `detach`.
 struct Release {
-    slots: Slots,
-    id: String,
+    until: Arc<OnceLock<Instant>>,
     retention: Duration,
 }
 
 impl Drop for Release {
     fn drop(&mut self) {
-        if let Some(slot) = self.slots.lock().get_mut(&self.id) {
-            slot.until = Some(Instant::now() + self.retention);
-        }
+        let _ = self.until.set(Instant::now() + self.retention);
     }
 }
 
@@ -305,6 +302,29 @@ mod tests {
             runtime
                 .detach(None, Box::pin(async { Ok(CallToolResult::default()) }))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn detach_survives_worker_dropped_inline_by_closed_runtime() {
+        let tokio = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let handle = tokio.handle().clone();
+        let runtime = tokio.block_on(async { runtime(1, 300_000) });
+        tokio.shutdown_background();
+        let (done, detached) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // A closed runtime drops a newly spawned future inside `spawn`.
+            let _enter = handle.enter();
+            let result = runtime.detach(None, Box::pin(async { Ok(CallToolResult::default()) }));
+            done.send(result.is_ok()).unwrap();
+        });
+        assert!(
+            detached
+                .recv_timeout(Duration::from_secs(10))
+                .expect("detach deadlocked")
         );
     }
 
