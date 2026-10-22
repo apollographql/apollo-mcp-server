@@ -313,13 +313,13 @@ Clients using `2026-07-28` select the protocol through discovery and per-request
 
 ### Tasks
 
-These fields are under the top-level `tasks` key. Each one can be overridden with an environment variable, such as `APOLLO_MCP_TASKS__ENABLED=true`.
+These fields are under the top-level `tasks` key. You can override each one with an environment variable, such as `APOLLO_MCP_TASKS__ENABLED=true`.
 
 | Option | Type | Default | Description |
 | :----- | :--- | :------ | :---------- |
 | `enabled` | `bool` | `false` | Return [MCP Tasks](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) handles for slow GraphQL tool calls. |
 | `detach_after_ms` | `number` | `1000` | How long a call runs before it returns a task handle instead of its result. `0` returns a handle immediately. |
-| `ttl_ms` | `number` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. Finished results are kept for another `ttl_ms`. Must be positive. |
+| `ttl_ms` | `number` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. The server keeps finished results for another `ttl_ms`. Must be positive. |
 | `max_tasks` | `number` | `1000` | Maximum number of running and retained tasks. At the limit, new calls run synchronously. Must be positive. |
 
 Tasks apply to operation tools, app tools, and `execute`, including the mutations your configuration allows. Utility tools such as `introspect`, `search`, and `validate` always respond synchronously. So does every call from a client that doesn't declare the `io.modelcontextprotocol/tasks` capability.
@@ -328,7 +328,11 @@ When a call becomes a task, the GraphQL request keeps running in the background 
 
 <Note>
 
-Tasks are held in server memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task. With [`auth`](#auth) enabled, only the token identity (issuer and subject) that created a task can read, update, or cancel it, and calls admitted without a token through `skip_token_validation` always respond synchronously. Without `auth`, task IDs act as bearer tokens: any client that knows a task ID can read or cancel that task. Once Tasks is enabled, rmcp's debug and trace logs are suppressed until the process exits, because they include full protocol payloads, task IDs among them.
+The server holds tasks in memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task.
+
+With [`auth`](#auth) enabled, only the token identity that created a task (its subject, scoped to the authorization server that verified it) can read, update, or cancel it, and calls admitted without a token through `skip_token_validation` always respond synchronously. Without `auth`, task IDs act as bearer tokens: any client that knows a task ID can read or cancel that task.
+
+After you enable Tasks, the server suppresses `rmcp` debug and trace logs until the process exits, because they include full protocol payloads, task IDs among them.
 
 </Note>
 
