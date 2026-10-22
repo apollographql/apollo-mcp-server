@@ -194,6 +194,18 @@ impl Starting {
             instructions,
             rhai_engine: engine,
             caching: self.config.caching,
+            tasks: self.config.tasks.enabled.then(|| {
+                // With auth, a task belongs to the token identity that created it.
+                let require_owner = matches!(
+                    &self.config.transport,
+                    Transport::StreamableHttp { auth: Some(_), .. }
+                );
+                super::tasks::TaskRuntime::new(
+                    self.config.tasks,
+                    cancellation_token.clone(),
+                    require_owner,
+                )
+            }),
         };
 
         match self.config.transport {
@@ -248,7 +260,11 @@ impl Starting {
                         error!("serving error: {:?}", e);
                     })
                     .map_err(Box::new)?;
-                service.waiting().await.map_err(ServerError::StartupError)?;
+                let result = service.waiting().await;
+                if let Some(tasks) = &running.tasks {
+                    tasks.shutdown().await;
+                }
+                result.map_err(ServerError::StartupError)?;
             }
         }
 
@@ -491,6 +507,7 @@ mod tests {
             server_info: Default::default(),
             instructions: None,
             caching: Default::default(),
+            tasks: Default::default(),
         }
     }
 

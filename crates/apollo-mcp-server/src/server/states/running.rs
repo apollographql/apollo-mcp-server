@@ -89,6 +89,7 @@ pub(super) struct Running {
     pub(super) instructions: Option<String>,
     pub(super) rhai_engine: SharedRhaiEngine,
     pub(super) caching: Caching,
+    pub(super) tasks: Option<super::tasks::TaskRuntime>,
 }
 
 /// Client capabilities and negotiated protocol version derived from the peer's `initialize`
@@ -354,11 +355,39 @@ impl Running {
             .apply_to(result, peer.protocol_version, server_max))
     }
 
+    fn is_graphql_tool(
+        &self,
+        request: &CallToolRequestParams,
+        extensions: &Extensions,
+        operation: Option<&Operation>,
+    ) -> bool {
+        let name = request.name.as_ref();
+        // Match call_tool_impl's utility precedence, even if an operation has
+        // the same name as an enabled built-in tool.
+        if (name == INTROSPECT_TOOL_NAME && self.introspect_tool.is_some())
+            || (name == SEARCH_TOOL_NAME && self.search_tool.is_some())
+            || (name == EXPLORER_TOOL_NAME && self.explorer_tool.is_some())
+            || (name == VALIDATE_TOOL_NAME && self.validate_tool.is_some())
+        {
+            return false;
+        }
+        if name == EXECUTE_TOOL_NAME && self.execute_tool.is_some() {
+            return true;
+        }
+        if let Some(app_name) = extract_app_param(extensions) {
+            return self.apps.iter().any(|app| {
+                app.name == app_name && app.tools.iter().any(|tool| tool.tool.name == name)
+            });
+        }
+        operation.is_some()
+    }
+
     async fn call_tool_impl(
         &self,
         request: CallToolRequestParams,
         extensions: &Extensions,
         protocol_version: Option<&ProtocolVersion>,
+        operation: Option<Operation>,
     ) -> Result<CallToolResult, McpError> {
         let meter = &meter::METER;
         let start = std::time::Instant::now();
@@ -440,9 +469,6 @@ impl Running {
                 self.headers.clone()
             };
 
-            // Acquire the lock once: reused for scope check and execution.
-            let ops = self.operations.read().await;
-
             if let Some(app_param) = &app_param {
                 if let Some(res) = find_and_execute_app_tool(
                     &self.apps,
@@ -461,7 +487,7 @@ impl Running {
                     Err(tool_not_found(&tool_name))
                 }
             } else if let Some(res) = find_and_execute_operation(
-                &ops,
+                operation.as_slice(),
                 &tool_name,
                 &headers,
                 request.arguments.as_ref(),
@@ -857,6 +883,8 @@ impl ServerHandler for McpService {
             tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
             &context,
         );
+        let execution_span = span.clone();
+        let execution_parent = parent_context.clone();
         async {
             let span = tracing::Span::current();
             if let Some(args) = &request.arguments
@@ -867,26 +895,125 @@ impl ServerHandler for McpService {
 
             let protocol_version = context.protocol_version();
 
-            let result = self
+            // Snapshot before returning any handle, including immediate
+            // detachment, so later catalog reloads cannot change this call.
+            let operation = self
                 .application
-                .call_tool_impl(request, &context.extensions, protocol_version.as_ref())
-                .await;
-
-            // Strip meta before recording: _meta.structuredContent holds the unfiltered
-            // @private payload and must not be exported to the span.
-            if let Ok(r) = &result {
-                let mut stripped = r.clone();
-                stripped.meta = None;
-                if let Ok(json) = serde_json::to_string(&stripped) {
-                    span.record("apollo.mcp.tool_result", json.as_str());
+                .operations
+                .read()
+                .await
+                .iter()
+                .find(|op| op.as_ref().name == request.name)
+                .cloned();
+            let tasks = self
+                .application
+                .tasks
+                .as_ref()
+                // rmcp also checks the response, but checking before execution
+                // prevents creating inaccessible work for non-declaring clients.
+                .filter(|_| {
+                    context
+                        .client_capabilities()
+                        .is_some_and(|caps| caps.supports_tasks())
+                })
+                .filter(|_| {
+                    self.application.is_graphql_tool(
+                        &request,
+                        &context.extensions,
+                        operation.as_ref(),
+                    )
+                });
+            let Some(tasks) = tasks else {
+                let result = self
+                    .application
+                    .call_tool_impl(
+                        request,
+                        &context.extensions,
+                        protocol_version.as_ref(),
+                        operation,
+                    )
+                    .await;
+                record_tool_result(&span, &result);
+                return result.map(Into::into);
+            };
+            let owner = request_principal(&context.extensions);
+            let mut application = self.application.clone();
+            // The worker must not own its runtime: that would keep the task
+            // manager alive through its own stored worker on teardown.
+            application.tasks = None;
+            let extensions = context.extensions.clone();
+            let execution = async move {
+                let result = application
+                    .call_tool_impl(request, &extensions, protocol_version.as_ref(), operation)
+                    .await;
+                record_tool_result(&span, &result);
+                result
+            }
+            // Preserve the actual handler span, including a disabled span.
+            // Re-entering Span::current() when filtered would re-enter the HTTP
+            // parent and overwrite the request's metadata-derived context.
+            .instrument(execution_span)
+            .with_context(execution_parent);
+            let mut execution: super::tasks::Execution = Box::pin(execution);
+            if !tasks.delay().is_zero() {
+                tokio::select! {
+                    biased;
+                    result = &mut execution => return result.map(Into::into),
+                    _ = tokio::time::sleep(tasks.delay()) => {},
                 }
             }
-
-            result.map(Into::into)
+            match tasks.detach(owner, execution) {
+                Ok(task) => Ok(CallToolResponse::Task(task)),
+                Err(pending) => pending.await.map(Into::into),
+            }
         }
         .instrument(span)
         .with_context(parent_context)
         .await
+    }
+
+    async fn get_task(
+        &self,
+        request: rmcp::model::GetTaskParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::GetTaskResult, McpError> {
+        let tasks = self
+            .application
+            .tasks
+            .as_ref()
+            .ok_or_else(McpError::method_not_found::<rmcp::model::GetTaskMethod>)?;
+        let owner = request_principal(&context.extensions);
+        tasks
+            .get(&request.task_id, owner.as_ref())
+            .map(rmcp::model::GetTaskResult::new)
+    }
+
+    async fn cancel_task(
+        &self,
+        request: rmcp::model::CancelTaskParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let tasks = self
+            .application
+            .tasks
+            .as_ref()
+            .ok_or_else(McpError::method_not_found::<rmcp::model::CancelTaskMethod>)?;
+        let owner = request_principal(&context.extensions);
+        tasks.cancel(&request.task_id, owner.as_ref())
+    }
+
+    async fn update_task(
+        &self,
+        request: rmcp::model::UpdateTaskParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<(), McpError> {
+        let tasks = self
+            .application
+            .tasks
+            .as_ref()
+            .ok_or_else(McpError::method_not_found::<rmcp::model::UpdateTaskMethod>)?;
+        let owner = request_principal(&context.extensions);
+        tasks.update(&request.task_id, owner.as_ref(), request.input_responses)
     }
 
     async fn list_tools(
@@ -1074,7 +1201,11 @@ impl ServerHandler for McpService {
             .build()
             .add(1, &[]);
 
-        let mut capabilities = ServerCapabilities::default();
+        let mut capabilities = if self.application.tasks.is_some() {
+            ServerCapabilities::builder().enable_tasks().build()
+        } else {
+            ServerCapabilities::default()
+        };
         let mut tools = ToolsCapability::default();
         tools.list_changed = Some(true);
         capabilities.tools = Some(tools);
@@ -1111,6 +1242,25 @@ impl ServerHandler for McpService {
         }
         result
     }
+}
+
+// Strip meta before recording: _meta.structuredContent holds the unfiltered
+// @private payload and must not be exported to the span.
+fn record_tool_result(span: &tracing::Span, result: &Result<CallToolResult, McpError>) {
+    if let Ok(r) = result {
+        let mut stripped = r.clone();
+        stripped.meta = None;
+        if let Ok(json) = serde_json::to_string(&stripped) {
+            span.record("apollo.mcp.tool_result", json.as_str());
+        }
+    }
+}
+
+fn request_principal(extensions: &Extensions) -> Option<crate::auth::Principal> {
+    extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| parts.extensions.get::<crate::auth::ValidToken>())
+        .map(|token| token.principal.clone())
 }
 
 fn extract_app_param(extensions: &Extensions) -> Option<String> {
@@ -1171,6 +1321,7 @@ mod tests {
             instructions: None,
             rhai_engine: SharedRhaiEngine::new("rhai"),
             caching: Caching::default(),
+            tasks: Default::default(),
         }
     }
 
@@ -3551,6 +3702,7 @@ mod tests {
                     request,
                     &Extensions::new(),
                     Some(&ProtocolVersion::V_2025_03_26),
+                    Some(running.operations.read().await[0].clone()),
                 )
                 .await
                 .unwrap();
@@ -3606,6 +3758,7 @@ mod tests {
                     request,
                     &Extensions::new(),
                     Some(&ProtocolVersion::V_2025_06_18),
+                    Some(running.operations.read().await[0].clone()),
                 )
                 .await
                 .unwrap();
@@ -3717,7 +3870,7 @@ mod tests {
             request.arguments = Some(Default::default());
 
             let _result = running
-                .call_tool_impl(request, &extensions, None)
+                .call_tool_impl(request, &extensions, None, None)
                 .await
                 .unwrap();
 
@@ -3851,6 +4004,7 @@ mod integration_tests {
                 instructions: None,
                 rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
+                tasks: Default::default(),
             }
         }
 
@@ -4374,6 +4528,7 @@ mod integration_tests {
                 instructions: None,
                 rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
+                tasks: Default::default(),
             }
         }
 
@@ -5357,6 +5512,7 @@ mod integration_tests {
                 instructions: None,
                 rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
+                tasks: Default::default(),
             }
         }
 
@@ -5542,6 +5698,7 @@ mod integration_tests {
                 instructions: None,
                 rhai_engine: SharedRhaiEngine::new("rhai"),
                 caching: Caching::default(),
+                tasks: Default::default(),
             }
         }
 
@@ -5737,3 +5894,6 @@ mod subscription_tests;
 
 #[cfg(test)]
 mod schema_conformance_tests;
+
+#[cfg(test)]
+mod task_tests;

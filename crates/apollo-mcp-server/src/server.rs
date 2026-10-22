@@ -84,6 +84,7 @@ pub struct Server {
     config_validator: Option<ConfigValidator>,
     instructions: Option<String>,
     caching: Caching,
+    tasks: crate::tasks::TasksConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -185,6 +186,7 @@ impl Server {
         config_validator: Option<ConfigValidator>,
         instructions: Option<String>,
         #[builder(default)] caching: Caching,
+        #[builder(default)] tasks: crate::tasks::TasksConfig,
     ) -> Self {
         let headers = {
             let mut headers = headers.clone();
@@ -231,6 +233,7 @@ impl Server {
             config_validator,
             instructions,
             caching,
+            tasks,
         }
     }
 

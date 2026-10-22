@@ -23,6 +23,7 @@ use opentelemetry_semantic_conventions::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tracing_opentelemetry::{MetricsLayer, OpenTelemetryLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -474,6 +475,13 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
 
     tracing_subscriber::registry()
         .with(logging_layer)
+        .with(tracing_subscriber::filter::filter_fn(|metadata| {
+            rmcp_event_allowed(
+                SUPPRESS_RMCP_DEBUG.load(Ordering::Relaxed),
+                metadata.target(),
+                metadata.level(),
+            )
+        }))
         .with(env_filter)
         .with(MetricsLayer::new(meter_provider.clone()))
         .with(OpenTelemetryLayer::new(tracer))
@@ -488,6 +496,25 @@ pub fn init_tracing_subscriber(config: &Config) -> Result<TelemetryGuard, anyhow
         meter_provider,
         logging_guard,
     })
+}
+
+// rmcp debug/trace events include complete request and response payloads,
+// including bearer task IDs. This is a hard filter rather than an overridable
+// RUST_LOG directive. It is set by any server build with Tasks enabled and never
+// cleared, so a config reload that enables Tasks reaches the startup subscriber.
+static SUPPRESS_RMCP_DEBUG: AtomicBool = AtomicBool::new(false);
+
+/// Suppress rmcp debug and trace events for the rest of the process.
+pub fn suppress_rmcp_debug() {
+    if !SUPPRESS_RMCP_DEBUG.swap(true, Ordering::Relaxed) {
+        // `FilterFn` caches each callsite's interest on first registration.
+        tracing::callsite::rebuild_interest_cache();
+    }
+}
+
+fn rmcp_event_allowed(suppress: bool, target: &str, level: &tracing::Level) -> bool {
+    let rmcp = target == "rmcp" || target.starts_with("rmcp::");
+    !suppress || !rmcp || *level <= tracing::Level::INFO
 }
 
 pub struct TelemetryGuard {
@@ -515,6 +542,30 @@ mod tests {
     use rstest::rstest;
     use serde::de::value::{Error, MapDeserializer, StrDeserializer};
     use tonic::metadata::MetadataValue;
+
+    #[rstest]
+    #[case::rmcp_debug_suppressed(true, "rmcp::service", tracing::Level::DEBUG, false)]
+    #[case::rmcp_trace_suppressed(true, "rmcp", tracing::Level::TRACE, false)]
+    #[case::rmcp_info_kept(true, "rmcp::service", tracing::Level::INFO, true)]
+    #[case::rmcp_warn_kept(true, "rmcp::service", tracing::Level::WARN, true)]
+    #[case::other_debug_kept(true, "apollo_mcp_server", tracing::Level::DEBUG, true)]
+    #[case::rmcp_prefixed_crate_kept(true, "rmcp_macros", tracing::Level::DEBUG, true)]
+    #[case::unsuppressed_rmcp_debug_kept(false, "rmcp::service", tracing::Level::DEBUG, true)]
+    fn rmcp_event_filter(
+        #[case] suppress: bool,
+        #[case] target: &str,
+        #[case] level: tracing::Level,
+        #[case] allowed: bool,
+    ) {
+        assert_eq!(rmcp_event_allowed(suppress, target, &level), allowed);
+    }
+
+    #[test]
+    fn rmcp_debug_suppression_is_sticky() {
+        suppress_rmcp_debug();
+        suppress_rmcp_debug();
+        assert!(SUPPRESS_RMCP_DEBUG.load(Ordering::Relaxed));
+    }
 
     fn test_config(
         service_name: Option<&str>,

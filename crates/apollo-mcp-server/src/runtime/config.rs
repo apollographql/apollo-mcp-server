@@ -26,6 +26,9 @@ pub struct Config {
     /// Cache hints for MCP list/read responses.
     pub caching: apollo_mcp_server::caching::Caching,
 
+    /// Asynchronous GraphQL execution through MCP Tasks.
+    pub tasks: apollo_mcp_server::tasks::TasksConfig,
+
     /// CORS configuration
     pub cors: CorsConfig,
 

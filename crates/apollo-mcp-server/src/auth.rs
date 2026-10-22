@@ -40,7 +40,7 @@ mod www_authenticate;
 
 use protected_resource::ProtectedResource;
 use valid_token::TokenValidator;
-pub(crate) use valid_token::ValidToken;
+pub(crate) use valid_token::{Principal, ValidToken};
 use www_authenticate::{BearerError, WwwAuthenticate};
 
 /// Enforcement mode for the global OAuth scope requirement on authenticated

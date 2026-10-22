@@ -15,6 +15,18 @@ use url::Url;
 pub(crate) struct ValidToken {
     pub(crate) token: Authorization<Bearer>,
     pub(crate) scopes: Vec<String>,
+    pub(crate) principal: Principal,
+}
+
+/// The identity a validated token was issued for. Unlike the bearer token, it
+/// stays the same across token refreshes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(test, derive(Default))]
+pub(crate) struct Principal {
+    /// The issuer of the authorization server whose keys verified the token,
+    /// which scopes `subject` even when the token has no `iss` claim.
+    pub(crate) issuer: String,
+    pub(crate) subject: String,
 }
 
 impl Deref for ValidToken {
@@ -129,9 +141,14 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                             break;
                         }
                     }
+                    let principal = Principal {
+                        issuer: discovered_issuer,
+                        subject: token_data.claims.sub.clone(),
+                    };
                     return Some(ValidToken {
                         token,
                         scopes: token_data.claims.scopes(),
+                        principal,
                     });
                 }
                 Err(e) => warn!("Token failed validation with error: {e}"),
@@ -249,7 +266,7 @@ mod test {
     use tracing_test::traced_test;
     use url::Url;
 
-    use super::{Claims, KeyResolver, TokenValidator, ValidToken, jwt_algorithm};
+    use super::{Claims, KeyResolver, Principal, TokenValidator, ValidToken, jwt_algorithm};
 
     /// A single upstream server in the stub resolver: its URL, the one
     /// `(kid, jwk)` it serves, and the issuer it advertises in discovery.
@@ -589,7 +606,15 @@ mod test {
             TestTokenValidator::single(vec![], vec![], true, (key_id, jwk), server);
 
         let token = jwt.token().to_string();
-        assert_eq!(test_validator.validate(jwt).await.unwrap().0.token(), token);
+        let valid = test_validator.validate(jwt).await.unwrap();
+        assert_eq!(valid.0.token(), token);
+        assert_eq!(
+            valid.principal,
+            Principal {
+                issuer: "https://auth.example.com".to_string(),
+                subject: "test user".to_string()
+            }
+        );
     }
 
     #[tokio::test]
@@ -780,15 +805,9 @@ mod test {
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
-        assert_eq!(
-            test_validator
-                .validate(jwt)
-                .await
-                .expect("valid token")
-                .token
-                .token(),
-            token
-        );
+        let valid = test_validator.validate(jwt).await.expect("valid token");
+        assert_eq!(valid.token.token(), token);
+        assert_eq!(valid.principal.issuer, "https://auth.example.com");
     }
 
     #[traced_test]
@@ -1162,6 +1181,44 @@ mod test {
                 .token(),
             token
         );
+    }
+
+    #[tokio::test]
+    async fn principal_issuer_is_the_verifying_servers_without_iss_claims() {
+        let (encode_a, decode_a) = create_key("DEADBEEF");
+        let (encode_b, decode_b) = create_key("CAFED00D");
+        let audience = "test-audience".to_string();
+        let in_the_future = chrono::Utc::now().timestamp() + 1000;
+        let server = |name: &str, kid: &str, decoding_key| TestServer {
+            url: Url::from_str(&format!("https://{name}.example.com")).expect("valid server URL"),
+            key_pair: (
+                kid.to_string(),
+                Jwk {
+                    alg: Some(KeyAlgorithm::HS512),
+                    decoding_key,
+                },
+            ),
+            discovered_issuer: format!("https://{name}.example.com"),
+        };
+        let test_validator = TestTokenValidator::new(
+            vec![audience.clone()],
+            vec![],
+            false,
+            vec![
+                server("auth-a", "kid-a", decode_a),
+                server("auth-b", "kid-b", decode_b),
+            ],
+        );
+
+        // Same `sub` and no `iss`, from two different authorization servers.
+        let from_a = create_jwt("kid-a".into(), encode_a, audience.clone(), in_the_future);
+        let from_b = create_jwt("kid-b".into(), encode_b, audience, in_the_future);
+        let principal_a = test_validator.validate(from_a).await.unwrap().principal;
+        let principal_b = test_validator.validate(from_b).await.unwrap().principal;
+
+        assert_eq!(principal_a.issuer, "https://auth-a.example.com");
+        assert_eq!(principal_b.issuer, "https://auth-b.example.com");
+        assert_ne!(principal_a, principal_b);
     }
 
     #[traced_test]
