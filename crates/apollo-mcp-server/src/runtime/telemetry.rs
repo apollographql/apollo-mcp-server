@@ -513,7 +513,8 @@ pub fn suppress_rmcp_debug() {
 }
 
 fn rmcp_event_allowed(suppress: bool, target: &str, level: &tracing::Level) -> bool {
-    !suppress || !target.starts_with("rmcp") || *level <= tracing::Level::INFO
+    let rmcp = target == "rmcp" || target.starts_with("rmcp::");
+    !suppress || !rmcp || *level <= tracing::Level::INFO
 }
 
 pub struct TelemetryGuard {
@@ -548,6 +549,7 @@ mod tests {
     #[case::rmcp_info_kept(true, "rmcp::service", tracing::Level::INFO, true)]
     #[case::rmcp_warn_kept(true, "rmcp::service", tracing::Level::WARN, true)]
     #[case::other_debug_kept(true, "apollo_mcp_server", tracing::Level::DEBUG, true)]
+    #[case::rmcp_prefixed_crate_kept(true, "rmcp_macros", tracing::Level::DEBUG, true)]
     #[case::unsuppressed_rmcp_debug_kept(false, "rmcp::service", tracing::Level::DEBUG, true)]
     fn rmcp_event_filter(
         #[case] suppress: bool,
