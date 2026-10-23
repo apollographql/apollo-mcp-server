@@ -182,8 +182,7 @@ struct Claims {
     /// `sub` claim is rejected at deserialize time.
     sub: String,
 
-    /// OAuth scope claim: a space-separated string (RFC 9068) or an array of
-    /// strings (Duende IdentityServer's default).
+    /// OAuth scope claim, as a space-separated string (RFC 9068) or an array of strings.
     #[serde(default)]
     scope: Option<ScopeClaimValue>,
 
