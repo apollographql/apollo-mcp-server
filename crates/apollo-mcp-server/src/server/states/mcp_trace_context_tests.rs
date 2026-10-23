@@ -281,6 +281,18 @@ async fn failed_tool_call_records_tool_error_type() {
 }
 
 #[tokio::test]
+async fn failed_tool_call_sets_error_status() {
+    let span = failed_tool_call_span().await;
+    assert!(matches!(span.status, Status::Error { .. }));
+}
+
+#[tokio::test]
+async fn successful_tool_call_leaves_status_unset() {
+    let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
+    assert_eq!(named(&spans, "call_tool").status, Status::Unset);
+}
+
+#[tokio::test]
 async fn failed_tool_call_omits_gen_ai_result() {
     let span = failed_tool_call_span().await;
     assert_eq!(attribute(&span, "gen_ai.tool.call.result"), None);

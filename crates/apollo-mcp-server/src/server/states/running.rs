@@ -895,6 +895,8 @@ impl ServerHandler for McpService {
                 gen_ai.tool.call.arguments = tracing::field::Empty,
                 gen_ai.tool.call.result = tracing::field::Empty,
                 error.type = tracing::field::Empty,
+                otel.status_code = tracing::field::Empty,
+                otel.status_description = tracing::field::Empty,
             ),
             &context,
         );
@@ -1282,10 +1284,13 @@ fn record_tool_result(
             }
             if is_error {
                 span.record("error.type", "tool_error");
+                span.record("otel.status_code", "ERROR");
             }
         }
         Err(e) if is_server_error(e.code) => {
             span.record("error.type", e.code.0.to_string().as_str());
+            span.record("otel.status_code", "ERROR");
+            span.record("otel.status_description", e.message.as_ref());
         }
         Err(_) => {}
     }

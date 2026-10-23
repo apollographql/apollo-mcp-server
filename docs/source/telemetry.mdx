@@ -268,6 +268,8 @@ The `call_tool` span includes the following attributes:
 | `gen_ai.tool.call.result`   | Same value as `apollo.mcp.tool_result`, for a successful call only. Opt-in. |
 | `error.type`                | `tool_error` when the tool result has `isError: true`, or the JSON-RPC error code when the call fails with a server error. |
 
+When the server records `error.type`, it also sets the span status to error. For a JSON-RPC error, the status description is the error message.
+
 The `mcp.*`, `gen_ai.*`, and `error.type` attributes follow the OpenTelemetry [semantic conventions for MCP](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md#server). Observability platforms that read these conventions, such as Langfuse, use `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` to show a tool call's input and output.
 
 The server doesn't export the `gen_ai.*` attributes by default, because `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` may contain sensitive data. To export all of them, enable `gen_ai`:
