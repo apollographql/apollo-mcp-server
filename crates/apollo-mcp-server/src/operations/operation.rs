@@ -69,7 +69,7 @@ impl Operation {
     }
 
     #[expect(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "load_tool")]
+    #[tracing::instrument(level = "debug", skip_all, name = "load_tool")]
     pub fn from_raw(
         raw_operation: RawOperation,
         graphql_schema: &GraphqlSchema,
@@ -241,7 +241,7 @@ impl Operation {
 
     /// Generate a tool description from the operation's description, its leading comments,
     /// or documentation in the schema, in that order
-    #[tracing::instrument(skip(comments, tree_shaker, graphql_schema, operation_def), fields(operation_type = ?operation_def.operation_type, operation_id = ?operation_def.name))]
+    #[tracing::instrument(level = "debug", skip(comments, tree_shaker, graphql_schema, operation_def), fields(operation_type = ?operation_def.operation_type, operation_id = ?operation_def.name))]
     fn tool_description(
         comments: Option<String>,
         tree_shaker: &mut SchemaTreeShaker,
@@ -438,7 +438,7 @@ impl graphql::Executable for Operation {
 /// This performs syntactic parsing only; it does not validate the executable document against a
 /// schema.
 #[allow(clippy::type_complexity)]
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(level = "debug", skip_all)]
 pub fn operation_defs(
     source_text: &str,
     allow_mutations: bool,
@@ -528,7 +528,7 @@ pub fn operation_name(
         .to_string())
 }
 
-#[tracing::instrument(skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
+#[tracing::instrument(level = "debug", skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
 pub fn variable_description_overrides(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
@@ -564,7 +564,7 @@ pub fn variable_description_overrides(
     argument_overrides_map
 }
 
-#[tracing::instrument(skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
+#[tracing::instrument(level = "debug", skip_all, fields(operation_type = ?operation_definition.operation_type, operation_id = ?operation_definition.name))]
 pub fn find_opening_parens_offset(
     source_text: &str,
     operation_definition: &Node<OperationDefinition>,
@@ -628,7 +628,7 @@ fn tool_character_length(tool: &Tool) -> Result<usize, serde_json::Error> {
         + output_schema_len)
 }
 
-#[tracing::instrument(skip_all)]
+#[tracing::instrument(level = "debug", skip_all)]
 fn get_json_schema(
     operation: &Node<OperationDefinition>,
     schema_argument_descriptions: &HashMap<String, Vec<String>>,
@@ -820,6 +820,62 @@ mod tests {
 
             j
         }};
+    }
+
+    fn exported_span_names_while_loading_tool(filter: &str) -> Vec<String> {
+        use opentelemetry::trace::TracerProvider as _;
+        use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+        use tracing_subscriber::layer::SubscriberExt as _;
+
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_subscriber::EnvFilter::new(filter))
+            .with(tracing_opentelemetry::OpenTelemetryLayer::new(
+                provider.tracer("test"),
+            ));
+
+        tracing::subscriber::with_default(subscriber, || {
+            Operation::from_raw(
+                RawOperation {
+                    source_text: "query QueryName($id: ID) { id }".to_string(),
+                    headers: None,
+                    variables: None,
+                    source_path: None,
+                },
+                &SCHEMA,
+                None,
+                MutationMode::None,
+                false,
+                false,
+                true,
+                &HashMap::new(),
+                &HashMap::new(),
+                &HashMap::new(),
+            )
+            .unwrap()
+            .unwrap();
+        });
+
+        provider.force_flush().unwrap();
+        exporter
+            .get_finished_spans()
+            .unwrap()
+            .into_iter()
+            .map(|span| span.name.into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn loading_tool_exports_no_spans_at_info_level() {
+        assert!(exported_span_names_while_loading_tool("info").is_empty());
+    }
+
+    #[test]
+    fn loading_tool_exports_spans_at_debug_level() {
+        assert!(exported_span_names_while_loading_tool("debug").contains(&"load_tool".to_string()));
     }
 
     #[test]
