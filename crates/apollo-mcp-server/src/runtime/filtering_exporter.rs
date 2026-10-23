@@ -1,5 +1,5 @@
-//! [`SpanExporter`] decorator that strips configured `apollo.*` attributes
-//! from each span before delegating to an inner exporter.
+//! [`SpanExporter`] decorator that strips configured attributes from each
+//! span before delegating to an inner exporter.
 //!
 //! Users opt attributes out via `telemetry.exporters.tracing.omitted_attributes`
 //! in YAML; the keys land in [`FilteringExporter::new`] and are removed at
@@ -14,11 +14,10 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use std::collections::HashSet;
 use std::time::Duration;
 
-/// Wraps an inner [`SpanExporter`] and drops any `apollo.*` attribute whose
-/// key appears in `omitted` before the span is exported.
+/// Wraps an inner [`SpanExporter`] and drops any attribute whose key appears
+/// in `omitted` before the span is exported.
 ///
-/// All other attributes (including non-`apollo.*` keys and `apollo.*` keys
-/// not listed in `omitted`) pass through untouched. Lifecycle methods
+/// All other attributes pass through untouched. Lifecycle methods
 /// (`shutdown`, `shutdown_with_timeout`, `force_flush`, `set_resource`) are
 /// forwarded transparently.
 #[derive(Debug)]
@@ -44,9 +43,7 @@ where
 {
     fn export(&self, mut batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
         for span in &mut batch {
-            span.attributes.retain(|kv| {
-                !(kv.key.as_str().starts_with("apollo.") && self.omitted.contains(&kv.key))
-            });
+            span.attributes.retain(|kv| !self.omitted.contains(&kv.key));
         }
 
         self.inner.export(batch)
@@ -84,11 +81,12 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     /// Inner exporter used in tests: counts invocations of every lifecycle
-    /// method and panics if a filtered `apollo.*` attribute leaks through
-    /// `export`.
+    /// method, records the attribute keys it receives, and panics if a
+    /// filtered `apollo.*` attribute leaks through `export`.
     #[derive(Debug, Default, Clone)]
     struct RecordingExporter {
         exports: Arc<AtomicUsize>,
+        exported_keys: Arc<std::sync::Mutex<Vec<Key>>>,
         shutdowns: Arc<AtomicUsize>,
         shutdown_timeouts: Arc<std::sync::Mutex<Vec<Duration>>>,
         force_flushes: Arc<AtomicUsize>,
@@ -106,6 +104,10 @@ mod tests {
                         .any(|kv| kv.key.as_str().starts_with("apollo.")),
                     "apollo.* attribute leaked through the filter",
                 );
+                self.exported_keys
+                    .lock()
+                    .expect("lock poisoned")
+                    .extend(span.attributes.iter().map(|kv| kv.key.clone()));
             }
             self.exports.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
@@ -182,6 +184,28 @@ mod tests {
         );
 
         assert_eq!(exports.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn filtering_exporter_filters_omitted_non_apollo_attributes() {
+        let recorder = RecordingExporter::default();
+        let exported_keys = recorder.exported_keys.clone();
+
+        let filtering_exporter = FilteringExporter::new(
+            recorder,
+            [
+                Key::from_static_str("apollo.mock"),
+                Key::from_static_str("http.method"),
+            ],
+        );
+        assert!(
+            filtering_exporter
+                .export(vec![create_mock_span_data()])
+                .await
+                .is_ok()
+        );
+
+        assert!(exported_keys.lock().expect("lock poisoned").is_empty());
     }
 
     #[tokio::test]

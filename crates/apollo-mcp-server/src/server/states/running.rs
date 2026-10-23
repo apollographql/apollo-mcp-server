@@ -880,7 +880,20 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            tracing::info_span!(
+                parent: get_parent_span(&context),
+                "call_tool",
+                mcp.method.name = "tools/call",
+                apollo.mcp.tool_name = request.name.as_ref(),
+                apollo.mcp.request_id = %context.id.clone(),
+                apollo.mcp.tool_arguments = tracing::field::Empty,
+                apollo.mcp.tool_result = tracing::field::Empty,
+                gen_ai.operation.name = "execute_tool",
+                gen_ai.tool.name = request.name.as_ref(),
+                gen_ai.tool.call.arguments = tracing::field::Empty,
+                gen_ai.tool.call.result = tracing::field::Empty,
+                error.type = tracing::field::Empty,
+            ),
             &context,
         );
         let execution_span = span.clone();
@@ -891,6 +904,7 @@ impl ServerHandler for McpService {
                 && let Ok(json) = serde_json::to_string(args)
             {
                 span.record("apollo.mcp.tool_arguments", json.as_str());
+                span.record("gen_ai.tool.call.arguments", json.as_str());
             }
 
             let protocol_version = context.protocol_version();
@@ -1248,10 +1262,17 @@ impl ServerHandler for McpService {
 // @private payload and must not be exported to the span.
 fn record_tool_result(span: &tracing::Span, result: &Result<CallToolResult, McpError>) {
     if let Ok(r) = result {
+        let is_error = r.is_error == Some(true);
         let mut stripped = r.clone();
         stripped.meta = None;
         if let Ok(json) = serde_json::to_string(&stripped) {
             span.record("apollo.mcp.tool_result", json.as_str());
+            if !is_error {
+                span.record("gen_ai.tool.call.result", json.as_str());
+            }
+        }
+        if is_error {
+            span.record("error.type", "tool_error");
         }
     }
 }
