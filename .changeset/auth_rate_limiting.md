@@ -20,4 +20,4 @@ Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and
 capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`.
 Repeated token-validation warnings are now summarised at most once every 60
 seconds with a count of suppressed events, instead of one log line per failed
-request.
+request. Suppressed events are still logged at `DEBUG`.

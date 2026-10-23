@@ -46,6 +46,7 @@ pub(super) trait KeyResolver {
 
 /// Coalesces attacker-influenced token-validation warnings across requests.
 /// Each kind has its own throttle so noise in one cannot hide another.
+/// Suppressed events still log at debug.
 #[derive(Default)]
 pub(super) struct TokenValidationReporter {
     missing_jwk_algorithm: LogThrottle,
@@ -93,6 +94,8 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         self.reporter.missing_jwk_algorithm.record(Instant::now())
                     {
                         tracing::warn!(suppressed, "Skipping JWK with no algorithm specified");
+                    } else {
+                        tracing::debug!("Skipping JWK with no algorithm specified");
                     }
                     continue;
                 };
@@ -105,6 +108,11 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                         tracing::warn!(
                             algorithm = ?alg,
                             suppressed,
+                            "Skipping JWT signed by unsupported algorithm"
+                        );
+                    } else {
+                        tracing::debug!(
+                            algorithm = ?alg,
                             "Skipping JWT signed by unsupported algorithm"
                         );
                     }
@@ -135,6 +143,8 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                             self.reporter.missing_audience.record(Instant::now())
                         {
                             tracing::warn!(suppressed, "Token is missing the required `aud` claim");
+                        } else {
+                            tracing::debug!("Token is missing the required `aud` claim");
                         }
                         break;
                     }
@@ -151,6 +161,8 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                                     suppressed,
                                     "Token is missing the required `iss` claim"
                                 );
+                            } else {
+                                tracing::debug!("Token is missing the required `iss` claim");
                             }
                             break;
                         };
@@ -170,6 +182,12 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                                     suppressed,
                                     "Token `iss` does not match the issuer of the server that signed it"
                                 );
+                            } else {
+                                tracing::debug!(
+                                    token_issuer,
+                                    server_issuer = %discovered_issuer,
+                                    "Token `iss` does not match the issuer of the server that signed it"
+                                );
                             }
                             break;
                         }
@@ -183,6 +201,8 @@ impl<R: KeyResolver> TokenValidator<'_, R> {
                     if let Some(suppressed) = self.reporter.validation_failed.record(Instant::now())
                     {
                         tracing::warn!(error = %error, suppressed, "Token failed validation");
+                    } else {
+                        tracing::debug!(error = %error, "Token failed validation");
                     }
                 }
             };
@@ -442,6 +462,22 @@ mod test {
         Authorization::bearer(&token).expect("create bearer token")
     }
 
+    /// Checks that `message` was warned once and the repeat was logged at debug.
+    fn warned_once_then_debugged(lines: &[&str], message: &str) -> Result<(), String> {
+        let count = |level: &str| {
+            lines
+                .iter()
+                .filter(|line| line.contains(level) && line.contains(message))
+                .count()
+        };
+        match (count("WARN"), count("DEBUG")) {
+            (1, 1) => Ok(()),
+            counts => Err(format!(
+                "Expected one WARN and one DEBUG for {message:?}, got {counts:?}"
+            )),
+        }
+    }
+
     #[tokio::test]
     async fn it_validates_jwt() {
         let key_id = "some-example-id".to_string();
@@ -513,7 +549,7 @@ mod test {
 
     #[traced_test]
     #[tokio::test]
-    async fn repeated_validation_failures_emit_one_immediate_warning() {
+    async fn repeated_validation_failures_warn_once_then_log_at_debug() {
         let key_id = "some-example-id".to_string();
         let (_, decode_key) = create_key("CAFED00D");
         let (bad_encode_key, _) = create_key("DEADC0DE");
@@ -548,7 +584,8 @@ mod test {
                 _ => Err(format!(
                     "Expected one immediate validation warning with suppressed=0, got {warnings:?}"
                 )),
-            }
+            }?;
+            warned_once_then_debugged(lines, "Token failed validation")
         });
     }
 
@@ -773,15 +810,11 @@ mod test {
             server,
         );
 
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
         assert_eq!(test_validator.validate(jwt).await, None);
 
         logs_assert(|lines: &[&str]| {
-            lines
-                .iter()
-                .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("missing the required `aud` claim"))
-                .then_some(())
-                .ok_or("Expected warning for missing aud claim".to_string())
+            warned_once_then_debugged(lines, "missing the required `aud` claim")
         });
     }
 
@@ -1037,15 +1070,11 @@ mod test {
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![issuer], false, (key_id, jwk), server);
 
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
         assert_eq!(test_validator.validate(jwt).await, None);
 
         logs_assert(|lines: &[&str]| {
-            lines
-                .iter()
-                .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("missing the required `iss` claim"))
-                .then_some(())
-                .ok_or("Expected warning for missing iss claim".to_string())
+            warned_once_then_debugged(lines, "missing the required `iss` claim")
         });
     }
 
@@ -1172,15 +1201,14 @@ mod test {
         // Server A verifies the signature but its discovered issuer
         // (`auth-a`) does not match the token's `iss` (`auth-b`); server B's key
         // fails the signature. So the token is rejected overall.
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
         assert_eq!(test_validator.validate(jwt).await, None);
 
         logs_assert(|lines: &[&str]| {
-            lines
-                .iter()
-                .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("does not match the issuer of the server that signed it"))
-                .then_some(())
-                .ok_or("Expected issuer-mismatch warning from the authorization server".to_string())
+            warned_once_then_debugged(
+                lines,
+                "does not match the issuer of the server that signed it",
+            )
         });
     }
 
@@ -1279,16 +1307,10 @@ mod test {
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
         assert_eq!(test_validator.validate(jwt).await, None);
 
-        logs_assert(|lines: &[&str]| {
-            lines
-                .iter()
-                .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("no algorithm specified"))
-                .then_some(())
-                .ok_or("Expected warning for missing algorithm".to_string())
-        });
+        logs_assert(|lines: &[&str]| warned_once_then_debugged(lines, "no algorithm specified"));
     }
 
     #[traced_test]
@@ -1313,16 +1335,10 @@ mod test {
         let test_validator =
             TestTokenValidator::single(vec![audience], vec![], false, (key_id, jwk), server);
 
+        assert_eq!(test_validator.validate(jwt.clone()).await, None);
         assert_eq!(test_validator.validate(jwt).await, None);
 
-        logs_assert(|lines: &[&str]| {
-            lines
-                .iter()
-                .filter(|line| line.contains("WARN"))
-                .any(|line| line.contains("unsupported algorithm"))
-                .then_some(())
-                .ok_or("Expected warning for unsupported algorithm".to_string())
-        });
+        logs_assert(|lines: &[&str]| warned_once_then_debugged(lines, "unsupported algorithm"));
     }
 
     #[tokio::test]
