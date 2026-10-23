@@ -47,8 +47,8 @@ pub struct RateLimitConfig {
     /// fails authentication.
     pub requests_per_second: NonZeroU32,
 
-    /// Requests a credential can make in a burst before the sustained rate
-    /// applies.
+    /// Failed authentications a credential can make in a burst before the
+    /// sustained rate applies.
     pub burst: NonZeroU32,
 }
 
