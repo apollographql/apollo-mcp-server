@@ -167,7 +167,21 @@ pub struct TracingExporters {
     gen_ai: Option<bool>,
 }
 
+impl Telemetry {
+    /// Whether the tracing exporter exports the OpenTelemetry GenAI attributes.
+    pub fn gen_ai(&self) -> bool {
+        self.exporters
+            .as_ref()
+            .and_then(|exporters| exporters.tracing.as_ref())
+            .is_some_and(TracingExporters::gen_ai)
+    }
+}
+
 impl TracingExporters {
+    fn gen_ai(&self) -> bool {
+        self.gen_ai.unwrap_or_default()
+    }
+
     /// Span attribute keys the exporter drops: every key of an omitted
     /// attribute, plus the GenAI attributes unless they're enabled.
     fn omitted_span_keys(&self) -> HashSet<Key> {
@@ -177,7 +191,7 @@ impl TracingExporters {
             .flatten()
             .flat_map(|a| a.span_keys())
             .collect();
-        if !self.gen_ai.unwrap_or_default() {
+        if !self.gen_ai() {
             keys.extend(TelemetryAttribute::GEN_AI_KEYS);
         }
         keys

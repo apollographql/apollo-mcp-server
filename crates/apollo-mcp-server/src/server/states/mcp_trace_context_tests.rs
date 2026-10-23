@@ -86,7 +86,16 @@ async fn http_tool_call(
     forward_headers: Vec<String>,
     version: &str,
 ) -> (Vec<SpanData>, HashMap<String, String>) {
-    http_tool_call_with_filter(meta, forward_headers, version, "trace", false, GRAPHQL_DATA).await
+    http_tool_call_with_filter(
+        meta,
+        forward_headers,
+        version,
+        "trace",
+        false,
+        GRAPHQL_DATA,
+        true,
+    )
+    .await
 }
 
 const GRAPHQL_DATA: &str = r#"{"data":{"hello":"world"}}"#;
@@ -98,6 +107,7 @@ async fn http_tool_call_with_filter(
     filter: &str,
     tasks: bool,
     graphql_body: &str,
+    gen_ai: bool,
 ) -> (Vec<SpanData>, HashMap<String, String>) {
     if version == "2026-07-28" {
         meta["io.modelcontextprotocol/protocolVersion"] = json!(version);
@@ -120,6 +130,7 @@ async fn http_tool_call_with_filter(
         .await;
     let mut running = create_test_running_with_operation(graphql.url().parse().unwrap());
     running.forward_headers = forward_headers;
+    running.gen_ai = gen_ai;
     if tasks {
         running.tasks = Some(crate::server::states::tasks::TaskRuntime::new(
             crate::tasks::TasksConfig {
@@ -228,6 +239,24 @@ async fn call_tool_span_records_constant_attribute(#[case] key: &str, #[case] ex
     );
 }
 
+#[rstest::rstest]
+#[case::arguments("gen_ai.tool.call.arguments")]
+#[case::result("gen_ai.tool.call.result")]
+#[tokio::test]
+async fn call_tool_span_omits_gen_ai_payload_when_disabled(#[case] key: &str) {
+    let (spans, _) = http_tool_call_with_filter(
+        json!({}),
+        vec![],
+        "2025-11-25",
+        "trace",
+        false,
+        GRAPHQL_DATA,
+        false,
+    )
+    .await;
+    assert_eq!(attribute(named(&spans, "call_tool"), key), None);
+}
+
 async fn failed_tool_call_span() -> SpanData {
     let (spans, _) = http_tool_call_with_filter(
         json!({}),
@@ -236,6 +265,7 @@ async fn failed_tool_call_span() -> SpanData {
         "trace",
         false,
         r#"{"errors":[{"message":"boom"}]}"#,
+        true,
     )
     .await;
     named(&spans, "call_tool").clone()
@@ -348,7 +378,7 @@ async fn filtered_handler_preserves_request_context(
     #[case] http_span: HttpSpan,
 ) {
     let (spans, headers) =
-        http_tool_call_with_filter(meta, vec![], version, filter, false, GRAPHQL_DATA).await;
+        http_tool_call_with_filter(meta, vec![], version, filter, false, GRAPHQL_DATA, false).await;
     assert!(!spans.iter().any(|span| span.name == "call_tool"));
     let execute = named(&spans, "execute");
     let client = named(&spans, "mcp-graphql-client");
@@ -903,6 +933,7 @@ async fn detached_tasks_preserve_metadata_and_rhai_context(
         filter,
         true,
         GRAPHQL_DATA,
+        false,
     )
     .await;
     let execute = named(&spans, "execute");

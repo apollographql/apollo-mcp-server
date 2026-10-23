@@ -266,7 +266,7 @@ The `call_tool` span includes the following attributes:
 | `gen_ai.tool.name`          | Same value as `apollo.mcp.tool_name`. Opt-in.   |
 | `gen_ai.tool.call.arguments` | Same value as `apollo.mcp.tool_arguments`. Opt-in. |
 | `gen_ai.tool.call.result`   | Same value as `apollo.mcp.tool_result`, for a successful call only. Opt-in. |
-| `error.type`                | `tool_error` when the tool result has `isError: true`. |
+| `error.type`                | `tool_error` when the tool result has `isError: true`, or the JSON-RPC error code when the call fails with a server error. |
 
 The `mcp.*`, `gen_ai.*`, and `error.type` attributes follow the OpenTelemetry [semantic conventions for MCP](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md#server). Observability platforms that read these conventions, such as Langfuse, use `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` to show a tool call's input and output.
 
@@ -336,14 +336,14 @@ Configure Apollo MCP Server to sample traces sent to your OpenTelemetry Collecto
 
 Trace and metric exporters have independent `omitted_attributes` lists:
 
-- `telemetry.exporters.tracing.omitted_attributes` removes the selected `apollo.*` attributes from spans exported by this server
+- `telemetry.exporters.tracing.omitted_attributes` removes the selected `apollo.*` attributes, and their `gen_ai.*` counterparts, from spans exported by this server
 - `telemetry.exporters.metrics.omitted_attributes` removes the selected supported labels from Apollo metrics
 
 Use short attribute names such as `tool_name`, `operation_id`, `tool_arguments`, and `graphql_response`. For detailed configuration options, go to the [telemetry configuration reference](/apollo-mcp-server/config-file#telemetry).
 
 <Caution>
 
-Attribute filtering applies only to supported Apollo attributes exported by your server; it doesn't filter application log output, non-`apollo.*` span attributes, outgoing GraphQL requests and responses, or telemetry produced by the downstream GraphQL service. Configure data-handling policies independently for each logging and telemetry destination.
+Attribute filtering applies only to supported Apollo attributes, and their `gen_ai.*` counterparts, exported by your server; it doesn't filter application log output, other span attributes, outgoing GraphQL requests and responses, or telemetry produced by the downstream GraphQL service. Configure data-handling policies independently for each logging and telemetry destination.
 
 </Caution>
 
