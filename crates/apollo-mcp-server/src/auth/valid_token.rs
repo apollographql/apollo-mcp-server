@@ -185,18 +185,18 @@ struct Claims {
     /// OAuth scope claim: a space-separated string (RFC 9068) or an array of
     /// strings (Duende IdentityServer's default).
     #[serde(default)]
-    scope: Option<ScopeClaim>,
+    scope: Option<ScopeClaimValue>,
 
     /// Non-standard scope claim. Okta emits this as an array of
     /// strings; Microsoft Entra emits it as a space-separated string.
     /// Used as a fallback when the RFC 9068 `scope` claim is absent.
     #[serde(default)]
-    scp: Option<ScopeClaim>,
+    scp: Option<ScopeClaimValue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-enum ScopeClaim {
+enum ScopeClaimValue {
     Array(Vec<String>),
     String(String),
 }
@@ -207,8 +207,8 @@ impl Claims {
     /// and Microsoft Entra (space-separated string).
     fn scopes(self) -> Vec<String> {
         match self.scope.or(self.scp) {
-            Some(ScopeClaim::String(s)) => s.split_whitespace().map(String::from).collect(),
-            Some(ScopeClaim::Array(v)) => v,
+            Some(ScopeClaimValue::String(s)) => s.split_whitespace().map(String::from).collect(),
+            Some(ScopeClaimValue::Array(v)) => v,
             None => Vec::new(),
         }
     }
