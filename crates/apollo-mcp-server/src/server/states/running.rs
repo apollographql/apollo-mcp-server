@@ -80,6 +80,8 @@ pub(super) struct Running {
     pub(super) disable_schema_description: bool,
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
+    /// Record the OpenTelemetry GenAI tool call payloads on `call_tool` spans.
+    pub(super) gen_ai: bool,
     pub(super) descriptions: HashMap<String, String>,
     pub(super) annotations: HashMap<String, AnnotationOverrides>,
     pub(super) param_headers: HashMap<String, ParamHeaders>,
@@ -880,7 +882,22 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "call_tool", apollo.mcp.tool_name = request.name.as_ref(), apollo.mcp.request_id = %context.id.clone(), apollo.mcp.tool_arguments = tracing::field::Empty, apollo.mcp.tool_result = tracing::field::Empty),
+            tracing::info_span!(
+                parent: get_parent_span(&context),
+                "call_tool",
+                mcp.method.name = "tools/call",
+                apollo.mcp.tool_name = request.name.as_ref(),
+                apollo.mcp.request_id = %context.id.clone(),
+                apollo.mcp.tool_arguments = tracing::field::Empty,
+                apollo.mcp.tool_result = tracing::field::Empty,
+                gen_ai.operation.name = "execute_tool",
+                gen_ai.tool.name = request.name.as_ref(),
+                gen_ai.tool.call.arguments = tracing::field::Empty,
+                gen_ai.tool.call.result = tracing::field::Empty,
+                error.type = tracing::field::Empty,
+                otel.status_code = tracing::field::Empty,
+                otel.status_description = tracing::field::Empty,
+            ),
             &context,
         );
         let execution_span = span.clone();
@@ -891,6 +908,9 @@ impl ServerHandler for McpService {
                 && let Ok(json) = serde_json::to_string(args)
             {
                 span.record("apollo.mcp.tool_arguments", json.as_str());
+                if self.application.gen_ai {
+                    span.record("gen_ai.tool.call.arguments", json.as_str());
+                }
             }
 
             let protocol_version = context.protocol_version();
@@ -933,7 +953,7 @@ impl ServerHandler for McpService {
                         operation,
                     )
                     .await;
-                record_tool_result(&span, &result);
+                record_tool_result(&span, &result, self.application.gen_ai);
                 return result.map(Into::into);
             };
             let owner = request_principal(&context.extensions);
@@ -946,7 +966,7 @@ impl ServerHandler for McpService {
                 let result = application
                     .call_tool_impl(request, &extensions, protocol_version.as_ref(), operation)
                     .await;
-                record_tool_result(&span, &result);
+                record_tool_result(&span, &result, application.gen_ai);
                 result
             }
             // Preserve the actual handler span, including a disabled span.
@@ -1246,14 +1266,47 @@ impl ServerHandler for McpService {
 
 // Strip meta before recording: _meta.structuredContent holds the unfiltered
 // @private payload and must not be exported to the span.
-fn record_tool_result(span: &tracing::Span, result: &Result<CallToolResult, McpError>) {
-    if let Ok(r) = result {
-        let mut stripped = r.clone();
-        stripped.meta = None;
-        if let Ok(json) = serde_json::to_string(&stripped) {
-            span.record("apollo.mcp.tool_result", json.as_str());
+fn record_tool_result(
+    span: &tracing::Span,
+    result: &Result<CallToolResult, McpError>,
+    gen_ai: bool,
+) {
+    match result {
+        Ok(r) => {
+            let is_error = r.is_error == Some(true);
+            let mut stripped = r.clone();
+            stripped.meta = None;
+            if let Ok(json) = serde_json::to_string(&stripped) {
+                span.record("apollo.mcp.tool_result", json.as_str());
+                if gen_ai && !is_error {
+                    span.record("gen_ai.tool.call.result", json.as_str());
+                }
+            }
+            if is_error {
+                span.record("error.type", "tool_error");
+                span.record("otel.status_code", "ERROR");
+            }
         }
+        Err(e) if is_server_error(e.code) => {
+            span.record("error.type", e.code.0.to_string().as_str());
+            span.record("otel.status_code", "ERROR");
+            span.record("otel.status_description", e.message.as_ref());
+        }
+        Err(_) => {}
     }
+}
+
+/// JSON-RPC codes the MCP semantic conventions treat as caller mistakes
+/// rather than errors; every other code is a server error.
+fn is_server_error(code: ErrorCode) -> bool {
+    !matches!(
+        code,
+        ErrorCode::PARSE_ERROR
+            | ErrorCode::INVALID_REQUEST
+            | ErrorCode::METHOD_NOT_FOUND
+            | ErrorCode::INVALID_PARAMS
+            | ErrorCode::RESOURCE_NOT_FOUND
+    )
 }
 
 fn request_principal(extensions: &Extensions) -> Option<crate::auth::Principal> {
@@ -1281,6 +1334,17 @@ fn tool_not_found(name: &str) -> McpError {
 
 #[cfg(test)]
 mod tests {
+    #[rstest::rstest]
+    #[case::parse_error(ErrorCode::PARSE_ERROR, false)]
+    #[case::invalid_request(ErrorCode::INVALID_REQUEST, false)]
+    #[case::method_not_found(ErrorCode::METHOD_NOT_FOUND, false)]
+    #[case::invalid_params(ErrorCode::INVALID_PARAMS, false)]
+    #[case::resource_not_found(ErrorCode::RESOURCE_NOT_FOUND, false)]
+    #[case::internal_error(ErrorCode::INTERNAL_ERROR, true)]
+    fn is_server_error_classifies_json_rpc_codes(#[case] code: ErrorCode, #[case] expected: bool) {
+        assert_eq!(super::is_server_error(code), expected);
+    }
+
     use rmcp::model::{JsonObject, Tool};
 
     use crate::apps::{
@@ -1312,6 +1376,7 @@ mod tests {
             disable_type_description: false,
             disable_schema_description: false,
             enable_output_schema: false,
+            gen_ai: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
@@ -3271,6 +3336,7 @@ mod tests {
             let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
+                gen_ai: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3317,6 +3383,7 @@ mod tests {
             let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
+                gen_ai: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3691,6 +3758,7 @@ mod tests {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
+                gen_ai: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3747,6 +3815,7 @@ mod tests {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
+                gen_ai: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3855,6 +3924,7 @@ mod tests {
                 apps: vec![app],
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
+                gen_ai: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3995,6 +4065,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: true,
+                gen_ai: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -4519,6 +4590,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: true,
+                gen_ai: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -5503,6 +5575,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: false,
+                gen_ai: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -5689,6 +5762,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: false,
+                gen_ai: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
