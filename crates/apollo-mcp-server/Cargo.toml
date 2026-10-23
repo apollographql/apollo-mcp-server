@@ -2,10 +2,14 @@
 name = "apollo-mcp-server"
 authors.workspace = true
 edition.workspace = true
-license-file.workspace = true
+license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 version.workspace = true
+description = "Model Context Protocol server that exposes GraphQL operations as MCP tools"
+readme = "../../README.md"
+keywords = ["mcp", "graphql", "apollo", "ai", "llm"]
+categories = ["command-line-utilities", "web-programming::http-server"]
 build = "build.rs"
 
 default-run = "apollo-mcp-server"
@@ -14,9 +18,9 @@ default-run = "apollo-mcp-server"
 anyhow = "1.0.98"
 apollo-compiler.workspace = true
 apollo-federation.workspace = true
-apollo-mcp-registry = { path = "../apollo-mcp-registry" }
-apollo-mcp-rhai = { path = "../apollo-mcp-rhai" }
-apollo-schema-index = { path = "../apollo-schema-index" }
+apollo-mcp-registry.workspace = true
+apollo-mcp-rhai.workspace = true
+apollo-schema-index.workspace = true
 axum = "0.8.4"
 axum-extra = { version = "0.12.0", features = ["typed-header"] }
 axum-otel-metrics = "0.14.1"
@@ -99,6 +103,8 @@ toml = "1.0.0"
 
 [features]
 experimental_rhai = ["apollo-mcp-rhai/experimental_rhai"]
+# Internal tool that prints the config JSON Schema; kept out of `cargo install`
+config-schema = []
 
 [lints]
 workspace = true
@@ -111,3 +117,4 @@ path = "src/main.rs"
 name = "config-schema"
 path = "src/config_schema.rs"
 test = false
+required-features = ["config-schema"]

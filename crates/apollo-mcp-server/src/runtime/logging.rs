@@ -12,12 +12,30 @@ use apollo_mcp_server::server::Transport;
 use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::ffi::OsStr;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use tracing::Level;
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::Layer;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+
+/// ANSI styling mode for log output.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnsiMode {
+    /// Enable ANSI styling only when the output stream is a terminal, unless
+    /// overridden by `NO_COLOR`, `FORCE_COLOR`, or `CLICOLOR_FORCE`.
+    #[default]
+    Auto,
+    /// Always enable ANSI styling, regardless of terminal detection or
+    /// environment variables.
+    Always,
+    /// Never enable ANSI styling, regardless of terminal detection or
+    /// environment variables.
+    Never,
+}
 
 /// Logging related options
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -39,6 +57,10 @@ pub struct Logging {
     /// [default: Hourly]
     #[serde(default = "defaults::default_rotation")]
     pub rotation: LogRotationKind,
+
+    /// ANSI styling mode for log output [default: auto]
+    #[serde(default)]
+    pub ansi: AnsiMode,
 }
 
 impl Default for Logging {
@@ -47,6 +69,7 @@ impl Default for Logging {
             level: defaults::log_level(),
             path: None,
             rotation: defaults::default_rotation(),
+            ansi: AnsiMode::default(),
         }
     }
 }
@@ -72,6 +95,13 @@ impl ConsoleStream {
         match self {
             Self::Stdout => BoxMakeWriter::new(std::io::stdout),
             Self::Stderr => BoxMakeWriter::new(std::io::stderr),
+        }
+    }
+
+    fn is_terminal(self) -> bool {
+        match self {
+            Self::Stdout => std::io::stdout().is_terminal(),
+            Self::Stderr => std::io::stderr().is_terminal(),
         }
     }
 }
@@ -102,6 +132,14 @@ impl Logging {
         logging: &Logging,
         console: ConsoleStream,
     ) -> Result<LoggingLayerResult, anyhow::Error> {
+        let no_color = std::env::var_os("NO_COLOR");
+        let force_color = std::env::var_os("FORCE_COLOR");
+        let clicolor_force = std::env::var_os("CLICOLOR_FORCE");
+        let ansi_env = AnsiEnv {
+            no_color: no_color.as_deref(),
+            force_color: force_color.as_deref(),
+            clicolor_force: clicolor_force.as_deref(),
+        };
         let (writer, guard, with_ansi) = match logging.path.clone() {
             Some(path) => std::fs::create_dir_all(&path)
                 .map(|_| path)
@@ -121,14 +159,22 @@ impl Logging {
                     (
                         BoxMakeWriter::new(non_blocking_appender),
                         Some(guard),
-                        false,
+                        logging.ansi == AnsiMode::Always,
                     )
                 })
                 .unwrap_or_else(|| {
                     eprintln!("Log file setup failed - falling back to stderr");
-                    (BoxMakeWriter::new(std::io::stderr), None, true)
+                    (
+                        BoxMakeWriter::new(std::io::stderr),
+                        None,
+                        should_use_ansi(logging.ansi, std::io::stderr().is_terminal(), ansi_env),
+                    )
                 }),
-            None => (console.make_writer(), None, true),
+            None => (
+                console.make_writer(),
+                None,
+                should_use_ansi(logging.ansi, console.is_terminal(), ansi_env),
+            ),
         };
 
         let inner_format = tracing_subscriber::fmt::format::Format::default()
@@ -143,6 +189,37 @@ impl Logging {
             guard,
         ))
     }
+}
+
+/// Environment variables consulted when `logging.ansi` is `auto`.
+#[derive(Clone, Copy, Debug, Default)]
+struct AnsiEnv<'a> {
+    no_color: Option<&'a OsStr>,
+    force_color: Option<&'a OsStr>,
+    clicolor_force: Option<&'a OsStr>,
+}
+
+fn should_use_ansi(mode: AnsiMode, is_terminal: bool, env: AnsiEnv<'_>) -> bool {
+    match mode {
+        AnsiMode::Always => true,
+        AnsiMode::Never => false,
+        AnsiMode::Auto => {
+            if env.no_color.is_some_and(|value| !value.is_empty()) {
+                false
+            } else if is_force_flag_set(env.force_color) || is_force_flag_set(env.clicolor_force) {
+                true
+            } else {
+                is_terminal
+            }
+        }
+    }
+}
+
+/// True when a "force color" variable (`FORCE_COLOR`, `CLICOLOR_FORCE`) is
+/// present with a value other than empty or `"0"`, both of which mean "not
+/// forcing" by widespread convention.
+fn is_force_flag_set(value: Option<&OsStr>) -> bool {
+    value.is_some_and(|value| !value.is_empty() && value != OsStr::new("0"))
 }
 
 fn level(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -183,5 +260,98 @@ mod tests {
         let (_layer, guard) =
             Logging::logging_layer(&Logging::default(), console).expect("logging layer");
         assert!(guard.is_none());
+    }
+
+    fn env(
+        no_color: Option<&'static str>,
+        force_color: Option<&'static str>,
+        clicolor_force: Option<&'static str>,
+    ) -> AnsiEnv<'static> {
+        AnsiEnv {
+            no_color: no_color.map(OsStr::new),
+            force_color: force_color.map(OsStr::new),
+            clicolor_force: clicolor_force.map(OsStr::new),
+        }
+    }
+
+    #[rstest]
+    #[case::terminal(AnsiMode::Auto, true, env(None, None, None), true)]
+    #[case::non_terminal(AnsiMode::Auto, false, env(None, None, None), false)]
+    #[case::no_color(AnsiMode::Auto, true, env(Some("1"), None, None), false)]
+    #[case::empty_no_color(AnsiMode::Auto, true, env(Some(""), None, None), true)]
+    #[case::force_color(AnsiMode::Auto, false, env(None, Some("1"), None), true)]
+    #[case::force_color_zero(AnsiMode::Auto, false, env(None, Some("0"), None), false)]
+    #[case::empty_force_color(AnsiMode::Auto, false, env(None, Some(""), None), false)]
+    #[case::clicolor_force(AnsiMode::Auto, false, env(None, None, Some("1")), true)]
+    #[case::clicolor_force_zero(AnsiMode::Auto, false, env(None, None, Some("0")), false)]
+    #[case::empty_clicolor_force(AnsiMode::Auto, false, env(None, None, Some("")), false)]
+    #[case::no_color_over_force_color(
+        AnsiMode::Auto,
+        false,
+        env(Some("1"), Some("1"), None),
+        false
+    )]
+    #[case::no_color_over_clicolor_force(
+        AnsiMode::Auto,
+        false,
+        env(Some("1"), None, Some("1")),
+        false
+    )]
+    #[case::always_non_terminal(AnsiMode::Always, false, env(None, None, None), true)]
+    #[case::always_over_no_color(AnsiMode::Always, true, env(Some("1"), None, None), true)]
+    #[case::never_terminal(AnsiMode::Never, true, env(None, None, None), false)]
+    #[case::never_over_force_color(AnsiMode::Never, false, env(None, Some("1"), Some("1")), false)]
+    fn should_use_ansi_decision(
+        #[case] mode: AnsiMode,
+        #[case] is_terminal: bool,
+        #[case] env: AnsiEnv<'static>,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(should_use_ansi(mode, is_terminal, env), expected);
+    }
+
+    #[rstest]
+    #[case::auto("ansi: auto", AnsiMode::Auto)]
+    #[case::always("ansi: always", AnsiMode::Always)]
+    #[case::never("ansi: never", AnsiMode::Never)]
+    #[case::default("{}", AnsiMode::Auto)]
+    fn ansi_mode_deserializes(#[case] yaml: &str, #[case] expected: AnsiMode) {
+        let logging: Logging = serde_yaml::from_str(yaml).expect("valid logging config");
+        assert_eq!(logging.ansi, expected);
+    }
+
+    #[rstest]
+    #[case::auto(AnsiMode::Auto, false)]
+    #[case::always(AnsiMode::Always, true)]
+    #[case::never(AnsiMode::Never, false)]
+    fn log_file_uses_ansi_only_when_always(#[case] ansi: AnsiMode, #[case] expected: bool) {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logging = Logging {
+            path: Some(dir.path().to_path_buf()),
+            ansi,
+            ..Logging::default()
+        };
+        let (layer, guard) =
+            Logging::logging_layer(&logging, ConsoleStream::Stdout).expect("logging layer");
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+            tracing::info!("hello");
+        });
+        drop(guard);
+
+        let file = std::fs::read_dir(dir.path())
+            .expect("log dir")
+            .next()
+            .expect("log file")
+            .expect("dir entry");
+        let contents = std::fs::read_to_string(file.path()).expect("log contents");
+        assert!(contents.contains("hello"));
+        assert_eq!(contents.contains('\x1b'), expected);
+    }
+
+    #[test]
+    fn ansi_mode_rejects_unknown_value() {
+        assert!(serde_yaml::from_str::<Logging>("ansi: sometimes").is_err());
     }
 }

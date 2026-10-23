@@ -144,6 +144,7 @@ mod tests {
             let token = ValidToken {
                 token: Authorization::bearer("test-token").unwrap(),
                 scopes: vec![],
+                principal: Default::default(),
             };
             extensions.insert(token);
 
@@ -169,6 +170,7 @@ mod tests {
             let token = ValidToken {
                 token: Authorization::bearer("test-token").unwrap(),
                 scopes: vec![],
+                principal: Default::default(),
             };
             extensions.insert(token);
 
@@ -198,6 +200,7 @@ mod tests {
             extensions.insert(ValidToken {
                 token: Authorization::bearer("validated-token").unwrap(),
                 scopes: vec![],
+                principal: Default::default(),
             });
 
             let result = super::super::build_request_headers(
@@ -253,6 +256,7 @@ mod tests {
             let token = ValidToken {
                 token: Authorization::bearer("oauth-token").unwrap(),
                 scopes: vec![],
+                principal: Default::default(),
             };
             extensions.insert(token);
 

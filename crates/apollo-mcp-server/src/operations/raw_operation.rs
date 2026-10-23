@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{custom_scalar_map::CustomScalarMap, errors::OperationError};
 
-use super::{AnnotationOverrides, MutationMode, operation::Operation};
+use super::{AnnotationOverrides, MutationMode, ParamHeaders, operation::Operation};
 
 #[derive(Debug, Clone)]
 pub struct RawOperation {
@@ -31,6 +31,7 @@ impl RawOperation {
         enable_output_schema: bool,
         annotation_overrides: &HashMap<String, AnnotationOverrides>,
         description_overrides: &HashMap<String, String>,
+        param_headers: &HashMap<String, ParamHeaders>,
     ) -> Result<Option<Operation>, OperationError> {
         Operation::from_raw(
             self,
@@ -42,6 +43,7 @@ impl RawOperation {
             enable_output_schema,
             annotation_overrides,
             description_overrides,
+            param_headers,
         )
     }
 }

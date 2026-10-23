@@ -26,7 +26,7 @@ Apollo MCP Server validates signed JWT bearer access tokens; it doesn't support 
 
 Then, you [configure the MCP server with `auth` settings](/apollo-mcp-server/config-file#auth) and the [GraphOS Router for JWT authentication](/graphos/routing/security/jwt) using those IdP values.
 
-For an example of how to configure Apollo MCP Server with Auth0, see [Authorization with Auth0](/apollo-mcp-server/guides/auth-auth0).
+For examples of how to configure Apollo MCP Server with a specific IdP, see [Authorization with Auth0](/apollo-mcp-server/guides/auth-auth0), [Authorization with WorkOS](/apollo-mcp-server/guides/auth-workos), and [Authorization with Okta](/apollo-mcp-server/guides/auth-okta).
 
 ## Configuring allowed audiences
 
@@ -160,7 +160,7 @@ Adopt `scope_mode: disabled` only when downstream services, like subgraphs, hand
 
 ### Scope claim: `scope` vs `scp`
 
-Apollo MCP Server reads the standard `scope` claim first. This claim is a space-separated string, defined in [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068). If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
+Apollo MCP Server reads the standard `scope` claim first. [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068) define this claim as a space-separated string, but some IdPs send it as an array of strings. The server accepts both. If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
 
 ## Per-operation scope requirements
 
@@ -209,6 +209,23 @@ The client can use this response to initiate targeted re-authorization and retry
 `required_scopes` adds to the global requirement and doesn't replace it. A token must satisfy the global `scopes` and `scope_mode` requirement when that requirement is enabled. For a listed operation, a flat list requires every listed scope; nested alternatives require every scope in at least one inner group. Per-operation validation always applies regardless of `scope_mode`, and setting `scope_mode: disabled` skips only the global requirement. Because each selected inner group is an AND set, the `WWW-Authenticate` challenge for a per-operation `403` reports `scope_mode="require_all"` regardless of the globally configured `scope_mode`.
 
 The server matches map keys exactly against the `params.name` tool name in a `tools/call` request. Only a matching request receives the additional check.
+
+An operation's entry applies only to that operation's tool. When the `execute` tool is enabled, an agent can send an ad-hoc query that reads the same data as a listed operation, and that query is governed only by the global requirement. To require scopes for ad-hoc queries, add an entry for the `execute` tool:
+
+```yaml title="mcp.yaml"
+introspection:
+  execute:
+    enabled: true
+overrides:
+  required_scopes:
+    GetUser:
+      - user:read
+    execute:
+      - user:read
+      - admin
+```
+
+The `execute` entry applies to every call to the tool, regardless of what the query requests.
 
 The server doesn't validate `required_scopes` keys against the current tool list and doesn't warn about unknown keys, so a misspelled or stale key doesn't protect the intended tool, and a newly added or renamed tool remains governed only by the global requirement until you update the map.
 

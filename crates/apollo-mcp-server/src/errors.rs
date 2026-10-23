@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use crate::introspection::tools::search::IndexingError;
+use crate::operations::UnmirrorableVariable;
 use apollo_compiler::{Schema, ast::Document, validation::WithErrors};
 use apollo_federation::error::FederationError;
 use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
@@ -44,6 +45,12 @@ pub enum OperationError {
 
     #[error("Error fetching persisted-query manifest: {0}")]
     Manifest(Box<dyn std::error::Error + Send + Sync + 'static>),
+
+    #[error("Operation {operation}: {source}")]
+    ParamHeader {
+        operation: String,
+        source: UnmirrorableVariable,
+    },
 }
 
 #[cfg(test)]

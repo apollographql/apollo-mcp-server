@@ -41,7 +41,7 @@ mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
-pub(crate) use valid_token::ValidToken;
+pub(crate) use valid_token::{Principal, ValidToken};
 use valid_token::{TokenValidationReporter, TokenValidator};
 use www_authenticate::{BearerError, WwwAuthenticate};
 
@@ -3576,6 +3576,65 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 // The body names the restricted operation: 403 proves it decided.
                 let status = send(version, names, tool_call_body("RestrictedOp")).await;
                 assert_eq!(status, StatusCode::FORBIDDEN);
+            }
+        }
+
+        mod execute_tool {
+            use super::*;
+            use crate::introspection::tools::execute::EXECUTE_TOOL_NAME;
+            use rstest::rstest;
+
+            fn execute_required() -> HashMap<String, OperationRequiredScopes> {
+                HashMap::from([(
+                    EXECUTE_TOOL_NAME.to_string(),
+                    OperationRequiredScopes::new(vec![vec!["sensitive:read".to_string()]])
+                        .expect("valid single-group requirement"),
+                )])
+            }
+
+            async fn call_execute(
+                token_scope: &str,
+                required_scopes: HashMap<String, OperationRequiredScopes>,
+            ) -> StatusCode {
+                let issuer = mock_issuer(token_scope).await;
+                let mut config = test_config();
+                config.servers = vec![issuer.server.url()];
+                config.scopes = vec![];
+                let mut auth_state = test_auth_state(config);
+                auth_state.required_scopes = Arc::new(required_scopes);
+                let app = Router::new()
+                    .route("/mcp", post(|| async { "ok" }))
+                    .layer(from_fn_with_state(auth_state, oauth_validate));
+
+                let req = Request::builder()
+                    .method("POST")
+                    .uri("/mcp")
+                    .header(AUTHORIZATION, format!("Bearer {}", issuer.token))
+                    .header("content-type", "application/json")
+                    .body(tool_call_body(EXECUTE_TOOL_NAME))
+                    .unwrap();
+                app.oneshot(req).await.unwrap().status()
+            }
+
+            #[rstest]
+            #[case::missing_scope("read", StatusCode::FORBIDDEN)]
+            #[case::has_scope("read sensitive:read", StatusCode::OK)]
+            #[tokio::test]
+            async fn execute_key_gates_the_execute_tool(
+                #[case] token_scope: &str,
+                #[case] expected: StatusCode,
+            ) {
+                assert_eq!(
+                    call_execute(token_scope, execute_required()).await,
+                    expected
+                );
+            }
+
+            #[tokio::test]
+            async fn operation_key_does_not_gate_the_execute_tool() {
+                // Scoping a named operation doesn't cover the same data
+                // reached through `execute`; only an `execute` key does.
+                assert_eq!(call_execute("read", required()).await, StatusCode::OK);
             }
         }
     }

@@ -42,6 +42,7 @@ All fields are optional.
 | `rhai`            | `Rhai`                |                          | Rhai scripting configuration                                     |
 | `schema`          | `SchemaSource`        |                          | Schema configuration                                             |
 | `server_info`     | `ServerInfo`          |                          | Server metadata configuration                                    |
+| `tasks`           | `Tasks`               |                          | [MCP Tasks](#tasks) configuration                                |
 | `transport`       | `Transport`           |                          | The type of server transport to use                              |
 | `telemetry`       | `Telemetry`           |                          | Configuration to export metrics and traces via OTLP              |
 
@@ -239,6 +240,11 @@ These fields are under the top-level `logging` key.
 | `level`    | `oneOf ["trace", "debug", "info", "warn", "error"]` | `"info"`   | The minimum log level to record                                                   |
 | `path`     | `FilePath`                                          |            | Directory for rolling log files. If not provided, logging outputs to `stderr` for the `stdio` transport and `stdout` for the `streamable_http` transport. |
 | `rotation` | `oneOf ["minutely", "hourly", "daily", "never"]`    | `"hourly"` | The log file rotation interval (if file logging is used)                          |
+| `ansi`     | `oneOf ["auto", "always", "never"]`                 | `"auto"`   | ANSI styling mode for log output                                                   |
+
+With `ansi: auto` (the default), logs written to a terminal use ANSI styling and redirected output or configured log files use plain text. A non-empty `NO_COLOR` environment variable disables ANSI styling even on a terminal. A non-empty `FORCE_COLOR` or `CLICOLOR_FORCE` environment variable (other than `0`) enables ANSI styling even when the output isn't a terminal, which is helpful for CI log viewers (like GitHub Actions) that render ANSI from piped output. `NO_COLOR` takes precedence over `FORCE_COLOR` and `CLICOLOR_FORCE` when both are set. For details, see the [NO_COLOR website](https://no-color.org/).
+
+Set `ansi: always` or `ansi: never` to override terminal detection and all of the preceding environment variables. `ansi: always` also applies ANSI styling to configured log files.
 
 <Caution>
 
@@ -305,6 +311,31 @@ Clients using `2026-07-28` select the protocol through discovery and per-request
 
 </Note>
 
+### Tasks
+
+These fields are under the top-level `tasks` key. You can override each one with an environment variable, such as `APOLLO_MCP_TASKS__ENABLED=true`.
+
+| Option | Type | Default | Description |
+| :----- | :--- | :------ | :---------- |
+| `enabled` | `bool` | `false` | Return [MCP Tasks](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) handles for slow GraphQL tool calls. |
+| `detach_after_ms` | `number` | `1000` | How long a call runs before it returns a task handle instead of its result. `0` returns a handle immediately. |
+| `ttl_ms` | `number` | `300000` | Task lifetime, measured from the task's creation. Unfinished work fails when it expires. The server keeps finished results for another `ttl_ms`. Must be positive. |
+| `max_tasks` | `number` | `1000` | Maximum number of running and retained tasks. At the limit, new calls run synchronously. Must be positive. |
+
+Tasks apply to operation tools, app tools, and `execute`, including the mutations your configuration allows. Utility tools such as `introspect`, `search`, and `validate` always respond synchronously. So does every call from a client that doesn't declare the `io.modelcontextprotocol/tasks` capability.
+
+When a call becomes a task, the GraphQL request keeps running in the background and isn't sent again. Clients poll `tasks/get` for its status and final result. `tasks/cancel` stops the upstream request but can't undo side effects that the GraphQL API has already performed.
+
+<Note>
+
+The server holds tasks in memory. They don't survive a restart, and changing the config file cancels them. Every `tasks/*` request must reach the server instance that created the task.
+
+With [`auth`](#auth) enabled, only the token identity that created a task (its subject, scoped to the authorization server that verified it) can read, update, or cancel it, and calls admitted without a token through `skip_token_validation` always respond synchronously. Without `auth`, task IDs act as bearer tokens: any client that knows a task ID can read or cancel that task.
+
+After you enable Tasks, the server suppresses `rmcp` debug and trace logs until the process exits, because they include full protocol payloads, task IDs among them.
+
+</Note>
+
 ### Overrides
 
 These fields are under the top-level `overrides` key.
@@ -319,6 +350,7 @@ These fields are under the top-level `overrides` key.
 | `descriptions`               | `Map<String, String>`               | `{}`     | Top-level tool descriptions keyed by exact operation name. Overrides source-derived descriptions for matching operations but doesn't affect input descriptions or executable documents. Unmatched keys don't produce a warning. [Learn more about config-level descriptions](/apollo-mcp-server/define-tools#config-level-descriptions). |
 | `annotations`                | `Map<String, AnnotationOverrides>`  | `{}`     | Optional map from operation name to MCP tool annotation hints. Merges with auto-detected annotations. Go to [config-level annotations](/apollo-mcp-server/define-tools#config-level-annotations). |
 | `required_scopes`            | `Map<String, List<String> \| List<List<String>>>` | `{}`     | Additional OAuth scopes for listed operations, keyed by exact MCP tool name. Unlisted tools receive no additional restriction. A flat list requires all scopes; nested lists define alternatives, where each inner list is AND and the outer list is OR. Requirements add to the global scope requirement. When a token lacks the required scopes for an operation, the server returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"`. [Learn more about per-operation scope requirements](/apollo-mcp-server/auth#per-operation-scope-requirements). |
+| `param_headers`              | `Map<String, Map<String, String>>`  | `{}`     | Header names for operation variables, keyed by operation name and then variable name. Clients on protocol `2026-07-28` or later mirror each annotated value into an `Mcp-Param-{name}` header, and the server rejects a header that doesn't match the body. [Learn more about config-level parameter headers](/apollo-mcp-server/define-tools#config-level-parameter-headers). |
 
 #### Mutation modes
 

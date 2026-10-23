@@ -22,57 +22,71 @@ This guide uses [Auth0](https://auth0.com/) as the Identity Provider.
    curl -sSL https://rover.apollo.dev/nix/latest | sh
    ```
 
-### Step 1: Set up the Auth0 Identity Provider
+### Step 1: Set up the Auth0 identity provider
 
 [Create an Auth0 account](https://auth0.com/).
 
+#### Find your Auth0 domain
+
+1. In your Auth0 dashboard, navigate to **Applications** -> **APIs**.
+1. Find the **Auth0 Management API** in the list. Its **API Audience** looks something like `https://dev-123456.us.auth0.com/api/v2/`, where `dev-123456` is your tenant name.
+1. Copy the host part of this URL, for example `dev-123456.us.auth0.com`. This guide refers to it as `<AUTH0 DOMAIN>`.
+
 #### Create the Auth0 API
 
-1. In your dashboard, navigate to **Applications** -> **APIs**.
-1. Click **Create API**.
+1. On the same **APIs** page, click **Create API**.
 1. Give it a friendly name like `Apollo MCP Server`.
-1. For the **Identifier** field, Auth0 recommends using a URL. This identifier is used in the MCP server configuration later as the `audience` property. For this guide, use `http://127.0.0.1:8000/mcp`.
+1. For the **Identifier** field, Auth0 recommends using a URL. MCP clients send this value as the `resource` parameter, and Auth0 puts it in the `aud` claim of the access token. For this guide, use `http://127.0.0.1:8000/mcp`, the URL of your MCP server.
 1. Leave the defaults for the rest of the fields and click **Create**.
-1. Navigate to your dashboard **Settings**.
-   1. Under **General** -> **API Authorization Settings**, set the **Default Audience** to the `Identifier` you chose.
-   1. Navigate to the **Advanced** tab.
-   1. Toggle on **Dynamic Client Registration (DCR)** to enable [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
-   1. Toggle on **Enable Application Connections**.
-   1. Save your changes.
+1. On the new API's **Permissions** tab, add a permission named `read:users` with a description like `Read users`, then click **Add**. The MCP server requires this scope in [Step 2](#step-2-configure-the-mcp-server-for-authorization). Auth0 only includes scopes in an access token when the API defines them.
+1. On the API's **Settings** tab, find **Default Permissions for third-party applications**. Set **User-delegated Access** to **Authorized - Pick and choose permissions.**, select `read:users`, and click **Save**. MCP clients register as third-party applications, and third-party applications can only get the permissions you select here.
 
-#### Create the Auth0 Connection
+   ![The Default Permissions for third-party applications section of an Auth0 API with User-delegated Access authorized for read:users](../images/auth0-third-party-permissions.png)
 
-The Auth0 Connection is the method clients use to authenticate. This guide uses the default **Username-Password-Authentication** connection.
+#### Configure the tenant for MCP clients
 
-1. In your Auth0 dashboard, navigate to **Authentication** -> **Database**.
-1. Create the default **Username-Password-Authentication** connection. Click the **Try Connection** button to test it and set up a username and password for later.
-1. Back on your Auth0 dashboard, note the **Connection Identifier** at the top of the page. It should start with something like `con_`. Copy it into a temporary location. This guide refers to it as `<CONNECTION ID>`.
-1. Navigate to **Applications** -> **APIs** -> **Auth0 Management API**.
-1. Copy the **Identifier** for the Auth0 Management API to a temporary location. It should look something like `dev-123456.us.auth0.com`, where `dev-123456` is your Auth0 tenant ID. This guide refers to it as `<AUTH0 DOMAIN>`.
-1. Click the **API Explorer** tab. Copy the token value to a temporary location. This guide refers to it as `<MGMT API ACCESS TOKEN>`.
-1. Run the following `curl` command to promote the connection to domain level, replacing `<CONNECTION ID>`, `<AUTH0 DOMAIN>`, and `<MGMT API ACCESS TOKEN>` with the values you copied in the previous steps:
+1. Navigate to **Settings** -> **Advanced**. Changes to the toggles on this tab take effect immediately.
+1. Toggle on **Resource Parameter Compatibility Profile**. MCP clients identify your MCP server with the standard `resource` parameter, but by default Auth0 only reads its own `audience` parameter. With this profile, Auth0 uses `resource` when a request has no `audience`, so it issues a JWT for your API.
+1. Toggle on **Client ID Metadata Document (CIMD) Registration**. With CIMD, an MCP client uses an HTTPS URL as its client ID, and that URL hosts the client's metadata. The MCP specification recommends CIMD. Auth0 only accepts CIMD clients that you import first. For more information, see [Import CIMD clients](#import-cimd-clients).
+1. Toggle on **Dynamic Client Registration (DCR)** and keep **Dynamic Client Registration (DCR) Security Mode** set to **Strict**, which Auth0 recommends. DCR lets a client register itself and get a new client ID. 
+  - You should select the registration mechanism your MCP clients support. MCP Inspector uses DCR unless you configure a CIMD metadata URL for it. `mcp-remote` supports only DCR. For more information, see the Auth0 documentation on [dynamic client registration](https://auth0.com/docs/get-started/applications/dynamic-client-registration#enable-dynamic-client-registration).
 
-   ```sh
-   curl --request PATCH \
-     --url 'https://<AUTH0 DOMAIN>/api/v2/connections/<CONNECTION ID>' \
-     --header 'authorization: Bearer <MGMT API ACCESS TOKEN>' \
-     --header 'cache-control: no-cache' \
-     --header 'content-type: application/json' \
-     --data '{ "is_domain_connection": true }'
-   ```
+   ![The Dynamic Client Registration settings in Strict mode, with Resource Parameter Compatibility Profile and Client ID Metadata Document turned on in the Auth0 Advanced tab](../images/auth0-registration.png)
 
-Your Auth0 setup is now complete. You have an API with an audience and a connection for authentication.
+1. Toggle on **Enable Application Connections**. New applications, including the ones MCP clients register, then get access to your existing connections.
 
-<ExpansionPanel title="Something went wrong? Try these troubleshooting steps">
-  - Check that the `curl` command is correct and that you have the correct values for `<CONNECTION ID>`, `<AUTH0 DOMAIN>`, and `<MGMT API ACCESS TOKEN>`.
-  - Check that you have the correct permissions to promote the connection to domain level. 
-    - In your Auth0 dashboard, navigate to **Applications** -> **Applications** -> **API Explorer Application** -> **APIs**. Ensure that the **Auth0 Management API** is authorized.
-    - Expand the **Auth0 Management API** item and enable the `update:connections` permission.
-    ![Auth0 Management API Permissions](../images/auth0-permissions-enable.png)
-    - Click **Update** to save your changes.
-</ExpansionPanel>
+<Note>
 
-### Step 2: Configure the MCP Server for authorization
+You don't need to set a tenant-wide **Default Audience** under **Settings** -> **General**. A default audience applies to every authorization request in the tenant, which can change the behavior of your other applications. The Resource Parameter Compatibility Profile scopes the audience to the MCP server that the client requests.
+
+</Note>
+
+#### Import CIMD clients
+
+Unlike DCR, Auth0 doesn't register a CIMD client the first time it signs in. Before an MCP client can use CIMD, import it into your tenant:
+
+1. Navigate to **Applications** -> **Applications** and click **Create application**.
+1. Select **Import from URL**.
+1. Enter the client's metadata URL, which is the HTTPS URL that the client uses as its client ID. Click **Preview**.
+1. Check the metadata that Auth0 shows, then click **Create**.
+
+Auth0 creates the client as a third-party application in Strict mode, so the default permissions you set on your API apply to it. Repeat these steps for each CIMD client you want to allow.
+
+This guide's clients use DCR, so you don't need to import anything to follow the rest of the guide.
+
+#### Set up the Auth0 connection
+
+The Auth0 Connection is the method users use to sign in. This guide uses the default **Username-Password-Authentication** connection.
+
+1. Navigate to **Authentication** -> **Database** and select **Username-Password-Authentication**.
+1. Click **Try Connection** and sign up with an email and a password. You use these credentials to sign in later.
+1. On the **Settings** tab, toggle on **Promote Connection to Domain Level** and click **Save**. Applications that MCP clients register are third-party applications, and they can only use domain-level connections.
+
+   ![The Promote Connection to Domain Level setting on an Auth0 database connection](../images/auth0-promote-connection.png)
+
+Your Auth0 setup is now complete. You have an API with a permission, client registration for MCP clients, and a connection for authentication.
+
+### Step 2: Configure the MCP server for authorization
 
 Configure the MCP server to use the Auth0 instance for authentication.
 
@@ -88,15 +102,15 @@ Configure the MCP server to use the Auth0 instance for authentication.
        servers:
          - https://<AUTH0 DOMAIN> # Fill in your Auth0 domain
        audiences:
-         - <AUTH0 DEFAULT AUDIENCE> # Fill in your Auth0 Identifier
+         - http://127.0.0.1:8000/mcp # Must match your Auth0 API identifier
        resource: http://127.0.0.1:8000/mcp
        scopes:
-         - read:users # Adjust scopes as needed
+         - read:users # Must be a permission defined on your Auth0 API
    ```
 
 1. Replace the `<AUTH0 DOMAIN>` with your own Auth0 domain from earlier.
 
-1. Replace the `<AUTH0 DEFAULT AUDIENCE>` with the matching `Identifier` you set when creating the Auth0 API. In this guide, you used `http://127.0.0.1:8000/mcp`.
+The MCP server advertises `read:users` to clients in its `WWW-Authenticate` challenge and Protected Resource Metadata. Clients request this scope from Auth0, and the user approves it on the consent screen.
 
 Your MCP server is now configured to use Auth0 for authentication.
 
@@ -117,6 +131,8 @@ Configure your GraphOS Router to validate JWTs issued by Auth0. This involves se
        jwt:
          jwks:
            - url: https://<AUTH0 DOMAIN>/.well-known/jwks.json
+             audiences:
+               - http://127.0.0.1:8000/mcp # Only accept tokens issued for this API
    homepage:
      enabled: false
    sandbox:
@@ -125,7 +141,7 @@ Configure your GraphOS Router to validate JWTs issued by Auth0. This involves se
      introspection: true
    ```
 
-   With this configuration, the router requires authentication for all requests. If a request doesn't include an Authorization token, the router returns an `UNAUTHENTICATED` error.
+   With this configuration, the router requires authentication for all requests. If a request doesn't include an Authorization token, the router returns an `unauthenticated` error with the `AUTH_ERROR` code.
 
 #### Retrieve your GraphOS license credentials for auth
 
@@ -148,7 +164,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
 1. Retrieve the values for `YOUR_APOLLO_KEY` and `YOUR_APOLLO_GRAPH_REF` from the modal and click **Finish later**.
 
-#### Run the MCP Server and router
+#### Run the MCP server and router
 
 1. Back in your terminal, in the root of the project directory, replace and run the following command to start the MCP Server and the router together:
 
@@ -161,11 +177,11 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
 
 1. Test the router by navigating to `http://localhost:4000` in your browser. You should see the Explorer, where you can run GraphQL queries against the router.
 
-1. Remember, the router is configured to require authentication on all requests. Any operations without a valid Authorization token returns an `UNAUTHENTICATED` error. Run the operation:
+1. Remember, the router is configured to require authentication on all requests. Any operation without a valid Authorization token returns an `unauthenticated` error. Run the operation:
 
    ```graphql
    query GetAstronautsCurrentlyInSpace {
-     astronauts(filters: { inSpace: true, search: "" }) {
+     astronauts(inSpace: true, search: "") {
        results {
          id
          name
@@ -176,7 +192,7 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
    }
    ```
 
-1. You should see an `UNAUTHENTICATED` error, which means the router is correctly enforcing authentication.
+1. You should see an `unauthenticated` error with the `AUTH_ERROR` code, which means the router is correctly enforcing authentication.
 
 ### Step 4: Make requests with MCP Inspector
 
@@ -186,33 +202,18 @@ You need a graph's credentials and a valid GraphOS plan to use the router's auth
    npx @modelcontextprotocol/inspector
    ```
 
-   The browser should open automatically with a proxy auth token.
+   Open the MCP Inspector URL that the command prints, `http://localhost:6274`.
 
-1. In the MCP Inspector, select `Streamable HTTP` as the Transport Type and enter `http://127.0.0.1:8000/mcp` as the URL.
-1. Click **Connect**. This triggers the OAuth flow, and you are redirected to the Auth0 login page.
+1. Click **Add Servers** -> **+ Add manually**.
+1. For **Server ID**, enter `apollo-auth0`. For **Transport**, select `streamable-http`. For **URL**, enter `http://127.0.0.1:8000/mcp`. Click **Add**.
+1. Turn on the switch on the `apollo-auth0` server card. This triggers the OAuth flow, and you are redirected to the Auth0 login page.
 1. Log in with the credentials you set up in the Auth0 connection and allow MCP Inspector access.
-1. After you connect, the browser redirects back to MCP Inspector.
-1. Click **List Tools** to see the available tools.
-1. Select the `GetAstronautsCurrentlyInSpace` tool listed and click **Run Tool**.
+1. After the browser redirects back to MCP Inspector, the server card shows **Connected**.
+1. Select the **Tools** view at the top of the page to see the available tools.
+1. Select the `GetAstronautsCurrentlyInSpace` tool and click **Execute Tool**.
 1. You should see the results of the query, which means the authentication is working correctly.
 
-You can select the **Auth** tab in MCP Inspector to see the details of the authenticated user and the scopes granted.
-
-<ExpansionPanel title="Alternative: Guided OAuth flow in MCP Inspector">
-
-You can also use the guided OAuth flow in MCP Inspector to test authentication. This gives you a detailed look into each step the client does to connect to the server.
-
-1. Click **Open Auth Settings**.
-1. In the **OAuth Flow Progress** section, click **Continue** to start the **Metadata Discovery** step.
-1. Click **Continue** to start the **Client Registration** step. Expand the **Registered Client Information** step to note the `client_id` value.
-1. Click **Continue** to start the **Preparing Authorization** step. Click the link to open up a new tab to authorize MCP Inspector.
-1. Copy the authorization code and return to MCP Inspector.
-1. Paste the code in the next step **Request Authorization and acquire authorization code** then click **Continue**.
-1. Click **Continue** to start the **Token Request** step. This completes the authentication flow.
-
-</ExpansionPanel>
-
-### Step 5: Make requests with an MCP Client (Goose)
+### Step 5: Make requests with an MCP client (Goose)
 
 We'll use [Goose](https://block.github.io/goose/) as our MCP Client. Goose allows you to choose between many different LLMs and provides some built-in functionality for connecting to MCP servers, called [Extensions](https://block.github.io/goose/docs/getting-started/using-extensions).
 
@@ -238,9 +239,9 @@ Then, continue with the following steps:
 
 ## Troubleshooting
 
-### Common Issues
+### Common issues
 
-#### MCP Server Won't Start
+#### MCP server won't start
 
 - **Error**: "Port 8000 is already in use"
   - Solution: Kill any existing processes using port 8000 or specify a different port with the `transport.port` option or `APOLLO_MCP_TRANSPORT__PORT` env variable
@@ -252,20 +253,41 @@ Then, continue with the following steps:
 - **Error**: "What URL is your subgraph running on?" question in terminal
   - Solution: Verify that the file path for your config files is correct. You should run the `rover dev` command from the root of the example project directory and the file paths should be relative to that root.
 
-#### MCP Inspector Connection Issues
+#### MCP Server rejects the token
+
+- **Issue**: The OAuth flow completes, but requests to the MCP server fail with `401 Unauthorized`
+  - Solution: Check that **Resource Parameter Compatibility Profile** is on under **Settings** -> **Advanced**. Without it, Auth0 ignores the `resource` parameter and doesn't issue a JWT for your API.
+  - Solution: Check that the Auth0 API identifier, `audiences`, and `resource` use exactly the same URL, including the scheme, host, port, and path. For example, `localhost` and `127.0.0.1` don't match.
+- **Issue**: Requests fail with `403 Forbidden` and an `insufficient_scope` error
+  - Solution: Check that every scope in the `scopes` configuration is a permission on your Auth0 API's **Permissions** tab. Auth0 leaves scopes that the API doesn't define out of the access token.
+
+#### MCP Inspector connection issues
 
 - **Error**: "Failed to connect to server"
   - Solution: Ensure the MCP server is running (check terminal output)
   - Solution: Verify you're using the correct URL (`http://127.0.0.1:8000/mcp`)
   - Solution: Check if your firewall is blocking the connection
 
+#### Client registration or sign-in fails
+
+- **Issue**: MCP Inspector or Goose fails at the client registration step
+  - Solution: In your Auth0 dashboard, go to **Settings** -> **Advanced** and check that **Dynamic Client Registration (DCR)** is on. MCP Inspector (without a CIMD metadata URL) and `mcp-remote` fail if only **Client ID Metadata Document (CIMD) Registration** is on.
+- **Issue**: The Auth0 error page says `invalid_request: Unknown client: https://...`
+  - Solution: The client uses CIMD, and you haven't imported it. Follow the steps in [Import CIMD clients](#import-cimd-clients).
+- **Issue**: Client registration fails with `403` and `"errorCode":"too_many_entities"`
+  - Solution: Your tenant reached its application limit. Every DCR registration creates a new third-party application, so repeated testing fills the tenant quickly. Delete the applications you no longer need under **Applications** -> **Applications**.
+- **Issue**: The Auth0 error page says `Client "tpc_..." is not authorized to access resource server "http://127.0.0.1:8000/mcp"`
+  - Solution: On your Auth0 API's **Settings** tab, check that **Default Permissions for third-party applications** authorizes **User-delegated Access** for `read:users`, and that you saved the change.
+- **Issue**: Client registration succeeds, but you can't sign in with your username and password
+  - Solution: Check that **Promote Connection to Domain Level** is on for the **Username-Password-Authentication** connection.
+
 ### Infinite loop during OAuth flow
 
 - **Issue**: After logging in to Auth0, MCP Inspector keeps refreshing and doesn't complete the OAuth flow
-  - Solution: In MCP Inspector, open the **Authentication** panel in the sidebar. Clear out any values in the **Header Name** and **Bearer Token** fields. Then try connecting again.
-  - Solution: In MCP Inspector, select **Clear OAuth State** and try connecting again.
+  - Solution: On the server card, click **Settings**. Under **Custom Headers**, remove any `Authorization` header. Then try connecting again.
+  - Solution: On the server card, click **Settings**. Under **OAuth Settings**, click **Clear stored OAuth state** and try connecting again.
 
-### Getting Help
+### Getting help
 
 If you're still having issues:
 

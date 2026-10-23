@@ -13,15 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Knope finds each change file's PR through the commit that added it
 
       - name: Configure Git
         run: |
           git config --global user.name GitHub Actions
           git config user.email github-actions@github.com
 
-      - uses: knope-dev/action@v2.1.0
+      - uses: knope-dev/action@v2.1.2
         with:
-          version: 0.22.1
+          version: 0.23.1
 
       - run: knope prepare-release --verbose
         env:

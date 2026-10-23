@@ -22,6 +22,7 @@ pub(crate) mod schema_tree_shake;
 pub mod scope_requirements;
 pub mod server;
 pub mod server_info;
+pub mod tasks;
 pub(crate) mod telemetry_attributes;
 
 /// These values are generated at build time by build.rs using telemetry.toml as input.

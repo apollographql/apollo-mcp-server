@@ -17,7 +17,7 @@ use crate::{
     errors::{OperationError, ServerError},
     headers::ForwardHeaders,
     health::HealthCheckConfig,
-    operations::{AnnotationOverrides, MutationMode},
+    operations::{AnnotationOverrides, MutationMode, ParamHeaders},
     scope_requirements::OperationRequiredScopes,
     server_info::ServerInfoConfig,
 };
@@ -31,6 +31,7 @@ mod schema_configured;
 #[cfg(test)]
 mod server_span_tests;
 mod starting;
+mod tasks;
 pub(crate) mod telemetry;
 mod tool_list_changes;
 
@@ -70,6 +71,7 @@ struct Config {
     disable_auth_token_passthrough: bool,
     descriptions: HashMap<String, String>,
     annotations: HashMap<String, AnnotationOverrides>,
+    param_headers: HashMap<String, ParamHeaders>,
     required_scopes: HashMap<String, OperationRequiredScopes>,
     search_leaf_depth: usize,
     index_memory_bytes: usize,
@@ -78,6 +80,7 @@ struct Config {
     server_info: ServerInfoConfig,
     instructions: Option<String>,
     caching: Caching,
+    tasks: crate::tasks::TasksConfig,
 }
 
 impl StateMachine {
@@ -130,6 +133,7 @@ impl StateMachine {
                 disable_auth_token_passthrough: server.disable_auth_token_passthrough,
                 descriptions: server.descriptions,
                 annotations: server.annotations,
+                param_headers: server.param_headers,
                 required_scopes: server.required_scopes,
                 search_leaf_depth: server.search_leaf_depth,
                 index_memory_bytes: server.index_memory_bytes,
@@ -138,11 +142,23 @@ impl StateMachine {
                 server_info: server.server_info,
                 instructions: server.instructions,
                 caching: server.caching,
+                tasks: server.tasks,
             },
         });
 
         while let Some(event) = stream.next().await {
-            state = Self::process_event(state, event, &config_validator).await?;
+            let tasks = match &state {
+                State::Running(running) => running.tasks.clone(),
+                _ => None,
+            };
+            let next = Self::process_event(state, event, &config_validator).await;
+            // Every exit from Running, including errors, ends its tasks.
+            if !matches!(&next, Ok(State::Running(_)))
+                && let Some(tasks) = tasks
+            {
+                tasks.shutdown().await;
+            }
+            state = next?;
             if let State::Starting(starting) = state {
                 state = starting.start().await.into();
             }
@@ -469,6 +485,7 @@ mod tests {
     use apollo_mcp_registry::uplink::schema::SchemaState;
     use reqwest::header::HeaderMap;
     use tokio::sync::RwLock;
+
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
@@ -514,11 +531,13 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             health_check: None,
             server_info: ServerInfoConfig::default(),
             instructions: None,
             rhai_engine: SharedRhaiEngine::new("rhai"),
             caching: Caching::default(),
+            tasks: Default::default(),
         }
     }
 
@@ -556,6 +575,7 @@ mod tests {
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
+            param_headers: HashMap::new(),
             required_scopes: HashMap::new(),
             search_leaf_depth: 5,
             index_memory_bytes: 1024 * 1024,
@@ -564,6 +584,7 @@ mod tests {
             server_info: ServerInfoConfig::default(),
             instructions: None,
             caching: Caching::default(),
+            tasks: Default::default(),
         }
     }
 

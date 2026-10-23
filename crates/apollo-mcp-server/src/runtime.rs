@@ -301,6 +301,12 @@ mod test {
                 caching: Caching {
                     ttl_ms: 300000,
                 },
+                tasks: TasksConfig {
+                    enabled: false,
+                    detach_after_ms: 1000,
+                    ttl_ms: 300000,
+                    max_tasks: 1000,
+                },
                 cors: CorsConfig {
                     enabled: false,
                     origins: [],
@@ -444,6 +450,7 @@ mod test {
                     ),
                     path: None,
                     rotation: Hourly,
+                    ansi: Auto,
                 },
                 telemetry: Telemetry {
                     exporters: None,
@@ -460,6 +467,7 @@ mod test {
                     descriptions: {},
                     annotations: {},
                     required_scopes: {},
+                    param_headers: {},
                 },
                 prompts: PromptsConfig {
                     path: "prompts",
@@ -879,6 +887,23 @@ mod test {
                 create_user.title.as_deref(),
                 Some("Create a new user account")
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn tasks_environment_overrides_yaml() {
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.create_file("config.yaml", "tasks:\n  enabled: false\n  ttl_ms: 60000\n")?;
+            jail.set_env("APOLLO_MCP_TASKS__ENABLED", "true");
+            jail.set_env("APOLLO_MCP_TASKS__DETACH_AFTER_MS", "0");
+            let config = read_config("config.yaml")?;
+            assert!(config.tasks.enabled);
+            assert_eq!(config.tasks.detach_after_ms, 0);
+            assert_eq!(config.tasks.ttl_ms.get(), 60000);
+            jail.set_env("APOLLO_MCP_TASKS__MAX_TASKS", "0");
+            assert!(read_config("config.yaml").is_err());
             Ok(())
         });
     }
