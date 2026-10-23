@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-/// Minimum time between emissions of attacker-influenced auth logs.
+/// Interval for summarizing attacker-influenced auth logs.
 const AUTH_LOG_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
