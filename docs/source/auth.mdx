@@ -160,7 +160,7 @@ Adopt `scope_mode: disabled` only when downstream services, like subgraphs, hand
 
 ### Scope claim: `scope` vs `scp`
 
-Apollo MCP Server reads the standard `scope` claim first. This claim is a space-separated string, defined in [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068). If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
+Apollo MCP Server reads the standard `scope` claim first. [RFC 6749](https://datatracker.ietf.org/doc/html/rfc6749) and [RFC 9068](https://datatracker.ietf.org/doc/html/rfc9068) define this claim as a space-separated string, but some IdPs send it as an array of strings. The server accepts both. If a token has no `scope` claim, the server reads `scp` instead. This is a non-standard claim that some IdPs use, for example Okta and Microsoft Entra ID (formerly Azure AD). IdPs send it as an array, or as a space-separated string. If a token has both claims, `scope` wins.
 
 ## Per-operation scope requirements
 

@@ -182,20 +182,20 @@ struct Claims {
     /// `sub` claim is rejected at deserialize time.
     sub: String,
 
-    /// OAuth scope claim (space-separated list per RFC 6749)
+    /// OAuth scope claim, as a space-separated string (RFC 9068) or an array of strings.
     #[serde(default)]
-    scope: Option<String>,
+    scope: Option<ScopeClaimValue>,
 
     /// Non-standard scope claim. Okta emits this as an array of
     /// strings; Microsoft Entra emits it as a space-separated string.
     /// Used as a fallback when the RFC 9068 `scope` claim is absent.
     #[serde(default)]
-    scp: Option<ScpClaim>,
+    scp: Option<ScopeClaimValue>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
-enum ScpClaim {
+enum ScopeClaimValue {
     Array(Vec<String>),
     String(String),
 }
@@ -205,12 +205,10 @@ impl Claims {
     /// `scope` claim and falling back to the `scp` claim used by Okta (array)
     /// and Microsoft Entra (space-separated string).
     fn scopes(self) -> Vec<String> {
-        match (self.scope, self.scp) {
-            (Some(s), _) | (None, Some(ScpClaim::String(s))) => {
-                s.split_whitespace().map(String::from).collect()
-            }
-            (None, Some(ScpClaim::Array(v))) => v,
-            (None, None) => Vec::new(),
+        match self.scope.or(self.scp) {
+            Some(ScopeClaimValue::String(s)) => s.split_whitespace().map(String::from).collect(),
+            Some(ScopeClaimValue::Array(v)) => v,
+            None => Vec::new(),
         }
     }
 }
@@ -1332,6 +1330,19 @@ mod test {
     fn scopes_come_from_scope_claim() {
         let scopes = scopes_of(serde_json::json!({ "sub": "u", "scope": "read write" }));
         assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
+    }
+
+    #[test]
+    fn scopes_come_from_scope_claim_array() {
+        let scopes = scopes_of(serde_json::json!({ "sub": "u", "scope": ["read", "write"] }));
+        assert_eq!(scopes, vec!["read".to_string(), "write".to_string()]);
+    }
+
+    #[test]
+    fn scope_claim_array_wins_over_scp() {
+        let scopes =
+            scopes_of(serde_json::json!({ "sub": "u", "scope": ["read"], "scp": "write" }));
+        assert_eq!(scopes, vec!["read".to_string()]);
     }
 
     #[test]
