@@ -4,6 +4,88 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.1.0 (2026-10-23)
+
+### Features
+
+#### Configure where apps and prompts are loaded from - @HunterLarco #860
+
+The directories the server reads MCP Apps and prompts from can now be set in the config file, matching the other file inputs such as `schema.path`, `operations.paths`, and `rhai.scripts`:
+
+```yaml
+apps:
+  path: path/to/apps
+prompts:
+  path: path/to/prompts
+```
+
+Both accept absolute paths or paths relative to the process working directory, and can also be set with the `APOLLO_MCP_APPS__PATH` and `APOLLO_MCP_PROMPTS__PATH` environment variables. They default to `apps` and `prompts`, so existing deployments are unaffected.
+
+#### Disable ANSI styling for non-terminal log output - @DaleSeo #886
+
+Apollo MCP Server now emits ANSI-styled logs only when the output stream is connected to a terminal. Redirected output and configured log files use plain text, and a non-empty `NO_COLOR` environment variable disables ANSI styling for terminal output.
+
+A non-empty `FORCE_COLOR` or `CLICOLOR_FORCE` environment variable (other than `0`) now enables ANSI styling even when the output isn't a terminal, useful for CI log viewers such as GitHub Actions that render ANSI from piped output. `NO_COLOR` takes precedence when both are set.
+
+A new `logging.ansi` config key (`auto` | `always` | `never`, default `auto`) lets operators override terminal detection and all of the above environment variables explicitly. `always` also applies ANSI styling to configured log files.
+
+#### Return MCP Tasks for slow GraphQL calls - @inanna-apollo #889
+
+GraphQL tool calls that take longer than a configurable threshold can now return an [MCP Tasks](https://tasks.extensions.modelcontextprotocol.io/seps/2663-tasks-extension) handle. Clients then poll `tasks/get` for the result or stop the call with `tasks/cancel`. The feature is off by default. It applies only to clients that declare Tasks support:
+
+```yaml
+tasks:
+  enabled: true
+  detach_after_ms: 1000
+```
+
+Tasks are held in server memory, and fast calls return their results as before.
+
+#### Stop defaulting `deployment.environment.name` to `development` - @DaleSeo #878
+
+Telemetry no longer sets `deployment.environment.name=development` when `ENVIRONMENT`
+is unset. The attribute is now omitted unless `ENVIRONMENT` or `OTEL_RESOURCE_ATTRIBUTES`
+sets it. Before, production deployments that didn't set `ENVIRONMENT` were reported as
+`development`.
+
+**Behavior change:** if your dashboards, monitors, or filters rely on `env:development`,
+set the environment explicitly, for example
+`OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=development`.
+
+`service.name`, `service.version`, and `deployment.environment.name` now follow one
+precedence rule: server config (`telemetry.service_name`, `telemetry.version`,
+`ENVIRONMENT`) wins over `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`, which win
+over defaults. Before, `OTEL_RESOURCE_ATTRIBUTES` silently overrode `telemetry.version`
+and `ENVIRONMENT`. The server now logs a startup warning when the two sources disagree.
+
+#### Mirror operation variables into `Mcp-Param-*` headers - @DaleSeo #879
+
+A new `overrides.param_headers` config key maps an operation's variables to SEP-2243 header names. The server annotates the matching tool parameters with `x-mcp-header`, so clients on protocol `2026-07-28` or later send each value in an `Mcp-Param-{name}` header as well as the body. A proxy can then route, meter, or authorize on the value without parsing the body.
+
+The server rejects a `tools/call` whose `Mcp-Param-*` header is missing or doesn't match the body with HTTP 400 and JSON-RPC error `-32020`. Header names must be unique HTTP tokens, and annotated variables must be `String`, `ID`, `Int`, `Boolean`, enum, or a custom scalar with a `string`, `integer`, or `boolean` schema. The server doesn't load an operation whose entry breaks these rules.
+
+#### Publish to crates.io - @DaleSeo #882
+
+Apollo MCP Server is now published to crates.io, so it can be built from source through a crates.io mirror:
+
+```sh
+cargo install --locked apollo-mcp-server
+```
+
+`--locked` builds with the same dependency versions that were tested for the release. It matters most for 2.0.0 and 1.20.0, which were published before this release and don't pin the internal crates to exact versions.
+
+The supporting crates (`apollo-mcp-registry`, `apollo-mcp-rhai`, and `apollo-schema-index`) are published alongside it as internal dependencies. They are not a stable public API and may change in any release.
+
+### Fixes
+
+#### Return an error when introspecting an unknown type - @RaphaelFakhri #885
+
+The `introspect` tool now returns a tool error that names the requested type when the type isn't in the schema. When a type differs only in letter case, the error suggests the correct name. Before, it returned an empty successful result, so clients couldn't tell a mistyped or missing type from a type with nothing to show.
+
+#### Accept an array-valued `scope` claim - @jacobstringfellow #896
+
+The server now accepts a JWT whose `scope` claim is an array of strings, as well as a space-separated string. Duende IdentityServer emits `scope` as an array by default. Before, such a token failed to deserialize and the server returned HTTP 401 even when the issuer, audience, signature and expiry were all valid.
+
 ## 2.0.0 (2026-10-05)
 
 ### Breaking Changes
