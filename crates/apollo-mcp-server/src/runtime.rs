@@ -909,6 +909,34 @@ mod test {
     }
 
     #[test]
+    fn auth_rate_limit_environment_overrides_yaml() {
+        figment::Jail::expect_with(|jail| {
+            jail.clear_env();
+            jail.create_file(
+                "config.yaml",
+                "transport:\n  type: streamable_http\n  auth:\n    servers:\n      - https://auth.example.com\n    resource: https://mcp.example.com/mcp\n    rate_limit:\n      requests_per_second: 2\n",
+            )?;
+            jail.set_env("APOLLO_MCP_TRANSPORT__AUTH__RATE_LIMIT__ENABLED", "false");
+            jail.set_env("APOLLO_MCP_TRANSPORT__AUTH__RATE_LIMIT__BURST", "4");
+
+            let config = read_config("config.yaml")?;
+            let apollo_mcp_server::server::Transport::StreamableHttp {
+                auth: Some(auth), ..
+            } = config.transport
+            else {
+                panic!("expected streamable_http with auth");
+            };
+            assert!(!auth.rate_limit.enabled);
+            assert_eq!(auth.rate_limit.requests_per_second.get(), 2);
+            assert_eq!(auth.rate_limit.burst.get(), 4);
+
+            jail.set_env("APOLLO_MCP_TRANSPORT__AUTH__RATE_LIMIT__BURST", "0");
+            assert!(read_config("config.yaml").is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
     fn caching_environment_overrides_yaml() {
         figment::Jail::expect_with(move |jail| {
             let config = r#"

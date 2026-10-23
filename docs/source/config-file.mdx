@@ -505,6 +505,9 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `allow_anonymous_mcp_discovery`   | `bool`                | `false`       | **Deprecated.** Use `skip_token_validation.methods` instead. Enabling this is the same as listing `initialize`, `server/discover`, `tools/list`, and `resources/list` there. Setting both is an error.           |
 | `discovery_timeout`               | `Duration`            | `5s`          | Timeout for authorization server metadata discovery requests. Supports human-readable durations (e.g., "5s", "10s", "30s").                                                                                      |
 | `discovery_headers`               | `Map<string, string>` | `{}`          | Custom headers to include in OIDC discovery and JWKS requests. Useful when upstream OAuth servers or WAFs require headers like `User-Agent`. See [discovery headers](/apollo-mcp-server/auth#discovery-headers). |
+| `rate_limit.enabled`              | `bool`                | `true`        | Rate limit bearer credentials that fail authentication, before any token validation runs. Set to `false` when requests are already rate limited before they reach the server. See [limit authentication rates](/apollo-mcp-server/auth#limit-authentication-rates). |
+| `rate_limit.requests_per_second`  | `number`              | `10`          | Sustained requests per second allowed for each failing bearer credential. Must be at least `1`.                                                                                                                  |
+| `rate_limit.burst`                | `number`              | `50`          | Requests a credential can make in a burst before the sustained rate applies. Must be at least `1`.                                                                                                                |
 | `tls.ca_cert`                     | `string`              |               | Path to a CA certificate to trust (PEM format).                                                                                                                                                                  |
 | `tls.danger_accept_invalid_certs` | `bool`                | `false`       | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.                                                                                                                   |
 
@@ -558,6 +561,13 @@ transport:
     # Useful when upstream OAuth servers or WAFs require specific headers
     discovery_headers:
       User-Agent: apollo-mcp-server
+
+    # Rate limit for bearer credentials that fail authentication.
+    # Set enabled: false when a gateway already rate limits clients.
+    rate_limit:
+      enabled: true
+      requests_per_second: 10
+      burst: 50
 
     # Requests that skip token validation. Each list applies only when the
     # request carries no Authorization header. Every other request is validated.
