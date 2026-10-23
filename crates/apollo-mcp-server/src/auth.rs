@@ -3294,6 +3294,63 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             assert_eq!(status(&app, "/test").await, StatusCode::UNAUTHORIZED);
             assert_eq!(status(&app, "/test").await, StatusCode::TOO_MANY_REQUESTS);
         }
+
+        #[tokio::test]
+        async fn valid_token_is_not_limited() {
+            // Same one-request bucket, but each validated request gets its
+            // token back, so a valid token can keep going.
+            let issuer = mock_issuer("read").await;
+            let mut config = test_config();
+            config.servers = vec![issuer.server.url()];
+            let app = config
+                .enable_middleware_with_rate_limit_state(
+                    Router::new().route("/test", get(|| async { "ok" })),
+                    HashMap::new(),
+                    true,
+                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
+                )
+                .unwrap();
+
+            for _ in 0..3 {
+                let req = Request::builder()
+                    .uri("/test")
+                    .header(AUTHORIZATION, format!("Bearer {}", issuer.token))
+                    .body(Body::empty())
+                    .unwrap();
+                assert_eq!(
+                    app.clone().oneshot(req).await.unwrap().status(),
+                    StatusCode::OK
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn valid_token_with_insufficient_scope_is_not_limited() {
+            // A 403 still means the token validated, so it gets its token back.
+            let issuer = mock_issuer("other").await;
+            let mut config = test_config();
+            config.servers = vec![issuer.server.url()];
+            let app = config
+                .enable_middleware_with_rate_limit_state(
+                    Router::new().route("/test", get(|| async { "ok" })),
+                    HashMap::new(),
+                    true,
+                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
+                )
+                .unwrap();
+
+            for _ in 0..3 {
+                let req = Request::builder()
+                    .uri("/test")
+                    .header(AUTHORIZATION, format!("Bearer {}", issuer.token))
+                    .body(Body::empty())
+                    .unwrap();
+                assert_eq!(
+                    app.clone().oneshot(req).await.unwrap().status(),
+                    StatusCode::FORBIDDEN
+                );
+            }
+        }
     }
 
     mod per_operation_scope_enforcement {

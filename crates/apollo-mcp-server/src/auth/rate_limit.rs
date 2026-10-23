@@ -1,8 +1,10 @@
 //! Per-credential rate limiting applied before OAuth token validation.
 //!
 //! Each bearer credential gets its own token bucket, so one client that
-//! replays a token cannot make the server validate it more than a fixed
-//! number of times per second. The check runs before JWT parsing or JWKS work.
+//! replays an invalid token cannot make the server validate it more than a
+//! fixed number of times per second. The check runs before JWT parsing or JWKS
+//! work. Requests that pass authentication get their token back, so only
+//! rejected credentials use up the budget.
 //!
 //! There is no per-peer limit. Behind a reverse proxy or load balancer the
 //! connection address identifies the proxy, not the client, so keying on it
@@ -114,6 +116,15 @@ impl KeyedRateLimiter {
         }
     }
 
+    /// Returns one token to a tracked key, up to the burst size.
+    fn refund(&self, key: u64, now: Instant) {
+        let mut state = self.buckets.lock();
+        if let Some(bucket) = state.map.get_mut(&key) {
+            refill(bucket, self.rate, self.burst, now);
+            bucket.tokens = (bucket.tokens + 1.0).min(self.burst);
+        }
+    }
+
     #[cfg(test)]
     fn tracked_keys(&self) -> usize {
         self.buckets.lock().map.len()
@@ -216,7 +227,8 @@ fn too_many_requests() -> Response {
 
 /// Enforces the bearer-credential limit. Requests without a bearer credential
 /// pass through; the OAuth middleware decides them (401, or admitted by a
-/// `skip_token_validation` rule) without any token validation.
+/// `skip_token_validation` rule) without any token validation. A request that
+/// is not answered with 401 gets its token back.
 pub(crate) async fn rate_limit(
     State(state): State<RateLimitState>,
     request: Request,
@@ -233,12 +245,19 @@ pub(crate) async fn rate_limit(
             state.reporter.record_rejection(now);
             return too_many_requests();
         }
-        LimitOutcome::AllowedUntracked => state
-            .reporter
-            .record_capacity_exhausted(state.credential_limiter.max_tracked, now),
+        LimitOutcome::AllowedUntracked => {
+            state
+                .reporter
+                .record_capacity_exhausted(state.credential_limiter.max_tracked, now);
+            return next.run(request).await;
+        }
     }
 
-    next.run(request).await
+    let response = next.run(request).await;
+    if response.status() != StatusCode::UNAUTHORIZED {
+        state.credential_limiter.refund(fingerprint, Instant::now());
+    }
+    response
 }
 
 #[cfg(test)]
@@ -347,6 +366,33 @@ mod tests {
             assert!(allowed(&limiter, 5, sweep_due));
             assert_eq!(limiter.tracked_keys(), 1);
         }
+
+        #[test]
+        fn refund_returns_a_token_up_to_the_burst() {
+            let limiter = KeyedRateLimiter::new(0, 2, MAX_TRACKED_KEYS);
+            let now = Instant::now();
+            assert!(allowed(&limiter, 1, now));
+            assert!(allowed(&limiter, 1, now));
+            assert!(!allowed(&limiter, 1, now));
+
+            limiter.refund(1, now);
+            assert!(allowed(&limiter, 1, now));
+            assert!(!allowed(&limiter, 1, now));
+
+            for _ in 0..5 {
+                limiter.refund(1, now);
+            }
+            assert!(allowed(&limiter, 1, now));
+            assert!(allowed(&limiter, 1, now));
+            assert!(!allowed(&limiter, 1, now), "refund exceeded the burst");
+        }
+
+        #[test]
+        fn refund_does_not_track_unknown_keys() {
+            let limiter = KeyedRateLimiter::new(0, 1, MAX_TRACKED_KEYS);
+            limiter.refund(1, Instant::now());
+            assert_eq!(limiter.tracked_keys(), 0);
+        }
     }
 
     mod middleware {
@@ -361,10 +407,20 @@ mod tests {
         use tower::ServiceExt;
         use tracing_test::traced_test;
 
+        /// Stands in for the OAuth middleware: `Bearer valid` passes
+        /// authentication and every other request is answered with 401.
         fn app(requests_per_second: u32, burst: u32, max_tracked: usize) -> Router {
             let state = RateLimitState::for_test(requests_per_second, burst, max_tracked);
             Router::new()
-                .route("/test", get(|| async { "ok" }))
+                .route(
+                    "/test",
+                    get(|request: Request<Body>| async move {
+                        match request.headers().get(AUTHORIZATION) {
+                            Some(value) if value == "Bearer valid" => StatusCode::OK,
+                            _ => StatusCode::UNAUTHORIZED,
+                        }
+                    }),
+                )
                 .layer(from_fn_with_state(state, rate_limit))
         }
 
@@ -389,7 +445,10 @@ mod tests {
         #[tokio::test]
         async fn credential_limit_returns_429_with_retry_after() {
             let app = app(0, 1, MAX_TRACKED_KEYS);
-            assert_eq!(status(&app, Some("Bearer token-a")).await, StatusCode::OK);
+            assert_eq!(
+                status(&app, Some("Bearer token-a")).await,
+                StatusCode::UNAUTHORIZED
+            );
 
             let limited = app
                 .clone()
@@ -406,7 +465,10 @@ mod tests {
         #[tokio::test]
         async fn each_credential_gets_its_own_bucket() {
             let app = app(0, 1, MAX_TRACKED_KEYS);
-            assert_eq!(status(&app, Some("Bearer token-a")).await, StatusCode::OK);
+            assert_eq!(
+                status(&app, Some("Bearer token-a")).await,
+                StatusCode::UNAUTHORIZED
+            );
             assert_eq!(
                 status(&app, Some("Bearer token-a")).await,
                 StatusCode::TOO_MANY_REQUESTS
@@ -416,14 +478,21 @@ mod tests {
             // token per request is never limited here. Each token still costs
             // one bounded validation, and the kid-miss JWKS guard still applies.
             for token in ["Bearer token-b", "Bearer token-c"] {
-                assert_eq!(status(&app, Some(token)).await, StatusCode::OK, "{token}");
+                assert_eq!(
+                    status(&app, Some(token)).await,
+                    StatusCode::UNAUTHORIZED,
+                    "{token}"
+                );
             }
         }
 
         #[tokio::test]
         async fn bearer_scheme_is_case_insensitive_and_whitespace_tolerant() {
             let app = app(0, 1, MAX_TRACKED_KEYS);
-            assert_eq!(status(&app, Some("Bearer token-a")).await, StatusCode::OK);
+            assert_eq!(
+                status(&app, Some("Bearer token-a")).await,
+                StatusCode::UNAUTHORIZED
+            );
             assert_eq!(
                 status(&app, Some("bearer  token-a")).await,
                 StatusCode::TOO_MANY_REQUESTS
@@ -441,18 +510,38 @@ mod tests {
                 for _ in 0..3 {
                     assert_eq!(
                         status(&app, authorization).await,
-                        StatusCode::OK,
+                        StatusCode::UNAUTHORIZED,
                         "{authorization:?}"
                     );
                 }
             }
         }
 
+        #[tokio::test]
+        async fn authenticated_requests_do_not_use_up_the_budget() {
+            let app = app(0, 1, MAX_TRACKED_KEYS);
+            for _ in 0..5 {
+                assert_eq!(status(&app, Some("Bearer valid")).await, StatusCode::OK);
+            }
+
+            assert_eq!(
+                status(&app, Some("Bearer invalid")).await,
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                status(&app, Some("Bearer invalid")).await,
+                StatusCode::TOO_MANY_REQUESTS
+            );
+        }
+
         #[traced_test]
         #[tokio::test]
         async fn full_limiter_lets_new_credentials_through_untracked() {
             let app = app(0, 1, 1);
-            assert_eq!(status(&app, Some("Bearer token-a")).await, StatusCode::OK);
+            assert_eq!(
+                status(&app, Some("Bearer token-a")).await,
+                StatusCode::UNAUTHORIZED
+            );
             assert_eq!(
                 status(&app, Some("Bearer token-a")).await,
                 StatusCode::TOO_MANY_REQUESTS
@@ -460,7 +549,10 @@ mod tests {
 
             // token-a's bucket is still active, so token-b is never tracked.
             for _ in 0..3 {
-                assert_eq!(status(&app, Some("Bearer token-b")).await, StatusCode::OK);
+                assert_eq!(
+                    status(&app, Some("Bearer token-b")).await,
+                    StatusCode::UNAUTHORIZED
+                );
             }
             assert!(logs_contain(
                 "rate limiter capacity exhausted; request allowed untracked"
