@@ -312,13 +312,27 @@ Apollo MCP Server caches the JWKS per issuer in memory and reuses it on the warm
 
 ### Limit authentication rates
 
-When you configure OAuth authentication, Apollo MCP Server automatically rate limits requests before any token validation work runs. This bounds the CPU cost that a client replaying one invalid bearer token imposes on the server.
+When you configure OAuth authentication, Apollo MCP Server rate limits requests before any token validation work runs. This bounds the CPU cost that a client replaying one invalid bearer token imposes on the server.
 
-The limiter is fixed and process-local. Each bearer credential can make `10` requests per second sustained, with bursts of up to `50` requests. The credential is represented by a process-randomized fingerprint; raw bearer tokens are never stored or logged. Distinct credentials receive separate buckets even when they arrive through the same reverse proxy.
+The limiter is process-local. By default, each bearer credential can make `10` requests per second sustained, with bursts of up to `50` requests. The credential is represented by a process-randomized fingerprint; raw bearer tokens are never stored or logged. Distinct credentials receive separate buckets even when they arrive through the same reverse proxy.
 
 Only requests that fail authentication use up the budget. When a request is not rejected with `401 Unauthorized`, its credential gets the request back, so clients that share one valid bearer token aren't limited by this layer. Because the request is returned only after validation finishes, a very large concurrent burst on one credential can still receive some `429` responses.
 
-The limit isn't configurable. Requests over it receive `429 Too Many Requests` with a `Retry-After` header before the server does any token parsing or JWKS fetching. Requests without a bearer credential aren't rate limited by this layer. Unless they match a `skip_token_validation` list, the OAuth middleware rejects them with `401` without any token validation. Traffic admitted by those lists isn't limited by this layer. A planned per-client limit that understands trusted proxies would cover it. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
+Requests over the limit receive `429 Too Many Requests` with a `Retry-After` header before the server does any token parsing or JWKS fetching. Requests without a bearer credential aren't rate limited by this layer. Unless they match a `skip_token_validation` list, the OAuth middleware rejects them with `401` without any token validation. Traffic admitted by those lists isn't limited by this layer. A planned per-client limit that understands trusted proxies would cover it. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
+
+The limiter is on by default. Use `rate_limit` to tune it, or to turn it off when a gateway in front of the server already rate limits clients:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  auth:
+    rate_limit:
+      enabled: true
+      requests_per_second: 10
+      burst: 50
+```
+
+Both `requests_per_second` and `burst` must be at least `1`. With `enabled: false`, the layer isn't mounted at all, and the server logs that at startup.
 
 There is no per-IP limit. Behind a reverse proxy, load balancer, or shared NAT, the connection address identifies the proxy instead of the client, so a per-IP limit would make unrelated clients share one bucket. A client that rotates fabricated bearer tokens is therefore not limited by this layer. Each token still costs at most one bounded signature check, and the per-issuer JWKS refresh guard still applies. A per-client limit that understands trusted proxies is planned as a follow-up.
 

@@ -2,9 +2,10 @@
 //!
 //! Each bearer credential gets its own token bucket, so one client that
 //! replays an invalid token cannot make the server validate it more than a
-//! fixed number of times per second. The check runs before JWT parsing or JWKS
-//! work. Requests that pass authentication get their token back, so only
-//! rejected credentials use up the budget.
+//! configured number of times per second. The check runs before JWT parsing or
+//! JWKS work. Requests that pass authentication get their token back, so only
+//! rejected credentials use up the budget. Operators that already rate limit
+//! upstream can turn the layer off with `transport.auth.rate_limit.enabled`.
 //!
 //! There is no per-peer limit. Behind a reverse proxy or load balancer the
 //! connection address identifies the proxy, not the client, so keying on it
@@ -12,6 +13,7 @@
 
 use std::collections::{HashMap, hash_map::RandomState};
 use std::hash::BuildHasher;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -22,14 +24,43 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use parking_lot::Mutex;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use crate::generated::telemetry::TelemetryMetric;
 use crate::meter;
 
 use super::log_throttle::LogThrottle;
 
-const CREDENTIAL_REQUESTS_PER_SECOND: u32 = 10;
-const CREDENTIAL_BURST: u32 = 50;
+const DEFAULT_REQUESTS_PER_SECOND: NonZeroU32 = NonZeroU32::new(10).unwrap();
+const DEFAULT_BURST: NonZeroU32 = NonZeroU32::new(50).unwrap();
+
+/// Rate limiting applied to bearer credentials before token validation.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct RateLimitConfig {
+    /// Set to `false` to turn the limiter off, for example when a gateway in
+    /// front of the server already rate limits clients.
+    pub enabled: bool,
+
+    /// Sustained requests per second allowed for each bearer credential that
+    /// fails authentication.
+    pub requests_per_second: NonZeroU32,
+
+    /// Requests a credential can make in a burst before the sustained rate
+    /// applies.
+    pub burst: NonZeroU32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            requests_per_second: DEFAULT_REQUESTS_PER_SECOND,
+            burst: DEFAULT_BURST,
+        }
+    }
+}
 
 /// Hard cap on tracked keys. When the map is full and a new key arrives,
 /// fully-refilled buckets are evicted. If the map remains full, the new key
@@ -186,10 +217,10 @@ pub(crate) struct RateLimitState {
 }
 
 impl RateLimitState {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(config: &RateLimitConfig) -> Self {
         Self::with_limiter(KeyedRateLimiter::new(
-            CREDENTIAL_REQUESTS_PER_SECOND,
-            CREDENTIAL_BURST,
+            config.requests_per_second.get(),
+            config.burst.get(),
             MAX_TRACKED_KEYS,
         ))
     }
@@ -271,9 +302,58 @@ pub(crate) async fn rate_limit(
 mod tests {
     use super::*;
 
+    mod config {
+        use super::*;
+        use rstest::rstest;
+
+        #[test]
+        fn defaults_are_on_at_ten_per_second_with_burst_of_fifty() {
+            let config: RateLimitConfig = serde_yaml::from_str("{}").unwrap();
+            assert!(config.enabled);
+            assert_eq!(config.requests_per_second.get(), 10);
+            assert_eq!(config.burst.get(), 50);
+        }
+
+        #[test]
+        fn fields_can_be_set_individually() {
+            let config: RateLimitConfig = serde_yaml::from_str("enabled: false\nburst: 5").unwrap();
+            assert!(!config.enabled);
+            assert_eq!(config.requests_per_second.get(), 10);
+            assert_eq!(config.burst.get(), 5);
+        }
+
+        #[rstest]
+        #[case::zero_rate("requests_per_second: 0")]
+        #[case::zero_burst("burst: 0")]
+        #[case::negative_rate("requests_per_second: -1")]
+        #[case::unknown_field("max_tracked: 10")]
+        fn rejects_invalid_values(#[case] yaml: &str) {
+            assert!(serde_yaml::from_str::<RateLimitConfig>(yaml).is_err());
+        }
+
+        #[test]
+        fn state_uses_configured_limits() {
+            let config: RateLimitConfig =
+                serde_yaml::from_str("requests_per_second: 3\nburst: 7").unwrap();
+            let state = RateLimitState::new(&config);
+            assert_eq!(state.credential_limiter.rate, 3.0);
+            assert_eq!(state.credential_limiter.burst, 7.0);
+            assert_eq!(state.credential_limiter.max_tracked, MAX_TRACKED_KEYS);
+        }
+
+        #[test]
+        fn schema_exposes_every_field_with_a_minimum_of_one() {
+            let schema = schemars::schema_for!(RateLimitConfig).to_value();
+            let properties = &schema["properties"];
+            assert!(properties.get("enabled").is_some());
+            assert_eq!(properties["requests_per_second"]["minimum"], 1);
+            assert_eq!(properties["burst"]["minimum"], 1);
+        }
+    }
+
     mod limiter {
         use super::{
-            CREDENTIAL_BURST, CREDENTIAL_REQUESTS_PER_SECOND, KeyedRateLimiter, LimitOutcome,
+            DEFAULT_BURST, DEFAULT_REQUESTS_PER_SECOND, KeyedRateLimiter, LimitOutcome,
             MAX_TRACKED_KEYS,
         };
         use rstest::rstest;
@@ -311,8 +391,8 @@ mod tests {
         #[test]
         fn credential_at_10x_is_clamped_and_other_credentials_are_unaffected() {
             let limiter = KeyedRateLimiter::new(
-                CREDENTIAL_REQUESTS_PER_SECOND,
-                CREDENTIAL_BURST,
+                DEFAULT_REQUESTS_PER_SECOND.get(),
+                DEFAULT_BURST.get(),
                 MAX_TRACKED_KEYS,
             );
             let start = Instant::now();

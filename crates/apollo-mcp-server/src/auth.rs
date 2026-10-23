@@ -41,6 +41,7 @@ mod valid_token;
 mod www_authenticate;
 
 use protected_resource::ProtectedResource;
+pub use rate_limit::RateLimitConfig;
 pub(crate) use valid_token::{Principal, ValidToken};
 use valid_token::{TokenValidationReporter, TokenValidator};
 use www_authenticate::{BearerError, WwwAuthenticate};
@@ -409,6 +410,13 @@ pub struct Config {
     #[serde(default, deserialize_with = "deserialize_header_map")]
     #[schemars(with = "HashMap<String, String>")]
     pub discovery_headers: HeaderMap,
+
+    /// Rate limit for bearer credentials that fail authentication.
+    ///
+    /// On by default. Set `enabled: false` when requests are already rate
+    /// limited before they reach the server.
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
 }
 
 /// TLS configuration for OAuth server connections
@@ -530,22 +538,28 @@ impl Config {
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
     ) -> Result<Router, TlsConfigError> {
+        let rate_limit_state = if self.rate_limit.enabled {
+            Some(rate_limit::RateLimitState::new(&self.rate_limit))
+        } else {
+            tracing::info!("auth rate limiting is disabled by configuration");
+            None
+        };
         self.enable_middleware_with_rate_limit_state(
             router,
             required_scopes,
             stateful_mode,
-            rate_limit::RateLimitState::new(),
+            rate_limit_state,
         )
     }
 
     /// Like [`Self::enable_middleware`], with the rate limiter supplied by the
-    /// caller so tests can use small limits.
+    /// caller so tests can use small limits. `None` mounts no limiter.
     fn enable_middleware_with_rate_limit_state(
         &self,
         router: Router,
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
-        rate_limit_state: rate_limit::RateLimitState,
+        rate_limit_state: Option<rate_limit::RateLimitState>,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -646,15 +660,17 @@ impl Config {
         // Auth first, then the rate limiter layered outside it.
         // Axum runs the outermost (last-added) layer first, so limited
         // requests are rejected before any token validation work.
-        let protected = router
-            .layer(axum::middleware::from_fn_with_state(
-                auth_state,
-                oauth_validate,
-            ))
-            .layer(axum::middleware::from_fn_with_state(
-                rate_limit_state,
+        let protected = router.layer(axum::middleware::from_fn_with_state(
+            auth_state,
+            oauth_validate,
+        ));
+        let protected = match rate_limit_state {
+            Some(state) => protected.layer(axum::middleware::from_fn_with_state(
+                state,
                 rate_limit::rate_limit,
-            ));
+            )),
+            None => protected,
+        };
 
         // Merge with MCP server routes
         Ok(Router::new().merge(auth_router).merge(protected))
@@ -1099,6 +1115,7 @@ mod tests {
             tls: TlsConfig::default(),
             discovery_timeout: None,
             discovery_headers: HeaderMap::new(),
+            rate_limit: RateLimitConfig::default(),
         }
     }
 
@@ -1899,6 +1916,38 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let config: Config = serde_yaml::from_str(y).unwrap();
             assert!(config.discovery_headers.is_empty());
+        }
+
+        #[test]
+        fn yaml_deserialization_without_rate_limit_defaults_to_enabled() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              resource: http://localhost:4000
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(config.rate_limit.enabled);
+            assert_eq!(config.rate_limit.requests_per_second.get(), 10);
+            assert_eq!(config.rate_limit.burst.get(), 50);
+        }
+
+        #[test]
+        fn yaml_deserialization_with_rate_limit() {
+            let y = r#"
+              servers:
+                - http://localhost:1234
+              resource: http://localhost:4000
+              rate_limit:
+                enabled: false
+                requests_per_second: 2
+                burst: 4
+            "#;
+
+            let config: Config = serde_yaml::from_str(y).unwrap();
+            assert!(!config.rate_limit.enabled);
+            assert_eq!(config.rate_limit.requests_per_second.get(), 2);
+            assert_eq!(config.rate_limit.burst.get(), 4);
         }
 
         #[tokio::test]
@@ -3254,6 +3303,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
     mod rate_limit_integration {
         use super::*;
+        use std::num::NonZeroU32;
+        use tracing_test::traced_test;
 
         fn request_with_token(uri: &str) -> Request<Body> {
             let mut req = Request::builder().uri(uri).body(Body::empty()).unwrap();
@@ -3270,7 +3321,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     base,
                     HashMap::new(),
                     true,
-                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
+                    Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
                 )
                 .unwrap()
         }
@@ -3281,6 +3332,47 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 .await
                 .unwrap()
                 .status()
+        }
+
+        /// Builds the router the way the server does, from `config.rate_limit`.
+        fn configured_app(enabled: bool, requests_per_second: u32, burst: u32) -> Router {
+            let mut config = test_config();
+            config.rate_limit = RateLimitConfig {
+                enabled,
+                requests_per_second: NonZeroU32::new(requests_per_second).unwrap(),
+                burst: NonZeroU32::new(burst).unwrap(),
+            };
+            config
+                .enable_middleware(
+                    Router::new().route("/test", get(|| async { "ok" })),
+                    HashMap::new(),
+                    true,
+                )
+                .unwrap()
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn disabled_limiter_never_returns_429_and_says_so_at_startup() {
+            // Smallest possible limits, but the layer is off, so every
+            // replay of the invalid token reaches the OAuth middleware.
+            let app = configured_app(false, 1, 1);
+            assert!(logs_contain(
+                "auth rate limiting is disabled by configuration"
+            ));
+            for _ in 0..5 {
+                assert_eq!(status(&app, "/test").await, StatusCode::UNAUTHORIZED);
+            }
+        }
+
+        #[tokio::test]
+        async fn configured_burst_is_enforced() {
+            // Burst of 2 at 1 request per second: two replays are validated,
+            // the third is rejected before validation.
+            let app = configured_app(true, 1, 2);
+            assert_eq!(status(&app, "/test").await, StatusCode::UNAUTHORIZED);
+            assert_eq!(status(&app, "/test").await, StatusCode::UNAUTHORIZED);
+            assert_eq!(status(&app, "/test").await, StatusCode::TOO_MANY_REQUESTS);
         }
 
         #[tokio::test]
@@ -3309,7 +3401,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     Router::new().route("/test", get(|| async { "ok" })),
                     HashMap::new(),
                     true,
-                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
+                    Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
                 )
                 .unwrap();
 
@@ -3337,7 +3429,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     Router::new().route("/test", get(|| async { "ok" })),
                     HashMap::new(),
                     true,
-                    rate_limit::RateLimitState::for_test(0, 1, 1_000),
+                    Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
                 )
                 .unwrap();
 
