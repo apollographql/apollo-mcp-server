@@ -19,6 +19,8 @@ pub(super) struct LogThrottle {
 }
 
 impl LogThrottle {
+    /// Records one event. Returns the suppressed count when this event should
+    /// be logged, or `None` when it should be suppressed.
     pub(super) fn record(&self, now: Instant) -> Option<u64> {
         let mut window = self.window.lock();
         let emission_due = window

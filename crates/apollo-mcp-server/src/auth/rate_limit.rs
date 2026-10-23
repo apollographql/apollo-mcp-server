@@ -131,6 +131,7 @@ impl KeyedRateLimiter {
     }
 }
 
+/// Adds tokens for the time since the last refill, capped at the burst size.
 fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
     let elapsed = now
         .saturating_duration_since(bucket.last_refill)
@@ -139,6 +140,7 @@ fn refill(bucket: &mut Bucket, rate: f64, burst: f64, now: Instant) {
     bucket.last_refill = now;
 }
 
+/// Adds one to a rate-limit counter.
 fn increment(metric: TelemetryMetric) {
     meter::METER
         .u64_counter(metric.as_str())
@@ -153,6 +155,7 @@ struct RateLimitReporter {
 }
 
 impl RateLimitReporter {
+    /// Counts a 429 and logs it, throttled.
     fn record_rejection(&self, now: Instant) {
         increment(TelemetryMetric::AuthRateLimitCount);
         if let Some(suppressed) = self.rejected.record(now) {
@@ -160,6 +163,8 @@ impl RateLimitReporter {
         }
     }
 
+    /// Counts a request let through untracked because the limiter is full, and
+    /// logs it, throttled.
     fn record_capacity_exhausted(&self, capacity: usize, now: Instant) {
         increment(TelemetryMetric::AuthRateLimitOverflowCount);
         if let Some(suppressed) = self.capacity_exhausted.record(now) {
@@ -207,6 +212,8 @@ impl RateLimitState {
     }
 }
 
+/// Returns a keyed hash of the bearer credential, or `None` when the request
+/// has no bearer credential.
 fn credential_fingerprint(request: &Request, hasher: &RandomState) -> Option<u64> {
     let value = request.headers().get(AUTHORIZATION)?.to_str().ok()?;
     let (scheme, credential) = value.split_once(' ')?;

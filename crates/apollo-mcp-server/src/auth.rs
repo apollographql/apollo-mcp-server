@@ -538,6 +538,8 @@ impl Config {
         )
     }
 
+    /// Like [`Self::enable_middleware`], with the rate limiter supplied by the
+    /// caller so tests can use small limits.
     fn enable_middleware_with_rate_limit_state(
         &self,
         router: Router,
