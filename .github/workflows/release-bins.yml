@@ -275,36 +275,14 @@ jobs:
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
     needs: [get-version, release]
     runs-on: ubuntu-latest
-    # Must match the Trusted Publisher configured for each crate on crates.io
-    environment: crates-io
     permissions:
-      contents: read
-      id-token: write
+      actions: write
     steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-
-      - name: Authenticate with crates.io (Trusted Publishing)
-        uses: rust-lang/crates-io-auth-action@v1
-        id: auth
-
-      - name: Publish to crates.io
+      - name: Dispatch Publish Crates on main
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.get-version.outputs.version }}
-        run: |
-          set -euo pipefail
-          version="${VERSION#v}"
-          # Dependencies first. Skips crates already live so a failed run can be re-run.
-          for crate in apollo-mcp-registry apollo-mcp-rhai apollo-schema-index apollo-mcp-server; do
-            if curl -sf -A "apollo-mcp-server-release-ci (github.com/apollographql/apollo-mcp-server)" \
-              "https://crates.io/api/v1/crates/${crate}/${version}" > /dev/null; then
-              echo "${crate}@${version} is already on crates.io, skipping"
-            else
-              cargo publish --locked -p "${crate}"
-            fi
-          done
+        run: gh workflow run publish-crates.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="${VERSION#v}"
 
   # Releases made with GITHUB_TOKEN can't trigger other workflows,
   # so a `release: published` listener never runs. Notify skills from here instead.
