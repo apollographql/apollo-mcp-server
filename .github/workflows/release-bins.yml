@@ -282,7 +282,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.get-version.outputs.version }}
-        run: gh workflow run publish-crates.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="${VERSION#v}"
+        run: |
+          set -euo pipefail
+          dispatched_after="$(date -u -d '-30 seconds' +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run publish-crates.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="${VERSION#v}"
+
+          # The dispatch API doesn't return the run it creates, so look it up
+          run_id=""
+          for _ in $(seq 1 30); do
+            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow publish-crates.yml --event workflow_dispatch \
+              --json databaseId,createdAt --jq "map(select(.createdAt >= \"${dispatched_after}\")) | last | .databaseId // empty")"
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+          if [[ -z "$run_id" ]]; then
+            echo "::error::Couldn't find the dispatched Publish Crates run"
+            exit 1
+          fi
+
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --interval 15 --exit-status
 
   # Releases made with GITHUB_TOKEN can't trigger other workflows,
   # so a `release: published` listener never runs. Notify skills from here instead.
