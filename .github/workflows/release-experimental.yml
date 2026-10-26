@@ -65,6 +65,7 @@ jobs:
   release-bins:
     needs: [validate, prepare-release]
     permissions:
+      actions: write
       contents: write
       packages: write
       attestations: write

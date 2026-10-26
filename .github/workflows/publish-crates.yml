@@ -1,0 +1,71 @@
+name: Publish Crates
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released version to publish, without the `v` prefix (e.g., 2.1.0)
+        required: true
+        type: string
+
+jobs:
+  publish-crates:
+    runs-on: ubuntu-latest
+    # Must match the Trusted Publisher configured for each crate on crates.io
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a stable version such as 2.1.0, got '${VERSION}'"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The environment only checks the dispatch ref, so make sure the tag is a release commit on main
+      - name: Verify release tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::v${VERSION} is not on main"
+            exit 1
+          fi
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$cargo_version" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml at v${VERSION} has version ${cargo_version}"
+            exit 1
+          fi
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Authenticate with crates.io (Trusted Publishing)
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # Dependencies first. Skips crates already live so a failed run can be re-run.
+          for crate in apollo-mcp-registry apollo-mcp-rhai apollo-schema-index apollo-mcp-server; do
+            if curl -sf -A "apollo-mcp-server-release-ci (github.com/apollographql/apollo-mcp-server)" \
+              "https://crates.io/api/v1/crates/${crate}/${VERSION}" > /dev/null; then
+              echo "${crate}@${VERSION} is already on crates.io, skipping"
+            else
+              cargo publish --locked -p "${crate}"
+            fi
+          done
