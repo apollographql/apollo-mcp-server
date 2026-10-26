@@ -17,9 +17,36 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a stable version such as 2.1.0, got '${VERSION}'"
+            exit 1
+          fi
+
       - uses: actions/checkout@v6
         with:
-          ref: v${{ inputs.version }}
+          ref: refs/tags/v${{ inputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The environment only checks the dispatch ref, so make sure the tag is a release commit on main
+      - name: Verify release tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::v${VERSION} is not on main"
+            exit 1
+          fi
+          cargo_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$cargo_version" != "$VERSION" ]]; then
+            echo "::error::Cargo.toml at v${VERSION} has version ${cargo_version}"
+            exit 1
+          fi
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
