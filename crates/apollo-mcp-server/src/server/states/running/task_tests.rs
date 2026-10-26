@@ -194,11 +194,6 @@ async fn http_detaches_once_and_preserves_results(#[case] graphql_error: bool) {
     let mut upstream = Upstream::new(payload.clone()).await;
     let mut running = upstream.running(1);
     running.forward_headers.push("x-tenant-id".into());
-    let discover = http(&running, "server/discover", json!({}), true).await;
-    assert_eq!(
-        discover["result"]["capabilities"]["extensions"]["io.modelcontextprotocol/tasks"],
-        json!({})
-    );
     let handle = http(&running, "tools/call", json!({"name":"Hello"}), true).await;
     assert_eq!(handle["result"]["resultType"], "task");
     let id = &handle["result"]["taskId"];
@@ -332,6 +327,66 @@ async fn synchronous_compatibility(
         "world"
     );
     assert!(result["result"].get("taskId").is_none());
+    if let Some(tasks) = &running.tasks {
+        tasks.shutdown().await;
+    }
+}
+
+/// `server/discover` and a legacy `initialize` handshake declare the Tasks
+/// extension exactly when it is enabled, and omit `extensions` otherwise.
+#[rstest::rstest]
+#[case::enabled(true)]
+#[case::disabled(false)]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(10))]
+async fn advertises_tasks_extension(#[case] enabled: bool) {
+    let upstream = Upstream::new(json!({"data":{"hello":"world"}})).await;
+    let mut running = upstream.running(0);
+    if !enabled {
+        running.tasks = None;
+    }
+    let expected = enabled.then(|| json!({TASKS_EXTENSION_ID: {}}));
+
+    let discover = http(&running, "server/discover", json!({}), true).await;
+    let capabilities = discover["result"]["capabilities"]
+        .as_object()
+        .unwrap_or_else(|| panic!("server/discover failed: {discover}"));
+    assert_eq!(
+        capabilities.get("extensions"),
+        expected.as_ref(),
+        "server/discover: {discover}"
+    );
+
+    let service = running.for_service();
+    let (server_io, client_io) = tokio::io::duplex(8192);
+    let server = tokio::spawn(async move {
+        service
+            .serve(server_io)
+            .await
+            .unwrap()
+            .waiting()
+            .await
+            .unwrap();
+    });
+    let client = ClientConfig::new(
+        ClientCapabilities::default(),
+        Implementation::new("tasks-test", "1"),
+    )
+    .with_protocol_version(ProtocolVersion::V_2025_11_25)
+    .serve(client_io)
+    .await
+    .unwrap();
+    let initialize = client.peer_info().expect("initialize result");
+    assert_eq!(initialize.protocol_version, ProtocolVersion::V_2025_11_25);
+    let capabilities = serde_json::to_value(&initialize.capabilities).unwrap();
+    assert_eq!(
+        capabilities.get("extensions"),
+        expected.as_ref(),
+        "initialize: {capabilities}"
+    );
+    client.cancel().await.unwrap();
+    server.await.unwrap();
+
     if let Some(tasks) = &running.tasks {
         tasks.shutdown().await;
     }
