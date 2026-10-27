@@ -1335,6 +1335,16 @@ fn tool_not_found(name: &str) -> McpError {
 
 #[cfg(test)]
 mod tests {
+    use rmcp::model::{JsonObject, Tool};
+
+    use crate::apps::{
+        App,
+        app::{AppResource, AppTool},
+        manifest::{AppLabels, CSPSettings, WidgetSettings},
+    };
+
+    use super::*;
+
     #[rstest::rstest]
     #[case::parse_error(ErrorCode::PARSE_ERROR, false)]
     #[case::invalid_request(ErrorCode::INVALID_REQUEST, false)]
@@ -1345,16 +1355,6 @@ mod tests {
     fn is_server_error_classifies_json_rpc_codes(#[case] code: ErrorCode, #[case] expected: bool) {
         assert_eq!(super::is_server_error(code), expected);
     }
-
-    use rmcp::model::{JsonObject, Tool};
-
-    use crate::apps::{
-        App,
-        app::{AppResource, AppTool},
-        manifest::{AppLabels, CSPSettings, WidgetSettings},
-    };
-
-    use super::*;
 
     fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {
         Running {
