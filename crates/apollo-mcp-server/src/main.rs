@@ -190,7 +190,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .disable_type_description(config.overrides.disable_type_description)
         .disable_schema_description(config.overrides.disable_schema_description)
         .enable_output_schema(config.overrides.enable_output_schema)
-        .gen_ai(config.telemetry.gen_ai())
+        .gen_ai_content(config.telemetry.gen_ai_content())
         .descriptions(config.overrides.descriptions)
         .annotations(config.overrides.annotations)
         .param_headers(config.overrides.param_headers)

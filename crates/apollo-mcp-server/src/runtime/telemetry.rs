@@ -161,40 +161,32 @@ pub struct TracingExporters {
     sampler: Option<SamplerOption>,
     /// Apollo span attributes excluded before export.
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
-    /// Export the OpenTelemetry GenAI (`gen_ai.*`) span attributes, including
-    /// tool call arguments and results, which may contain sensitive data.
-    /// Defaults to off.
-    gen_ai: Option<bool>,
+    /// Export the opt-in OpenTelemetry GenAI content attributes
+    /// (`gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`), which may
+    /// contain sensitive data. Other `gen_ai.*` attributes are always exported.
+    #[serde(default)]
+    gen_ai_content: bool,
 }
 
 impl Telemetry {
-    /// Whether the tracing exporter exports the OpenTelemetry GenAI attributes.
-    pub fn gen_ai(&self) -> bool {
+    /// Whether the tracing exporter exports the GenAI content attributes.
+    pub fn gen_ai_content(&self) -> bool {
         self.exporters
             .as_ref()
             .and_then(|exporters| exporters.tracing.as_ref())
-            .is_some_and(TracingExporters::gen_ai)
+            .is_some_and(|tracing| tracing.gen_ai_content)
     }
 }
 
 impl TracingExporters {
-    fn gen_ai(&self) -> bool {
-        self.gen_ai.unwrap_or_default()
-    }
-
-    /// Span attribute keys the exporter drops: every key of an omitted
-    /// attribute, plus the GenAI attributes unless they're enabled.
+    /// Span attribute keys the exporter drops: every key of each omitted
+    /// attribute.
     fn omitted_span_keys(&self) -> HashSet<Key> {
-        let mut keys: HashSet<Key> = self
-            .omitted_attributes
+        self.omitted_attributes
             .iter()
             .flatten()
             .flat_map(|a| a.span_keys())
-            .collect();
-        if !self.gen_ai() {
-            keys.extend(TelemetryAttribute::GEN_AI_KEYS);
-        }
-        keys
+            .collect()
     }
 }
 
@@ -601,35 +593,33 @@ mod tests {
         assert!(SUPPRESS_RMCP_DEBUG.load(Ordering::Relaxed));
     }
 
-    fn tracing_exporters(omitted: &[TelemetryAttribute], gen_ai: Option<bool>) -> TracingExporters {
-        TracingExporters {
+    #[rstest]
+    #[case::nothing_omitted(&[], &[])]
+    #[case::tool_name(&[TelemetryAttribute::ToolName], &["apollo.mcp.tool_name", "gen_ai.tool.name"])]
+    #[case::tool_arguments(&[TelemetryAttribute::ToolArguments], &["apollo.mcp.tool_arguments", "gen_ai.tool.call.arguments"])]
+    #[case::graphql_query(&[TelemetryAttribute::GraphqlQuery], &["apollo.mcp.graphql_query"])]
+    fn omitted_span_keys_include_gen_ai_counterparts(
+        #[case] omitted: &[TelemetryAttribute],
+        #[case] expected: &[&'static str],
+    ) {
+        let exporters = TracingExporters {
             otlp: None,
             sampler: None,
             omitted_attributes: Some(omitted.iter().copied().collect()),
-            gen_ai,
-        }
+            gen_ai_content: true,
+        };
+        let expected: HashSet<Key> = expected.iter().map(|k| Key::from_static_str(k)).collect();
+        assert_eq!(exporters.omitted_span_keys(), expected);
     }
 
-    const ALL_GEN_AI: &[&str] = &[
-        "gen_ai.operation.name",
-        "gen_ai.tool.name",
-        "gen_ai.tool.call.arguments",
-        "gen_ai.tool.call.result",
-    ];
-
     #[rstest]
-    #[case::unset_drops_gen_ai(&[], None, ALL_GEN_AI)]
-    #[case::disabled_drops_gen_ai(&[], Some(false), ALL_GEN_AI)]
-    #[case::enabled_keeps_gen_ai(&[], Some(true), &[])]
-    #[case::omitted_attribute_overrides_gen_ai(&[TelemetryAttribute::ToolArguments], Some(true), &["apollo.mcp.tool_arguments", "gen_ai.tool.call.arguments"])]
-    fn omitted_span_keys_respect_gen_ai(
-        #[case] omitted: &[TelemetryAttribute],
-        #[case] gen_ai: Option<bool>,
-        #[case] expected: &[&'static str],
-    ) {
-        let keys = tracing_exporters(omitted, gen_ai).omitted_span_keys();
-        let expected: HashSet<Key> = expected.iter().map(|k| Key::from_static_str(k)).collect();
-        assert_eq!(keys, expected);
+    #[case::unset(serde_json::json!({}), false)]
+    #[case::disabled(serde_json::json!({"gen_ai_content": false}), false)]
+    #[case::enabled(serde_json::json!({"gen_ai_content": true}), true)]
+    fn gen_ai_content_defaults_to_off(#[case] tracing: serde_json::Value, #[case] expected: bool) {
+        let telemetry: Telemetry =
+            serde_json::from_value(serde_json::json!({"exporters": {"tracing": tracing}})).unwrap();
+        assert_eq!(telemetry.gen_ai_content(), expected);
     }
 
     fn test_config(
@@ -665,7 +655,7 @@ mod tests {
                 otlp: Some(TraceTelemetryExporter::default()),
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: Some(ommitted),
-                gen_ai: None,
+                gen_ai_content: false,
             }),
         );
         // init_tracing_subscriber can only be called once in the test suite to avoid
@@ -707,7 +697,7 @@ mod tests {
                 }),
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
-                gen_ai: None,
+                gen_ai_content: false,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
@@ -730,7 +720,7 @@ mod tests {
                 }),
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
-                gen_ai: None,
+                gen_ai_content: false,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
@@ -753,7 +743,7 @@ mod tests {
                 }),
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
-                gen_ai: None,
+                gen_ai_content: false,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());

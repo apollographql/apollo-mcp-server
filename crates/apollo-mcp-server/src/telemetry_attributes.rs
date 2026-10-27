@@ -2,20 +2,11 @@ use crate::generated::telemetry::{ALL_ATTRS, TelemetryAttribute};
 use opentelemetry::Key;
 use std::collections::HashSet;
 
-const GEN_AI_OPERATION_NAME: Key = Key::from_static_str("gen_ai.operation.name");
 const GEN_AI_TOOL_NAME: Key = Key::from_static_str("gen_ai.tool.name");
 const GEN_AI_TOOL_CALL_ARGUMENTS: Key = Key::from_static_str("gen_ai.tool.call.arguments");
 const GEN_AI_TOOL_CALL_RESULT: Key = Key::from_static_str("gen_ai.tool.call.result");
 
 impl TelemetryAttribute {
-    /// Every OpenTelemetry GenAI attribute the server records on spans.
-    pub const GEN_AI_KEYS: [Key; 4] = [
-        GEN_AI_OPERATION_NAME,
-        GEN_AI_TOOL_NAME,
-        GEN_AI_TOOL_CALL_ARGUMENTS,
-        GEN_AI_TOOL_CALL_RESULT,
-    ];
-
     pub const fn to_key(self) -> Key {
         match self {
             TelemetryAttribute::ToolName => {

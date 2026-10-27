@@ -80,8 +80,9 @@ pub(super) struct Running {
     pub(super) disable_schema_description: bool,
     pub(super) enable_output_schema: bool,
     pub(super) disable_auth_token_passthrough: bool,
-    /// Record the OpenTelemetry GenAI tool call payloads on `call_tool` spans.
-    pub(super) gen_ai: bool,
+    /// Record the opt-in GenAI content attributes (tool call arguments and
+    /// results) on `call_tool` spans.
+    pub(super) gen_ai_content: bool,
     pub(super) descriptions: HashMap<String, String>,
     pub(super) annotations: HashMap<String, AnnotationOverrides>,
     pub(super) param_headers: HashMap<String, ParamHeaders>,
@@ -908,7 +909,7 @@ impl ServerHandler for McpService {
                 && let Ok(json) = serde_json::to_string(args)
             {
                 span.record("apollo.mcp.tool_arguments", json.as_str());
-                if self.application.gen_ai {
+                if self.application.gen_ai_content {
                     span.record("gen_ai.tool.call.arguments", json.as_str());
                 }
             }
@@ -953,7 +954,7 @@ impl ServerHandler for McpService {
                         operation,
                     )
                     .await;
-                record_tool_result(&span, &result, self.application.gen_ai);
+                record_tool_result(&span, &result, self.application.gen_ai_content);
                 return result.map(Into::into);
             };
             let owner = request_principal(&context.extensions);
@@ -966,7 +967,7 @@ impl ServerHandler for McpService {
                 let result = application
                     .call_tool_impl(request, &extensions, protocol_version.as_ref(), operation)
                     .await;
-                record_tool_result(&span, &result, application.gen_ai);
+                record_tool_result(&span, &result, application.gen_ai_content);
                 result
             }
             // Preserve the actual handler span, including a disabled span.
@@ -1269,7 +1270,7 @@ impl ServerHandler for McpService {
 fn record_tool_result(
     span: &tracing::Span,
     result: &Result<CallToolResult, McpError>,
-    gen_ai: bool,
+    gen_ai_content: bool,
 ) {
     match result {
         Ok(r) => {
@@ -1278,7 +1279,7 @@ fn record_tool_result(
             stripped.meta = None;
             if let Ok(json) = serde_json::to_string(&stripped) {
                 span.record("apollo.mcp.tool_result", json.as_str());
-                if gen_ai && !is_error {
+                if gen_ai_content && !is_error {
                     span.record("gen_ai.tool.call.result", json.as_str());
                 }
             }
@@ -1376,7 +1377,7 @@ mod tests {
             disable_type_description: false,
             disable_schema_description: false,
             enable_output_schema: false,
-            gen_ai: false,
+            gen_ai_content: false,
             disable_auth_token_passthrough: false,
             descriptions: HashMap::new(),
             annotations: HashMap::new(),
@@ -3336,7 +3337,7 @@ mod tests {
             let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3383,7 +3384,7 @@ mod tests {
             let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3758,7 +3759,7 @@ mod tests {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3815,7 +3816,7 @@ mod tests {
                 operations: Arc::new(RwLock::new(vec![operation])),
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -3924,7 +3925,7 @@ mod tests {
                 apps: vec![app],
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 ..test_running(Arc::new(RwLock::new(schema)))
             };
 
@@ -4065,7 +4066,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -4590,7 +4591,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: true,
-                gen_ai: false,
+                gen_ai_content: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -5575,7 +5576,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: false,
-                gen_ai: false,
+                gen_ai_content: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
@@ -5762,7 +5763,7 @@ mod integration_tests {
                 disable_type_description: false,
                 disable_schema_description: false,
                 enable_output_schema: false,
-                gen_ai: false,
+                gen_ai_content: false,
                 disable_auth_token_passthrough: false,
                 descriptions: HashMap::new(),
                 annotations: HashMap::new(),
