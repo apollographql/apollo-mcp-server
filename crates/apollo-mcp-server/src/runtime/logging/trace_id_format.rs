@@ -50,7 +50,8 @@ where
 /// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span
 /// is entered (when `context_activation` is enabled, which is the default), so
 /// during event formatting the current OTel context corresponds to the
-/// innermost active span.
+/// innermost active span. Events with an explicit `parent:` still get the IDs
+/// of that entered span, not of the named parent.
 pub(super) fn current_ids() -> Option<(TraceId, SpanId)> {
     Context::map_current(|context| {
         let span = context.span();
