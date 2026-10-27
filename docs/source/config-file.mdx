@@ -249,6 +249,12 @@ Set `ansi: always` or `ansi: never` to override terminal detection and all of th
 
 With `format: json`, each log line is one JSON object with `timestamp`, `level`, `target`, `message`, and the event's fields as top-level keys, plus `trace_id` and `span_id` when the line is emitted inside a span. JSON output never contains ANSI styling, whatever `ansi` is set to. For details, go to [Log correlation](/apollo-mcp-server/telemetry#log-correlation).
 
+To keep readable logs locally and send JSON to your log pipeline in production, leave `format: text` in your shared configuration file and override it in production with an environment variable:
+
+```bash
+APOLLO_MCP_LOGGING__FORMAT=json
+```
+
 <Caution>
 
 At the `debug` level, Apollo MCP Server logs the parsed configuration. Ordinary static header values, including values you populate through `${env.VAR}`, can appear in this output. The GraphOS key is redacted. Do not enable debug logging in production without protecting and restricting access to the resulting logs.
