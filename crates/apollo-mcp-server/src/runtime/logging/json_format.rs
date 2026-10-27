@@ -7,18 +7,28 @@ use std::fmt;
 use serde_json::{Map, Value};
 use tracing::Subscriber;
 use tracing::field::{Field, Visit};
+use tracing_log::NormalizeEvent;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::time::{FormatTime, SystemTime};
 use tracing_subscriber::registry::LookupSpan;
 
-use super::trace_id_format::current_span_context;
+use super::trace_id_format::current_ids;
+
+/// Event field names that never become keys: `trace_id`, `span_id`, and `span`
+/// only come from the active span, and `log.*` fields are metadata that
+/// `tracing-log` adds to events bridged from the `log` crate.
+fn is_reserved_field(name: &str) -> bool {
+    matches!(name, "trace_id" | "span_id" | "span") || name.starts_with("log.")
+}
 
 /// A [`FormatEvent`] that writes each event as a single-line JSON object.
 ///
-/// Event fields, including `message`, become top-level keys. The `timestamp`,
-/// `level`, `target`, `trace_id`, and `span_id` keys take precedence over event
-/// fields with the same name. The output never contains ANSI escape codes.
+/// Event fields, including `message` when the event has one, become top-level
+/// keys. The `timestamp`, `level`, and `target` keys take precedence over event
+/// fields with the same name, and `trace_id`, `span_id`, and `span` (the current
+/// span's name) only appear inside a span. The output never contains ANSI
+/// escape codes.
 pub struct JsonFormat;
 
 impl<S, N> FormatEvent<S, N> for JsonFormat
@@ -28,26 +38,24 @@ where
 {
     fn format_event(
         &self,
-        _ctx: &FmtContext<'_, S, N>,
+        ctx: &FmtContext<'_, S, N>,
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> fmt::Result {
         let mut object = Map::new();
         let mut timestamp = String::new();
         SystemTime.format_time(&mut Writer::new(&mut timestamp))?;
-        let metadata = event.metadata();
+        let normalized = event.normalized_metadata();
+        let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
         object.insert("timestamp".to_string(), timestamp.into());
         object.insert("level".to_string(), metadata.level().as_str().into());
         object.insert("target".to_string(), metadata.target().into());
-        if let Some(span_context) = current_span_context() {
-            object.insert(
-                "trace_id".to_string(),
-                span_context.trace_id().to_string().into(),
-            );
-            object.insert(
-                "span_id".to_string(),
-                span_context.span_id().to_string().into(),
-            );
+        if let Some(span) = ctx.lookup_current() {
+            object.insert("span".to_string(), span.name().into());
+        }
+        if let Some((trace_id, span_id)) = current_ids() {
+            object.insert("trace_id".to_string(), trace_id.to_string().into());
+            object.insert("span_id".to_string(), span_id.to_string().into());
         }
         event.record(&mut JsonVisitor(&mut object));
 
@@ -57,12 +65,14 @@ where
 }
 
 /// Records event fields into a JSON object, keeping numbers and booleans typed.
-/// Keys already in the object are left as they are.
+/// Keys already in the object and reserved fields are left out.
 struct JsonVisitor<'a>(&'a mut Map<String, Value>);
 
 impl JsonVisitor<'_> {
     fn insert(&mut self, field: &Field, value: Value) {
-        self.0.entry(field.name()).or_insert(value);
+        if !is_reserved_field(field.name()) {
+            self.0.entry(field.name()).or_insert(value);
+        }
     }
 }
 
@@ -185,6 +195,55 @@ mod tests {
             (hex_len("trace_id"), hex_len("span_id")),
             (Some(32), Some(16))
         );
+    }
+
+    #[test]
+    fn includes_current_span_name() {
+        let line = json_lines(|| {
+            let span = tracing::info_span!("call_tool");
+            let _guard = span.enter();
+            tracing::info!("in span");
+        })
+        .remove(0);
+        assert_eq!(line["span"], json!("call_tool"));
+    }
+
+    #[test]
+    fn ignores_id_fields_on_events_outside_span() {
+        let line =
+            json_lines(|| tracing::info!(trace_id = "fake", span_id = "fake", "hello")).remove(0);
+        assert!(!line.contains_key("trace_id") && !line.contains_key("span_id"));
+    }
+
+    #[test]
+    fn uses_original_target_for_log_crate_events() {
+        let line = json_lines(|| {
+            let record = log::Record::builder()
+                .args(format_args!("from log"))
+                .level(log::Level::Info)
+                .target("some_dependency::module")
+                .module_path_static(Some("some_dependency::module"))
+                .file_static(Some("module.rs"))
+                .line(Some(7))
+                .build();
+            tracing_log::format_trace(&record).expect("bridged log record");
+        })
+        .remove(0);
+        assert_eq!(line["target"], json!("some_dependency::module"));
+    }
+
+    #[test]
+    fn omits_log_crate_metadata_fields() {
+        let line = json_lines(|| {
+            let record = log::Record::builder()
+                .args(format_args!("from log"))
+                .level(log::Level::Info)
+                .target("some_dependency::module")
+                .build();
+            tracing_log::format_trace(&record).expect("bridged log record");
+        })
+        .remove(0);
+        assert!(!line.keys().any(|key| key.starts_with("log.")));
     }
 
     #[test]

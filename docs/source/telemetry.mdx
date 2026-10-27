@@ -178,10 +178,10 @@ The server doesn't set `host.name`. Set it with `OTEL_RESOURCE_ATTRIBUTES` (for 
 Log lines emitted inside an active span carry the span's IDs, so you can jump from a log line to its trace. How the IDs appear depends on [`logging.format`](/apollo-mcp-server/config-file#logging):
 
 - `text` (default): the line starts with `trace_id=<32 hex> span_id=<16 hex>`.
-- `json`: each line is one JSON object, and `trace_id` and `span_id` are top-level string keys. Most log backends detect these keys automatically.
+- `json`: each line is one JSON object, and `trace_id` and `span_id` are top-level string keys, next to `span`, the span's name. Most log backends detect these keys automatically.
 
 ```json
-{"timestamp":"2026-10-27T15:04:05.123456Z","level":"INFO","target":"apollo_schema_index","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","message":"Indexed 83 types in 16.51ms"}
+{"timestamp":"2026-10-27T15:04:05.123456Z","level":"INFO","target":"apollo_schema_index","span":"schema_index","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","message":"Indexed 83 types in 16.51ms"}
 ```
 
 Events outside a span have neither ID. This is correlation by ID only: logs still go to standard output or your log files, not to an OTLP endpoint.

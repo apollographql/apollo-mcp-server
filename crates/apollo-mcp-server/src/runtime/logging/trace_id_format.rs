@@ -4,7 +4,7 @@
 use std::fmt;
 
 use opentelemetry::Context;
-use opentelemetry::trace::{SpanContext, TraceContextExt};
+use opentelemetry::trace::{SpanId, TraceContextExt, TraceId};
 use tracing::Subscriber;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{Format, FormatEvent, FormatFields, Full, Writer};
@@ -36,30 +36,29 @@ where
         mut writer: Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> fmt::Result {
-        if let Some(span_context) = current_span_context() {
-            write!(
-                writer,
-                "trace_id={} span_id={} ",
-                span_context.trace_id(),
-                span_context.span_id()
-            )?;
+        if let Some((trace_id, span_id)) = current_ids() {
+            write!(writer, "trace_id={trace_id} span_id={span_id} ")?;
         }
 
         self.inner.format_event(ctx, writer, event)
     }
 }
 
-/// Reads the span context from the currently attached OpenTelemetry context,
-/// or `None` if no span with a valid trace is active.
+/// Reads the trace and span IDs from the currently attached OpenTelemetry
+/// context, or `None` if no span with a valid trace is active.
 ///
 /// `tracing-opentelemetry`'s layer attaches an OTel context guard when a span
 /// is entered (when `context_activation` is enabled, which is the default), so
 /// during event formatting the current OTel context corresponds to the
 /// innermost active span.
-pub(super) fn current_span_context() -> Option<SpanContext> {
-    let context = Context::current();
-    let span_context = context.span().span_context().clone();
-    span_context.is_valid().then_some(span_context)
+pub(super) fn current_ids() -> Option<(TraceId, SpanId)> {
+    Context::map_current(|context| {
+        let span = context.span();
+        let span_context = span.span_context();
+        span_context
+            .is_valid()
+            .then(|| (span_context.trace_id(), span_context.span_id()))
+    })
 }
 
 #[cfg(test)]

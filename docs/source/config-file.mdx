@@ -247,7 +247,7 @@ With `ansi: auto` (the default), logs written to a terminal use ANSI styling and
 
 Set `ansi: always` or `ansi: never` to override terminal detection and all of the preceding environment variables. `ansi: always` also applies ANSI styling to configured log files.
 
-With `format: json`, each log line is one JSON object with `timestamp`, `level`, `target`, `message`, and the event's fields as top-level keys, plus `trace_id` and `span_id` when the line is emitted inside a span. JSON output never contains ANSI styling, whatever `ansi` is set to. For details, go to [Log correlation](/apollo-mcp-server/telemetry#log-correlation).
+With `format: json`, each log line is one JSON object with `timestamp`, `level`, `target`, and the event's fields (including `message` when the event has one) as top-level keys. Lines emitted inside a span also have `span` (the span's name), `trace_id`, and `span_id`. JSON output never contains ANSI styling, whatever `ansi` is set to. For details, go to [Log correlation](/apollo-mcp-server/telemetry#log-correlation).
 
 To keep readable logs locally and send JSON to your log pipeline in production, leave `format: text` in your shared configuration file and override it in production with an environment variable:
 

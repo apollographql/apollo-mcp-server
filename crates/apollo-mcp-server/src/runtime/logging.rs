@@ -447,6 +447,12 @@ mod tests {
             .expect("dir entry");
         let contents = std::fs::read_to_string(file.path()).expect("log contents");
         assert!(!contents.contains('\x1b'));
+        let messages: Vec<serde_json::Value> = contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .map(|line| line["message"].clone())
+            .collect();
+        assert_eq!(messages, ["first", "second"]);
         assert!(
             contents
                 .lines()
