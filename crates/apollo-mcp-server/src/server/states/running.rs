@@ -18,9 +18,9 @@ use rmcp::model::{
 use rmcp::{
     RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ContentBlock, ErrorCode, InitializeRequestParams,
-        InitializeResult, ListToolsResult, PaginatedRequestParams, ProtocolVersion,
-        ServerCapabilities, ServerConfig,
+        CallToolRequestParams, CallToolResult, ConstString, ContentBlock, ErrorCode,
+        InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
+        ProtocolVersion, ServerCapabilities, ServerConfig,
     },
     service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
@@ -998,15 +998,25 @@ impl ServerHandler for McpService {
         request: rmcp::model::GetTaskParams,
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::GetTaskResult, McpError> {
-        let tasks = self
-            .application
-            .tasks
-            .as_ref()
-            .ok_or_else(McpError::method_not_found::<rmcp::model::GetTaskMethod>)?;
-        let owner = request_principal(&context.extensions);
-        tasks
-            .get(&request.task_id, owner.as_ref())
-            .map(rmcp::model::GetTaskResult::new)
+        // Task IDs act as bearer handles, so they're never recorded on the span.
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "get_task", mcp.method.name = rmcp::model::GetTaskMethod::VALUE),
+            &context,
+        );
+        async {
+            let tasks = self
+                .application
+                .tasks
+                .as_ref()
+                .ok_or_else(McpError::method_not_found::<rmcp::model::GetTaskMethod>)?;
+            let owner = request_principal(&context.extensions);
+            tasks
+                .get(&request.task_id, owner.as_ref())
+                .map(rmcp::model::GetTaskResult::new)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     async fn cancel_task(
@@ -1014,13 +1024,22 @@ impl ServerHandler for McpService {
         request: rmcp::model::CancelTaskParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let tasks = self
-            .application
-            .tasks
-            .as_ref()
-            .ok_or_else(McpError::method_not_found::<rmcp::model::CancelTaskMethod>)?;
-        let owner = request_principal(&context.extensions);
-        tasks.cancel(&request.task_id, owner.as_ref())
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "cancel_task", mcp.method.name = rmcp::model::CancelTaskMethod::VALUE),
+            &context,
+        );
+        async {
+            let tasks = self
+                .application
+                .tasks
+                .as_ref()
+                .ok_or_else(McpError::method_not_found::<rmcp::model::CancelTaskMethod>)?;
+            let owner = request_principal(&context.extensions);
+            tasks.cancel(&request.task_id, owner.as_ref())
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     async fn update_task(
@@ -1028,13 +1047,22 @@ impl ServerHandler for McpService {
         request: rmcp::model::UpdateTaskParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let tasks = self
-            .application
-            .tasks
-            .as_ref()
-            .ok_or_else(McpError::method_not_found::<rmcp::model::UpdateTaskMethod>)?;
-        let owner = request_principal(&context.extensions);
-        tasks.update(&request.task_id, owner.as_ref(), request.input_responses)
+        let (span, parent_context) = with_request_context(
+            tracing::info_span!(parent: get_parent_span(&context), "update_task", mcp.method.name = rmcp::model::UpdateTaskMethod::VALUE),
+            &context,
+        );
+        async {
+            let tasks = self
+                .application
+                .tasks
+                .as_ref()
+                .ok_or_else(McpError::method_not_found::<rmcp::model::UpdateTaskMethod>)?;
+            let owner = request_principal(&context.extensions);
+            tasks.update(&request.task_id, owner.as_ref(), request.input_responses)
+        }
+        .instrument(span)
+        .with_context(parent_context)
+        .await
     }
 
     async fn list_tools(

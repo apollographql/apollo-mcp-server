@@ -701,15 +701,25 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
 }
 
 /// Modern HTTP carries protocol selection on each request, independently of discovery.
-fn metadata_request(id: u32, method: &str, mut params: Value) -> Request<Body> {
+fn metadata_request(id: u32, method: &str, params: Value) -> Request<Body> {
+    metadata_request_with_capabilities(id, method, params, json!({}))
+}
+
+fn metadata_request_with_capabilities(
+    id: u32,
+    method: &str,
+    mut params: Value,
+    client_capabilities: Value,
+) -> Request<Body> {
     params["_meta"] = json!({
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-        "io.modelcontextprotocol/clientCapabilities": {},
+        "io.modelcontextprotocol/clientCapabilities": client_capabilities,
         "traceparent": TRACEPARENT
     });
     let name = params
         .get("name")
         .or_else(|| params.get("uri"))
+        .or_else(|| params.get("taskId"))
         .and_then(Value::as_str)
         .unwrap_or("");
     Request::builder()
@@ -760,6 +770,85 @@ async fn metadata_parents_each_http_handler(
     assert_eq!(
         named(&spans, "POST /mcp").parent_span_id.to_string(),
         "bbbbbbbbbbbbbbbb"
+    );
+}
+
+/// Sends a Tasks request to a server with Tasks enabled, from a client that
+/// declares Tasks support, and returns the named handler span.
+async fn task_handler_span(method: &str, params: Value, name: &str) -> SpanData {
+    let spans = ExportedSpans::capture();
+    let mut running = create_test_running();
+    let runtime = crate::server::states::tasks::TaskRuntime::new(
+        crate::tasks::TasksConfig {
+            enabled: true,
+            ..Default::default()
+        },
+        running.cancellation_token.clone(),
+        false,
+    );
+    running.tasks = Some(runtime.clone());
+    let service = build_http_service(running, false, &Default::default());
+    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let response = router
+        .oneshot(metadata_request_with_capabilities(
+            1,
+            method,
+            params,
+            json!({"extensions": {"io.modelcontextprotocol/tasks": {}}}),
+        ))
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+    runtime.shutdown().await;
+    named(&spans.collect(), name).clone()
+}
+
+#[rstest::rstest]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[tokio::test]
+async fn task_handler_span_records_mcp_method_name(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let span = task_handler_span(method, params, name).await;
+    assert_eq!(attribute(&span, "mcp.method.name").as_deref(), Some(method));
+}
+
+#[rstest::rstest]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[tokio::test]
+async fn task_handler_span_keeps_metadata_parent(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let span = task_handler_span(method, params, name).await;
+    assert_eq!(span.parent_span_id.to_string(), REMOTE_SPAN_ID);
+}
+
+#[rstest::rstest]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[tokio::test]
+async fn task_handler_span_never_records_task_id(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let span = task_handler_span(method, params, name).await;
+    assert!(
+        !span
+            .attributes
+            .iter()
+            .any(|kv| kv.value.as_str().contains("secret-task-id")),
+        "task ID leaked into span attributes: {:?}",
+        span.attributes
     );
 }
 
