@@ -82,6 +82,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
         disable_type_description: false,
         disable_schema_description: false,
         enable_output_schema: false,
+        gen_ai_content: false,
         disable_auth_token_passthrough: false,
         descriptions: HashMap::new(),
         annotations: HashMap::new(),
