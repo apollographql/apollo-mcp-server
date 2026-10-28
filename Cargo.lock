@@ -124,12 +124,12 @@ dependencies = [
 
 [[package]]
 name = "apollo-compiler"
-version = "2.0.0-beta.1"
+version = "2.0.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "031ad1ba5d073dc231b63bfac51cea2f180f4280c41b766f4d6db0f57474841f"
+checksum = "29c770fa043a08a4db8b676929e6715c618d1d35bcba7caf36cee2274526cc08"
 dependencies = [
  "ahash",
- "apollo-parser 0.9.0-beta.0",
+ "apollo-parser 0.9.0-beta.2",
  "ariadne",
  "futures",
  "indexmap",
@@ -234,7 +234,7 @@ name = "apollo-mcp-server"
 version = "2.1.0"
 dependencies = [
  "anyhow",
- "apollo-compiler 2.0.0-beta.1",
+ "apollo-compiler 2.0.0-beta.2",
  "apollo-federation",
  "apollo-mcp-registry",
  "apollo-mcp-rhai",
@@ -316,9 +316,9 @@ dependencies = [
 
 [[package]]
 name = "apollo-parser"
-version = "0.9.0-beta.0"
+version = "0.9.0-beta.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c72cf951e113a1a27378bdddb82ccf08bbe2f49436cf597eb851ae8cb012ea3"
+checksum = "f7dc28af62cc545b679f3e02c44edd48d4f256053f7df66e5c69c172daab2d88"
 dependencies = [
  "memchr",
  "rowan",
@@ -329,7 +329,7 @@ dependencies = [
 name = "apollo-schema-index"
 version = "2.1.0"
 dependencies = [
- "apollo-compiler 2.0.0-beta.1",
+ "apollo-compiler 2.0.0-beta.2",
  "enumset",
  "heck 0.5.0",
  "insta",
@@ -818,7 +818,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1468,7 +1468,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2394,7 +2394,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2856,7 +2856,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3600,7 +3600,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -4079,7 +4079,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4137,7 +4137,7 @@ dependencies = [
  "security-framework 3.5.1",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4847,7 +4847,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5790,7 +5790,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
