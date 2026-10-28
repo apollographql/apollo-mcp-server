@@ -677,6 +677,7 @@ export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR
 | :------------------- | :-------------------- | :-------------------------- | :-------------------------------------------- |
 | `otlp`               | `OTLP Trace Exporter` | `null` (Exporting disabled) | Configuration for exporting traces via OTLP.  |
 | `sampler`            | `SamplerOption`       | `ALWAYS_ON`                 | Configuration to control sampling of traces.  |
+| `parent_based_sampler` | `bool`              | `true`                      | Follow the sampling decision of an incoming trace context and apply `sampler` only to requests without one. |
 | `omitted_attributes` | `List<String>`        |                             | Supported Apollo span attributes to omit before export. |
 | `gen_ai_content`     | `bool`                | `false`                     | Export the `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result` span attributes. |
 

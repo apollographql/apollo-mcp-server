@@ -166,6 +166,15 @@ pub struct TracingExporters {
     /// contain sensitive data. Other `gen_ai.*` attributes are always exported.
     #[serde(default)]
     gen_ai_content: bool,
+    /// Follow the sampling decision of an incoming trace context, such as a
+    /// `traceparent` header or MCP `_meta`, and apply `sampler` only to
+    /// requests without one. Defaults to true.
+    #[serde(default = "default_parent_based_sampler")]
+    parent_based_sampler: bool,
+}
+
+const fn default_parent_based_sampler() -> bool {
+    true
 }
 
 impl Telemetry {
@@ -179,6 +188,17 @@ impl Telemetry {
 }
 
 impl TracingExporters {
+    /// The OpenTelemetry sampler for `sampler`, wrapped to respect the parent's
+    /// decision when `parent_based_sampler` is set.
+    fn otel_sampler(&self) -> opentelemetry_sdk::trace::Sampler {
+        let sampler = self.sampler.clone().unwrap_or_default().into();
+        if self.parent_based_sampler {
+            opentelemetry_sdk::trace::Sampler::ParentBased(Box::new(sampler))
+        } else {
+            sampler
+        }
+    }
+
     /// Span attribute keys the exporter drops: every key of each omitted
     /// attribute.
     fn omitted_span_keys(&self) -> HashSet<Key> {
@@ -448,11 +468,10 @@ fn init_tracer_provider(
             .build()?,
     };
 
-    let sampler: opentelemetry_sdk::trace::Sampler = tracer_exporters
-        .as_ref()
-        .and_then(|e| e.sampler.clone())
-        .unwrap_or_default()
-        .into();
+    let sampler = tracer_exporters.map_or_else(
+        || SamplerOption::default().into(),
+        TracingExporters::otel_sampler,
+    );
 
     let omitted_attributes = tracer_exporters
         .map(TracingExporters::omitted_span_keys)
@@ -565,6 +584,7 @@ impl Drop for TelemetryGuard {
 mod tests {
     use super::*;
     use http::{HeaderMap, HeaderValue};
+    use opentelemetry::TraceFlags;
     use rstest::rstest;
     use serde::de::value::{Error, MapDeserializer, StrDeserializer};
     use tonic::metadata::MetadataValue;
@@ -607,9 +627,55 @@ mod tests {
             sampler: None,
             omitted_attributes: Some(omitted.iter().copied().collect()),
             gen_ai_content: true,
+            parent_based_sampler: true,
         };
         let expected: HashSet<Key> = expected.iter().map(|k| Key::from_static_str(k)).collect();
         assert_eq!(exporters.omitted_span_keys(), expected);
+    }
+
+    /// Asks the configured sampler whether to record a server span.
+    fn samples(tracing: serde_json::Value, parent: Option<TraceFlags>) -> bool {
+        use opentelemetry::trace::{
+            SpanContext, SpanId, SpanKind, TraceContextExt, TraceId, TraceState,
+        };
+        use opentelemetry_sdk::trace::{SamplingDecision, ShouldSample};
+
+        let exporters: TracingExporters = serde_json::from_value(tracing).unwrap();
+        let parent_context = parent.map(|flags| {
+            opentelemetry::Context::new().with_remote_span_context(SpanContext::new(
+                TraceId::from_bytes(1u128.to_be_bytes()),
+                SpanId::from_bytes(1u64.to_be_bytes()),
+                flags,
+                true,
+                TraceState::default(),
+            ))
+        });
+        let decision = exporters
+            .otel_sampler()
+            .should_sample(
+                parent_context.as_ref(),
+                TraceId::from_bytes(1u128.to_be_bytes()),
+                "POST /mcp",
+                &SpanKind::Server,
+                &[],
+                &[],
+            )
+            .decision;
+        decision == SamplingDecision::RecordAndSample
+    }
+
+    #[rstest]
+    #[case::sampled_parent_overrides_always_off(serde_json::json!({"sampler": "always_off"}), Some(TraceFlags::SAMPLED), true)]
+    #[case::sampled_parent_overrides_zero_ratio(serde_json::json!({"sampler": 0.0}), Some(TraceFlags::SAMPLED), true)]
+    #[case::unsampled_parent_overrides_always_on(serde_json::json!({"sampler": "always_on"}), Some(TraceFlags::NOT_SAMPLED), false)]
+    #[case::root_uses_sampler(serde_json::json!({"sampler": "always_off"}), None, false)]
+    #[case::opt_out_ignores_sampled_parent(serde_json::json!({"sampler": "always_off", "parent_based_sampler": false}), Some(TraceFlags::SAMPLED), false)]
+    fn sampler_respects_parent_decision_by_default(
+        #[case] tracing: serde_json::Value,
+        #[case] parent: Option<TraceFlags>,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(samples(tracing, parent), expected);
     }
 
     #[rstest]
@@ -656,6 +722,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: Some(ommitted),
                 gen_ai_content: false,
+                parent_based_sampler: true,
             }),
         );
         // init_tracing_subscriber can only be called once in the test suite to avoid
@@ -698,6 +765,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                parent_based_sampler: true,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
@@ -721,6 +789,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                parent_based_sampler: true,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());
@@ -744,6 +813,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                parent_based_sampler: true,
             }),
         );
         let result = init_tracer_provider(&config.telemetry, Resource::builder_empty().build());

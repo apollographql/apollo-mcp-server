@@ -353,6 +353,26 @@ Configure Apollo MCP Server to sample traces sent to your OpenTelemetry Collecto
 - **always_off** - Disable trace collection entirely
 - **0.0-1.0** - Send a specified percentage of traces
 
+By default, `sampler` applies only to requests that start a new trace. When a request carries a trace context, in a `traceparent` header or in MCP `_meta`, the server follows the caller's sampling decision instead, so a trace is either recorded across every service or not at all.
+
+This also lets you force a trace while troubleshooting, even with a low sampling ratio. Send a `traceparent` whose last field, the trace flags, is `01`:
+
+```bash
+curl http://localhost:8000/mcp \
+  -H 'traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01' \
+  ...
+```
+
+A trace flags value of `00` tells the server not to record the request. To ignore incoming sampling decisions and apply `sampler` to every request, set `parent_based_sampler: false`:
+
+```yaml title="config.yaml"
+telemetry:
+  exporters:
+    tracing:
+      sampler: 0.1
+      parent_based_sampler: false
+```
+
 #### Attribute Filtering
 
 Trace and metric exporters have independent `omitted_attributes` lists:
