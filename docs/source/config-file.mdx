@@ -721,7 +721,7 @@ telemetry:
 | Option       | Type     | Description                                         |
 | :----------- | :------- | :-------------------------------------------------- |
 | `always_on`  | `string` | All traces will be exported.                        |
-| `always_off` | `string` | Sampling is turned off, no traces will be exported. |
+| `always_off` | `string` | Spans that start a new trace aren't exported. Spans with a sampled incoming trace context are still exported unless `parent_based_sampler` is `false`. |
 | `0.0-1.0`    | `f64`    | Percentage of traces to export.                     |
 
 ### Server info

@@ -350,10 +350,10 @@ To prevent performance issues and reduce costs, the Apollo MCP Server provides t
 Configure Apollo MCP Server to sample traces sent to your OpenTelemetry Collector using the `sampler` field in the `telemetry.exporters.tracing` configuration:
 
 - **always_on** - Send every trace
-- **always_off** - Disable trace collection entirely
+- **always_off** - Don't record spans that start a new trace. Spans with a sampled incoming trace context are still recorded unless `parent_based_sampler` is `false`
 - **0.0-1.0** - Send a specified percentage of traces
 
-By default, `sampler` applies only to requests that start a new trace. When a request carries a trace context, in a `traceparent` header or in MCP `_meta`, the server follows the caller's sampling decision instead, so a trace is either recorded across every service or not at all.
+By default, `sampler` applies only to spans that start a new trace. A span with an incoming trace context follows the caller's sampling decision instead, so a trace is either recorded across every service or not at all. A `traceparent` header is the parent of the HTTP request span, and MCP `_meta.traceparent` is the parent of the MCP handler span, such as `tools/call`. When only `_meta` carries a trace context, the HTTP request span starts its own trace and uses `sampler`.
 
 This also lets you force a trace while troubleshooting, even with a low sampling ratio. Send a `traceparent` whose last field, the trace flags, is `01`:
 
@@ -363,7 +363,9 @@ curl http://localhost:8000/mcp \
   ...
 ```
 
-A trace flags value of `00` tells the server not to record the request. To ignore incoming sampling decisions and apply `sampler` to every request, set `parent_based_sampler: false`:
+A trace flags value of `00` tells the server not to record the spans whose parent is that context.
+
+Because callers make the sampling decision for their own requests, `sampler` doesn't limit trace volume when callers aren't trusted. A client that sends trace flags `01` gets its requests recorded and exported, even with `always_off`. For a public-facing server, or to apply `sampler` to every request, set `parent_based_sampler: false`:
 
 ```yaml title="config.yaml"
 telemetry:
