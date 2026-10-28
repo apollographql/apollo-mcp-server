@@ -18,9 +18,12 @@ use rmcp::model::{
 use rmcp::{
     RoleServer, ServerHandler,
     model::{
-        CallToolRequestParams, CallToolResult, ConstString, ContentBlock, ErrorCode,
-        InitializeRequestParams, InitializeResult, ListToolsResult, PaginatedRequestParams,
-        ProtocolVersion, ServerCapabilities, ServerConfig,
+        CallToolRequestMethod, CallToolRequestParams, CallToolResult, ConstString, ContentBlock,
+        ErrorCode, GetPromptRequestMethod, InitializeRequestParams, InitializeResult,
+        InitializeResultMethod, ListPromptsRequestMethod, ListResourceTemplatesRequestMethod,
+        ListResourcesRequestMethod, ListToolsRequestMethod, ListToolsResult,
+        PaginatedRequestParams, ProtocolVersion, ReadResourceRequestMethod, ServerCapabilities,
+        ServerConfig, SetLevelRequestMethod, SubscriptionsListenRequestMethod,
     },
     service::{NotificationContext, RequestContext, SubscriptionContext, SubscriptionSendError},
 };
@@ -734,7 +737,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "initialize", apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+            tracing::info_span!(parent: get_parent_span(&context), "initialize", mcp.method.name = InitializeResultMethod::VALUE, apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
             &context,
         );
         async {
@@ -794,7 +797,7 @@ impl ServerHandler for McpService {
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", apollo.mcp.request_id = %context.request_context().id),
+            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", mcp.method.name = SubscriptionsListenRequestMethod::VALUE, apollo.mcp.request_id = %context.request_context().id),
             context.request_context(),
         );
         async {
@@ -886,7 +889,7 @@ impl ServerHandler for McpService {
             tracing::info_span!(
                 parent: get_parent_span(&context),
                 "call_tool",
-                mcp.method.name = "tools/call",
+                mcp.method.name = CallToolRequestMethod::VALUE,
                 apollo.mcp.tool_name = request.name.as_ref(),
                 apollo.mcp.request_id = %context.id.clone(),
                 apollo.mcp.tool_arguments = tracing::field::Empty,
@@ -1071,7 +1074,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_tools"),
+            tracing::info_span!(parent: get_parent_span(&context), "list_tools", mcp.method.name = ListToolsRequestMethod::VALUE),
             &context,
         );
         async {
@@ -1112,7 +1115,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_resources"),
+            tracing::info_span!(parent: get_parent_span(&context), "list_resources", mcp.method.name = ListResourcesRequestMethod::VALUE),
             &context,
         );
         async {
@@ -1132,7 +1135,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates"),
+            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates", mcp.method.name = ListResourceTemplatesRequestMethod::VALUE),
             &context,
         );
         async {
@@ -1152,7 +1155,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "read_resource", apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+            tracing::info_span!(parent: get_parent_span(&context), "read_resource", mcp.method.name = ReadResourceRequestMethod::VALUE, apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
             &context,
         );
         async {
@@ -1179,7 +1182,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_prompts"),
+            tracing::info_span!(parent: get_parent_span(&context), "list_prompts", mcp.method.name = ListPromptsRequestMethod::VALUE),
             &context,
         );
         async {
@@ -1199,7 +1202,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", apollo.mcp.prompt_name = request.name),
+            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", mcp.method.name = GetPromptRequestMethod::VALUE, apollo.mcp.prompt_name = request.name),
             &context,
         );
         async { self.application.get_prompt_impl(request).map(Into::into) }
@@ -1217,7 +1220,7 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "set_level"),
+            tracing::info_span!(parent: get_parent_span(&context), "set_level", mcp.method.name = SetLevelRequestMethod::VALUE),
             &context,
         );
         async {
