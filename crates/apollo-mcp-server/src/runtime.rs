@@ -451,6 +451,7 @@ mod test {
                     path: None,
                     rotation: Hourly,
                     ansi: Auto,
+                    format: Text,
                 },
                 telemetry: Telemetry {
                     exporters: None,

@@ -4,8 +4,11 @@
 //! helper functions
 
 mod defaults;
+mod json_format;
 mod log_rotation_kind;
 mod parsers;
+#[cfg(test)]
+mod test_writer;
 mod trace_id_format;
 
 use apollo_mcp_server::server::Transport;
@@ -13,13 +16,16 @@ use log_rotation_kind::LogRotationKind;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ffi::OsStr;
+use std::fmt;
 use std::io::IsTerminal;
 use std::path::PathBuf;
-use tracing::Level;
+use tracing::{Level, Subscriber};
 use tracing_appender::rolling::RollingFileAppender;
 use tracing_subscriber::EnvFilter;
-use tracing_subscriber::fmt::Layer;
+use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
+use tracing_subscriber::fmt::{FmtContext, Layer};
+use tracing_subscriber::registry::LookupSpan;
 
 /// ANSI styling mode for log output.
 #[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -35,6 +41,19 @@ pub enum AnsiMode {
     /// Never enable ANSI styling, regardless of terminal detection or
     /// environment variables.
     Never,
+}
+
+/// Output format for log lines.
+#[derive(Clone, Copy, Debug, Default, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    /// Human-readable text, prefixed with `trace_id=<hex> span_id=<hex>` when
+    /// a span is active.
+    #[default]
+    Text,
+    /// One JSON object per line, with `trace_id` and `span_id` as top-level
+    /// keys when a span is active. Never styled with ANSI.
+    Json,
 }
 
 /// Logging related options
@@ -61,6 +80,10 @@ pub struct Logging {
     /// ANSI styling mode for log output [default: auto]
     #[serde(default)]
     pub ansi: AnsiMode,
+
+    /// Output format for log lines [default: text]
+    #[serde(default)]
+    pub format: LogFormat,
 }
 
 impl Default for Logging {
@@ -70,6 +93,7 @@ impl Default for Logging {
             path: None,
             rotation: defaults::default_rotation(),
             ansi: AnsiMode::default(),
+            format: LogFormat::default(),
         }
     }
 }
@@ -110,7 +134,7 @@ type LoggingLayerResult = (
     Layer<
         tracing_subscriber::Registry,
         tracing_subscriber::fmt::format::DefaultFields,
-        trace_id_format::TraceIdFormat,
+        EventFormat,
         BoxMakeWriter,
     >,
     Option<tracing_appender::non_blocking::WorkerGuard>,
@@ -177,17 +201,50 @@ impl Logging {
             ),
         };
 
-        let inner_format = tracing_subscriber::fmt::format::Format::default()
-            .with_ansi(with_ansi)
-            .with_target(false);
+        let (event_format, with_ansi) = match logging.format {
+            LogFormat::Text => {
+                let inner_format = tracing_subscriber::fmt::format::Format::default()
+                    .with_ansi(with_ansi)
+                    .with_target(false);
+                (
+                    EventFormat::Text(trace_id_format::TraceIdFormat::new(inner_format)),
+                    with_ansi,
+                )
+            }
+            LogFormat::Json => (EventFormat::Json(json_format::JsonFormat), false),
+        };
 
         Ok((
             tracing_subscriber::fmt::layer()
                 .with_writer(writer)
                 .with_ansi(with_ansi)
-                .event_format(trace_id_format::TraceIdFormat::new(inner_format)),
+                .event_format(event_format),
             guard,
         ))
+    }
+}
+
+/// The event formatter selected by `logging.format`.
+pub enum EventFormat {
+    Text(trace_id_format::TraceIdFormat),
+    Json(json_format::JsonFormat),
+}
+
+impl<S, N> FormatEvent<S, N> for EventFormat
+where
+    S: Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> FormatFields<'a> + 'static,
+{
+    fn format_event(
+        &self,
+        ctx: &FmtContext<'_, S, N>,
+        writer: Writer<'_>,
+        event: &tracing::Event<'_>,
+    ) -> fmt::Result {
+        match self {
+            Self::Text(format) => format.format_event(ctx, writer, event),
+            Self::Json(format) => format.format_event(ctx, writer, event),
+        }
     }
 }
 
@@ -348,6 +405,61 @@ mod tests {
         let contents = std::fs::read_to_string(file.path()).expect("log contents");
         assert!(contents.contains("hello"));
         assert_eq!(contents.contains('\x1b'), expected);
+    }
+
+    #[rstest]
+    #[case::text("format: text", LogFormat::Text)]
+    #[case::json("format: json", LogFormat::Json)]
+    #[case::default("{}", LogFormat::Text)]
+    fn log_format_deserializes(#[case] yaml: &str, #[case] expected: LogFormat) {
+        let logging: Logging = serde_yaml::from_str(yaml).expect("valid logging config");
+        assert_eq!(logging.format, expected);
+    }
+
+    #[test]
+    fn log_format_rejects_unknown_value() {
+        assert!(serde_yaml::from_str::<Logging>("format: pretty").is_err());
+    }
+
+    #[test]
+    fn json_log_file_is_one_object_per_line_without_ansi() {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let logging = Logging {
+            path: Some(dir.path().to_path_buf()),
+            ansi: AnsiMode::Always,
+            format: LogFormat::Json,
+            ..Logging::default()
+        };
+        let (layer, guard) =
+            Logging::logging_layer(&logging, ConsoleStream::Stdout).expect("logging layer");
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+            tracing::info!("first");
+            tracing::warn!("second");
+        });
+        drop(guard);
+
+        let file = std::fs::read_dir(dir.path())
+            .expect("log dir")
+            .next()
+            .expect("log file")
+            .expect("dir entry");
+        let contents = std::fs::read_to_string(file.path()).expect("log contents");
+        assert!(!contents.contains('\x1b'));
+        let messages: Vec<serde_json::Value> = contents
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .map(|line| line["message"].clone())
+            .collect();
+        assert_eq!(messages, ["first", "second"]);
+        assert!(
+            contents
+                .lines()
+                .all(|line| serde_json::from_str::<serde_json::Value>(line)
+                    .is_ok_and(|v| v.is_object())),
+            "every line should be a JSON object: {contents}"
+        );
     }
 
     #[test]

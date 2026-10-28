@@ -67,6 +67,7 @@ tokio-util = { version = "0.7.15", features = ["rt"] }
 tonic = "0.14"
 tower-http = { version = "0.6.6", features = ["cors", "trace"] }
 tracing-appender = "0.2.3"
+tracing-log = "0.2.0"
 tracing-opentelemetry = "0.33.0"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing.workspace = true
@@ -82,6 +83,7 @@ tempfile.workspace = true
 chrono = { version = "0.4.41", default-features = false, features = ["now"] }
 figment = { version = "0.10.19", features = ["test"] }
 insta.workspace = true
+log = "0.4"
 mockito = "1.7.0"
 opentelemetry_sdk = { version = "0.32.1", features = ["testing"] }
 proptest = "1"
