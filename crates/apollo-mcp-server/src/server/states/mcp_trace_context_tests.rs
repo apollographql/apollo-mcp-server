@@ -738,6 +738,20 @@ fn metadata_request_with_capabilities(
         .unwrap()
 }
 
+/// Sends one MCP request over HTTP and returns the exported spans.
+async fn http_handler_spans(method: &str, params: Value) -> Vec<SpanData> {
+    let spans = ExportedSpans::capture();
+    let running = create_test_running();
+    let service = build_http_service(running, false, &Default::default());
+    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let response = router
+        .oneshot(metadata_request(1, method, params))
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+    spans.collect()
+}
+
 #[rstest::rstest]
 #[case::tools("tools/list", json!({}), "list_tools")]
 #[case::resources("resources/list", json!({}), "list_resources")]
@@ -752,18 +766,9 @@ async fn metadata_parents_each_http_handler(
     #[case] params: Value,
     #[case] name: &str,
 ) {
-    let spans = ExportedSpans::capture();
-    let running = create_test_running();
-    let service = build_http_service(running, false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
-    let response = router
-        .oneshot(metadata_request(1, method, params))
-        .await
-        .unwrap();
-    response.into_body().collect().await.unwrap();
     // Missing named resources/prompts and modern setLevel return errors, but
     // still dispatch their real handlers and must retain request parentage.
-    let spans = spans.collect();
+    let spans = http_handler_spans(method, params).await;
     let handler = named(&spans, name);
     assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
     assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
@@ -849,6 +854,53 @@ async fn task_handler_span_never_records_task_id(
             .any(|kv| kv.value.as_str().contains("secret-task-id")),
         "task ID leaked into span attributes: {:?}",
         span.attributes
+    );
+}
+
+#[rstest::rstest]
+#[case::tools("tools/list", json!({}), "list_tools")]
+#[case::resources("resources/list", json!({}), "list_resources")]
+#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
+#[case::prompts("prompts/list", json!({}), "list_prompts")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[tokio::test]
+async fn each_http_handler_records_mcp_method_name(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let spans = http_handler_spans(method, params).await;
+    assert_eq!(
+        attribute(named(&spans, name), "mcp.method.name").as_deref(),
+        Some(method)
+    );
+}
+
+#[tokio::test]
+async fn initialize_span_records_mcp_method_name() {
+    let spans = ExportedSpans::capture();
+    let mut request = mcp_request("/mcp");
+    *request.body_mut() = Body::from(
+        json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "test-client", "version": "1.0.0"}
+            }
+        })
+        .to_string(),
+    );
+    let response = production_router(create_test_running())
+        .oneshot(request)
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+    let spans = spans.collect();
+    assert_eq!(
+        attribute(named(&spans, "initialize"), "mcp.method.name").as_deref(),
+        Some("initialize")
     );
 }
 
@@ -971,6 +1023,10 @@ async fn metadata_parents_http_subscription_through_readiness_and_cancellation()
     let spans = spans.collect();
     let handler = named(&spans, "listen");
     assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
+    assert_eq!(
+        attribute(handler, "mcp.method.name").as_deref(),
+        Some("subscriptions/listen")
+    );
     assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
     let http_spans: Vec<_> = spans
         .iter()
