@@ -1,10 +1,15 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use apollo_compiler::{Schema, validation::Valid};
+use axum_tracing_opentelemetry::tracing_opentelemetry_instrumentation_sdk::http::http_flavor;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::FutureExt as _;
+use opentelemetry_semantic_conventions::attribute::{
+    ERROR_TYPE, NETWORK_PROTOCOL_NAME, NETWORK_PROTOCOL_VERSION, NETWORK_TRANSPORT,
+};
 use reqwest::header::HeaderMap;
 use rmcp::ErrorData;
 #[cfg(test)]
@@ -764,7 +769,8 @@ impl ServerHandler for McpService {
             ),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(InitializeResultMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let meter = &meter::METER;
             let attributes = vec![
                 KeyValue::new(
@@ -822,7 +828,11 @@ impl ServerHandler for McpService {
             request_span!(context.request_context(), "listen", SubscriptionsListenRequestMethod, apollo.mcp.request_id = %context.request_context().id),
             context.request_context(),
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(
+            SubscriptionsListenRequestMethod::VALUE,
+            context.request_context(),
+        );
+        in_request_span(request_span, metric, async {
             let shutdown = &self.application.cancellation_token;
             // The SDK also enforces the accepted filter in SubscriptionSink. Keep
             // our opt-in boundary explicit before allocating a catalog receiver.
@@ -921,9 +931,15 @@ impl ServerHandler for McpService {
             ),
             &context,
         );
+        let start = Instant::now();
+        let mut metric = OperationMetric::for_request(CallToolRequestMethod::VALUE, &context)
+            .with_target("gen_ai.tool.name", request.name.to_string());
+        metric
+            .attributes
+            .push(KeyValue::new("gen_ai.operation.name", "execute_tool"));
         let execution_span = span.clone();
         let execution_parent = parent_context.clone();
-        async {
+        let response = async {
             let span = tracing::Span::current();
             if let Some(args) = &request.arguments
                 && let Ok(json) = serde_json::to_string(args)
@@ -1010,7 +1026,13 @@ impl ServerHandler for McpService {
         }
         .instrument(span)
         .with_context(parent_context)
-        .await
+        .await;
+        let tool_error = matches!(
+            &response,
+            Ok(CallToolResponse::Complete(result)) if result.is_error == Some(true)
+        );
+        metric.record(start, response.as_ref().err(), tool_error);
+        response
     }
 
     async fn get_task(
@@ -1023,7 +1045,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "get_task", rmcp::model::GetTaskMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(rmcp::model::GetTaskMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let tasks = self
                 .application
                 .tasks
@@ -1046,7 +1069,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "cancel_task", rmcp::model::CancelTaskMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(rmcp::model::CancelTaskMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let tasks = self
                 .application
                 .tasks
@@ -1067,7 +1091,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "update_task", rmcp::model::UpdateTaskMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(rmcp::model::UpdateTaskMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let tasks = self
                 .application
                 .tasks
@@ -1088,7 +1113,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "list_tools", ListToolsRequestMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(ListToolsRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
             let peer = PeerContext {
@@ -1127,7 +1153,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "list_resources", ListResourcesRequestMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(ListResourcesRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let protocol_version = context.protocol_version();
 
             self.application
@@ -1149,7 +1176,9 @@ impl ServerHandler for McpService {
             ),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric =
+            OperationMetric::for_request(ListResourceTemplatesRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let protocol_version = context.protocol_version();
 
             self.application
@@ -1167,7 +1196,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "read_resource", ReadResourceRequestMethod, mcp.resource.uri = request.uri.as_str(), apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(ReadResourceRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
             let peer = PeerContext {
@@ -1192,7 +1222,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "list_prompts", ListPromptsRequestMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(ListPromptsRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             let protocol_version = context.protocol_version();
 
             self.application
@@ -1216,7 +1247,9 @@ impl ServerHandler for McpService {
             ),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(GetPromptRequestMethod::VALUE, &context)
+            .with_target("gen_ai.prompt.name", request.name.clone());
+        in_request_span(request_span, metric, async {
             self.application.get_prompt_impl(request).map(Into::into)
         })
         .await
@@ -1234,7 +1267,8 @@ impl ServerHandler for McpService {
             request_span!(&context, "set_level", SetLevelRequestMethod),
             &context,
         );
-        in_request_span(request_span, async {
+        let metric = OperationMetric::for_request(SetLevelRequestMethod::VALUE, &context);
+        in_request_span(request_span, metric, async {
             // rmcp 3.5 dispatches this method for every version; its modern HTTP
             // transport maps this method-not-found error to HTTP 404.
             if context
@@ -1348,17 +1382,109 @@ fn record_error<T>(span: &tracing::Span, result: &Result<T, McpError>) {
     }
 }
 
-/// Runs a request handler in its span and records a server error on the span.
+/// Runs a request handler in its span, records a server error on the span,
+/// and records the request's duration.
 pub(super) async fn in_request_span<T>(
     (span, parent_context): (tracing::Span, opentelemetry::Context),
+    metric: OperationMetric,
     handler: impl Future<Output = Result<T, McpError>>,
 ) -> Result<T, McpError> {
+    let start = Instant::now();
     let result = handler
         .instrument(span.clone())
         .with_context(parent_context)
         .await;
     record_error(&span, &result);
+    metric.record(start, result.as_ref().err(), false);
     result
+}
+
+const MCP_SERVER_OPERATION_DURATION: &str = "mcp.server.operation.duration";
+
+/// The bucket boundaries, in seconds, that the MCP semantic conventions advise
+/// for `mcp.server.operation.duration`.
+const OPERATION_DURATION_BOUNDARIES: [f64; 14] = [
+    0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0,
+];
+
+/// One `mcp.server.operation.duration` measurement, built up as the request
+/// is handled.
+pub(super) struct OperationMetric {
+    attributes: Vec<KeyValue>,
+    /// The tool or prompt the request names. A client can send any name, so
+    /// it's dropped when the request fails with a caller error, such as an
+    /// unknown tool, to keep made-up names from adding time series.
+    target: Option<KeyValue>,
+}
+
+impl OperationMetric {
+    pub(super) fn new(
+        method: &'static str,
+        protocol_version: Option<&ProtocolVersion>,
+        http: Option<&axum::http::request::Parts>,
+    ) -> Self {
+        let mut attributes = vec![KeyValue::new("mcp.method.name", method)];
+        if let Some(version) = protocol_version {
+            attributes.push(KeyValue::new("mcp.protocol.version", version.to_string()));
+        }
+        match http {
+            Some(parts) => attributes.extend([
+                KeyValue::new(NETWORK_TRANSPORT, "tcp"),
+                KeyValue::new(NETWORK_PROTOCOL_NAME, "http"),
+                KeyValue::new(NETWORK_PROTOCOL_VERSION, http_flavor(parts.version)),
+            ]),
+            None => attributes.push(KeyValue::new(NETWORK_TRANSPORT, "pipe")),
+        }
+        Self {
+            attributes,
+            target: None,
+        }
+    }
+
+    fn for_request(method: &'static str, context: &RequestContext<RoleServer>) -> Self {
+        Self::new(
+            method,
+            context.protocol_version().as_ref(),
+            context.extensions.get::<axum::http::request::Parts>(),
+        )
+    }
+
+    fn with_target(mut self, key: &'static str, name: impl Into<opentelemetry::Value>) -> Self {
+        self.target = Some(KeyValue::new(key, name));
+        self
+    }
+
+    /// The measurement's attributes for a request that ended with `error`, or
+    /// with a tool result that has `isError: true` when `tool_error` is set.
+    fn finish(self, error: Option<&McpError>, tool_error: bool) -> Vec<KeyValue> {
+        let mut attributes = self.attributes;
+        let caller_error = error.is_some_and(|e| !is_server_error(e.code));
+        if !caller_error {
+            attributes.extend(self.target);
+        }
+        if let Some(e) = error {
+            let code = e.code.0.to_string();
+            attributes.push(KeyValue::new("rpc.response.status_code", code.clone()));
+            if !caller_error {
+                attributes.push(KeyValue::new(ERROR_TYPE, code));
+            }
+        } else if tool_error {
+            attributes.push(KeyValue::new(ERROR_TYPE, "tool_error"));
+        }
+        attributes
+    }
+
+    fn record(self, start: Instant, error: Option<&McpError>, tool_error: bool) {
+        meter::METER
+            .f64_histogram(MCP_SERVER_OPERATION_DURATION)
+            .with_unit("s")
+            .with_boundaries(OPERATION_DURATION_BOUNDARIES.to_vec())
+            .build()
+            .record(
+                start.elapsed().as_secs_f64(),
+                &self.finish(error, tool_error),
+            );
+    }
 }
 
 /// JSON-RPC codes the MCP semantic conventions treat as caller mistakes
@@ -1418,6 +1544,133 @@ mod tests {
     #[case::internal_error(ErrorCode::INTERNAL_ERROR, true)]
     fn is_server_error_classifies_json_rpc_codes(#[case] code: ErrorCode, #[case] expected: bool) {
         assert_eq!(super::is_server_error(code), expected);
+    }
+
+    /// The value of `key` among a measurement's attributes.
+    fn metric_attribute(attributes: &[KeyValue], key: &str) -> Option<String> {
+        attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| kv.value.as_str().into_owned())
+    }
+
+    fn tool_metric() -> OperationMetric {
+        OperationMetric::new("tools/call", None, None).with_target("gen_ai.tool.name", "GetAlerts")
+    }
+
+    #[test]
+    fn operation_metric_records_method_name() {
+        let attributes = OperationMetric::new("tools/list", None, None).finish(None, false);
+        assert_eq!(
+            metric_attribute(&attributes, "mcp.method.name").as_deref(),
+            Some("tools/list")
+        );
+    }
+
+    #[test]
+    fn operation_metric_records_protocol_version() {
+        let attributes =
+            OperationMetric::new("tools/list", Some(&ProtocolVersion::V_2025_06_18), None)
+                .finish(None, false);
+        assert_eq!(
+            metric_attribute(&attributes, "mcp.protocol.version").as_deref(),
+            Some("2025-06-18")
+        );
+    }
+
+    #[test]
+    fn operation_metric_records_pipe_transport_without_http() {
+        let attributes = OperationMetric::new("tools/list", None, None).finish(None, false);
+        assert_eq!(
+            metric_attribute(&attributes, "network.transport").as_deref(),
+            Some("pipe")
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::transport("network.transport", "tcp")]
+    #[case::protocol_name("network.protocol.name", "http")]
+    #[case::protocol_version("network.protocol.version", "1.1")]
+    fn operation_metric_records_http_network_attributes(#[case] key: &str, #[case] expected: &str) {
+        let (parts, ()) = axum::http::Request::new(()).into_parts();
+        let attributes = OperationMetric::new("tools/list", None, Some(&parts)).finish(None, false);
+        assert_eq!(
+            metric_attribute(&attributes, key).as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn operation_metric_keeps_target_on_success() {
+        let attributes = tool_metric().finish(None, false);
+        assert_eq!(
+            metric_attribute(&attributes, "gen_ai.tool.name").as_deref(),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn operation_metric_keeps_target_on_server_error() {
+        let error = McpError::internal_error("boom", None);
+        let attributes = tool_metric().finish(Some(&error), false);
+        assert_eq!(
+            metric_attribute(&attributes, "gen_ai.tool.name").as_deref(),
+            Some("GetAlerts")
+        );
+    }
+
+    #[test]
+    fn operation_metric_drops_target_on_caller_error() {
+        let error = tool_not_found("MadeUp");
+        let attributes = tool_metric().finish(Some(&error), false);
+        assert_eq!(metric_attribute(&attributes, "gen_ai.tool.name"), None);
+    }
+
+    #[rstest::rstest]
+    #[case::server_error(McpError::internal_error("boom", None), Some("-32603"))]
+    #[case::caller_error(McpError::invalid_params("bad", None), None)]
+    fn operation_metric_records_error_type_for_server_errors_only(
+        #[case] error: McpError,
+        #[case] expected: Option<&str>,
+    ) {
+        let attributes = tool_metric().finish(Some(&error), false);
+        assert_eq!(
+            metric_attribute(&attributes, "error.type").as_deref(),
+            expected
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::server_error(McpError::internal_error("boom", None), "-32603")]
+    #[case::caller_error(McpError::invalid_params("bad", None), "-32602")]
+    fn operation_metric_records_rpc_response_status_code(
+        #[case] error: McpError,
+        #[case] expected: &str,
+    ) {
+        let attributes = tool_metric().finish(Some(&error), false);
+        assert_eq!(
+            metric_attribute(&attributes, "rpc.response.status_code").as_deref(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn operation_metric_records_tool_error() {
+        let attributes = tool_metric().finish(None, true);
+        assert_eq!(
+            metric_attribute(&attributes, "error.type").as_deref(),
+            Some("tool_error")
+        );
+    }
+
+    #[test]
+    fn operation_metric_omits_error_attributes_on_success() {
+        let attributes = tool_metric().finish(None, false);
+        assert!(
+            !attributes
+                .iter()
+                .any(|kv| matches!(kv.key.as_str(), "error.type" | "rpc.response.status_code"))
+        );
     }
 
     fn test_running(schema: Arc<RwLock<Valid<Schema>>>) -> Running {

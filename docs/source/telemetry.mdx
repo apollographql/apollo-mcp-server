@@ -211,7 +211,7 @@ The OpenTelemetry integration is configured via the `telemetry` section of the [
 
 ## Emitted Metrics
 
-The server emits the following metrics, which are invaluable for monitoring and alerting. All duration metrics are in milliseconds.
+The server emits the following metrics, which are invaluable for monitoring and alerting. The `apollo.mcp.*` duration metrics are in milliseconds.
 
 | Metric Name                     | Type      | Description                                                            | Attributes                                         |
 | ------------------------------- | --------- | ---------------------------------------------------------------------- | -------------------------------------------------- |
@@ -226,6 +226,23 @@ The server emits the following metrics, which are invaluable for monitoring and 
 | `apollo.mcp.auth.rate_limit.overflow.count` | Counter | Increments each time the rate limiter allows a request untracked because its key table is full. | none |
 
 The two `auth.rate_limit` metrics are emitted only when you configure OAuth authentication and `transport.auth.rate_limit.enabled` is `true` (the default). They carry no attributes, so no credential or client address is recorded. See [Limit authentication rates](/apollo-mcp-server/auth#limit-authentication-rates).
+
+The server also emits `mcp.server.operation.duration`, the request duration metric from the OpenTelemetry [semantic conventions for MCP](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md#metric-mcpserveroperationduration). It's a histogram in seconds, with the bucket boundaries the conventions advise, and it records one measurement for every MCP request the server handles. It carries these attributes:
+
+| Attribute                  | Description |
+| -------------------------- | ----------- |
+| `mcp.method.name`          | The request's MCP method, such as `tools/call`. |
+| `mcp.protocol.version`     | The MCP protocol version of the request, when known. |
+| `network.transport`        | `tcp` for Streamable HTTP, or `pipe` for stdio. |
+| `network.protocol.name`    | `http`, for Streamable HTTP only. |
+| `network.protocol.version` | The HTTP version, for Streamable HTTP only. |
+| `gen_ai.operation.name`    | `execute_tool`, for `tools/call` only. |
+| `gen_ai.tool.name`         | The tool name, for `tools/call` only. |
+| `gen_ai.prompt.name`       | The prompt name, for `prompts/get` only. |
+| `rpc.response.status_code` | The JSON-RPC error code, when the request returns an error response. |
+| `error.type`               | The JSON-RPC error code for a server error, or `tool_error` when a tool result has `isError: true`. |
+
+A client can send any tool or prompt name, so the server leaves out `gen_ai.tool.name` and `gen_ai.prompt.name` when the request fails with a caller error, such as an unknown tool. Otherwise each made-up name would add a time series. The `subscriptions/listen` measurement covers the whole subscription, so it reports how long a client listened rather than request latency. The `omitted_attributes` setting applies only to `apollo.mcp.*` metrics.
 
 In addition to these metrics, the server emits the standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) for every request to the MCP endpoint, courtesy of the `axum-otel-metrics` library.
 

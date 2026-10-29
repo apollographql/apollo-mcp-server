@@ -1249,6 +1249,7 @@ async fn failed_handler_span(error: rmcp::ErrorData) -> SpanData {
     );
     let _ = crate::server::states::running::in_request_span::<()>(
         (span, opentelemetry::Context::new()),
+        crate::server::states::running::OperationMetric::new("tools/list", None, None),
         async { Err(error) },
     )
     .await;
