@@ -242,7 +242,7 @@ The server also emits `mcp.server.operation.duration`, the request duration metr
 | `rpc.response.status_code` | The JSON-RPC error code, when the request returns an error response. |
 | `error.type`               | The JSON-RPC error code for a server error, or `tool_error` when a tool result has `isError: true`. |
 
-A client can send any tool or prompt name, so the server leaves out `gen_ai.tool.name` and `gen_ai.prompt.name` when the request fails with a caller error, such as an unknown tool. Otherwise each made-up name would add a time series. The `subscriptions/listen` measurement covers the whole subscription, so it reports how long a client listened rather than request latency. The `omitted_attributes` setting applies only to `apollo.mcp.*` metrics.
+A client can send any tool or prompt name, so the server leaves out `gen_ai.tool.name` and `gen_ai.prompt.name` when the request fails with a caller error, such as an unknown tool. Otherwise each made-up name would add a time series. The `subscriptions/listen` measurement covers the whole subscription, so it reports how long a client listened rather than request latency. Omitting `tool_name` with `telemetry.exporters.metrics.omitted_attributes` also drops `gen_ai.tool.name` from this metric, the same way it drops the `gen_ai.*` copies from spans.
 
 In addition to these metrics, the server emits the standard [HTTP server metrics](https://opentelemetry.io/docs/specs/semconv/http/http-metrics/) for every request to the MCP endpoint, courtesy of the `axum-otel-metrics` library.
 

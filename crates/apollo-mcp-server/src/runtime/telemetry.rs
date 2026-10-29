@@ -5,7 +5,9 @@ use crate::runtime::filtering_exporter::FilteringExporter;
 use crate::runtime::logging::{ConsoleStream, Logging};
 use crate::runtime::telemetry::sampler::SamplerOption;
 use apollo_mcp_server::generated::telemetry::TelemetryAttribute;
-use apollo_mcp_server::server::w3c_text_map_propagator;
+use apollo_mcp_server::server::{
+    MCP_SERVER_OPERATION_DURATION, MCP_SERVER_OPERATION_DURATION_KEYS, w3c_text_map_propagator,
+};
 use opentelemetry::{Key, KeyValue, global, trace::TracerProvider as _};
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
@@ -402,10 +404,6 @@ fn init_meter_provider(
         .as_ref()
         .and_then(|exporters| exporters.omitted_attributes.clone())
         .unwrap_or_default();
-    let included_attributes: Vec<Key> = TelemetryAttribute::included_attributes(omitted_attributes)
-        .iter()
-        .map(|a| a.to_key())
-        .collect();
 
     let export_interval = metrics_exporters
         .as_ref()
@@ -416,24 +414,47 @@ fn init_meter_provider(
         .with_interval(export_interval)
         .build();
 
-    let filtered_view = move |i: &Instrument| {
-        if i.name().starts_with("apollo.") {
-            Stream::builder()
-                .with_allowed_attribute_keys(included_attributes.clone()) // if available in your version
-                .build()
-                .ok()
-        } else {
-            None
-        }
-    };
-
     let meter_provider = MeterProviderBuilder::default()
         .with_resource(resource)
         .with_reader(reader)
-        .with_view(filtered_view)
+        .with_view(metrics_view(omitted_attributes))
         .build();
 
     Ok(meter_provider)
+}
+
+/// The view that drops the omitted attributes from the metrics this server
+/// defines: the `apollo.*` keys, and on `mcp.server.operation.duration` their
+/// semantic-convention counterparts, such as `gen_ai.tool.name` for `tool_name`.
+fn metrics_view(
+    omitted_attributes: HashSet<TelemetryAttribute>,
+) -> impl Fn(&Instrument) -> Option<Stream> + Send + Sync + 'static {
+    let omitted_keys: HashSet<Key> = omitted_attributes
+        .iter()
+        .flat_map(|attribute| attribute.span_keys())
+        .collect();
+    let included_attributes: Vec<Key> = TelemetryAttribute::included_attributes(omitted_attributes)
+        .iter()
+        .map(|a| a.to_key())
+        .collect();
+    let operation_duration_keys: Vec<Key> = MCP_SERVER_OPERATION_DURATION_KEYS
+        .into_iter()
+        .map(Key::from_static_str)
+        .filter(|key| !omitted_keys.contains(key))
+        .collect();
+    move |i: &Instrument| {
+        let allowed = if i.name().starts_with("apollo.") {
+            &included_attributes
+        } else if i.name() == MCP_SERVER_OPERATION_DURATION {
+            &operation_duration_keys
+        } else {
+            return None;
+        };
+        Stream::builder()
+            .with_allowed_attribute_keys(allowed.clone())
+            .build()
+            .ok()
+    }
 }
 
 fn init_tracer_provider(
@@ -611,6 +632,64 @@ mod tests {
         suppress_rmcp_debug();
         suppress_rmcp_debug();
         assert!(SUPPRESS_RMCP_DEBUG.load(Ordering::Relaxed));
+    }
+
+    /// The attribute keys of the one `mcp.server.operation.duration` data
+    /// point recorded through [`metrics_view`] with `omitted` attributes.
+    fn operation_duration_keys(omitted: &[TelemetryAttribute]) -> Vec<String> {
+        use opentelemetry::metrics::MeterProvider as _;
+        use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
+        use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
+
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .with_view(metrics_view(omitted.iter().copied().collect()))
+            .build();
+        provider
+            .meter("test")
+            .f64_histogram(MCP_SERVER_OPERATION_DURATION)
+            .build()
+            .record(
+                0.1,
+                &[
+                    KeyValue::new("mcp.method.name", "tools/call"),
+                    KeyValue::new("gen_ai.tool.name", "GetAlerts"),
+                ],
+            );
+        provider.force_flush().expect("flush metrics");
+        let metrics = exporter.get_finished_metrics().expect("read metrics");
+        let metric = metrics
+            .iter()
+            .flat_map(|resource| resource.scope_metrics())
+            .flat_map(|scope| scope.metrics())
+            .find(|metric| metric.name() == MCP_SERVER_OPERATION_DURATION)
+            .expect("operation duration exported");
+        let AggregatedMetrics::F64(MetricData::Histogram(histogram)) = metric.data() else {
+            panic!("expected an f64 histogram");
+        };
+        histogram
+            .data_points()
+            .flat_map(|point| point.attributes())
+            .map(|kv| kv.key.to_string())
+            .collect()
+    }
+
+    #[rstest]
+    #[case::nothing_omitted(&[], true)]
+    #[case::tool_name_omitted(&[TelemetryAttribute::ToolName], false)]
+    fn metrics_view_omits_tool_name_from_operation_duration(
+        #[case] omitted: &[TelemetryAttribute],
+        #[case] expected: bool,
+    ) {
+        let keys = operation_duration_keys(omitted);
+        assert_eq!(keys.iter().any(|key| key == "gen_ai.tool.name"), expected);
+    }
+
+    #[test]
+    fn metrics_view_keeps_other_operation_duration_attributes() {
+        let keys = operation_duration_keys(&[TelemetryAttribute::ToolName]);
+        assert!(keys.iter().any(|key| key == "mcp.method.name"));
     }
 
     #[rstest]

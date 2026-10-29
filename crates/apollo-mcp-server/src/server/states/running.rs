@@ -1399,7 +1399,23 @@ pub(super) async fn in_request_span<T>(
     result
 }
 
-const MCP_SERVER_OPERATION_DURATION: &str = "mcp.server.operation.duration";
+/// The request duration histogram from the MCP semantic conventions.
+pub const MCP_SERVER_OPERATION_DURATION: &str = "mcp.server.operation.duration";
+
+/// Every attribute key [`MCP_SERVER_OPERATION_DURATION`] can carry. The
+/// metrics view allow-lists these, minus the ones an operator omits.
+pub const MCP_SERVER_OPERATION_DURATION_KEYS: [&str; 10] = [
+    "mcp.method.name",
+    "mcp.protocol.version",
+    NETWORK_TRANSPORT,
+    NETWORK_PROTOCOL_NAME,
+    NETWORK_PROTOCOL_VERSION,
+    "gen_ai.operation.name",
+    "gen_ai.tool.name",
+    "gen_ai.prompt.name",
+    "rpc.response.status_code",
+    ERROR_TYPE,
+];
 
 /// The bucket boundaries, in seconds, that the MCP semantic conventions advise
 /// for `mcp.server.operation.duration`.
@@ -1661,6 +1677,32 @@ mod tests {
             metric_attribute(&attributes, "error.type").as_deref(),
             Some("tool_error")
         );
+    }
+
+    #[rstest::rstest]
+    #[case::server_error(Some(McpError::internal_error("boom", None)), false)]
+    #[case::tool_error(None, true)]
+    fn operation_metric_attributes_are_all_allow_listed(
+        #[case] error: Option<McpError>,
+        #[case] tool_error: bool,
+    ) {
+        let (parts, ()) = axum::http::Request::new(()).into_parts();
+        let mut metric = OperationMetric::new(
+            "tools/call",
+            Some(&ProtocolVersion::V_2025_06_18),
+            Some(&parts),
+        )
+        .with_target("gen_ai.tool.name", "GetAlerts");
+        metric
+            .attributes
+            .push(KeyValue::new("gen_ai.operation.name", "execute_tool"));
+        let unlisted: Vec<_> = metric
+            .finish(error.as_ref(), tool_error)
+            .into_iter()
+            .map(|kv| kv.key)
+            .filter(|key| !MCP_SERVER_OPERATION_DURATION_KEYS.contains(&key.as_str()))
+            .collect();
+        assert!(unlisted.is_empty(), "not in the allow-list: {unlisted:?}");
     }
 
     #[test]
