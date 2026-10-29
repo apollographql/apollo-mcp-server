@@ -330,6 +330,15 @@ async fn server_error_tool_call_records_json_rpc_error_type() {
 }
 
 #[tokio::test]
+async fn server_error_tool_call_records_rpc_response_status_code() {
+    let span = server_error_tool_call_span().await;
+    assert_eq!(
+        attribute(&span, "rpc.response.status_code").as_deref(),
+        Some("-32603")
+    );
+}
+
+#[tokio::test]
 async fn server_error_tool_call_sets_error_status_with_message() {
     let span = server_error_tool_call_span().await;
     assert_eq!(span.status, Status::error("hook failed"));
@@ -1234,6 +1243,7 @@ async fn failed_handler_span(error: rmcp::ErrorData) -> SpanData {
     let span = tracing::info_span!(
         "handler",
         error.type = tracing::field::Empty,
+        rpc.response.status_code = tracing::field::Empty,
         otel.status_code = tracing::field::Empty,
         otel.status_description = tracing::field::Empty,
     );
@@ -1261,4 +1271,28 @@ async fn server_error_sets_error_status_with_message_on_handler_span() {
 async fn caller_error_omits_error_type_on_handler_span() {
     let span = failed_handler_span(rmcp::ErrorData::invalid_params("bad", None)).await;
     assert_eq!(attribute(&span, "error.type"), None);
+}
+
+#[rstest::rstest]
+#[case::server_error(rmcp::ErrorData::internal_error("boom", None), "-32603")]
+#[case::caller_error(rmcp::ErrorData::invalid_params("bad", None), "-32602")]
+#[tokio::test]
+async fn failed_handler_records_rpc_response_status_code(
+    #[case] error: rmcp::ErrorData,
+    #[case] expected: &str,
+) {
+    let span = failed_handler_span(error).await;
+    assert_eq!(
+        attribute(&span, "rpc.response.status_code").as_deref(),
+        Some(expected)
+    );
+}
+
+#[tokio::test]
+async fn caller_error_records_rpc_response_status_code_on_http_handler() {
+    let spans = http_handler_spans("prompts/get", json!({"name": "missing"})).await;
+    assert_eq!(
+        attribute(named(&spans, "get_prompt"), "rpc.response.status_code").as_deref(),
+        Some("-32602")
+    );
 }

@@ -740,6 +740,7 @@ macro_rules! request_span {
             mcp.method.name = <$method>::VALUE,
             jsonrpc.request.id = %$context.id,
             error.type = tracing::field::Empty,
+            rpc.response.status_code = tracing::field::Empty,
             otel.status_code = tracing::field::Empty,
             otel.status_description = tracing::field::Empty,
             $($($extra)+)?
@@ -1331,13 +1332,17 @@ fn record_tool_result(
     }
 }
 
-/// Marks `span` as failed when `result` is a server error. Errors caused by
-/// the caller leave the span status unset.
+/// Records the JSON-RPC error code of a failed `result` on `span`, and marks
+/// the span as failed when it's a server error. Errors caused by the caller
+/// leave the span status unset.
 fn record_error<T>(span: &tracing::Span, result: &Result<T, McpError>) {
-    if let Err(e) = result
-        && is_server_error(e.code)
-    {
-        span.record("error.type", e.code.0.to_string().as_str());
+    let Err(e) = result else {
+        return;
+    };
+    let code = e.code.0.to_string();
+    span.record("rpc.response.status_code", code.as_str());
+    if is_server_error(e.code) {
+        span.record("error.type", code.as_str());
         span.record("otel.status_code", "ERROR");
         span.record("otel.status_description", e.message.as_ref());
     }
