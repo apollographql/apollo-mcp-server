@@ -28,7 +28,7 @@ insta = { version = "1.43.1", features = [
   "yaml",
   "glob",
 ] }
-rmcp = { version = "3.5.1", features = [
+rmcp = { version = "3.8.0", features = [
   "server",
   "transport-io",
   "transport-streamable-http-server",
