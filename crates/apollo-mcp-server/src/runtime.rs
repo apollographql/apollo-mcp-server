@@ -252,6 +252,37 @@ mod test {
     }
 
     #[test]
+    fn it_reads_transport_path_from_file_and_env() {
+        let config = "
+            transport:
+              type: streamable_http
+              path: /v1/agents
+        ";
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+            jail.create_file(path, config)?;
+            let transport_path = |config: super::Config| match config.transport {
+                apollo_mcp_server::server::Transport::StreamableHttp { path, .. } => {
+                    path.to_string()
+                }
+                apollo_mcp_server::server::Transport::Stdio {} => {
+                    panic!("expected streamable_http")
+                }
+            };
+
+            assert_eq!(transport_path(read_config(path)?), "/v1/agents");
+
+            jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/agents");
+            assert_eq!(transport_path(read_config(path)?), "/agents");
+
+            jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/");
+            assert!(read_config(path).is_err());
+            Ok(())
+        });
+    }
+
+    #[test]
     fn it_merges_env_and_file() {
         let config = "
             endpoint: http://from_file:4000/
