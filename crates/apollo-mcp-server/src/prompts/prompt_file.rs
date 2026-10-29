@@ -62,20 +62,43 @@ fn parse_frontmatter(content: &str) -> Result<(PromptFrontmatter, String), Strin
 }
 
 /// Replace `{{name}}` placeholders in the template with argument values.
+///
+/// The template is scanned once, so placeholder text inside an argument value is
+/// never expanded, and arguments without a placeholder in the template are ignored.
 pub(crate) fn substitute_args(
     template: &str,
     arguments: &Map<String, serde_json::Value>,
 ) -> String {
-    let mut result = template.to_string();
-    for (key, value) in arguments {
-        let placeholder = format!("{{{{{key}}}}}");
-        if let Some(s) = value.as_str() {
-            result = result.replace(&placeholder, s);
-        } else {
-            let replacement = value.to_string();
-            result = result.replace(&placeholder, &replacement);
+    let mut result = String::with_capacity(template.len());
+    let mut rest = template;
+    while let Some((before, after_open)) = rest.split_once("{{") {
+        result.push_str(before);
+        let Some((raw_key, after_close)) = after_open.split_once("}}") else {
+            result.push_str("{{");
+            rest = after_open;
+            break;
+        };
+        // `{{a{{b}}` names `b`, with `{{a` left as literal text.
+        let key = match raw_key.rsplit_once("{{") {
+            Some((literal, key)) => {
+                result.push_str("{{");
+                result.push_str(literal);
+                key
+            }
+            None => raw_key,
+        };
+        match arguments.get(key) {
+            Some(serde_json::Value::String(value)) => result.push_str(value),
+            Some(value) => result.push_str(&value.to_string()),
+            None => {
+                result.push_str("{{");
+                result.push_str(key);
+                result.push_str("}}");
+            }
         }
+        rest = after_close;
     }
+    result.push_str(rest);
     result
 }
 
@@ -235,6 +258,47 @@ arguments:
         let args = Map::new();
         let result = substitute_args("Hello {{unknown}}", &args);
         assert_eq!(result, "Hello {{unknown}}");
+    }
+
+    #[test]
+    fn substitute_args_does_not_expand_placeholders_inside_values() {
+        let mut args = Map::new();
+        args.insert(
+            "name".to_string(),
+            serde_json::Value::String("{{zz}}".to_string()),
+        );
+        args.insert(
+            "zz".to_string(),
+            serde_json::Value::String("expanded".to_string()),
+        );
+        let result = substitute_args("Hello {{name}}", &args);
+        assert_eq!(result, "Hello {{zz}}");
+    }
+
+    #[test]
+    fn substitute_args_output_is_bounded_by_template_and_values() {
+        let mut args = Map::new();
+        args.insert(
+            "name".to_string(),
+            serde_json::Value::String("{{zz}}".repeat(1_000)),
+        );
+        args.insert(
+            "zz".to_string(),
+            serde_json::Value::String("x".repeat(1_000)),
+        );
+        let result = substitute_args("Hello {{name}}", &args);
+        assert_eq!(result.len(), "Hello ".len() + "{{zz}}".len() * 1_000);
+    }
+
+    #[test]
+    fn substitute_args_ignores_arguments_not_in_template() {
+        let mut args = Map::new();
+        args.insert(
+            "extra".to_string(),
+            serde_json::Value::String("ignored".to_string()),
+        );
+        let result = substitute_args("Hello world", &args);
+        assert_eq!(result, "Hello world");
     }
 
     #[test]
