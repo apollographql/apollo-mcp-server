@@ -5,6 +5,7 @@ use std::collections::HashSet;
 const GEN_AI_TOOL_NAME: Key = Key::from_static_str("gen_ai.tool.name");
 const GEN_AI_TOOL_CALL_ARGUMENTS: Key = Key::from_static_str("gen_ai.tool.call.arguments");
 const GEN_AI_TOOL_CALL_RESULT: Key = Key::from_static_str("gen_ai.tool.call.result");
+const JSONRPC_REQUEST_ID: Key = Key::from_static_str("jsonrpc.request.id");
 
 impl TelemetryAttribute {
     pub const fn to_key(self) -> Key {
@@ -52,15 +53,16 @@ impl TelemetryAttribute {
     }
 
     /// Span attribute keys that carry this attribute's value: its `apollo.*`
-    /// key and, for tool calls, the matching OpenTelemetry GenAI key.
+    /// key and, where one exists, the matching OpenTelemetry semantic-convention key.
     pub fn span_keys(self) -> impl Iterator<Item = Key> {
-        let gen_ai = match self {
+        let semconv = match self {
             TelemetryAttribute::ToolName => Some(GEN_AI_TOOL_NAME),
             TelemetryAttribute::ToolArguments => Some(GEN_AI_TOOL_CALL_ARGUMENTS),
             TelemetryAttribute::ToolResult => Some(GEN_AI_TOOL_CALL_RESULT),
+            TelemetryAttribute::RequestId => Some(JSONRPC_REQUEST_ID),
             _ => None,
         };
-        std::iter::once(self.to_key()).chain(gen_ai)
+        std::iter::once(self.to_key()).chain(semconv)
     }
 
     pub fn included_attributes(omitted: HashSet<TelemetryAttribute>) -> Vec<TelemetryAttribute> {
@@ -81,8 +83,9 @@ mod tests {
     #[case::tool_name(TelemetryAttribute::ToolName, vec!["apollo.mcp.tool_name", "gen_ai.tool.name"])]
     #[case::tool_arguments(TelemetryAttribute::ToolArguments, vec!["apollo.mcp.tool_arguments", "gen_ai.tool.call.arguments"])]
     #[case::tool_result(TelemetryAttribute::ToolResult, vec!["apollo.mcp.tool_result", "gen_ai.tool.call.result"])]
+    #[case::request_id(TelemetryAttribute::RequestId, vec!["apollo.mcp.request_id", "jsonrpc.request.id"])]
     #[case::graphql_query(TelemetryAttribute::GraphqlQuery, vec!["apollo.mcp.graphql_query"])]
-    fn span_keys_include_gen_ai_counterpart(
+    fn span_keys_include_semconv_counterpart(
         #[case] attribute: TelemetryAttribute,
         #[case] expected: Vec<&str>,
     ) {

@@ -730,17 +730,41 @@ pub(super) struct McpService {
     notifications: LegacyToolNotifications,
 }
 
+/// Opens the span for an MCP request with the attributes the MCP semantic
+/// conventions define for every request, followed by any `extra` fields.
+macro_rules! request_span {
+    ($context:expr, $name:literal, $method:ty $(, $($extra:tt)+)?) => {
+        tracing::info_span!(
+            parent: get_parent_span($context),
+            $name,
+            mcp.method.name = <$method>::VALUE,
+            jsonrpc.request.id = %$context.id,
+            error.type = tracing::field::Empty,
+            rpc.response.status_code = tracing::field::Empty,
+            otel.status_code = tracing::field::Empty,
+            otel.status_description = tracing::field::Empty,
+            $($($extra)+)?
+        )
+    };
+}
+
 impl ServerHandler for McpService {
     async fn initialize(
         &self,
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<InitializeResult, McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "initialize", mcp.method.name = InitializeResultMethod::VALUE, apollo.mcp.client_name = request.client_info.name, apollo.mcp.client_version = request.client_info.version),
+        let request_span = with_request_context(
+            request_span!(
+                &context,
+                "initialize",
+                InitializeResultMethod,
+                apollo.mcp.client_name = request.client_info.name,
+                apollo.mcp.client_version = request.client_info.version
+            ),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let meter = &meter::METER;
             let attributes = vec![
                 KeyValue::new(
@@ -765,9 +789,7 @@ impl ServerHandler for McpService {
             self.notifications
                 .initialize(&self.application.tool_list_changes);
             Ok(info)
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -796,11 +818,11 @@ impl ServerHandler for McpService {
     }
 
     async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(context.request_context()), "listen", mcp.method.name = SubscriptionsListenRequestMethod::VALUE, apollo.mcp.request_id = %context.request_context().id),
+        let request_span = with_request_context(
+            request_span!(context.request_context(), "listen", SubscriptionsListenRequestMethod, apollo.mcp.request_id = %context.request_context().id),
             context.request_context(),
         );
-        async {
+        in_request_span(request_span, async {
             let shutdown = &self.application.cancellation_token;
             // The SDK also enforces the accepted filter in SubscriptionSink. Keep
             // our opt-in boundary explicit before allocating a catalog receiver.
@@ -874,9 +896,7 @@ impl ServerHandler for McpService {
                     }
                 }
             }
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -886,10 +906,10 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let (span, parent_context) = with_request_context(
-            tracing::info_span!(
-                parent: get_parent_span(&context),
+            request_span!(
+                &context,
                 "call_tool",
-                mcp.method.name = CallToolRequestMethod::VALUE,
+                CallToolRequestMethod,
                 apollo.mcp.tool_name = request.name.as_ref(),
                 apollo.mcp.request_id = %context.id.clone(),
                 apollo.mcp.tool_arguments = tracing::field::Empty,
@@ -898,9 +918,6 @@ impl ServerHandler for McpService {
                 gen_ai.tool.name = request.name.as_ref(),
                 gen_ai.tool.call.arguments = tracing::field::Empty,
                 gen_ai.tool.call.result = tracing::field::Empty,
-                error.type = tracing::field::Empty,
-                otel.status_code = tracing::field::Empty,
-                otel.status_description = tracing::field::Empty,
             ),
             &context,
         );
@@ -1002,11 +1019,11 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<rmcp::model::GetTaskResult, McpError> {
         // Task IDs act as bearer handles, so they're never recorded on the span.
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "get_task", mcp.method.name = rmcp::model::GetTaskMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "get_task", rmcp::model::GetTaskMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let tasks = self
                 .application
                 .tasks
@@ -1016,9 +1033,7 @@ impl ServerHandler for McpService {
             tasks
                 .get(&request.task_id, owner.as_ref())
                 .map(rmcp::model::GetTaskResult::new)
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1027,11 +1042,11 @@ impl ServerHandler for McpService {
         request: rmcp::model::CancelTaskParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "cancel_task", mcp.method.name = rmcp::model::CancelTaskMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "cancel_task", rmcp::model::CancelTaskMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let tasks = self
                 .application
                 .tasks
@@ -1039,9 +1054,7 @@ impl ServerHandler for McpService {
                 .ok_or_else(McpError::method_not_found::<rmcp::model::CancelTaskMethod>)?;
             let owner = request_principal(&context.extensions);
             tasks.cancel(&request.task_id, owner.as_ref())
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1050,11 +1063,11 @@ impl ServerHandler for McpService {
         request: rmcp::model::UpdateTaskParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "update_task", mcp.method.name = rmcp::model::UpdateTaskMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "update_task", rmcp::model::UpdateTaskMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let tasks = self
                 .application
                 .tasks
@@ -1062,9 +1075,7 @@ impl ServerHandler for McpService {
                 .ok_or_else(McpError::method_not_found::<rmcp::model::UpdateTaskMethod>)?;
             let owner = request_principal(&context.extensions);
             tasks.update(&request.task_id, owner.as_ref(), request.input_responses)
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1073,11 +1084,11 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_tools", mcp.method.name = ListToolsRequestMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "list_tools", ListToolsRequestMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
             let peer = PeerContext {
@@ -1088,9 +1099,7 @@ impl ServerHandler for McpService {
             self.application
                 .list_tools_impl(context.extensions, peer)
                 .await
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1114,18 +1123,16 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_resources", mcp.method.name = ListResourcesRequestMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "list_resources", ListResourcesRequestMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let protocol_version = context.protocol_version();
 
             self.application
                 .list_resources_impl(&context.extensions, protocol_version.as_ref())
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1134,18 +1141,20 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_resource_templates", mcp.method.name = ListResourceTemplatesRequestMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(
+                &context,
+                "list_resource_templates",
+                ListResourceTemplatesRequestMethod
+            ),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let protocol_version = context.protocol_version();
 
             self.application
                 .list_resource_templates_impl(protocol_version.as_ref())
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1154,11 +1163,11 @@ impl ServerHandler for McpService {
         request: rmcp::model::ReadResourceRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<ReadResourceResponse, ErrorData> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "read_resource", mcp.method.name = ReadResourceRequestMethod::VALUE, apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
+        let request_span = with_request_context(
+            request_span!(&context, "read_resource", ReadResourceRequestMethod, mcp.resource.uri = request.uri.as_str(), apollo.mcp.resource_uri = request.uri.as_str(), apollo.mcp.request_id = %context.id.clone()),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let client_capabilities = context.client_capabilities();
             let protocol_version = context.protocol_version();
             let peer = PeerContext {
@@ -1170,9 +1179,7 @@ impl ServerHandler for McpService {
                 .read_resource_impl(request, context.extensions, peer)
                 .await
                 .map(Into::into)
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1181,18 +1188,16 @@ impl ServerHandler for McpService {
         _request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListPromptsResult, McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "list_prompts", mcp.method.name = ListPromptsRequestMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "list_prompts", ListPromptsRequestMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             let protocol_version = context.protocol_version();
 
             self.application
                 .list_prompts_impl(protocol_version.as_ref())
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1201,14 +1206,20 @@ impl ServerHandler for McpService {
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "get_prompt", mcp.method.name = GetPromptRequestMethod::VALUE, apollo.mcp.prompt_name = request.name),
+        let request_span = with_request_context(
+            request_span!(
+                &context,
+                "get_prompt",
+                GetPromptRequestMethod,
+                gen_ai.prompt.name = request.name.as_str(),
+                apollo.mcp.prompt_name = request.name
+            ),
             &context,
         );
-        async { self.application.get_prompt_impl(request).map(Into::into) }
-            .instrument(span)
-            .with_context(parent_context)
-            .await
+        in_request_span(request_span, async {
+            self.application.get_prompt_impl(request).map(Into::into)
+        })
+        .await
     }
 
     // SEP-2575 removes this RPC in 2026-07-28, independently of SEP-2577's
@@ -1219,11 +1230,11 @@ impl ServerHandler for McpService {
         request: rmcp::model::SetLevelRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<(), McpError> {
-        let (span, parent_context) = with_request_context(
-            tracing::info_span!(parent: get_parent_span(&context), "set_level", mcp.method.name = SetLevelRequestMethod::VALUE),
+        let request_span = with_request_context(
+            request_span!(&context, "set_level", SetLevelRequestMethod),
             &context,
         );
-        async {
+        in_request_span(request_span, async {
             // rmcp 3.5 dispatches this method for every version; its modern HTTP
             // transport maps this method-not-found error to HTTP 404.
             if context
@@ -1240,9 +1251,7 @@ impl ServerHandler for McpService {
             // capabilities, so they see an empty success instead of `-32601`.
             debug!(level = ?request.level, "received logging/setLevel; no-op");
             Ok(())
-        }
-        .instrument(span)
-        .with_context(parent_context)
+        })
         .await
     }
 
@@ -1319,13 +1328,37 @@ fn record_tool_result(
                 span.record("otel.status_code", "ERROR");
             }
         }
-        Err(e) if is_server_error(e.code) => {
-            span.record("error.type", e.code.0.to_string().as_str());
-            span.record("otel.status_code", "ERROR");
-            span.record("otel.status_description", e.message.as_ref());
-        }
-        Err(_) => {}
+        Err(_) => record_error(span, result),
     }
+}
+
+/// Records the JSON-RPC error code of a failed `result` on `span`, and marks
+/// the span as failed when it's a server error. Errors caused by the caller
+/// leave the span status unset.
+fn record_error<T>(span: &tracing::Span, result: &Result<T, McpError>) {
+    let Err(e) = result else {
+        return;
+    };
+    let code = e.code.0.to_string();
+    span.record("rpc.response.status_code", code.as_str());
+    if is_server_error(e.code) {
+        span.record("error.type", code.as_str());
+        span.record("otel.status_code", "ERROR");
+        span.record("otel.status_description", e.message.as_ref());
+    }
+}
+
+/// Runs a request handler in its span and records a server error on the span.
+pub(super) async fn in_request_span<T>(
+    (span, parent_context): (tracing::Span, opentelemetry::Context),
+    handler: impl Future<Output = Result<T, McpError>>,
+) -> Result<T, McpError> {
+    let result = handler
+        .instrument(span.clone())
+        .with_context(parent_context)
+        .await;
+    record_error(&span, &result);
+    result
 }
 
 /// JSON-RPC codes the MCP semantic conventions treat as caller mistakes
