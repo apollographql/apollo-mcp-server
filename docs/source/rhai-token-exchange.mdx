@@ -90,7 +90,8 @@ fn form_encode(params) {
 fn on_execute_graphql_operation(ctx) {
     let inbound = ctx.incoming_request.headers["authorization"];
 
-    if !inbound.starts_with("Bearer ") {
+    // The auth scheme is case-insensitive, so accept `bearer` as well as `Bearer`.
+    if inbound.sub_string(0, 7).to_lower() != "bearer " {
         throw #{
             message: "Missing bearer token",
             code: ErrorCode::INVALID_REQUEST
@@ -140,7 +141,19 @@ fn on_execute_graphql_operation(ctx) {
 ### Adapting the script
 
 - **Form encoding:** RFC 8693 requires an `application/x-www-form-urlencoded` body. `Http::post` sends `body` exactly as given, so the script encodes each value with `form_escape`. Don't build the body by joining raw strings: a token or secret that contains `+`, `&`, `=`, or `%` would be sent with a different meaning.
-- **Client authentication:** The script sends `client_id` and `client_secret` in the body. Rhai scripts have no Base64 function, so HTTP Basic client authentication isn't available. Check that your authorization server accepts client credentials in the request body.
+- **Client authentication:** The script sends `client_id` and `client_secret` in the body. If your authorization server requires HTTP Basic client authentication instead, remove them from the body and send an `Authorization` header. Rhai scripts have no Base64 function, so compute the credential outside the server: Base64-encode `client_id:client_secret`, with each part form-encoded first, and store the result in an environment variable:
+
+  ```rhai
+  let basic_credentials = Env::get("TOKEN_EXCHANGE_BASIC_CREDENTIALS");
+
+  // In the hook, in the options passed to `Http::post`:
+  headers: #{
+      "authorization": "Basic " + basic_credentials,
+      "content-type": "application/x-www-form-urlencoded",
+      "accept": "application/json"
+  },
+  ```
+
 - **Request parameters:** Authorization servers differ in which optional parameters they accept, such as `audience`, `resource`, `scope`, and `requested_token_type`. Add or remove entries in the map passed to `form_encode` to match yours.
 - **Errors:** Throwing a map in the hook sends its `message` to the client. A map thrown from a helper function, such as `form_encode`, reaches the client as a generic `Internal error`, so keep `throw` statements in the hook. If the token endpoint can't be reached, `.wait()` throws a plain string, and the client receives a generic `Internal error`. The server logs the underlying error.
 - **Secrets:** Never `print` the subject token, the exchanged token, or the client secret. The server writes `print` output to its logs.

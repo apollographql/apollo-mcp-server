@@ -73,10 +73,11 @@ A hook can add or replace headers, but it can't remove them.
 1. Static [`headers`](/apollo-mcp-server/config-file#static-headers) from the config file
 2. Headers copied from the client request by [`forward_headers`](/apollo-mcp-server/config-file#forwarding-headers)
 3. The client's validated OAuth token as `Authorization`, when [auth](/apollo-mcp-server/auth) is configured and [`disable_auth_token_passthrough`](/apollo-mcp-server/config-file#auth) isn't set
-4. Changes made by `on_execute_graphql_operation`
-5. Headers saved with the operation itself, such as headers saved with an operation in a GraphOS operation collection
+4. The client's `mcp-session-id` header, when the client sends one
+5. Changes made by `on_execute_graphql_operation`
+6. Headers saved with the operation itself, such as headers saved with an operation in a GraphOS operation collection
 
-With the `stdio` transport, there's no client request, so steps 2 and 3 don't apply and `ctx.headers` starts with only the static headers.
+With the `stdio` transport, there's no client request, so steps 2 through 4 don't apply and `ctx.headers` starts with only the static headers.
 
 <Caution>
 
