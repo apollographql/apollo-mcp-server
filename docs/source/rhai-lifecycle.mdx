@@ -7,6 +7,8 @@ Lifecycle hooks enable your Rhai scripts run at specific points during request p
 
 If a hook function isn't defined, the server skips it.
 
+Apollo MCP Server currently provides one hook, [`on_execute_graphql_operation`](#on_execute_graphql_operation). It runs before each GraphQL request that the server sends to your endpoint, and it can change the request's endpoint and headers. No hook runs after the response arrives. For more information, go to [What the hook can't do](#what-the-hook-cant-do).
+
 <Caution>
 
 Rhai scripts run as trusted server-side code. Hooks can use request-derived data and change outbound request destinations or headers, so restrict and review script changes. For more information, go to [Rhai security guidance](/apollo-mcp-server/rhai-getting-started#security).
@@ -22,6 +24,19 @@ fn on_execute_graphql_operation(ctx) {
     // ctx gives you access to the outgoing request
 }
 ```
+
+### When the hook runs
+
+The server calls the hook once per tool call, before it validates the operation and sends it to your endpoint. If validation fails, the hook has already run, but no request is sent.
+
+| Tool                                           | Hook runs                                                                                                                                                  |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Operation tools                                | Once per tool call.                                                                                                                                        |
+| `execute`                                      | Once per tool call.                                                                                                                                        |
+| [MCP Apps](/apollo-mcp-server/mcp-apps) tools  | Once per tool call. [Prefetch](/apollo-mcp-server/mcp-apps-reference#prefetch-directive) operations reuse the endpoint and headers that the hook returned. |
+| `introspect`, `search`, `validate`, `explorer` | Never. These tools don't send requests to your endpoint.                                                                                                   |
+
+Hooks for concurrent tool calls run in parallel. A hook that waits on a slow call, such as an [`Http`](/apollo-mcp-server/rhai-functions#http) request, delays only its own tool call.
 
 ### Context object
 
@@ -48,6 +63,26 @@ fn on_execute_graphql_operation(ctx) {
     ctx.headers["x-request-id"] = "abc-123";
 }
 ```
+
+A hook can add or replace headers, but it can't remove them.
+
+### Header order
+
+`ctx.headers` starts with the headers the server has already assembled for the request. The server builds the final headers in this order, and a later step replaces a header with the same name from an earlier step:
+
+1. Static [`headers`](/apollo-mcp-server/config-file#static-headers) from the config file
+2. Headers copied from the client request by [`forward_headers`](/apollo-mcp-server/config-file#forwarding-headers)
+3. The client's validated OAuth token as `Authorization`, when [auth](/apollo-mcp-server/auth) is configured and [`disable_auth_token_passthrough`](/apollo-mcp-server/config-file#auth) isn't set
+4. Changes made by `on_execute_graphql_operation`
+5. Headers saved with the operation itself, such as headers saved with an operation in a GraphOS operation collection
+
+With the `stdio` transport, there's no client request, so steps 2 and 3 don't apply and `ctx.headers` starts with only the static headers.
+
+<Caution>
+
+Headers saved with an operation replace hook-set headers that have the same name. The server records this only in a debug-level log, so the hook appears to succeed. For example, an operation saved with its own `Authorization` header always sends that value, whatever the hook sets. Headers with other names that the hook sets still reach your endpoint. The `execute` tool has no saved headers, so the hook's headers always apply to it.
+
+</Caution>
 
 ### The incoming_request object
 
@@ -105,6 +140,19 @@ fn on_execute_graphql_operation(ctx) {
 
 `ctx.trace_id` is a 32-character lowercase hex string when an OpenTelemetry trace context is active, and an empty string when the hook runs without an active span. The same trace ID is also prefixed onto server log lines, so you can correlate values emitted from Rhai with the rest of the server's output.
 
+### Example: Exchange the client's token
+
+To swap the client's token for one scoped to your GraphQL API before each request, see [Token exchange with Rhai](/apollo-mcp-server/rhai-token-exchange).
+
+### What the hook can't do
+
+The hook sees and changes only the request's endpoint and headers. It runs before the request is sent and never sees the response.
+
+- **Validate tool arguments:** The hook can't read the operation, its variables, or the tool's arguments. It can reject a request based on headers, `tool_name`, or `incoming_request` by [throwing an error](#error-handling-with-throw).
+- **Redact or reshape the response:** The hook has no access to the response. The [`@private` directive](/apollo-mcp-server/mcp-apps-reference#private-directive) hides fields from the content the model sees, but the full response still reaches the MCP client in the result's metadata. To keep a field from leaving the server, remove it from the operation.
+- **Chain queries:** A hook can call another API with [`Http`](/apollo-mcp-server/rhai-functions#http), but it can't add the result to the tool's response.
+- **Keep state between requests:** Writes to top-level variables are discarded when the hook returns. For more information, go to [Global state](#global-state).
+
 ## Error handling with throw
 
 Use `throw` inside a hook to abort the current request and return an error to the MCP client. Throw a map with `message` and `code` fields for a structured error response:
@@ -134,10 +182,12 @@ fn on_execute_graphql_operation(ctx) {
 - Throwing a map with `message` and `code` returns a structured error to the client with those values.
 - Throwing a map without a `message` field defaults the message to `"Internal error"`.
 - Throwing a non-map value (for example, a plain string) returns a generic internal error. The thrown value is logged server-side but not sent to the client.
+- Throwing a map from a function that the hook calls, including a function in an imported module, returns a generic internal error. Only a map thrown in the hook's own body reaches the client.
+- Errors thrown by built-in functions, such as `.wait()` on a failed [`Http`](/apollo-mcp-server/rhai-functions#http) request, are plain strings and return a generic internal error.
 
 <Caution>
 
-When you throw a non-map value, the actual error message isn't forwarded to the MCP client. If you want to expose a specific error message to the client, throw a map with a `message` field.
+When you throw a non-map value, or throw from a helper function, the actual error message isn't forwarded to the MCP client. To send a specific message, throw a map with a `message` field directly in the hook. A helper can return a value that the hook checks before it throws.
 
 </Caution>
 
@@ -157,7 +207,7 @@ fn on_execute_graphql_operation(ctx) {
 
 <Caution>
 
-Keep top-level code free of side effects. Rhai re-executes the top-level statements before every hook call, so an HTTP request or any other side effect placed there runs once per request, even though hooks read the values captured at load time.
+Keep top-level code free of side effects. Rhai re-executes the top-level statements before every hook call, so an HTTP request or any other side effect placed there runs once per request, even though hooks read the values captured at load time. Make HTTP requests inside a hook, never at the top level.
 
 Each hook invocation also gets its own copy of these variables so that hooks can run concurrently. A value a hook writes to one is discarded when the hook returns, so top-level variables can't carry state from one request to the next. This includes variables a top-level closure captured: the closure keeps the value from load time and doesn't see writes a hook makes.
 
