@@ -33,6 +33,8 @@ mod server_span_tests;
 mod starting;
 mod tasks;
 pub(crate) mod telemetry;
+
+pub use running::{MCP_SERVER_OPERATION_DURATION, MCP_SERVER_OPERATION_DURATION_KEYS};
 mod tool_list_changes;
 
 use configuring::Configuring;

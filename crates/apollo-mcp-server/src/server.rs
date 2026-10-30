@@ -26,6 +26,7 @@ use crate::server_info::ServerInfoConfig;
 pub(crate) mod states;
 
 pub use states::telemetry::w3c_text_map_propagator;
+pub use states::{MCP_SERVER_OPERATION_DURATION, MCP_SERVER_OPERATION_DURATION_KEYS};
 
 use states::StateMachine;
 
