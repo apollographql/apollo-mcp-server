@@ -72,21 +72,14 @@ pub(crate) fn substitute_args(
     let mut result = String::with_capacity(template.len());
     let mut rest = template;
     while let Some((before, after_open)) = rest.split_once("{{") {
-        result.push_str(before);
         let Some((raw_key, after_close)) = after_open.split_once("}}") else {
-            result.push_str("{{");
-            rest = after_open;
             break;
         };
-        // `{{a{{b}}` names `b`, with `{{a` left as literal text.
-        let key = match raw_key.rsplit_once("{{") {
-            Some((literal, key)) => {
-                result.push_str("{{");
-                result.push_str(literal);
-                key
-            }
-            None => raw_key,
-        };
+        // The key follows the last `{{` before `}}`, so extra opening braces stay literal:
+        // `{{{a}}}` names `a`, and `{{a{{b}}` names `b`.
+        let head = &rest[..before.len() + "{{".len() + raw_key.len()];
+        let (literal, key) = head.rsplit_once("{{").unwrap_or((before, raw_key));
+        result.push_str(literal);
         match arguments.get(key) {
             Some(serde_json::Value::String(value)) => result.push_str(value),
             Some(value) => result.push_str(&value.to_string()),
@@ -299,6 +292,23 @@ arguments:
         );
         let result = substitute_args("Hello world", &args);
         assert_eq!(result, "Hello world");
+    }
+
+    #[rstest::rstest]
+    #[case::extra_opening_brace("x{{{name}}}y", "x{Bob}y")]
+    #[case::doubled_braces("{{{{name}}}}", "{{Bob}}")]
+    #[case::extra_closing_brace("{{name}}}", "Bob}")]
+    #[case::nested_opener("{{a{{name}}", "{{aBob")]
+    #[case::unknown_with_extra_brace("{{{unknown}}}", "{{{unknown}}}")]
+    #[case::unterminated("Hello {{name", "Hello {{name")]
+    #[case::unterminated_after_placeholder("{{name}} {{", "Bob {{")]
+    fn substitute_args_brace_edge_cases(#[case] template: &str, #[case] expected: &str) {
+        let mut args = Map::new();
+        args.insert(
+            "name".to_string(),
+            serde_json::Value::String("Bob".to_string()),
+        );
+        assert_eq!(substitute_args(template, &args), expected);
     }
 
     #[test]
