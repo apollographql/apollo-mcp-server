@@ -3,13 +3,13 @@ title: Token Exchange with Rhai
 subtitle: Swap the client's token for one scoped to your GraphQL API
 ---
 
-A client often connects to Apollo MCP Server with a token issued for the MCP server, while your GraphQL API expects a token issued for the API. With [OAuth 2.0 Token Exchange (RFC 8693)](https://www.rfc-editor.org/rfc/rfc8693.html), the server can trade the client's token for an API token at your authorization server before each GraphQL request.
+A client often connects to Apollo MCP Server with a token issued for the MCP server, while your GraphQL API expects a token issued for the API. With [OAuth 2.0 Token Exchange (RFC 8693)](https://www.rfc-editor.org/rfc/rfc8693.html), the server can trade the client's token for an API token at your authorization server before each tool call.
 
 Apollo MCP Server doesn't support token exchange natively. This page shows how to implement it in the [`on_execute_graphql_operation`](/apollo-mcp-server/rhai-lifecycle#on_execute_graphql_operation) hook.
 
 ## How it works
 
-For each GraphQL request, the hook:
+For each tool call, the hook:
 
 1. Reads the client's bearer token from `ctx.incoming_request`.
 2. Sends a form-encoded token exchange request to your authorization server with [`Http::post`](/apollo-mcp-server/rhai-functions#http).
@@ -160,9 +160,9 @@ fn on_execute_graphql_operation(ctx) {
 
 ## Limitations
 
-### One exchange per GraphQL request
+### One exchange per tool call
 
-The hook runs for every GraphQL request, so every tool call makes an extra request to your token endpoint. A script can't cache the exchanged token between requests: writes to top-level variables are discarded when the hook returns. For more information, go to [Global state](/apollo-mcp-server/rhai-lifecycle#global-state).
+The hook runs once per tool call, so every tool call makes an extra request to your token endpoint. This includes calls that then fail operation validation, because the hook runs before validation. An [MCP Apps](/apollo-mcp-server/mcp-apps) tool call sends its [prefetch](/apollo-mcp-server/mcp-apps-reference#prefetch-directive) operations with the same exchanged token, so they don't trigger more exchanges. A script can't cache the exchanged token between requests: writes to top-level variables are discarded when the hook returns. For more information, go to [Global state](/apollo-mcp-server/rhai-lifecycle#global-state).
 
 Keep the exchange inside the hook. Top-level statements run again before every hook call, so an exchange placed at the top level would run on every request too, and its result would be discarded.
 
