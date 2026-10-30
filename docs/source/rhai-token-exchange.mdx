@@ -1,0 +1,177 @@
+---
+title: Token Exchange with Rhai
+subtitle: Swap the client's token for one scoped to your GraphQL API
+---
+
+A client often connects to Apollo MCP Server with a token issued for the MCP server, while your GraphQL API expects a token issued for the API. With [OAuth 2.0 Token Exchange (RFC 8693)](https://www.rfc-editor.org/rfc/rfc8693.html), the server can trade the client's token for an API token at your authorization server before each tool call.
+
+Apollo MCP Server doesn't support token exchange natively. This page shows how to implement it in the [`on_execute_graphql_operation`](/apollo-mcp-server/rhai-lifecycle#on_execute_graphql_operation) hook.
+
+## How it works
+
+For each tool call, the hook:
+
+1. Reads the client's bearer token from `ctx.incoming_request`.
+2. Sends a form-encoded token exchange request to your authorization server with [`Http::post`](/apollo-mcp-server/rhai-functions#http).
+3. Replaces the outgoing `Authorization` header with the token it receives.
+
+The client's token is only available with the `streamable_http` transport. Configure [auth](/apollo-mcp-server/auth) so the server validates the client's token before your script sends it to the authorization server.
+
+## Example script
+
+The script reads its configuration from environment variables:
+
+| Variable                       | Description                                                     |
+| ------------------------------ | --------------------------------------------------------------- |
+| `TOKEN_EXCHANGE_URL`           | Your authorization server's token endpoint.                     |
+| `TOKEN_EXCHANGE_CLIENT_ID`     | The client ID that Apollo MCP Server uses at the token endpoint. |
+| `TOKEN_EXCHANGE_CLIENT_SECRET` | The secret for that client.                                     |
+| `TOKEN_EXCHANGE_AUDIENCE`      | The audience to request for the new token, such as your API's identifier. |
+
+```rhai title="rhai/main.rhai"
+// Configuration only. Top-level statements run again before every hook call,
+// so nothing here sends a request.
+let token_url = Env::get("TOKEN_EXCHANGE_URL");
+let client_id = Env::get("TOKEN_EXCHANGE_CLIENT_ID");
+let client_secret = Env::get("TOKEN_EXCHANGE_CLIENT_SECRET");
+let audience = Env::get("TOKEN_EXCHANGE_AUDIENCE");
+
+// Encodes one character as `%XX` for each of its UTF-8 bytes.
+fn percent_encode_char(ch) {
+    let hex = "0123456789ABCDEF";
+    let bytes = ch.to_string().to_blob();
+    let encoded = "";
+
+    // Indexing a blob yields an integer; iterating one yields a `u8`
+    // that Rhai's arithmetic operators don't accept.
+    for i in 0..bytes.len() {
+        let byte = bytes[i];
+        encoded += "%";
+        encoded += hex[byte / 16];
+        encoded += hex[byte % 16];
+    }
+
+    encoded
+}
+
+// Percent-encodes `text` for an `application/x-www-form-urlencoded` body.
+// Unreserved ASCII characters pass through unchanged.
+fn form_escape(text) {
+    let unreserved = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+    let escaped = "";
+
+    for ch in text {
+        if unreserved.contains(ch) {
+            escaped += ch;
+        } else {
+            escaped += percent_encode_char(ch);
+        }
+    }
+
+    escaped
+}
+
+// Builds a form body from a map of string values.
+fn form_encode(params) {
+    let body = "";
+
+    for key in params.keys() {
+        if body != "" {
+            body += "&";
+        }
+        body += form_escape(key);
+        body += "=";
+        body += form_escape(params[key].to_string());
+    }
+
+    body
+}
+
+fn on_execute_graphql_operation(ctx) {
+    let inbound = ctx.incoming_request.headers["authorization"];
+
+    // The auth scheme is case-insensitive, so accept `bearer` as well as `Bearer`.
+    if inbound.sub_string(0, 7).to_lower() != "bearer " {
+        throw #{
+            message: "Missing bearer token",
+            code: ErrorCode::INVALID_REQUEST
+        };
+    }
+
+    let body = form_encode(#{
+        grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+        subject_token: inbound.sub_string(7),
+        subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+        audience: audience,
+        client_id: client_id,
+        client_secret: client_secret
+    });
+
+    let response = Http::post(token_url, #{
+        headers: #{
+            "content-type": "application/x-www-form-urlencoded",
+            "accept": "application/json"
+        },
+        body: body,
+        timeout: 5
+    }).wait();
+
+    if response.status != 200 {
+        print(`token exchange failed: status=${response.status} trace_id=${ctx.trace_id}`);
+        throw #{
+            message: "Token exchange failed",
+            code: ErrorCode::INTERNAL_ERROR
+        };
+    }
+
+    let token = response.json().access_token;
+
+    if type_of(token) != "string" {
+        throw #{
+            message: "Token exchange response has no access_token",
+            code: ErrorCode::INTERNAL_ERROR
+        };
+    }
+
+    ctx.headers["authorization"] = "Bearer " + token;
+}
+```
+
+### Adapting the script
+
+- **Form encoding:** RFC 8693 requires an `application/x-www-form-urlencoded` body. `Http::post` sends `body` exactly as given, so the script encodes each value with `form_escape`. Don't build the body by joining raw strings: a token or secret that contains `+`, `&`, `=`, or `%` would be sent with a different meaning.
+- **Client authentication:** The script sends `client_id` and `client_secret` in the body. If your authorization server requires HTTP Basic client authentication instead, remove them from the body and send an `Authorization` header. Rhai scripts have no Base64 function, so compute the credential outside the server: Base64-encode `client_id:client_secret`, with each part form-encoded first, and store the result in an environment variable:
+
+  ```rhai
+  let basic_credentials = Env::get("TOKEN_EXCHANGE_BASIC_CREDENTIALS");
+
+  // In the hook, in the options passed to `Http::post`:
+  headers: #{
+      "authorization": "Basic " + basic_credentials,
+      "content-type": "application/x-www-form-urlencoded",
+      "accept": "application/json"
+  },
+  ```
+
+- **Request parameters:** Authorization servers differ in which optional parameters they accept, such as `audience`, `resource`, `scope`, and `requested_token_type`. Add or remove entries in the map passed to `form_encode` to match yours.
+- **Errors:** Throwing a map in the hook sends its `message` to the client. A map thrown from a helper function, such as `form_encode`, reaches the client as a generic `Internal error`, so keep `throw` statements in the hook. If the token endpoint can't be reached, `.wait()` throws a plain string, and the client receives a generic `Internal error`. The server logs the underlying error.
+- **Secrets:** Never `print` the subject token, the exchanged token, or the client secret. The server writes `print` output to its logs.
+
+## Limitations
+
+### One exchange per tool call
+
+The hook runs once per tool call, so every tool call makes an extra request to your token endpoint. This includes calls that then fail operation validation, because the hook runs before validation. An [MCP Apps](/apollo-mcp-server/mcp-apps) tool call sends its [prefetch](/apollo-mcp-server/mcp-apps-reference#prefetch-directive) operations with the same exchanged token, so they don't trigger more exchanges. A script can't cache the exchanged token between requests: writes to top-level variables are discarded when the hook returns. For more information, go to [Global state](/apollo-mcp-server/rhai-lifecycle#global-state).
+
+Keep the exchange inside the hook. Top-level statements run again before every hook call, so an exchange placed at the top level would run on every request too, and its result would be discarded.
+
+Hooks for concurrent tool calls run in parallel, so a slow token endpoint delays only the tool call waiting on it. Set `timeout` to bound that delay.
+
+### Headers saved with an operation take precedence
+
+An operation saved with its own `Authorization` header, such as one saved in a GraphOS operation collection, sends that value instead of the exchanged token. The server records this only in a debug-level log. Remove `Authorization` from operations that should use the exchanged token. For more information, go to [Header order](/apollo-mcp-server/rhai-lifecycle#header-order).
+
+### Expression complexity
+
+Building a request body in one long expression can fail with `Expression exceeds maximum complexity`. The example builds the body across several statements and moves the inner loop into `percent_encode_char` to stay within Rhai's nesting limit. For more information, go to [Script limits](/apollo-mcp-server/rhai-getting-started#script-limits).

@@ -78,6 +78,24 @@ fn on_execute_graphql_operation(ctx) {
 }
 ```
 
+## Script limits
+
+Rhai limits how deeply expressions can nest. Each `+` in a chain adds a level, and so does each block nested inside another, such as a loop inside a condition inside a loop. A script that exceeds the limit fails to load with the error `Expression exceeds maximum complexity`. At startup, the server exits. If a script fails to reload while the server is running, the server logs the error and keeps running the previous scripts.
+
+Hooks are functions, and the limit inside functions is lower. In released Apollo MCP Server binaries, a single expression that concatenates about 30 values inside a hook exceeds the limit, or about 60 at the top level of a script. Debug builds of the server, such as those started with `cargo run`, allow about half as many.
+
+To stay within the limit, build values across several statements, and move nested loops into their own functions:
+
+```rhai
+// One long expression: every `+` adds a level of nesting
+let body = "grant_type=" + grant_type + "&subject_token=" + subject_token + "&audience=" + audience /* ... */;
+
+// Several statements: each one stays shallow
+let body = "grant_type=" + grant_type;
+body += "&subject_token=" + subject_token;
+body += "&audience=" + audience;
+```
+
 ## Modules
 
 Organize your scripts into multiple files using Rhai's module system. Place additional `.rhai` files in the `rhai/` directory and import them:

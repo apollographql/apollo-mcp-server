@@ -52,6 +52,8 @@ items:
         href: "./rhai-getting-started"
       - label: "Lifecycle Hooks"
         href: "./rhai-lifecycle"
+      - label: "Token Exchange"
+        href: "./rhai-token-exchange"
       - label: "Functions Reference"
         href: "./rhai-functions"
   - label: "MCP Apps"
