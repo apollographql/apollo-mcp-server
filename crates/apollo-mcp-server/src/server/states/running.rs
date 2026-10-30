@@ -769,7 +769,17 @@ impl ServerHandler for McpService {
             ),
             &context,
         );
-        let metric = OperationMetric::for_request(InitializeResultMethod::VALUE, &context);
+        // Negotiate rather than answering with `get_info` as-is (#794).
+        // `supported_protocol_versions` below bounds both this call and the
+        // re-negotiation rmcp runs afterwards on every transport (#803).
+        let negotiated = self.negotiate_initialize(&request);
+        // The context still holds the version the client asked for, which can
+        // be any string, so the metric records the negotiated one instead.
+        let metric = OperationMetric::new(
+            InitializeResultMethod::VALUE,
+            negotiated.as_ref().ok().map(|info| &info.protocol_version),
+            context.extensions.get::<axum::http::request::Parts>(),
+        );
         in_request_span(request_span, metric, async {
             let meter = &meter::METER;
             let attributes = vec![
@@ -786,10 +796,7 @@ impl ServerHandler for McpService {
                 .u64_counter(TelemetryMetric::InitializeCount.as_str())
                 .build()
                 .add(1, &attributes);
-            // Negotiate rather than answering with `get_info` as-is (#794).
-            // `supported_protocol_versions` below bounds both this call and the
-            // re-negotiation rmcp runs afterwards on every transport (#803).
-            let info = self.negotiate_initialize(&request)?;
+            let info = negotiated?;
             // rmcp's negotiate_initialize only selects versions with the legacy
             // handshake; modern clients use discovery and per-request metadata.
             self.notifications

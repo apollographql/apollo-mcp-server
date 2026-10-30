@@ -227,12 +227,12 @@ The server emits the following metrics, which are invaluable for monitoring and 
 
 The two `auth.rate_limit` metrics are emitted only when you configure OAuth authentication and `transport.auth.rate_limit.enabled` is `true` (the default). They carry no attributes, so no credential or client address is recorded. See [Limit authentication rates](/apollo-mcp-server/auth#limit-authentication-rates).
 
-The server also emits `mcp.server.operation.duration`, the request duration metric from the OpenTelemetry [semantic conventions for MCP](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md#metric-mcpserveroperationduration). It's a histogram in seconds, with the bucket boundaries the conventions advise, and it records one measurement for every MCP request the server handles. It carries these attributes:
+The server also emits `mcp.server.operation.duration`, the request duration metric from the OpenTelemetry [semantic conventions for MCP](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/mcp.md#metric-mcpserveroperationduration). It's a histogram in seconds, with the bucket boundaries the conventions advise, and it records one measurement for every MCP request the server handles, except `ping`, `server/discover`, and `completion/complete`, which the MCP SDK answers on the server's behalf. It carries these attributes:
 
 | Attribute                  | Description |
 | -------------------------- | ----------- |
 | `mcp.method.name`          | The request's MCP method, such as `tools/call`. |
-| `mcp.protocol.version`     | The MCP protocol version of the request, when known. |
+| `mcp.protocol.version`     | The MCP protocol version of the request, when known. For `initialize`, the version the server negotiated. |
 | `network.transport`        | `tcp` for Streamable HTTP, or `pipe` for stdio. |
 | `network.protocol.name`    | `http`, for Streamable HTTP only. |
 | `network.protocol.version` | The HTTP version, for Streamable HTTP only. |
