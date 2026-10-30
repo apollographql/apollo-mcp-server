@@ -34,12 +34,6 @@ impl EndpointPath {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-
-    /// Whether `path` is this endpoint path or a path below it.
-    pub fn covers(&self, path: &str) -> bool {
-        path.strip_prefix(self.as_str())
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
-    }
 }
 
 impl Default for EndpointPath {
@@ -132,15 +126,6 @@ mod tests {
             path: path.to_owned(),
             segment: segment.to_owned(),
         }
-    }
-
-    #[rstest]
-    #[case::exact("/mcp", true)]
-    #[case::below("/mcp/health", true)]
-    #[case::sibling_with_shared_prefix("/mcp-health", false)]
-    #[case::unrelated("/health", false)]
-    fn covers(#[case] path: &str, #[case] expected: bool) {
-        assert_eq!(EndpointPath::default().covers(path), expected);
     }
 
     #[test]

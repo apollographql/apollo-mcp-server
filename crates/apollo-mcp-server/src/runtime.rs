@@ -21,6 +21,9 @@ pub mod telemetry;
 use std::mem::discriminant;
 use std::path::Path;
 
+use apollo_mcp_server::errors::ServerError;
+use apollo_mcp_server::server::Transport;
+
 pub use config::Config;
 use figment::{
     Figment, Metadata, Profile, Provider,
@@ -68,6 +71,26 @@ pub fn read_config(yaml_path: impl AsRef<Path>) -> Result<Config, figment::Error
         .join(&file)
         .extract()
         .map_err(|error| attribute_to_source(error, &file))
+        .and_then(validate)
+}
+
+/// Rejects settings that parse on their own but can't run together, so that a reload
+/// with them is refused before the running server is torn down.
+#[expect(clippy::result_large_err)]
+fn validate(config: Config) -> Result<Config, figment::Error> {
+    let health_check = &config.health_check;
+    if let Transport::StreamableHttp { path, .. } = &config.transport
+        && health_check.enabled
+        && health_check.listen.is_none()
+        && health_check.path == path.as_str()
+    {
+        let conflict = ServerError::HealthPathConflict {
+            health_path: health_check.path.clone(),
+            endpoint_path: path.clone(),
+        };
+        return Err(figment::Error::from(conflict.to_string()));
+    }
+    Ok(config)
 }
 
 /// Figment provider for the config file, after `${env.VAR}` expansion. Wraps the YAML
@@ -278,6 +301,37 @@ mod test {
 
             jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/");
             assert!(read_config(path).is_err());
+            Ok(())
+        });
+    }
+
+    #[rstest::rstest]
+    #[case::same_path("/mcp", None, false)]
+    #[case::below_endpoint("/mcp/health", None, true)]
+    #[case::separate_listener("/mcp", Some("127.0.0.1:9000"), true)]
+    fn it_validates_health_path_against_transport_path(
+        #[case] health_path: &str,
+        #[case] listen: Option<&str>,
+        #[case] valid: bool,
+    ) {
+        let listen = listen.map_or(String::new(), |addr| format!("listen: {addr}"));
+        let config = format!(
+            "
+            transport:
+              type: streamable_http
+            health_check:
+              enabled: true
+              path: {health_path}
+              {listen}
+            "
+        );
+
+        figment::Jail::expect_with(move |jail| {
+            let path = "config.yaml";
+            jail.create_file(path, &config)?;
+
+            let result = read_config(path);
+            assert_eq!(result.is_ok(), valid, "{result:?}");
             Ok(())
         });
     }

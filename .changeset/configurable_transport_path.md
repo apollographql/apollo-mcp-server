@@ -12,4 +12,4 @@ transport:
   path: /v1/agents
 ```
 
-If you use auth, set `transport.auth.resource` to a URL that ends with the same path, so that the OAuth protected resource metadata is served at the matching well-known URL.
+If you use auth, keep `transport.auth.resource` in line with the new path, for example `https://mcp.example.com/v1/agents`, so that clients accept the OAuth protected resource metadata. The server logs a warning at startup when the two don't match.

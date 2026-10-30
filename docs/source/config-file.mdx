@@ -445,7 +445,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. The root path (`/`), a trailing `/`, and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path or under it. |
+| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. The root path (`/`), a trailing `/`, and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
 | `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 
