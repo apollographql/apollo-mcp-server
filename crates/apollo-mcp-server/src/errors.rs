@@ -94,6 +94,15 @@ pub enum ServerError {
     #[error("Could not open file: {0}")]
     ReadFile(#[from] std::io::Error),
 
+    #[error(
+        "health check path {health_path} conflicts with the MCP endpoint path {endpoint_path}; \
+         change health_check.path or transport.path, or set health_check.listen"
+    )]
+    HealthPathConflict {
+        health_path: String,
+        endpoint_path: crate::server::EndpointPath,
+    },
+
     #[error("Failed to bind listener on {0}: {1}")]
     Bind(SocketAddr, #[source] std::io::Error),
 

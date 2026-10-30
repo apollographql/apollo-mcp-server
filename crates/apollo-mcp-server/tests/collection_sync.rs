@@ -119,6 +119,7 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
             auth: None,
             address: "127.0.0.1".parse().unwrap(),
             port: 0,
+            path: Default::default(),
             stateful_mode: false,
             host_validation: HostValidationConfig::default(),
         })

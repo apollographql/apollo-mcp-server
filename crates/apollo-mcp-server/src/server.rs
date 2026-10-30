@@ -23,7 +23,10 @@ use crate::operations::{AnnotationOverrides, MutationMode, OperationSource, Para
 use crate::scope_requirements::{OperationRequiredScopes, OperationScopeRequirements};
 use crate::server_info::ServerInfoConfig;
 
+mod endpoint_path;
 pub(crate) mod states;
+
+pub use endpoint_path::{EndpointPath, EndpointPathError};
 
 pub use states::telemetry::w3c_text_map_propagator;
 pub use states::{MCP_SERVER_OPERATION_DURATION, MCP_SERVER_OPERATION_DURATION_KEYS};
@@ -111,6 +114,10 @@ pub enum Transport {
         /// The port to bind to
         #[serde(default = "Transport::default_port")]
         port: u16,
+
+        /// The URL path to serve MCP requests on. Defaults to `/mcp`.
+        #[serde(default)]
+        path: EndpointPath,
 
         /// Enable legacy HTTP sessions for clients on protocol versions before
         /// 2026-07-28. Sessionless requests do not receive unsolicited
