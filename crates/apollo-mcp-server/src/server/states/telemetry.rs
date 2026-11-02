@@ -331,8 +331,9 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
 }
 
 /// Prepare the handler span, record the request's session on it, and retain
-/// its parent context for poll-scoped attachment even when the span is filtered. Set the parent before entry:
-/// the OTel layer starts spans on entry, after which parentage cannot change.
+/// its parent context for poll-scoped attachment even when the span is
+/// filtered. Set the parent before entry: the OTel layer starts spans on
+/// entry, after which parentage cannot change.
 pub(super) fn with_request_context(
     span: tracing::Span,
     context: &RequestContext<RoleServer>,
