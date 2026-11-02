@@ -155,7 +155,7 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
 
     // Only the `initialize` response assigns a session; every later request
     // carries it inbound instead, so read both ends to label the whole session.
-    let inbound_session_id = session_id(request.headers()).map(str::to_owned);
+    let inbound_session_id = inbound_session_id(request.headers()).map(str::to_owned);
 
     // `GET /mcp` is the session's standing server-to-client stream: its body
     // never ends while the session lives. Only a body that terminates with the
@@ -194,6 +194,16 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
     } else {
         response
     }
+}
+
+/// The session ID a request carries, unless it uses a protocol without
+/// sessions: rmcp skips the session lookup for those, so the header goes
+/// unchecked even in stateful mode.
+fn inbound_session_id(headers: &http::HeaderMap) -> Option<&str> {
+    if crate::auth::uses_stateless_protocol(headers) {
+        return None;
+    }
+    session_id(headers)
 }
 
 fn session_id(headers: &http::HeaderMap) -> Option<&str> {
@@ -330,9 +340,10 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
         .unwrap_or_else(tracing::Span::none)
 }
 
-/// Prepare the handler span and retain its parent context for poll-scoped
-/// attachment even when the span is filtered. Set the parent before entry:
-/// the OTel layer starts spans on entry, after which parentage cannot change.
+/// Prepare the handler span, record the request's session on it, and retain
+/// its parent context for poll-scoped attachment even when the span is
+/// filtered. Set the parent before entry: the OTel layer starts spans on
+/// entry, after which parentage cannot change.
 pub(super) fn with_request_context(
     span: tracing::Span,
     context: &RequestContext<RoleServer>,
@@ -352,6 +363,26 @@ pub(super) fn with_request_context(
     // Disabled spans cannot accept a parent, but the future must still attach
     // it so enabled downstream spans and Rhai hooks see this request's context.
     let _ = span.set_parent(parent.clone());
+    // MCP and transport contexts are independent, so when `_meta` supplies the
+    // parent, the conventions ask for a link to the transport's context.
+    // Compare the IDs alone: the same span can arrive with a different
+    // tracestate in the header and in `_meta`.
+    let ambient = http_parent.span().span_context().clone();
+    let selected = parent.span().span_context().clone();
+    if ambient.is_valid()
+        && (ambient.trace_id(), ambient.span_id()) != (selected.trace_id(), selected.span_id())
+    {
+        span.add_link(ambient);
+    }
+    // The handler runs only for a request the transport accepted, and reads
+    // the header the same way the HTTP span does for `apollo.mcp.session_id`.
+    if let Some(id) = context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| inbound_session_id(&parts.headers))
+    {
+        span.record("mcp.session.id", id);
+    }
     (span, parent)
 }
 

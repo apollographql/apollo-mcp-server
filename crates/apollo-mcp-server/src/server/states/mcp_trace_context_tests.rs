@@ -230,6 +230,10 @@ fn attribute(span: &SpanData, key: &str) -> Option<String> {
 #[rstest::rstest]
 #[case::mcp_method_name("mcp.method.name", "tools/call")]
 #[case::gen_ai_operation_name("gen_ai.operation.name", "execute_tool")]
+#[case::mcp_protocol_version("mcp.protocol.version", "2025-11-25")]
+#[case::network_transport("network.transport", "tcp")]
+#[case::network_protocol_name("network.protocol.name", "http")]
+#[case::network_protocol_version("network.protocol.version", "1.1")]
 #[tokio::test]
 async fn call_tool_span_records_constant_attribute(#[case] key: &str, #[case] expected: &str) {
     let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
@@ -523,6 +527,66 @@ async fn filtered_handler_preserves_request_context(
             assert!(!spans.iter().any(|span| span.span_kind == SpanKind::Server));
         }
     }
+}
+
+fn linked_span_ids(span: &SpanData) -> Vec<String> {
+    span.links
+        .iter()
+        .map(|link| link.span_context.span_id().to_string())
+        .collect()
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn metadata_parented_handler_links_the_http_span(
+    #[values("2025-11-25", "2026-07-28")] version: &str,
+) {
+    let (spans, _) = http_tool_call(json!({"traceparent": TRACEPARENT}), vec![], version).await;
+    let http = named(&spans, "POST /mcp")
+        .span_context
+        .span_id()
+        .to_string();
+    assert_eq!(linked_span_ids(named(&spans, "call_tool")), vec![http]);
+}
+
+#[tokio::test]
+async fn metadata_parented_handler_links_the_header_context_when_http_span_is_filtered() {
+    let (spans, _) = http_tool_call_with_filter(
+        json!({"traceparent": TRACEPARENT}),
+        vec![],
+        "2026-07-28",
+        "trace,apollo_mcp_server::server::states::telemetry=off",
+        false,
+        GRAPHQL_DATA,
+        true,
+    )
+    .await;
+    assert_eq!(
+        linked_span_ids(named(&spans, "call_tool")),
+        vec!["bbbbbbbbbbbbbbbb"]
+    );
+}
+
+#[tokio::test]
+async fn handler_skips_the_link_when_metadata_names_the_header_span() {
+    // Same span as the header, but a different tracestate.
+    let (spans, _) = http_tool_call_with_filter(
+        json!({"traceparent": HTTP_TRACEPARENT, "tracestate": "vendor=value"}),
+        vec![],
+        "2026-07-28",
+        "trace,apollo_mcp_server::server::states::telemetry=off",
+        false,
+        GRAPHQL_DATA,
+        true,
+    )
+    .await;
+    assert!(linked_span_ids(named(&spans, "call_tool")).is_empty());
+}
+
+#[tokio::test]
+async fn http_parented_handler_has_no_links() {
+    let (spans, _) = http_tool_call(json!({}), vec![], "2026-07-28").await;
+    assert!(linked_span_ids(named(&spans, "call_tool")).is_empty());
 }
 
 #[tokio::test]
@@ -887,15 +951,15 @@ async fn each_http_handler_records_mcp_method_name(
     );
 }
 
-#[tokio::test]
-async fn initialize_span_records_mcp_method_name() {
+/// Sends `initialize` asking for `protocol_version` and returns its handler span.
+async fn initialize_span(protocol_version: &str) -> SpanData {
     let spans = ExportedSpans::capture();
     let mut request = mcp_request("/mcp");
     *request.body_mut() = Body::from(
         json!({
             "jsonrpc": "2.0", "id": 1, "method": "initialize",
             "params": {
-                "protocolVersion": "2025-11-25", "capabilities": {},
+                "protocolVersion": protocol_version, "capabilities": {},
                 "clientInfo": {"name": "test-client", "version": "1.0.0"}
             }
         })
@@ -906,10 +970,25 @@ async fn initialize_span_records_mcp_method_name() {
         .await
         .unwrap();
     response.into_body().collect().await.unwrap();
-    let spans = spans.collect();
+    named(&spans.collect(), "initialize").clone()
+}
+
+#[tokio::test]
+async fn initialize_span_records_mcp_method_name() {
+    let span = initialize_span("2025-11-25").await;
     assert_eq!(
-        attribute(named(&spans, "initialize"), "mcp.method.name").as_deref(),
+        attribute(&span, "mcp.method.name").as_deref(),
         Some("initialize")
+    );
+}
+
+#[tokio::test]
+async fn initialize_span_records_negotiated_protocol_version() {
+    // The newest version the legacy handshake negotiates, not the one asked for.
+    let span = initialize_span("1999-01-01").await;
+    assert_eq!(
+        attribute(&span, "mcp.protocol.version").as_deref(),
+        Some("2025-11-25")
     );
 }
 
@@ -1209,6 +1288,129 @@ async fn each_http_handler_records_jsonrpc_request_id(
     assert_eq!(
         attribute(named(&spans, name), "jsonrpc.request.id").as_deref(),
         Some("1")
+    );
+}
+
+#[rstest::rstest]
+#[case::mcp_protocol_version("mcp.protocol.version", "2026-07-28")]
+#[case::network_transport("network.transport", "tcp")]
+#[case::network_protocol_name("network.protocol.name", "http")]
+#[case::network_protocol_version("network.protocol.version", "1.1")]
+#[tokio::test]
+async fn http_handler_records_request_attribute(#[case] key: &str, #[case] expected: &str) {
+    let spans = http_handler_spans("tools/list", json!({})).await;
+    assert_eq!(
+        attribute(named(&spans, "list_tools"), key).as_deref(),
+        Some(expected)
+    );
+}
+
+fn duplicate_attribute_keys(span: &SpanData) -> Vec<&str> {
+    let mut keys: Vec<_> = span.attributes.iter().map(|kv| kv.key.as_str()).collect();
+    keys.sort_unstable();
+    let mut duplicates: Vec<_> = keys
+        .windows(2)
+        .filter(|w| w[0] == w[1])
+        .map(|w| w[0])
+        .collect();
+    duplicates.dedup();
+    duplicates
+}
+
+#[tokio::test]
+async fn http_handler_records_each_attribute_once() {
+    let spans = http_handler_spans("tools/list", json!({})).await;
+    assert_eq!(
+        duplicate_attribute_keys(named(&spans, "list_tools")),
+        Vec::<&str>::new()
+    );
+}
+
+#[tokio::test]
+async fn call_tool_span_records_each_attribute_once() {
+    let (spans, _) = http_tool_call(json!({}), vec![], "2026-07-28").await;
+    assert_eq!(
+        duplicate_attribute_keys(named(&spans, "call_tool")),
+        Vec::<&str>::new()
+    );
+}
+
+#[tokio::test]
+async fn stateless_handler_omits_mcp_session_id() {
+    let spans = http_handler_spans("tools/list", json!({})).await;
+    assert_eq!(
+        attribute(named(&spans, "list_tools"), "mcp.session.id"),
+        None
+    );
+}
+
+/// A 2026-07-28 request on a stateful server, carrying a session ID that rmcp
+/// never checks because the protocol has no sessions.
+async fn stateless_request_with_session_header_spans() -> Vec<SpanData> {
+    let spans = ExportedSpans::capture();
+    let mut request = metadata_request(1, "tools/list", json!({}));
+    request
+        .headers_mut()
+        .insert("mcp-session-id", http::HeaderValue::from_static("made-up"));
+    let response = production_router(create_test_running())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    response.into_body().collect().await.unwrap();
+    spans.collect()
+}
+
+#[tokio::test]
+async fn stateless_handler_ignores_session_header() {
+    let spans = stateless_request_with_session_header_spans().await;
+    assert_eq!(
+        attribute(named(&spans, "list_tools"), "mcp.session.id"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn stateless_http_span_ignores_session_header() {
+    let spans = stateless_request_with_session_header_spans().await;
+    assert_eq!(
+        attribute(
+            named(&spans, "POST /mcp"),
+            TelemetryAttribute::SessionId.as_str()
+        ),
+        None
+    );
+}
+
+#[tokio::test]
+async fn session_handler_records_mcp_session_id() {
+    let spans = ExportedSpans::capture();
+    let router = production_router(create_test_running());
+    let initialized = router.clone().oneshot(mcp_request("/mcp")).await.unwrap();
+    let session = initialized.headers()["mcp-session-id"].clone();
+    initialized.into_body().collect().await.unwrap();
+    let notified = router
+        .clone()
+        .oneshot(session_request(
+            &session,
+            json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        ))
+        .await
+        .unwrap();
+    notified.into_body().collect().await.unwrap();
+    let response = router
+        .oneshot(session_request(
+            &session,
+            json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
+        ))
+        .await
+        .unwrap();
+    response.into_body().collect().await.unwrap();
+
+    let spans = spans.collect();
+    assert_eq!(
+        attribute(named(&spans, "list_tools"), "mcp.session.id").as_deref(),
+        session.to_str().ok()
     );
 }
 
