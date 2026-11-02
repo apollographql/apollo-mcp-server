@@ -6,6 +6,7 @@ const GEN_AI_TOOL_NAME: Key = Key::from_static_str("gen_ai.tool.name");
 const GEN_AI_TOOL_CALL_ARGUMENTS: Key = Key::from_static_str("gen_ai.tool.call.arguments");
 const GEN_AI_TOOL_CALL_RESULT: Key = Key::from_static_str("gen_ai.tool.call.result");
 const JSONRPC_REQUEST_ID: Key = Key::from_static_str("jsonrpc.request.id");
+const MCP_SESSION_ID: Key = Key::from_static_str("mcp.session.id");
 
 impl TelemetryAttribute {
     pub const fn to_key(self) -> Key {
@@ -60,6 +61,7 @@ impl TelemetryAttribute {
             TelemetryAttribute::ToolArguments => Some(GEN_AI_TOOL_CALL_ARGUMENTS),
             TelemetryAttribute::ToolResult => Some(GEN_AI_TOOL_CALL_RESULT),
             TelemetryAttribute::RequestId => Some(JSONRPC_REQUEST_ID),
+            TelemetryAttribute::SessionId => Some(MCP_SESSION_ID),
             _ => None,
         };
         std::iter::once(self.to_key()).chain(semconv)
@@ -84,6 +86,7 @@ mod tests {
     #[case::tool_arguments(TelemetryAttribute::ToolArguments, vec!["apollo.mcp.tool_arguments", "gen_ai.tool.call.arguments"])]
     #[case::tool_result(TelemetryAttribute::ToolResult, vec!["apollo.mcp.tool_result", "gen_ai.tool.call.result"])]
     #[case::request_id(TelemetryAttribute::RequestId, vec!["apollo.mcp.request_id", "jsonrpc.request.id"])]
+    #[case::session_id(TelemetryAttribute::SessionId, vec!["apollo.mcp.session_id", "mcp.session.id"])]
     #[case::graphql_query(TelemetryAttribute::GraphqlQuery, vec!["apollo.mcp.graphql_query"])]
     fn span_keys_include_semconv_counterpart(
         #[case] attribute: TelemetryAttribute,

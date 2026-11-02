@@ -748,6 +748,11 @@ macro_rules! request_span {
             rpc.response.status_code = tracing::field::Empty,
             otel.status_code = tracing::field::Empty,
             otel.status_description = tracing::field::Empty,
+            mcp.protocol.version = tracing::field::Empty,
+            mcp.session.id = tracing::field::Empty,
+            network.transport = tracing::field::Empty,
+            network.protocol.name = tracing::field::Empty,
+            network.protocol.version = tracing::field::Empty,
             $($($extra)+)?
         )
     };
@@ -944,6 +949,7 @@ impl ServerHandler for McpService {
         metric
             .attributes
             .push(KeyValue::new("gen_ai.operation.name", "execute_tool"));
+        metric.record_on(&span);
         let execution_span = span.clone();
         let execution_parent = parent_context.clone();
         let response = async {
@@ -1396,6 +1402,7 @@ pub(super) async fn in_request_span<T>(
     metric: OperationMetric,
     handler: impl Future<Output = Result<T, McpError>>,
 ) -> Result<T, McpError> {
+    metric.record_on(&span);
     let start = Instant::now();
     let result = handler
         .instrument(span.clone())
@@ -1475,6 +1482,23 @@ impl OperationMetric {
     fn with_target(mut self, key: &'static str, name: impl Into<opentelemetry::Value>) -> Self {
         self.target = Some(KeyValue::new(key, name));
         self
+    }
+
+    /// Records the request's protocol and transport attributes on `span`.
+    /// Only the fields `request_span!` leaves empty are recorded: recording a
+    /// field the span already set adds a second copy of the key.
+    fn record_on(&self, span: &tracing::Span) {
+        const SPAN_KEYS: [&str; 4] = [
+            "mcp.protocol.version",
+            NETWORK_TRANSPORT,
+            NETWORK_PROTOCOL_NAME,
+            NETWORK_PROTOCOL_VERSION,
+        ];
+        for attribute in &self.attributes {
+            if SPAN_KEYS.contains(&attribute.key.as_str()) {
+                span.record(attribute.key.as_str(), attribute.value.as_str().as_ref());
+            }
+        }
     }
 
     /// The measurement's attributes for a request that ended with `error`, or
