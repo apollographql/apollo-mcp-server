@@ -353,6 +353,12 @@ pub(super) fn with_request_context(
     // Disabled spans cannot accept a parent, but the future must still attach
     // it so enabled downstream spans and Rhai hooks see this request's context.
     let _ = span.set_parent(parent.clone());
+    // MCP and transport contexts are independent, so when `_meta` supplies the
+    // parent, the conventions ask for a link to the transport's context.
+    let ambient = http_parent.span().span_context().clone();
+    if ambient.is_valid() && *parent.span().span_context() != ambient {
+        span.add_link(ambient);
+    }
     // The handler runs only for a request the transport accepted, the same
     // rule the HTTP span follows for `apollo.mcp.session_id`.
     if let Some(id) = context

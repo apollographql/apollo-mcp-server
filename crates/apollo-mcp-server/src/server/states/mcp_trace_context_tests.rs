@@ -529,6 +529,50 @@ async fn filtered_handler_preserves_request_context(
     }
 }
 
+fn linked_span_ids(span: &SpanData) -> Vec<String> {
+    span.links
+        .iter()
+        .map(|link| link.span_context.span_id().to_string())
+        .collect()
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn metadata_parented_handler_links_the_http_span(
+    #[values("2025-11-25", "2026-07-28")] version: &str,
+) {
+    let (spans, _) = http_tool_call(json!({"traceparent": TRACEPARENT}), vec![], version).await;
+    let http = named(&spans, "POST /mcp")
+        .span_context
+        .span_id()
+        .to_string();
+    assert_eq!(linked_span_ids(named(&spans, "call_tool")), vec![http]);
+}
+
+#[tokio::test]
+async fn metadata_parented_handler_links_the_header_context_when_http_span_is_filtered() {
+    let (spans, _) = http_tool_call_with_filter(
+        json!({"traceparent": TRACEPARENT}),
+        vec![],
+        "2026-07-28",
+        "trace,apollo_mcp_server::server::states::telemetry=off",
+        false,
+        GRAPHQL_DATA,
+        true,
+    )
+    .await;
+    assert_eq!(
+        linked_span_ids(named(&spans, "call_tool")),
+        vec!["bbbbbbbbbbbbbbbb"]
+    );
+}
+
+#[tokio::test]
+async fn http_parented_handler_has_no_links() {
+    let (spans, _) = http_tool_call(json!({}), vec![], "2026-07-28").await;
+    assert!(linked_span_ids(named(&spans, "call_tool")).is_empty());
+}
+
 #[tokio::test]
 async fn initialize_metadata_parents_the_handler_without_reparenting_http() {
     let spans = ExportedSpans::capture();
