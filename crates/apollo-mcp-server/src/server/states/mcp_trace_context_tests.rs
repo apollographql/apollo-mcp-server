@@ -1344,6 +1344,44 @@ async fn stateless_handler_omits_mcp_session_id() {
     );
 }
 
+/// A 2026-07-28 request on a stateful server, carrying a session ID that rmcp
+/// never checks because the protocol has no sessions.
+async fn stateless_request_with_session_header_spans() -> Vec<SpanData> {
+    let spans = ExportedSpans::capture();
+    let mut request = metadata_request(1, "tools/list", json!({}));
+    request
+        .headers_mut()
+        .insert("mcp-session-id", http::HeaderValue::from_static("made-up"));
+    let response = production_router(create_test_running())
+        .oneshot(request)
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    response.into_body().collect().await.unwrap();
+    spans.collect()
+}
+
+#[tokio::test]
+async fn stateless_handler_ignores_session_header() {
+    let spans = stateless_request_with_session_header_spans().await;
+    assert_eq!(
+        attribute(named(&spans, "list_tools"), "mcp.session.id"),
+        None
+    );
+}
+
+#[tokio::test]
+async fn stateless_http_span_ignores_session_header() {
+    let spans = stateless_request_with_session_header_spans().await;
+    assert_eq!(
+        attribute(
+            named(&spans, "POST /mcp"),
+            TelemetryAttribute::SessionId.as_str()
+        ),
+        None
+    );
+}
+
 #[tokio::test]
 async fn session_handler_records_mcp_session_id() {
     let spans = ExportedSpans::capture();

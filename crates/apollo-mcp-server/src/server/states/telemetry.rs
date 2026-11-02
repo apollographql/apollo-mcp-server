@@ -155,7 +155,7 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
 
     // Only the `initialize` response assigns a session; every later request
     // carries it inbound instead, so read both ends to label the whole session.
-    let inbound_session_id = session_id(request.headers()).map(str::to_owned);
+    let inbound_session_id = inbound_session_id(request.headers()).map(str::to_owned);
 
     // `GET /mcp` is the session's standing server-to-client stream: its body
     // never ends while the session lives. Only a body that terminates with the
@@ -194,6 +194,16 @@ pub async fn otel_context_middleware(mut request: Request, next: Next) -> Respon
     } else {
         response
     }
+}
+
+/// The session ID a request carries, unless it uses a protocol without
+/// sessions: rmcp skips the session lookup for those, so the header goes
+/// unchecked even in stateful mode.
+fn inbound_session_id(headers: &http::HeaderMap) -> Option<&str> {
+    if crate::auth::uses_stateless_protocol(headers) {
+        return None;
+    }
+    session_id(headers)
 }
 
 fn session_id(headers: &http::HeaderMap) -> Option<&str> {
@@ -364,12 +374,12 @@ pub(super) fn with_request_context(
     {
         span.add_link(ambient);
     }
-    // The handler runs only for a request the transport accepted, the same
-    // rule the HTTP span follows for `apollo.mcp.session_id`.
+    // The handler runs only for a request the transport accepted, and reads
+    // the header the same way the HTTP span does for `apollo.mcp.session_id`.
     if let Some(id) = context
         .extensions
         .get::<axum::http::request::Parts>()
-        .and_then(|parts| session_id(&parts.headers))
+        .and_then(|parts| inbound_session_id(&parts.headers))
     {
         span.record("mcp.session.id", id);
     }

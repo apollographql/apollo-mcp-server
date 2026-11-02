@@ -777,9 +777,8 @@ fn standard_headers_enforced(request: &Request) -> bool {
 ///
 /// A missing header is legacy, as in rmcp. The known-version allowlist fails
 /// closed, so an unrecognized version stays gated.
-fn uses_stateless_protocol(request: &Request) -> bool {
-    request
-        .headers()
+pub(crate) fn uses_stateless_protocol(headers: &HeaderMap) -> bool {
+    headers
         .get(HEADER_MCP_PROTOCOL_VERSION)
         .and_then(|value| value.to_str().ok())
         .and_then(|version| {
@@ -882,7 +881,7 @@ async fn oauth_validate(
     // here. A legacy-protocol GET in stateful mode carries real traffic and
     // stays gated below like any other request.
     if request.method() == Method::GET
-        && (!auth_state.stateful_mode || uses_stateless_protocol(&request))
+        && (!auth_state.stateful_mode || uses_stateless_protocol(request.headers()))
     {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
