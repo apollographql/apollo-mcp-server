@@ -330,8 +330,8 @@ pub fn get_parent_span(context: &RequestContext<RoleServer>) -> tracing::Span {
         .unwrap_or_else(tracing::Span::none)
 }
 
-/// Prepare the handler span and retain its parent context for poll-scoped
-/// attachment even when the span is filtered. Set the parent before entry:
+/// Prepare the handler span, record the request's session on it, and retain
+/// its parent context for poll-scoped attachment even when the span is filtered. Set the parent before entry:
 /// the OTel layer starts spans on entry, after which parentage cannot change.
 pub(super) fn with_request_context(
     span: tracing::Span,
@@ -352,6 +352,15 @@ pub(super) fn with_request_context(
     // Disabled spans cannot accept a parent, but the future must still attach
     // it so enabled downstream spans and Rhai hooks see this request's context.
     let _ = span.set_parent(parent.clone());
+    // The handler runs only for a request the transport accepted, the same
+    // rule the HTTP span follows for `apollo.mcp.session_id`.
+    if let Some(id) = context
+        .extensions
+        .get::<axum::http::request::Parts>()
+        .and_then(|parts| session_id(&parts.headers))
+    {
+        span.record("mcp.session.id", id);
+    }
     (span, parent)
 }
 

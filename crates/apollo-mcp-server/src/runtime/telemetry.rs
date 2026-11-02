@@ -697,6 +697,7 @@ mod tests {
     #[case::tool_name(&[TelemetryAttribute::ToolName], &["apollo.mcp.tool_name", "gen_ai.tool.name"])]
     #[case::tool_arguments(&[TelemetryAttribute::ToolArguments], &["apollo.mcp.tool_arguments", "gen_ai.tool.call.arguments"])]
     #[case::request_id(&[TelemetryAttribute::RequestId], &["apollo.mcp.request_id", "jsonrpc.request.id"])]
+    #[case::session_id(&[TelemetryAttribute::SessionId], &["apollo.mcp.session_id", "mcp.session.id"])]
     #[case::graphql_query(&[TelemetryAttribute::GraphqlQuery], &["apollo.mcp.graphql_query"])]
     fn omitted_span_keys_include_semconv_counterparts(
         #[case] omitted: &[TelemetryAttribute],
