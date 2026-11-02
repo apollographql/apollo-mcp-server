@@ -27,6 +27,7 @@ The script reads its configuration from environment variables:
 | `TOKEN_EXCHANGE_CLIENT_ID`     | The client ID that Apollo MCP Server uses at the token endpoint. |
 | `TOKEN_EXCHANGE_CLIENT_SECRET` | The secret for that client.                                     |
 | `TOKEN_EXCHANGE_AUDIENCE`      | The audience to request for the new token, such as your API's identifier. |
+| `TOKEN_EXCHANGE_BASIC_CREDENTIALS` | Only for HTTP Basic client authentication: Base64 of `client_id:client_secret`, used instead of the client ID and secret in the body. For more information, go to [Adapting the script](#adapting-the-script). |
 
 ```rhai title="rhai/main.rhai"
 // Configuration only. Top-level statements run again before every hook call,
@@ -118,7 +119,15 @@ fn on_execute_graphql_operation(ctx) {
     }).wait();
 
     if response.status != 200 {
-        print(`token exchange failed: status=${response.status} trace_id=${ctx.trace_id}`);
+        // The body may not be JSON, for example an HTML error page from a proxy.
+        let detail = response.text().sub_string(0, 200);
+        try {
+            let error = response.json().error;
+            if type_of(error) == "string" {
+                detail = error;
+            }
+        } catch {}
+        print(`token exchange failed: status=${response.status} error=${detail} trace_id=${ctx.trace_id}`);
         throw #{
             message: "Token exchange failed",
             code: ErrorCode::INTERNAL_ERROR

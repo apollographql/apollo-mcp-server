@@ -141,7 +141,7 @@ fn on_execute_graphql_operation(ctx) {
 
 `ctx.trace_id` is a 32-character lowercase hex string when an OpenTelemetry trace context is active, and an empty string when the hook runs without an active span. The same trace ID is also prefixed onto server log lines, so you can correlate values emitted from Rhai with the rest of the server's output.
 
-### Example: Exchange the client's token
+### Token exchange
 
 To swap the client's token for one scoped to your GraphQL API before each request, see [Token exchange with Rhai](/apollo-mcp-server/rhai-token-exchange).
 
