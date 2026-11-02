@@ -31,7 +31,7 @@ mod tests {
 
     #[test]
     fn deserializes_custom_path() {
-        let config = serde_yaml::from_str::<AppsConfig>("path: /config/apps\n")
+        let config = yaml_serde::from_str::<AppsConfig>("path: /config/apps\n")
             .expect("Apps config should parse");
 
         assert_eq!(config.path, std::path::PathBuf::from("/config/apps"));
@@ -39,7 +39,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_fields() {
-        let err = serde_yaml::from_str::<AppsConfig>("dir: /config/apps\n")
+        let err = yaml_serde::from_str::<AppsConfig>("dir: /config/apps\n")
             .expect_err("unknown field should be rejected")
             .to_string();
 

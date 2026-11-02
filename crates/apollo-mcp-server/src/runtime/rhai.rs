@@ -34,7 +34,7 @@ mod tests {
 
     #[test]
     fn deserializes_custom_path() {
-        let config = serde_yaml::from_str::<RhaiConfig>("scripts: /config/rhai\n")
+        let config = yaml_serde::from_str::<RhaiConfig>("scripts: /config/rhai\n")
             .expect("Rhai config should parse");
 
         assert_eq!(config.scripts_dir, std::path::PathBuf::from("/config/rhai"));

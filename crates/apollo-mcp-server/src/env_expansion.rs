@@ -2,7 +2,7 @@
 //!
 //! Supports `${env.VAR_NAME}` and `${env.VAR_NAME:-default}` syntax.
 
-use serde_yaml::Value;
+use yaml_serde::Value;
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum EnvExpansionError {
@@ -25,14 +25,14 @@ pub enum EnvExpansionError {
 /// environment variables, coerces types, and returns the expanded YAML string.
 pub fn expand_yaml(yaml_content: &str) -> Result<String, EnvExpansionError> {
     // Parse YAML to AST
-    let mut value: Value = serde_yaml::from_str(yaml_content)
+    let mut value: Value = yaml_serde::from_str(yaml_content)
         .map_err(|e| EnvExpansionError::YamlParse(e.to_string()))?;
 
     // Walk and expand environment variables
     expand_value(&mut value)?;
 
     // Serialize back to YAML string
-    serde_yaml::to_string(&value).map_err(|e| EnvExpansionError::YamlSerialize(e.to_string()))
+    yaml_serde::to_string(&value).map_err(|e| EnvExpansionError::YamlSerialize(e.to_string()))
 }
 
 /// Recursively walk the YAML AST and expand environment variables in string nodes.
@@ -73,7 +73,7 @@ fn expand_value(value: &mut Value) -> Result<(), EnvExpansionError> {
 /// - `"hello"` → `String("hello")`
 /// - `"port: 8080"` → `String("port: 8080")` (stays string, not parsed as mapping)
 pub fn coerce(s: &str) -> Value {
-    match serde_yaml::from_str(s) {
+    match yaml_serde::from_str(s) {
         Ok(Value::Bool(b)) => Value::Bool(b),
         Ok(Value::Number(n)) => Value::Number(n),
         Ok(Value::Null) => Value::Null,
@@ -120,7 +120,7 @@ mod tests {
                 let yaml = "enabled: \"${env.MY_BOOL}\"";
                 let result = expand_yaml(yaml).unwrap();
                 // Should be coerced to boolean, not string "true"
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert_eq!(parsed["enabled"], Value::Bool(true));
                 Ok(())
             });
@@ -132,7 +132,7 @@ mod tests {
                 jail.set_env("MY_PORT", "8080");
                 let yaml = "port: \"${env.MY_PORT}\"";
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert!(parsed["port"].is_number());
                 assert_eq!(parsed["port"].as_u64(), Some(8080));
                 Ok(())
@@ -145,7 +145,7 @@ mod tests {
                 jail.set_env("MY_NULL", "null");
                 let yaml = "value: \"${env.MY_NULL}\"";
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert!(parsed["value"].is_null());
                 Ok(())
             });
@@ -157,7 +157,7 @@ mod tests {
                 jail.set_env("MY_STRING", "hello world");
                 let yaml = "name: \"${env.MY_STRING}\"";
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert_eq!(parsed["name"].as_str(), Some("hello world"));
                 Ok(())
             });
@@ -170,7 +170,7 @@ mod tests {
                 jail.set_env("MY_VALUE", "key: value with colon");
                 let yaml = "description: \"${env.MY_VALUE}\"";
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 // Should be a string, not a nested mapping
                 assert_eq!(
                     parsed["description"].as_str(),
@@ -192,7 +192,7 @@ server:
     enabled: "${env.ENABLED}"
 "#;
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert_eq!(parsed["server"]["port"].as_u64(), Some(3000));
                 assert_eq!(parsed["server"]["nested"]["enabled"], Value::Bool(true));
                 Ok(())
@@ -210,7 +210,7 @@ items:
   - "${env.VAL2}"
 "#;
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert_eq!(parsed["items"][0].as_str(), Some("first"));
                 assert_eq!(parsed["items"][1].as_u64(), Some(42));
                 Ok(())
@@ -223,7 +223,7 @@ items:
                 jail.set_env("MY_NUM", "123");
                 let yaml = "count: ${env.MY_NUM}";
                 let result = expand_yaml(yaml).unwrap();
-                let parsed: Value = serde_yaml::from_str(&result).unwrap();
+                let parsed: Value = yaml_serde::from_str(&result).unwrap();
                 assert_eq!(parsed["count"].as_u64(), Some(123));
                 Ok(())
             });

@@ -58,7 +58,7 @@ mod tests {
             "#
         );
 
-        let config: Config = serde_yaml::from_str(&yaml).expect("config parses");
+        let config: Config = yaml_serde::from_str(&yaml).expect("config parses");
         let metadata = ProtectedResource::from(config);
         let json = serde_json::to_value(&metadata).expect("metadata serializes");
 
@@ -79,7 +79,7 @@ mod tests {
               - read
         "#;
 
-        let config: Config = serde_yaml::from_str(yaml).expect("config parses");
+        let config: Config = yaml_serde::from_str(yaml).expect("config parses");
         let metadata = ProtectedResource::from(config);
         let json = serde_json::to_value(&metadata).expect("metadata serializes");
 

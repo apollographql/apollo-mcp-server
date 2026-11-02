@@ -27,7 +27,7 @@ use apollo_mcp_server::server::Transport;
 pub use config::Config;
 use figment::{
     Figment, Metadata, Profile, Provider,
-    providers::{Env, Format, Yaml},
+    providers::Env,
     value::{Dict, Map},
 };
 pub use operation_source::{IdOrDefault, OperationSource};
@@ -107,7 +107,10 @@ impl Provider for ConfigFile<'_> {
     }
 
     fn data(&self) -> Result<Map<Profile, Dict>, figment::Error> {
-        Yaml::string(self.expanded).data()
+        // What figment's `Yaml` provider does, with `yaml_serde` in place of the
+        // deprecated `serde_yaml` it's built on.
+        let dict: Dict = yaml_serde::from_str(self.expanded).map_err(|e| e.to_string())?;
+        Ok(Profile::Default.collect(dict))
     }
 }
 

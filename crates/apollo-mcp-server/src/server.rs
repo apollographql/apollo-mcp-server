@@ -274,21 +274,21 @@ mod tests {
     #[test]
     fn sse_transport_is_rejected_at_parse_time() {
         let yaml = "type: sse\nport: 8000";
-        let result = serde_yaml::from_str::<Transport>(yaml);
+        let result = yaml_serde::from_str::<Transport>(yaml);
         assert!(result.is_err(), "Expected SSE transport to be rejected");
     }
 
     #[test]
     fn stdio_transport_parses() {
         let yaml = "type: stdio";
-        let result = serde_yaml::from_str::<Transport>(yaml);
+        let result = yaml_serde::from_str::<Transport>(yaml);
         assert!(result.is_ok(), "Expected stdio transport to parse");
     }
 
     #[test]
     fn streamable_http_transport_parses() {
         let yaml = "type: streamable_http\nport: 9000";
-        let result = serde_yaml::from_str::<Transport>(yaml);
+        let result = yaml_serde::from_str::<Transport>(yaml);
         assert!(
             result.is_ok(),
             "Expected streamable_http transport to parse"

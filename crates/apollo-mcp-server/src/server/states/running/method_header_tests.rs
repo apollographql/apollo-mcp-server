@@ -30,7 +30,7 @@ fn router(handler: McpService, stateful: bool) -> Router {
             .with_json_response(true)
             .with_cancellation_token(cancel),
     );
-    let auth: crate::auth::Config = serde_yaml::from_str(
+    let auth: crate::auth::Config = yaml_serde::from_str(
         r#"
         servers: [https://auth.example.com]
         resource: http://localhost/mcp
