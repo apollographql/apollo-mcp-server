@@ -183,4 +183,4 @@ An operation saved with its own `Authorization` header, such as one saved in a G
 
 ### Expression complexity
 
-Building a request body in one long expression can fail with `Expression exceeds maximum complexity`. The example builds the body across several statements and moves the inner loop into `percent_encode_char` to stay within Rhai's nesting limit. For more information, go to [Script limits](/apollo-mcp-server/rhai-getting-started#script-limits).
+Building a request body in one long expression can fail with `Expression exceeds maximum complexity`. The example builds the body across multiple statements and moves the inner loop into `percent_encode_char` to stay within Rhai's nesting limit. For more information, go to [Script limits](/apollo-mcp-server/rhai-getting-started#script-limits).
