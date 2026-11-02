@@ -9,7 +9,7 @@ use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServiceExt as _, transport::stdio};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::server::states::telemetry::otel_context_middleware;
 use crate::{
@@ -23,7 +23,7 @@ use crate::{
     },
     operations::{MutationMode, RawOperation, warn_app_tool_collisions, warn_unmatched_operations},
     scope_requirements::OperationRequiredScopes,
-    server::Transport,
+    server::{EndpointPath, Transport},
 };
 use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
@@ -214,17 +214,18 @@ impl Starting {
                 auth,
                 address,
                 port,
+                path,
                 stateful_mode,
                 host_validation,
             } => {
-                info!(port = ?port, address = ?address, "Starting MCP server in Streamable HTTP mode");
+                info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
                 let listen_address = SocketAddr::new(address, port);
                 let service = build_http_service(running, stateful_mode, &host_validation);
                 let health_check = health_check.filter(|h| h.config().enabled);
 
                 let listeners =
-                    ListenerBuilder::new(listen_address, service, self.config.cors.clone())
+                    ListenerBuilder::new(listen_address, path, service, self.config.cors.clone())
                         .with_auth(auth, self.config.required_scopes.clone(), stateful_mode)?
                         .with_cors()?
                         .with_telemetry()
@@ -333,6 +334,18 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
     }
 }
 
+/// Clients accept a resource whose URL is a prefix of the MCP endpoint URL, which covers
+/// root resources such as `http://localhost:4000`. A gateway may also add a prefix the
+/// server never sees, so a resource that ends with the endpoint path matches too.
+fn resource_matches_path(resource: &url::Url, path: &EndpointPath) -> bool {
+    let resource_path = resource.path().trim_end_matches('/');
+    let path = path.as_str();
+    let is_prefix = path
+        .strip_prefix(resource_path)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
+    is_prefix || resource_path.ends_with(path)
+}
+
 /// One HTTP listener to serve, not yet bound to a socket.
 struct UnboundListener {
     address: SocketAddr,
@@ -365,18 +378,21 @@ impl UnboundListener {
 struct ListenerBuilder {
     router: axum::Router,
     listen_address: SocketAddr,
+    path: EndpointPath,
     cors: CorsConfig,
 }
 
 impl ListenerBuilder {
     fn new(
         listen_address: SocketAddr,
+        path: EndpointPath,
         service: StreamableHttpService<super::running::McpService, LocalSessionManager>,
         cors: CorsConfig,
     ) -> Self {
         Self {
-            router: axum::Router::new().nest_service("/mcp", service),
+            router: axum::Router::new().nest_service(path.as_str(), service),
             listen_address,
+            path,
             cors,
         }
     }
@@ -388,6 +404,14 @@ impl ListenerBuilder {
         stateful_mode: bool,
     ) -> Result<Self, ServerError> {
         if let Some(auth) = auth {
+            if !resource_matches_path(&auth.resource, &self.path) {
+                warn!(
+                    resource = %auth.resource,
+                    path = %self.path,
+                    "transport.auth.resource doesn't match transport.path, so OAuth clients may \
+                     reject the protected resource metadata"
+                );
+            }
             self.router = auth
                 .enable_middleware(self.router, required_scopes, stateful_mode)
                 .inspect_err(|e| {
@@ -423,6 +447,13 @@ impl ListenerBuilder {
         };
         let listeners = match health_check.config().listen {
             None => {
+                let health_path = &health_check.config().path;
+                if self.path.as_str() == health_path {
+                    return Err(ServerError::HealthPathConflict {
+                        health_path: health_path.clone(),
+                        endpoint_path: self.path,
+                    });
+                }
                 let router = with_cors(health_check.enable_router(self.router), &self.cors)?;
                 vec![UnboundListener {
                     address: self.listen_address,
@@ -474,6 +505,7 @@ mod tests {
                 auth: None,
                 address: "127.0.0.1".parse().unwrap(),
                 port,
+                path: Default::default(),
                 stateful_mode: false,
                 host_validation: HostValidationConfig::default(),
             },
@@ -558,6 +590,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn serves_mcp_only_at_configured_path() {
+        let running = super::super::running::test_support::create_test_running();
+        let service = build_http_service(running, false, &Default::default());
+        let path = EndpointPath::try_from("/v1/agents".to_owned()).unwrap();
+        let router = ListenerBuilder::new(
+            "127.0.0.1:0".parse().unwrap(),
+            path,
+            service,
+            CorsConfig::default(),
+        )
+        .router;
+
+        let get = |uri: &str| Request::get(uri).body(Body::empty()).unwrap();
+        let res = router.clone().oneshot(get("/v1/agents")).await.unwrap();
+        assert_ne!(res.status(), StatusCode::NOT_FOUND);
+
+        let res = router.oneshot(get("/mcp")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn with_health_rejects_endpoint_path() {
+        let health_check = HealthCheck::new(HealthCheckConfig {
+            enabled: true,
+            path: "/mcp".to_owned(),
+            ..Default::default()
+        });
+        let result = ListenerBuilder {
+            router: axum::Router::new(),
+            listen_address: "127.0.0.1:0".parse().unwrap(),
+            path: EndpointPath::default(),
+            cors: CorsConfig::default(),
+        }
+        .with_health(Some(&health_check));
+
+        assert!(matches!(
+            result,
+            Err(ServerError::HealthPathConflict { health_path, .. }) if health_path == "/mcp"
+        ));
+    }
+
+    #[tokio::test]
+    async fn with_health_serves_path_below_endpoint() {
+        let running = super::super::running::test_support::create_test_running();
+        let service = build_http_service(running, false, &Default::default());
+        let health_check = HealthCheck::new(HealthCheckConfig {
+            enabled: true,
+            path: "/mcp/health".to_owned(),
+            ..Default::default()
+        });
+        let listeners = ListenerBuilder::new(
+            "127.0.0.1:0".parse().unwrap(),
+            EndpointPath::default(),
+            service,
+            CorsConfig::default(),
+        )
+        .with_health(Some(&health_check))
+        .unwrap();
+        let UnboundListener { router, .. } = listeners.into_iter().next().unwrap();
+
+        let req = Request::get("/mcp/health").body(Body::empty()).unwrap();
+        let res = router.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[rstest::rstest]
+    #[case::same_path("https://mcp.example.com/mcp", true)]
+    #[case::trailing_slash("https://mcp.example.com/mcp/", true)]
+    #[case::root("https://mcp.example.com/", true)]
+    #[case::root_without_slash("http://localhost:4000", true)]
+    #[case::gateway_prefix("https://api.example.com/first-service/mcp", true)]
+    #[case::different_path("https://mcp.example.com/agents", false)]
+    #[case::shared_prefix("https://mcp.example.com/mc", false)]
+    #[case::shared_suffix("https://mcp.example.com/my-mcp", false)]
+    #[case::below_endpoint("https://mcp.example.com/mcp/extra", false)]
+    fn resource_matches_path_accepts_prefix_or_suffix(
+        #[case] resource: &str,
+        #[case] expected: bool,
+    ) {
+        let resource = url::Url::parse(resource).unwrap();
+        assert_eq!(
+            resource_matches_path(&resource, &EndpointPath::default()),
+            expected
+        );
+    }
+
+    #[tokio::test]
     async fn with_health_merges_into_main_router_when_listen_unset() {
         let health_check = HealthCheck::new(HealthCheckConfig {
             enabled: true,
@@ -566,6 +685,7 @@ mod tests {
         let listeners = ListenerBuilder {
             router: axum::Router::new(),
             listen_address: "127.0.0.1:0".parse().unwrap(),
+            path: EndpointPath::default(),
             cors: CorsConfig::default(),
         }
         .with_health(Some(&health_check))
@@ -596,6 +716,7 @@ mod tests {
         let mut listeners = ListenerBuilder {
             router: axum::Router::new(),
             listen_address: main_addr,
+            path: EndpointPath::default(),
             cors: CorsConfig::default(),
         }
         .with_health(Some(&health_check))
