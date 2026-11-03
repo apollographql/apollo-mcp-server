@@ -1,0 +1,26 @@
+name: Telemetry end to end
+on:
+  workflow_dispatch:
+
+jobs:
+  telemetry:
+    name: Telemetry end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Run the end-to-end telemetry check
+        run: bash e2e/telemetry/run.sh
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: telemetry-e2e
+          path: e2e/telemetry/artifacts/
+          if-no-files-found: warn

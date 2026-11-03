@@ -1,0 +1,32 @@
+endpoint: http://127.0.0.1:4201/graphql
+transport:
+  type: streamable_http
+  address: 127.0.0.1
+  port: 4200
+schema:
+  source: local
+  path: schema.graphql
+operations:
+  source: local
+  paths:
+    - operations
+health_check:
+  enabled: true
+logging:
+  # `logging/setLevel` logs at debug inside its span on the legacy protocol,
+  # which the log check uses.
+  level: debug
+  format: json
+telemetry:
+  exporters:
+    tracing:
+      otlp:
+        endpoint: http://127.0.0.1:4317
+        protocol: grpc
+      # A ratio, so the checks can pick trace IDs it keeps and ones it drops.
+      sampler: 0.5
+    metrics:
+      otlp:
+        endpoint: http://127.0.0.1:4317
+        protocol: grpc
+      export_interval: 1s
