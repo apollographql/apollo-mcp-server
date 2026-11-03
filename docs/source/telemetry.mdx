@@ -262,7 +262,7 @@ Stability is the status each metric carries in the OpenTelemetry semantic conven
 Spans are generated for the following actions:
 
 - **Incoming HTTP Requests**: The server creates a `SERVER` span for every HTTP request to the MCP endpoint. That span roots the trace unless the request carries a `traceparent` header. The server doesn't trace requests to the health check endpoint, so probes don't appear as service entry points.
-- **MCP Handler Methods**: Each implemented request handler creates a span, including tools, resources, prompts, initialization, logging, subscriptions, and [Tasks](/apollo-mcp-server/config-file#tasks) (`tasks/get`, `tasks/cancel`, and `tasks/update`). Every handler span records the request's MCP method, such as `tools/list` or `resources/read`, as `mcp.method.name`, and the JSON-RPC request ID as `jsonrpc.request.id`. It also records the MCP protocol version as `mcp.protocol.version`, which for `initialize` is the version the server negotiated, and the transport as `network.transport`: `tcp` for Streamable HTTP, with `network.protocol.name` and `network.protocol.version`, or `pipe` for stdio. A request on a session records the session ID as `mcp.session.id`. When a handler returns a JSON-RPC error, its span records the error code as `rpc.response.status_code`. When the error is a server error, the span also records the code as `error.type` and sets the span status to error, with the error message as the status description. Errors the caller causes, such as an unknown method or invalid parameters, leave the span status unset. The `resources/read` span records the resource URI as `mcp.resource.uri`, and the `prompts/get` span records the prompt name as `gen_ai.prompt.name`. With [`gen_ai_content`](#span-attributes) enabled, the `prompts/get` span also records each argument the prompt declares as `gen_ai.prompt.variable.<name>`, such as `gen_ai.prompt.variable.email`. A string value is recorded as is, and any other value as JSON. The server skips arguments the prompt doesn't declare, so a client can't add attribute names. Task handler spans never record the task ID, because a task ID can act as a bearer handle. Valid `_meta` trace context parents this span directly, with a span link to the HTTP request span; otherwise it nests beneath the HTTP request span or starts a new trace over stdio.
+- **MCP Handler Methods**: Each implemented request handler creates a span, including tools, resources, prompts, initialization, logging, subscriptions, and [Tasks](/apollo-mcp-server/config-file#tasks) (`tasks/get`, `tasks/cancel`, and `tasks/update`). Every handler span records the request's MCP method, such as `tools/list` or `resources/read`, as `mcp.method.name`, and the JSON-RPC request ID as `jsonrpc.request.id`. It also records the MCP protocol version as `mcp.protocol.version`, which for `initialize` is the version the server negotiated, and the transport as `network.transport`: `tcp` for Streamable HTTP, with `network.protocol.name` and `network.protocol.version`, or `pipe` for stdio. A request on a session records the session ID as `mcp.session.id`. Over Streamable HTTP, with [`client_address`](#client-addresses) enabled, the span also records `client.address` and `client.port`. When a handler returns a JSON-RPC error, its span records the error code as `rpc.response.status_code`. When the error is a server error, the span also records the code as `error.type` and sets the span status to error, with the error message as the status description. Errors the caller causes, such as an unknown method or invalid parameters, leave the span status unset. The `resources/read` span records the resource URI as `mcp.resource.uri`, and the `prompts/get` span records the prompt name as `gen_ai.prompt.name`. With [`gen_ai_content`](#span-attributes) enabled, the `prompts/get` span also records each argument the prompt declares as `gen_ai.prompt.variable.<name>`, such as `gen_ai.prompt.variable.email`. A string value is recorded as is, and any other value as JSON. The server skips arguments the prompt doesn't declare, so a client can't add attribute names. Task handler spans never record the task ID, because a task ID can act as a bearer handle. Valid `_meta` trace context parents this span directly, with a span link to the HTTP request span; otherwise it nests beneath the HTTP request span or starts a new trace over stdio.
 - **Tool Execution**: `call_tool` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
 - **Downstream GraphQL Calls**: The `execute` tool in Apollo MCP Server and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is caller-controlled, request-scoped context, not identity. Don't put secrets or personally identifiable information in baggage, and never use it for authorization. If your GraphQL endpoint crosses a trust boundary, filter baggage before forwarding it. Apollo MCP Server doesn't automatically copy baggage onto exported span attributes.
 
@@ -282,6 +282,9 @@ The inbound request span is named `{method} {route}`, for example `POST /mcp`. A
 | `server.port`               | The port from the `Host` header, when it carries one.                                    |
 | `user_agent.original`       | The `User-Agent` header.                                                                 |
 | `network.protocol.version`  | The HTTP version, for example `1.1`.                                                     |
+| `client.address`            | The client's IP address, when `client_address` is enabled.                               |
+| `network.peer.address`      | The IP address of the connection's peer, when `client_address` is enabled.               |
+| `network.peer.port`         | The port of the connection's peer, when `client_address` is enabled.                     |
 | `error.type`                | The status code, for a 5xx response.                                                     |
 | `apollo.mcp.session_id`     | The MCP session ID, from the `initialize` response or from an accepted request's header. |
 
@@ -367,6 +370,21 @@ telemetry:
 Omitting `tool_name`, `tool_arguments`, or `tool_result` also removes the matching `gen_ai.*` attribute, even when `gen_ai_content` is enabled, so the payload isn't exported under either name.
 
 Omitting payload attributes removes payload-level detail while retaining useful trace structure, timing, status, and any attributes you don't omit. Select omissions according to your investigation needs and data-handling requirements.
+
+#### Client addresses
+
+An IP address is personal data in many jurisdictions, so the server doesn't record client addresses by default. To record them, enable `client_address`:
+
+```yaml title="config.yaml"
+telemetry:
+  exporters:
+    tracing:
+      client_address: true
+```
+
+The HTTP request span then records `client.address`, `network.peer.address`, and `network.peer.port`, and MCP handler spans record `client.address` and `client.port`. Requests over stdio have no client address. These attributes go only to exported traces: they don't appear in the span context of log lines. Metrics never carry them either, because every client address would add a time series.
+
+The server takes the address from the TCP connection. It doesn't read `Forwarded` or `X-Forwarded-For`, because a caller can set them to any value. Behind a reverse proxy or load balancer, the recorded address is therefore the proxy's, not the original client's.
 
 ### Sampling and attribute filtering
 

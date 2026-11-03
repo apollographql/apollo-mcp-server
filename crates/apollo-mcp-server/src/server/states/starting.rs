@@ -11,7 +11,7 @@ use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use crate::server::states::telemetry::otel_context_middleware;
+use crate::server::states::telemetry::{expose_client_address, otel_context_middleware};
 use crate::{
     auth,
     cors::CorsConfig,
@@ -228,7 +228,7 @@ impl Starting {
                     ListenerBuilder::new(listen_address, path, service, self.config.cors.clone())
                         .with_auth(auth, self.config.required_scopes.clone(), stateful_mode)?
                         .with_cors()?
-                        .with_telemetry()
+                        .with_telemetry(self.config.client_address)
                         .with_health(health_check.as_ref())?;
 
                 // Bind every listener before spawning any serving task, so a later bind
@@ -287,6 +287,12 @@ pub(super) fn with_telemetry_layers(router: axum::Router) -> axum::Router {
         .layer(axum::middleware::from_fn(otel_context_middleware))
 }
 
+/// Expose each request's TCP peer to the telemetry layers, which must already
+/// wrap `router`, so spans record it as the client.
+pub(super) fn with_client_address(router: axum::Router) -> axum::Router {
+    router.layer(axum::middleware::from_fn(expose_client_address))
+}
+
 /// Construct the production transport, including cancellation of open streams.
 pub(super) fn build_http_service(
     running: Running,
@@ -312,15 +318,18 @@ pub(super) async fn serve_http(
     shutdown: CancellationToken,
     signal: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = signal => {},
-                _ = shutdown.cancelled() => {},
-            }
-            shutdown.cancel();
-        })
-        .await
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = signal => {},
+            _ = shutdown.cancelled() => {},
+        }
+        shutdown.cancel();
+    })
+    .await
 }
 
 fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, ServerError> {
@@ -426,8 +435,11 @@ impl ListenerBuilder {
         Ok(self)
     }
 
-    fn with_telemetry(mut self) -> Self {
+    fn with_telemetry(mut self, client_address: bool) -> Self {
         self.router = with_telemetry_layers(self.router);
+        if client_address {
+            self.router = with_client_address(self.router);
+        }
         self
     }
 
@@ -529,6 +541,7 @@ mod tests {
             disable_schema_description: false,
             enable_output_schema: false,
             gen_ai_content: false,
+            client_address: false,
             disable_auth_token_passthrough: false,
             descriptions: std::collections::HashMap::new(),
             annotations: std::collections::HashMap::new(),
@@ -746,5 +759,82 @@ mod tests {
             .unwrap();
         let res = health.router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[rstest::rstest]
+    #[case::enabled(true)]
+    #[case::disabled(false)]
+    #[tokio::test]
+    async fn with_telemetry_exposes_the_client_address_only_when_enabled(#[case] enabled: bool) {
+        use crate::server::states::telemetry::ClientAddress;
+
+        let builder = ListenerBuilder {
+            router: axum::Router::new().route(
+                "/",
+                axum::routing::get(|request: Request<Body>| async move {
+                    request
+                        .extensions()
+                        .get::<ClientAddress>()
+                        .is_some()
+                        .to_string()
+                }),
+            ),
+            listen_address: "127.0.0.1:0".parse().unwrap(),
+            path: EndpointPath::default(),
+            cors: CorsConfig::default(),
+        };
+        let mut request = Request::get("/").body(Body::empty()).unwrap();
+        let peer: SocketAddr = "203.0.113.7:51234".parse().unwrap();
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(peer));
+
+        let response = builder
+            .with_telemetry(enabled)
+            .router
+            .oneshot(request)
+            .await
+            .unwrap();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+
+        assert_eq!(body, enabled.to_string());
+    }
+
+    #[tokio::test]
+    async fn serve_http_exposes_the_peer_to_the_client_address_layer() {
+        use crate::server::states::telemetry::ClientAddress;
+
+        let router = with_client_address(axum::Router::new().route(
+            "/",
+            axum::routing::get(|request: Request<Body>| async move {
+                request
+                    .extensions()
+                    .get::<ClientAddress>()
+                    .is_some()
+                    .to_string()
+            }),
+        ));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let shutdown = CancellationToken::new();
+        let server = tokio::spawn(serve_http(
+            listener,
+            router,
+            shutdown.clone(),
+            std::future::pending(),
+        ));
+
+        let body = reqwest::get(format!("http://{address}/"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        shutdown.cancel();
+        server.await.unwrap().unwrap();
+
+        assert_eq!(body, "true");
     }
 }
