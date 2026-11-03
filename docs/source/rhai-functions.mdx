@@ -113,17 +113,21 @@ Make HTTP requests from Rhai scripts.
 | `Http::post(url)`          | Sends a POST request to the given URL. Returns a `Promise`.          | `Http::post("https://api.example.com/data")`          |
 | `Http::post(url, options)` | Sends a POST request with the provided options. Returns a `Promise`. | `Http::post(url, #{ body: payload })`                 |
 
-All `Http` functions return a `Promise`. Call `.wait()` on the promise to block until the response is available.
+All `Http` functions return a `Promise`. Call `.wait()` on the promise to block until the response is available. Waiting blocks only the hook that called it. Hooks for other requests keep running.
+
+If the request fails before a response arrives, for example because the host can't be reached or the request times out, `.wait()` throws an error. A response with an error status, such as `500`, doesn't throw. Check `status` instead.
 
 ### Options
 
 The optional `options` parameter is a map that can contain any of the following keys:
 
-| Key       | Type    | Description                      |
-| --------- | ------- | -------------------------------- |
-| `headers` | Map     | A map of header names to values. |
-| `body`    | String  | The request body.                |
-| `timeout` | Integer | Request timeout in seconds. Defaults to 30. |
+| Key       | Type    | Description                                          |
+| --------- | ------- | ---------------------------------------------------- |
+| `headers` | Map     | A map of header names to values.                     |
+| `body`    | String  | The request body. A string is sent exactly as given. |
+| `timeout` | Integer | Request timeout in seconds. Defaults to 30.          |
+
+`Http` doesn't encode the body or set a `content-type` header for you. A map or other non-string `body` is sent as Rhai's text form, such as `#{"a": 1}`, not as JSON. Set `content-type` in `headers`, and encode the body to match it, for example with `JSON::stringify` for JSON. For a form-encoded body, see the `form_encode` function in [Token exchange with Rhai](/apollo-mcp-server/rhai-token-exchange#example-script).
 
 ### Response
 
