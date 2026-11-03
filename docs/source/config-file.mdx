@@ -627,7 +627,7 @@ transport:
 
 | Option        | Type                | Default                 | Description                                                                                                                                                |
 | :------------ | :------------------ | :---------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `endpoint`    | `URL`               | `http://localhost:4317` | URL to export data to. Requires full path.                                                                                                                 |
+| `endpoint`    | `URL`               |                         | URL to export data to. Required. Requires full path.                                                                                                       |
 | `protocol`    | `string`            | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.                                                                            |
 | `temporality` | `MetricTemporality` | `Cumulative`            | Specifies how additive quantities are expressed over time. `Cumulative` means reported values include previous measurements, and `Delta` means they don't. |
 | `metadata`    | Key-value pairs     |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.                                                                           |
@@ -687,7 +687,7 @@ export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR
 
 | Option     | Type            | Default                 | Description                                                                              |
 | :--------- | :-------------- | :---------------------- | :--------------------------------------------------------------------------------------- |
-| `endpoint` | `URL`           | `http://localhost:4317` | URL to export data to. Requires full path.                                               |
+| `endpoint` | `URL`           |                         | URL to export data to. Required. Requires full path.                                     |
 | `protocol` | `string`        | `grpc`                  | Specifies the export protocol. Supported values are `grpc` and `http/protobuf`.          |
 | `metadata` | Key-value pairs |                         | Key-value pairs for metadata. This field applies only when `protocol` is `grpc`.         |
 | `headers`  | Key-value pairs |                         | Key-value pairs for headers. This field applies only when `protocol` is `http/protobuf`. |
