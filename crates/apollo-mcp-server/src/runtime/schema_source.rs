@@ -25,7 +25,7 @@ mod tests {
 
     #[test]
     fn deserialize_graphos_source() {
-        let source: SchemaSource = serde_yaml::from_str("source: graphos").unwrap();
+        let source: SchemaSource = yaml_serde::from_str("source: graphos").unwrap();
         assert!(matches!(source, SchemaSource::Graphos));
     }
 }

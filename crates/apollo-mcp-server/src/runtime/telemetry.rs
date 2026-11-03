@@ -934,13 +934,13 @@ mod tests {
         #[case] yaml_value: &str,
         #[case] expected: MetricTemporality,
     ) {
-        let actual: MetricTemporality = serde_yaml::from_str(yaml_value).unwrap();
+        let actual: MetricTemporality = yaml_serde::from_str(yaml_value).unwrap();
         assert_eq!(actual, expected);
     }
 
     #[test]
     fn yaml_deserialization_of_invalid_value_results_in_an_unknown_variant_error() {
-        let result: Result<MetricTemporality, _> = serde_yaml::from_str("invalid");
+        let result: Result<MetricTemporality, _> = yaml_serde::from_str("invalid");
         assert!(result.is_err());
         assert!(
             result
@@ -992,7 +992,7 @@ mod tests {
                   another-key: another-value
         "#;
 
-        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let telemetry_config: Telemetry = yaml_serde::from_str(y).unwrap();
         let metric_exporter = telemetry_config
             .exporters
             .unwrap()
@@ -1030,7 +1030,7 @@ mod tests {
               export_interval: 1m
         "#;
 
-        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let telemetry_config: Telemetry = yaml_serde::from_str(y).unwrap();
         let metrics_exporters = telemetry_config.exporters.unwrap().metrics.unwrap();
 
         assert_eq!(
@@ -1049,7 +1049,7 @@ mod tests {
                 endpoint: "http://127.0.0.1:4317"
         "#;
 
-        let telemetry_config: Telemetry = serde_yaml::from_str(y).unwrap();
+        let telemetry_config: Telemetry = yaml_serde::from_str(y).unwrap();
         let metrics_exporters = telemetry_config.exporters.unwrap().metrics.unwrap();
 
         assert_eq!(metrics_exporters.export_interval, None);

@@ -1698,7 +1698,7 @@ mod tests {
                 scope_mode: require_any
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert_eq!(config.scope_mode, ScopeMode::RequireAny);
         }
 
@@ -1714,7 +1714,7 @@ mod tests {
                   - read
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert_eq!(config.scope_mode, ScopeMode::RequireAll);
         }
     }
@@ -1849,7 +1849,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
               discovery_timeout: 10s
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, Some(Duration::from_secs(10)));
         }
 
@@ -1865,7 +1865,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 - read
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert_eq!(config.discovery_timeout, None);
         }
 
@@ -1884,7 +1884,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 X-Custom-Header: custom-value
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert_eq!(
                 config
                     .discovery_headers
@@ -1913,7 +1913,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 - read
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert!(config.discovery_headers.is_empty());
         }
 
@@ -1925,7 +1925,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
               resource: http://localhost:4000
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert!(config.rate_limit.enabled);
             assert_eq!(config.rate_limit.requests_per_second.get(), 10);
             assert_eq!(config.rate_limit.burst.get(), 50);
@@ -1943,7 +1943,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 burst: 4
             "#;
 
-            let config: Config = serde_yaml::from_str(y).unwrap();
+            let config: Config = yaml_serde::from_str(y).unwrap();
             assert!(!config.rate_limit.enabled);
             assert_eq!(config.rate_limit.requests_per_second.get(), 2);
             assert_eq!(config.rate_limit.burst.get(), 4);
@@ -2039,7 +2039,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 scopes:
                   - read
             "#;
-            let err = serde_yaml::from_str::<Config>(yaml).unwrap_err();
+            let err = yaml_serde::from_str::<Config>(yaml).unwrap_err();
             assert!(
                 err.to_string().contains("invalid auth server URL"),
                 "got: {err}"
@@ -2065,7 +2065,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                   - read
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert_eq!(
                 config.issuers,
                 vec![
@@ -2087,7 +2087,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                   - read
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert!(config.issuers.is_empty());
         }
     }
@@ -2106,7 +2106,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                   - write
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert_eq!(config.scopes, vec!["read".to_string(), "write".to_string()]);
         }
 
@@ -2118,7 +2118,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 resource: http://localhost:4000
             "#;
 
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert!(config.scopes.is_empty());
         }
     }
@@ -2477,7 +2477,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                   - read
                 allow_anonymous_mcp_discovery: true
             "#;
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert!(config.allow_anonymous_mcp_discovery);
         }
 
@@ -2492,7 +2492,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 scopes:
                   - read
             "#;
-            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            let config: Config = yaml_serde::from_str(yaml).unwrap();
             assert!(!config.allow_anonymous_mcp_discovery);
         }
     }
@@ -2941,8 +2941,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
         mod config_validation {
             use super::*;
 
-            fn parse(extra: &str) -> Result<Config, serde_yaml::Error> {
-                serde_yaml::from_str(&format!(
+            fn parse(extra: &str) -> Result<Config, yaml_serde::Error> {
+                yaml_serde::from_str(&format!(
                     "servers:\n  \
                      - http://localhost:1234\n\
                      resource: http://localhost:4000\n\

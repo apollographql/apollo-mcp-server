@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn param_headers_parse_from_yaml() {
-        let overrides: Overrides = serde_yaml::from_str(
+        let overrides: Overrides = yaml_serde::from_str(
             r#"
             param_headers:
               GetWorkflow:
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn param_headers_reject_invalid_header_name() {
-        let result = serde_yaml::from_str::<Overrides>(
+        let result = yaml_serde::from_str::<Overrides>(
             r#"
             param_headers:
               GetWorkflow:

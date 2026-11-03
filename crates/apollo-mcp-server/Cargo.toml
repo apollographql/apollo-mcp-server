@@ -24,10 +24,10 @@ apollo-schema-index.workspace = true
 axum = "0.8.4"
 axum-extra = { version = "0.12.0", features = ["typed-header"] }
 axum-otel-metrics = "0.14.1"
-axum-tracing-opentelemetry = "0.38.0"
+axum-tracing-opentelemetry = "0.39.1"
 bon = "3.6.3"
 clap = { version = "4.5.36", features = ["derive", "env"] }
-figment = { version = "0.10.19", features = ["env", "yaml"] }
+figment = { version = "0.10.19", features = ["env"] }
 futures.workspace = true
 headers = "0.4.1"
 http = "1.3.1"
@@ -46,7 +46,7 @@ opentelemetry-otlp = { version = "0.32.0", features = [
   "trace",
   "reqwest-rustls",
 ] }
-opentelemetry-semantic-conventions = "0.32.0"
+opentelemetry-semantic-conventions = "0.32.1"
 opentelemetry_sdk = { version = "0.32.1", features = [
   "spec_unstable_metrics_views",
 ] }
@@ -59,7 +59,7 @@ rmcp.workspace = true
 schemars = { version = "1.0.1", features = ["url2"] }
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9.34"
+yaml_serde = "0.10.7"
 shellexpand = { version = "3.1", default-features = false, features = ["base-0"] }
 thiserror.workspace = true
 tokio.workspace = true
@@ -89,7 +89,7 @@ opentelemetry_sdk = { version = "0.32.1", features = ["testing"] }
 proptest = "1"
 rstest.workspace = true
 secrecy.workspace = true
-serde_yaml = "0.9.34"
+yaml_serde = "0.10.7"
 sse-stream = "0.2.5"
 tokio = { workspace = true, features = ["test-util"] }
 tower = "0.5.2"

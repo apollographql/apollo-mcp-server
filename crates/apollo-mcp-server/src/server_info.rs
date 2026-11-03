@@ -170,7 +170,7 @@ mod tests {
 icons:
   - src: "https://example.com/mark.svg"
 "#;
-        let config: ServerInfoConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ServerInfoConfig = yaml_serde::from_str(yaml).unwrap();
 
         let icons = config.icons().expect("configured icons should surface");
         assert_eq!(icons.len(), 1);
@@ -188,7 +188,7 @@ icons:
   - src: "data:image/png;base64,iVBORw0KGgo="
   - src: "data:image/svg+xml,%3Csvg/%3E"
 "#;
-        let config: ServerInfoConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ServerInfoConfig = yaml_serde::from_str(yaml).unwrap();
 
         assert_eq!(config.icons.len(), 3);
     }
@@ -199,7 +199,7 @@ icons:
 icons:
   - src: "https://example.com"
 "#;
-        let config: ServerInfoConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ServerInfoConfig = yaml_serde::from_str(yaml).unwrap();
 
         assert_eq!(config.icons[0].src, "https://example.com");
     }
@@ -208,7 +208,7 @@ icons:
     fn icons_reject_src_that_is_not_a_uri() {
         for src in ["", "example.com/icon.png", "/icons/mark.svg", "https://"] {
             let yaml = format!("icons:\n  - src: \"{src}\"\n");
-            let err = serde_yaml::from_str::<ServerInfoConfig>(&yaml)
+            let err = yaml_serde::from_str::<ServerInfoConfig>(&yaml)
                 .expect_err(&format!("src {src:?} should be rejected"));
             assert!(
                 err.to_string().contains("invalid icon src"),
@@ -224,7 +224,7 @@ icons:
   - src: "https://example.com/mark.svg"
     sizes: ["48x48", "1024x1024", "any"]
 "#;
-        let config: ServerInfoConfig = serde_yaml::from_str(yaml).unwrap();
+        let config: ServerInfoConfig = yaml_serde::from_str(yaml).unwrap();
 
         assert_eq!(
             config.icons[0].sizes.as_deref(),
@@ -242,6 +242,6 @@ icons:
     fn icons_reject_sizes_that_are_not_an_array_of_strings() {
         let yaml = "icons:\n  - src: \"https://example.com/mark.svg\"\n    sizes: \"48x48\"\n";
 
-        assert!(serde_yaml::from_str::<ServerInfoConfig>(yaml).is_err());
+        assert!(yaml_serde::from_str::<ServerInfoConfig>(yaml).is_err());
     }
 }

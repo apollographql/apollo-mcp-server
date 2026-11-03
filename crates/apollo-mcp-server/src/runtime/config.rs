@@ -238,7 +238,7 @@ mod test {
             endpoint: http://localhost:4000/
             instructions: "Use semantic search before listing."
         "#;
-        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        let config: Config = yaml_serde::from_str(yaml).unwrap();
         assert_eq!(
             config.instructions.as_deref(),
             Some("Use semantic search before listing.")
@@ -254,7 +254,7 @@ mod test {
                 servers:
                   - https://auth-server.com
         "#;
-        let result = serde_yaml::from_str::<Config>(yaml);
+        let result = yaml_serde::from_str::<Config>(yaml);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown field"), "unexpected error: {err}");
         assert!(err.contains("auth"), "unexpected error: {err}");
@@ -266,7 +266,7 @@ mod test {
             transport:
               type: stdio
         "#;
-        serde_yaml::from_str::<Config>(yaml).unwrap();
+        yaml_serde::from_str::<Config>(yaml).unwrap();
     }
 
     #[test]
@@ -280,7 +280,7 @@ mod test {
             transport:
               type: streamable_http
         "#;
-        let result = serde_yaml::from_str::<Config>(yaml);
+        let result = yaml_serde::from_str::<Config>(yaml);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("unknown field"));
     }

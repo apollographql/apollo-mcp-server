@@ -306,7 +306,7 @@ mod tests {
     #[case::stdio("type: stdio", ConsoleStream::Stderr)]
     #[case::streamable_http("type: streamable_http", ConsoleStream::Stdout)]
     fn console_stream_for_transport(#[case] yaml: &str, #[case] expected: ConsoleStream) {
-        let transport: Transport = serde_yaml::from_str(yaml).expect("valid transport");
+        let transport: Transport = yaml_serde::from_str(yaml).expect("valid transport");
         assert_eq!(ConsoleStream::for_transport(&transport), expected);
     }
 
@@ -373,7 +373,7 @@ mod tests {
     #[case::never("ansi: never", AnsiMode::Never)]
     #[case::default("{}", AnsiMode::Auto)]
     fn ansi_mode_deserializes(#[case] yaml: &str, #[case] expected: AnsiMode) {
-        let logging: Logging = serde_yaml::from_str(yaml).expect("valid logging config");
+        let logging: Logging = yaml_serde::from_str(yaml).expect("valid logging config");
         assert_eq!(logging.ansi, expected);
     }
 
@@ -412,13 +412,13 @@ mod tests {
     #[case::json("format: json", LogFormat::Json)]
     #[case::default("{}", LogFormat::Text)]
     fn log_format_deserializes(#[case] yaml: &str, #[case] expected: LogFormat) {
-        let logging: Logging = serde_yaml::from_str(yaml).expect("valid logging config");
+        let logging: Logging = yaml_serde::from_str(yaml).expect("valid logging config");
         assert_eq!(logging.format, expected);
     }
 
     #[test]
     fn log_format_rejects_unknown_value() {
-        assert!(serde_yaml::from_str::<Logging>("format: pretty").is_err());
+        assert!(yaml_serde::from_str::<Logging>("format: pretty").is_err());
     }
 
     #[test]
@@ -464,6 +464,6 @@ mod tests {
 
     #[test]
     fn ansi_mode_rejects_unknown_value() {
-        assert!(serde_yaml::from_str::<Logging>("ansi: sometimes").is_err());
+        assert!(yaml_serde::from_str::<Logging>("ansi: sometimes").is_err());
     }
 }

@@ -56,7 +56,7 @@ fn parse_frontmatter(content: &str) -> Result<(PromptFrontmatter, String), Strin
         .to_string();
 
     let frontmatter: PromptFrontmatter =
-        serde_yaml::from_str(yaml_str).map_err(|err| format!("Invalid frontmatter YAML: {err}"))?;
+        yaml_serde::from_str(yaml_str).map_err(|err| format!("Invalid frontmatter YAML: {err}"))?;
 
     Ok((frontmatter, body))
 }

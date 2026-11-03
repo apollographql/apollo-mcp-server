@@ -308,7 +308,7 @@ mod tests {
 
         #[test]
         fn defaults_are_on_at_ten_per_second_with_burst_of_fifty() {
-            let config: RateLimitConfig = serde_yaml::from_str("{}").unwrap();
+            let config: RateLimitConfig = yaml_serde::from_str("{}").unwrap();
             assert!(config.enabled);
             assert_eq!(config.requests_per_second.get(), 10);
             assert_eq!(config.burst.get(), 50);
@@ -316,7 +316,7 @@ mod tests {
 
         #[test]
         fn fields_can_be_set_individually() {
-            let config: RateLimitConfig = serde_yaml::from_str("enabled: false\nburst: 5").unwrap();
+            let config: RateLimitConfig = yaml_serde::from_str("enabled: false\nburst: 5").unwrap();
             assert!(!config.enabled);
             assert_eq!(config.requests_per_second.get(), 10);
             assert_eq!(config.burst.get(), 5);
@@ -328,13 +328,13 @@ mod tests {
         #[case::negative_rate("requests_per_second: -1")]
         #[case::unknown_field("max_tracked: 10")]
         fn rejects_invalid_values(#[case] yaml: &str) {
-            assert!(serde_yaml::from_str::<RateLimitConfig>(yaml).is_err());
+            assert!(yaml_serde::from_str::<RateLimitConfig>(yaml).is_err());
         }
 
         #[test]
         fn state_uses_configured_limits() {
             let config: RateLimitConfig =
-                serde_yaml::from_str("requests_per_second: 3\nburst: 7").unwrap();
+                yaml_serde::from_str("requests_per_second: 3\nburst: 7").unwrap();
             let state = RateLimitState::new(&config);
             assert_eq!(state.credential_limiter.rate, 3.0);
             assert_eq!(state.credential_limiter.burst, 7.0);
