@@ -49,6 +49,7 @@ pub struct Exporters {
 /// Metric telemetry exporter options
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "protocol", rename_all = "lowercase", deny_unknown_fields)]
+#[schemars(transform = super::schemas::grpc_by_default)]
 pub enum MetricTelemetryExporter {
     /// GRPC Exporter
     Grpc {
@@ -74,6 +75,7 @@ pub enum MetricTelemetryExporter {
 /// Trace telemetry exporter options
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(tag = "protocol", rename_all = "lowercase", deny_unknown_fields)]
+#[schemars(transform = super::schemas::grpc_by_default)]
 pub enum TraceTelemetryExporter {
     /// GRPC Exporter
     Grpc {
@@ -95,6 +97,7 @@ pub enum TraceTelemetryExporter {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MetricsExporters {
+    #[serde(default, deserialize_with = "parsers::grpc_by_default")]
     otlp: Option<MetricTelemetryExporter>,
     /// Apollo metric attributes excluded before export.
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
@@ -159,6 +162,7 @@ impl Default for MetricTelemetryExporter {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TracingExporters {
+    #[serde(default, deserialize_with = "parsers::grpc_by_default")]
     otlp: Option<TraceTelemetryExporter>,
     sampler: Option<SamplerOption>,
     /// Apollo span attributes excluded before export.
@@ -223,9 +227,30 @@ impl Default for TraceTelemetryExporter {
 
 mod parsers {
     use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
-    use serde::Deserializer;
+    use serde::de::DeserializeOwned;
+    use serde::{Deserialize, Deserializer};
+    use serde_json::{Map, Value};
     use std::str::FromStr;
     use tonic::metadata::{MetadataKey, MetadataValue};
+
+    /// Deserializes an OTLP exporter, filling in `protocol: grpc` when the
+    /// config leaves it out. The tag of an internally tagged enum can't have a
+    /// serde default of its own.
+    pub(super) fn grpc_by_default<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+    where
+        D: Deserializer<'de>,
+        T: DeserializeOwned,
+    {
+        let Some(mut exporter) = Option::<Map<String, Value>>::deserialize(deserializer)? else {
+            return Ok(None);
+        };
+        exporter
+            .entry("protocol")
+            .or_insert_with(|| Value::from("grpc"));
+        T::deserialize(Value::Object(exporter))
+            .map(Some)
+            .map_err(serde::de::Error::custom)
+    }
 
     pub(super) fn metadata_map_from_str<'de, D>(deserializer: D) -> Result<MetadataMap, D::Error>
     where
@@ -609,6 +634,169 @@ mod tests {
     use rstest::rstest;
     use serde::de::value::{Error, MapDeserializer, StrDeserializer};
     use tonic::metadata::MetadataValue;
+
+    fn trace_protocol(otlp: serde_json::Value) -> &'static str {
+        let exporters: TracingExporters =
+            serde_json::from_value(serde_json::json!({ "otlp": otlp })).unwrap();
+        match exporters.otlp {
+            Some(TraceTelemetryExporter::Grpc { .. }) => "grpc",
+            Some(TraceTelemetryExporter::HttpProtobuf { .. }) => "http/protobuf",
+            None => "none",
+        }
+    }
+
+    fn metric_protocol(otlp: serde_json::Value) -> &'static str {
+        let exporters: MetricsExporters =
+            serde_json::from_value(serde_json::json!({ "otlp": otlp })).unwrap();
+        match exporters.otlp {
+            Some(MetricTelemetryExporter::Grpc { .. }) => "grpc",
+            Some(MetricTelemetryExporter::HttpProtobuf { .. }) => "http/protobuf",
+            None => "none",
+        }
+    }
+
+    #[rstest]
+    #[case::omitted(serde_json::json!({"endpoint": "http://localhost:4317"}), "grpc")]
+    #[case::grpc(serde_json::json!({"protocol": "grpc", "endpoint": "http://localhost:4317"}), "grpc")]
+    #[case::http(serde_json::json!({"protocol": "http/protobuf", "endpoint": "http://localhost:4318/v1/traces"}), "http/protobuf")]
+    #[case::absent(serde_json::Value::Null, "none")]
+    fn trace_exporter_protocol_defaults_to_grpc(
+        #[case] otlp: serde_json::Value,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(trace_protocol(otlp), expected);
+    }
+
+    #[rstest]
+    #[case::omitted(serde_json::json!({"endpoint": "http://localhost:4317"}), "grpc")]
+    #[case::grpc(serde_json::json!({"protocol": "grpc", "endpoint": "http://localhost:4317"}), "grpc")]
+    #[case::http(serde_json::json!({"protocol": "http/protobuf", "endpoint": "http://localhost:4318/v1/metrics"}), "http/protobuf")]
+    #[case::absent(serde_json::Value::Null, "none")]
+    fn metric_exporter_protocol_defaults_to_grpc(
+        #[case] otlp: serde_json::Value,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(metric_protocol(otlp), expected);
+    }
+
+    /// The protocols the trace and metrics exporters of `config` resolved to.
+    fn configured_protocols(config: &Config) -> (&'static str, &'static str) {
+        let exporters = config.telemetry.exporters.as_ref().unwrap();
+        let tracing = match exporters.tracing.as_ref().and_then(|t| t.otlp.as_ref()) {
+            Some(TraceTelemetryExporter::Grpc { .. }) => "grpc",
+            Some(TraceTelemetryExporter::HttpProtobuf { .. }) => "http/protobuf",
+            None => "none",
+        };
+        let metrics = match exporters.metrics.as_ref().and_then(|m| m.otlp.as_ref()) {
+            Some(MetricTelemetryExporter::Grpc { .. }) => "grpc",
+            Some(MetricTelemetryExporter::HttpProtobuf { .. }) => "http/protobuf",
+            None => "none",
+        };
+        (tracing, metrics)
+    }
+
+    #[test]
+    fn config_file_without_a_protocol_uses_grpc() {
+        figment::Jail::expect_with(|jail| {
+            jail.create_file(
+                "config.yaml",
+                "
+                telemetry:
+                  exporters:
+                    tracing:
+                      otlp:
+                        endpoint: http://localhost:4317
+                    metrics:
+                      otlp:
+                        endpoint: http://localhost:4317
+                ",
+            )?;
+            let config = crate::runtime::read_config("config.yaml")?;
+            assert_eq!(configured_protocols(&config), ("grpc", "grpc"));
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn env_without_a_protocol_uses_grpc() {
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(
+                "APOLLO_MCP_TELEMETRY__EXPORTERS__TRACING__OTLP__ENDPOINT",
+                "http://localhost:4317",
+            );
+            jail.set_env(
+                "APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__ENDPOINT",
+                "http://localhost:4317",
+            );
+            let config = crate::runtime::read_config_from_env()?;
+            assert_eq!(configured_protocols(&config), ("grpc", "grpc"));
+            Ok(())
+        });
+    }
+
+    #[rstest]
+    #[case::unknown_protocol("protocol: carrier-pigeon", &["carrier-pigeon", "`grpc` or `http/protobuf`"])]
+    #[case::bad_temporality("temporality: sometimes", &["sometimes", "`cumulative`, `delta`, `lowmemory`"])]
+    fn malformed_exporter_error_names_the_value_and_the_file(
+        #[case] field: &str,
+        #[case] expected: &[&str],
+    ) {
+        let field = field.to_owned();
+        let expected: Vec<String> = expected.iter().map(|s| (*s).to_owned()).collect();
+        figment::Jail::expect_with(move |jail| {
+            jail.create_file(
+                "config.yaml",
+                &format!(
+                    "telemetry:\n  exporters:\n    metrics:\n      otlp:\n        endpoint: http://localhost:4317\n        {field}\n"
+                ),
+            )?;
+            let error = crate::runtime::read_config("config.yaml")
+                .unwrap_err()
+                .to_string();
+            for text in expected
+                .iter()
+                .map(String::as_str)
+                .chain(["config.yaml", "metrics.otlp"])
+            {
+                assert!(error.contains(text), "{error:?} should mention {text:?}");
+            }
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn defaulted_grpc_exporter_still_rejects_http_fields() {
+        let result = serde_json::from_value::<TracingExporters>(serde_json::json!({
+            "otlp": {"endpoint": "http://localhost:4317", "headers": {"x": "y"}}
+        }));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unknown field `headers`")
+        );
+    }
+
+    #[rstest]
+    #[case::trace("TraceTelemetryExporter")]
+    #[case::metric("MetricTelemetryExporter")]
+    fn exporter_schema_makes_protocol_optional_for_grpc_only(#[case] definition: &str) {
+        let schema = schemars::schema_for!(Config).to_value();
+        let required: Vec<_> = schema["$defs"][definition]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|variant| {
+                let protocol = variant["properties"]["protocol"]["const"].as_str().unwrap();
+                let requires = variant["required"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&"protocol".into());
+                (protocol, requires)
+            })
+            .collect();
+        assert_eq!(required, vec![("grpc", false), ("http/protobuf", true)]);
+    }
 
     #[rstest]
     #[case::rmcp_debug_suppressed(true, "rmcp::service", tracing::Level::DEBUG, false)]
