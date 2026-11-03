@@ -22,11 +22,9 @@ telemetry:
     tracing:
       otlp:
         endpoint: http://127.0.0.1:4317
-        protocol: grpc
       # A ratio, so the checks can pick trace IDs it keeps and ones it drops.
       sampler: 0.5
     metrics:
       otlp:
         endpoint: http://127.0.0.1:4317
-        protocol: grpc
       export_interval: 1s
