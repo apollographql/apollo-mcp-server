@@ -211,6 +211,31 @@ curl -v https://your-endpoint/v1/metrics
 
 The OpenTelemetry integration is configured via the `telemetry` section of the [configuration reference page](/apollo-mcp-server/config-file#telemetry).
 
+## Semantic conventions
+
+The server's spans, metrics, and resource attributes follow two sets of OpenTelemetry semantic conventions:
+
+| Conventions | Version | Used for |
+| ----------- | ------- | -------- |
+| [OpenTelemetry semantic conventions](https://github.com/open-telemetry/semantic-conventions) | [v1.42.0](https://github.com/open-telemetry/semantic-conventions/tree/v1.42.0/docs) | Resource attributes, HTTP server spans and metrics, and the `network.*` and `error.type` attributes |
+| [OpenTelemetry GenAI semantic conventions](https://github.com/open-telemetry/semantic-conventions-genai) | `main` as of 2026-10-30 ([`6f98aef`](https://github.com/open-telemetry/semantic-conventions-genai/blob/6f98aef121ae3d5f224c5084d9fb4433bc6f7f67/docs/gen-ai/mcp.md)) | MCP handler spans, the `mcp.server.operation.duration` metric, and the `mcp.*`, `gen_ai.*`, and `jsonrpc.*` attributes |
+
+The resource carries the schema URL `https://opentelemetry.io/schemas/1.42.0`. The GenAI conventions don't publish releases or a schema URL yet, so the server pins them to a commit and sets no schema URL for them.
+
+<Caution>
+
+Telemetry that follows the GenAI conventions is experimental. This covers the MCP handler span names, the `mcp.server.operation.duration` metric, and the `mcp.*`, `gen_ai.*`, and `jsonrpc.*` attributes. The MCP conventions are in development, and the server adopts their changes in a minor release.
+
+</Caution>
+
+The `apollo.*` metrics and attributes, and metric attributes without a namespace such as `tool_name`, are Apollo's own and don't follow the semantic conventions. Where a convention covers the same data, the server emits both names. For example, spans carry both `apollo.mcp.tool_name` and `gen_ai.tool.name`.
+
+The Apollo names don't change when the conventions do, so use them for dashboards and alerts that must keep working across upgrades. After the MCP conventions become stable, Apollo might deprecate Apollo names that only duplicate a convention name. Apollo announces each deprecation in the release notes before it removes the name.
+
+### When the conventions change
+
+The server adopts newer conventions in minor releases. If an update renames or removes a span, metric, or attribute, the release notes list the change under breaking changes. The server doesn't emit a convention's old and new names side by side, and it doesn't read `OTEL_SEMCONV_STABILITY_OPT_IN`. Before you upgrade, check the release notes and update the dashboards, alerts, and queries that use a renamed span, metric, or attribute.
+
 ## Emitted Metrics
 
 The server emits the following metrics, which are invaluable for monitoring and alerting. The `apollo.mcp.*` duration metrics are in milliseconds.

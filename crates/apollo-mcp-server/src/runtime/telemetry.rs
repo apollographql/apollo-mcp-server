@@ -1443,6 +1443,14 @@ mod tests {
         assert_eq!(resource.schema_url(), Some(SCHEMA_URL));
     }
 
+    /// Fails when a bump of `opentelemetry-semantic-conventions` changes the
+    /// targeted version, so the "Semantic conventions" section of
+    /// `docs/source/telemetry.mdx` gets updated with it.
+    #[test]
+    fn schema_url_matches_the_documented_version() {
+        assert_eq!(SCHEMA_URL, "https://opentelemetry.io/schemas/1.42.0");
+    }
+
     #[derive(Clone, Default)]
     struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
