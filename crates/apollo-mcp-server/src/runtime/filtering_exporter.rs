@@ -14,6 +14,9 @@ use opentelemetry_sdk::trace::{SpanData, SpanExporter};
 use std::collections::HashSet;
 use std::time::Duration;
 
+const GEN_AI_TOOL_NAME: Key = Key::from_static_str("gen_ai.tool.name");
+const MCP_METHOD_NAME: Key = Key::from_static_str("mcp.method.name");
+
 /// Wraps an inner [`SpanExporter`] and drops any attribute whose key appears
 /// in `omitted` before the span is exported.
 ///
@@ -42,7 +45,11 @@ where
     E: SpanExporter + Send + Sync,
 {
     fn export(&self, mut batch: Vec<SpanData>) -> impl Future<Output = OTelSdkResult> + Send {
+        let omits_tool_name = self.omitted.contains(&GEN_AI_TOOL_NAME);
         for span in &mut batch {
+            if omits_tool_name {
+                drop_tool_name_from_span_name(span);
+            }
             span.attributes.retain(|kv| !self.omitted.contains(&kv.key));
         }
 
@@ -63,6 +70,20 @@ where
 
     fn set_resource(&mut self, r: &Resource) {
         self.inner.set_resource(r)
+    }
+}
+
+/// Names a span that carries a tool name, such as `tools/call GetUser`, after
+/// its MCP method alone, so an omitted tool name doesn't leave in the name.
+fn drop_tool_name_from_span_name(span: &mut SpanData) {
+    let carries_tool_name = span.attributes.iter().any(|kv| kv.key == GEN_AI_TOOL_NAME);
+    let method = span
+        .attributes
+        .iter()
+        .find(|kv| kv.key == MCP_METHOD_NAME)
+        .map(|kv| kv.value.as_str().into_owned());
+    if carries_tool_name && let Some(method) = method {
+        span.name = method.into();
     }
 }
 
@@ -87,6 +108,7 @@ mod tests {
     struct RecordingExporter {
         exports: Arc<AtomicUsize>,
         exported_keys: Arc<std::sync::Mutex<Vec<Key>>>,
+        exported_names: Arc<std::sync::Mutex<Vec<String>>>,
         shutdowns: Arc<AtomicUsize>,
         shutdown_timeouts: Arc<std::sync::Mutex<Vec<Duration>>>,
         force_flushes: Arc<AtomicUsize>,
@@ -108,6 +130,10 @@ mod tests {
                     .lock()
                     .expect("lock poisoned")
                     .extend(span.attributes.iter().map(|kv| kv.key.clone()));
+                self.exported_names
+                    .lock()
+                    .expect("lock poisoned")
+                    .push(span.name.to_string());
             }
             self.exports.fetch_add(1, Ordering::SeqCst);
             ready(Ok(()))
@@ -206,6 +232,44 @@ mod tests {
         );
 
         assert!(exported_keys.lock().expect("lock poisoned").is_empty());
+    }
+
+    #[cfg_attr(coverage_nightly, coverage(off))]
+    fn tool_call_span() -> SpanData {
+        SpanData {
+            name: "tools/call GetUser".into(),
+            attributes: vec![
+                KeyValue::new("mcp.method.name", "tools/call"),
+                KeyValue::new("gen_ai.tool.name", "GetUser"),
+            ],
+            ..create_mock_span_data()
+        }
+    }
+
+    #[rstest::rstest]
+    #[case::tool_name_omitted(&["apollo.mcp.tool_name", "gen_ai.tool.name"], "tools/call")]
+    #[case::tool_name_kept(&["apollo.mock"], "tools/call GetUser")]
+    #[tokio::test]
+    async fn filtering_exporter_names_tool_call_spans(
+        #[case] omitted: &[&'static str],
+        #[case] expected: &str,
+    ) {
+        let recorder = RecordingExporter::default();
+        let exported_names = recorder.exported_names.clone();
+
+        let filtering_exporter =
+            FilteringExporter::new(recorder, omitted.iter().map(|k| Key::from_static_str(k)));
+        assert!(
+            filtering_exporter
+                .export(vec![tool_call_span()])
+                .await
+                .is_ok()
+        );
+
+        assert_eq!(
+            *exported_names.lock().expect("lock poisoned"),
+            vec![expected]
+        );
     }
 
     #[tokio::test]

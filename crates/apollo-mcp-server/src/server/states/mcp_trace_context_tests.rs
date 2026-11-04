@@ -35,7 +35,7 @@ fn named<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
 }
 
 fn assert_downstream_context(spans: &[SpanData], headers: &HashMap<String, String>) {
-    let handler = named(spans, "call_tool");
+    let handler = named(spans, "tools/call Hello");
     let execute = named(spans, "execute");
     let client = named(spans, "mcp-graphql-client");
     assert_eq!(execute.parent_span_id, handler.span_context.span_id());
@@ -206,7 +206,7 @@ async fn explicit_forwarded_baggage_remains_when_context_baggage_is_empty() {
         "2025-11-25",
     )
     .await;
-    let handler = named(&spans, "call_tool");
+    let handler = named(&spans, "tools/call Hello");
     assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
     assert_eq!(handler.span_context.trace_state().header(), "");
     assert_eq!(headers["baggage"], "source=http");
@@ -238,7 +238,7 @@ fn attribute(span: &SpanData, key: &str) -> Option<String> {
 async fn call_tool_span_records_constant_attribute(#[case] key: &str, #[case] expected: &str) {
     let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
     assert_eq!(
-        attribute(named(&spans, "call_tool"), key).as_deref(),
+        attribute(named(&spans, "tools/call Hello"), key).as_deref(),
         Some(expected)
     );
 }
@@ -258,7 +258,7 @@ async fn call_tool_span_omits_gen_ai_payload_when_disabled(#[case] key: &str) {
         false,
     )
     .await;
-    assert_eq!(attribute(named(&spans, "call_tool"), key), None);
+    assert_eq!(attribute(named(&spans, "tools/call Hello"), key), None);
 }
 
 #[rstest::rstest]
@@ -280,7 +280,7 @@ async fn call_tool_span_records_gen_ai_identity_when_content_disabled(
     )
     .await;
     assert_eq!(
-        attribute(named(&spans, "call_tool"), key).as_deref(),
+        attribute(named(&spans, "tools/call Hello"), key).as_deref(),
         Some(expected)
     );
 }
@@ -324,7 +324,7 @@ async fn server_error_tool_call_span() -> SpanData {
         .await
         .unwrap();
     response.into_body().collect().await.unwrap();
-    named(&spans.collect(), "call_tool").clone()
+    named(&spans.collect(), "tools/call Hello").clone()
 }
 
 #[tokio::test]
@@ -359,7 +359,7 @@ async fn failed_tool_call_span() -> SpanData {
         true,
     )
     .await;
-    named(&spans, "call_tool").clone()
+    named(&spans, "tools/call Hello").clone()
 }
 
 #[tokio::test]
@@ -380,7 +380,7 @@ async fn failed_tool_call_sets_error_status() {
 #[tokio::test]
 async fn successful_tool_call_leaves_status_unset() {
     let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
-    assert_eq!(named(&spans, "call_tool").status, Status::Unset);
+    assert_eq!(named(&spans, "tools/call Hello").status, Status::Unset);
 }
 
 #[tokio::test]
@@ -392,7 +392,10 @@ async fn failed_tool_call_omits_gen_ai_result() {
 #[tokio::test]
 async fn successful_tool_call_omits_error_type() {
     let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
-    assert_eq!(attribute(named(&spans, "call_tool"), "error.type"), None);
+    assert_eq!(
+        attribute(named(&spans, "tools/call Hello"), "error.type"),
+        None
+    );
 }
 
 #[rstest::rstest]
@@ -405,7 +408,7 @@ async fn call_tool_span_mirrors_apollo_attribute_as_gen_ai(
     #[case] apollo_key: &str,
 ) {
     let (spans, _) = http_tool_call(json!({}), vec![], "2025-11-25").await;
-    let call_tool = named(&spans, "call_tool");
+    let call_tool = named(&spans, "tools/call Hello");
     let gen_ai = attribute(call_tool, gen_ai_key);
     assert!(gen_ai.is_some(), "{gen_ai_key} should be recorded");
     assert_eq!(gen_ai, attribute(call_tool, apollo_key));
@@ -436,7 +439,7 @@ async fn http_metadata_context_reaches_graphql(
 ) {
     let (spans, headers) = http_tool_call(meta, vec![], version).await;
     let http = named(&spans, "POST /mcp");
-    let handler = named(&spans, "call_tool");
+    let handler = named(&spans, "tools/call Hello");
     assert_eq!(http.parent_span_id.to_string(), "bbbbbbbbbbbbbbbb");
     assert_eq!(
         http.span_context.trace_id().to_string(),
@@ -482,7 +485,7 @@ async fn filtered_handler_preserves_request_context(
 ) {
     let (spans, headers) =
         http_tool_call_with_filter(meta, vec![], version, filter, false, GRAPHQL_DATA, false).await;
-    assert!(!spans.iter().any(|span| span.name == "call_tool"));
+    assert!(!spans.iter().any(|span| span.name == "tools/call Hello"));
     let execute = named(&spans, "execute");
     let client = named(&spans, "mcp-graphql-client");
     let trace_id = if metadata_parent {
@@ -546,7 +549,10 @@ async fn metadata_parented_handler_links_the_http_span(
         .span_context
         .span_id()
         .to_string();
-    assert_eq!(linked_span_ids(named(&spans, "call_tool")), vec![http]);
+    assert_eq!(
+        linked_span_ids(named(&spans, "tools/call Hello")),
+        vec![http]
+    );
 }
 
 #[tokio::test]
@@ -562,7 +568,7 @@ async fn metadata_parented_handler_links_the_header_context_when_http_span_is_fi
     )
     .await;
     assert_eq!(
-        linked_span_ids(named(&spans, "call_tool")),
+        linked_span_ids(named(&spans, "tools/call Hello")),
         vec!["bbbbbbbbbbbbbbbb"]
     );
 }
@@ -580,13 +586,13 @@ async fn handler_skips_the_link_when_metadata_names_the_header_span() {
         true,
     )
     .await;
-    assert!(linked_span_ids(named(&spans, "call_tool")).is_empty());
+    assert!(linked_span_ids(named(&spans, "tools/call Hello")).is_empty());
 }
 
 #[tokio::test]
 async fn http_parented_handler_has_no_links() {
     let (spans, _) = http_tool_call(json!({}), vec![], "2026-07-28").await;
-    assert!(linked_span_ids(named(&spans, "call_tool")).is_empty());
+    assert!(linked_span_ids(named(&spans, "tools/call Hello")).is_empty());
 }
 
 #[tokio::test]
@@ -699,7 +705,7 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
     let headers: Vec<_> = (0..3).map(|_| rx.try_recv().unwrap()).collect();
     let spans = spans.collect();
     let handler_name = match handler_spans {
-        HandlerSpans::Enabled => "call_tool",
+        HandlerSpans::Enabled => "tools/call Hello",
         HandlerSpans::Filtered => "execute",
     };
     let handlers: Vec<_> = spans
@@ -759,11 +765,11 @@ async fn stdio_requests_have_independent_contexts_and_propagate_downstream(
             assert!(
                 !spans
                     .iter()
-                    .any(|span| span.name == "call_tool" || span.name == "list_resources")
+                    .any(|span| span.name == "tools/call Hello" || span.name == "resources/list")
             );
         }
         HandlerSpans::Enabled => {
-            let resource = named(&spans, "list_resources");
+            let resource = named(&spans, "resources/list");
             assert_eq!(resource.parent_span_id.to_string(), REMOTE_SPAN_ID);
             assert_eq!(
                 resource.span_context.trace_id().to_string(),
@@ -836,13 +842,13 @@ async fn http_handler_spans_on(
 }
 
 #[rstest::rstest]
-#[case::tools("tools/list", json!({}), "list_tools")]
-#[case::resources("resources/list", json!({}), "list_resources")]
-#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
-#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
-#[case::prompts("prompts/list", json!({}), "list_prompts")]
-#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
-#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[case::tools("tools/list", json!({}), "tools/list")]
+#[case::resources("resources/list", json!({}), "resources/list")]
+#[case::resource_templates("resources/templates/list", json!({}), "resources/templates/list")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "resources/read")]
+#[case::prompts("prompts/list", json!({}), "prompts/list")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "prompts/get")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "logging/setLevel")]
 #[tokio::test]
 async fn metadata_parents_each_http_handler(
     #[case] method: &str,
@@ -892,9 +898,9 @@ async fn task_handler_span(method: &str, params: Value, name: &str) -> SpanData 
 }
 
 #[rstest::rstest]
-#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
-#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
-#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "tasks/get")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "tasks/cancel")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "tasks/update")]
 #[tokio::test]
 async fn task_handler_span_records_mcp_method_name(
     #[case] method: &str,
@@ -906,9 +912,9 @@ async fn task_handler_span_records_mcp_method_name(
 }
 
 #[rstest::rstest]
-#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
-#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
-#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "tasks/get")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "tasks/cancel")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "tasks/update")]
 #[tokio::test]
 async fn task_handler_span_keeps_metadata_parent(
     #[case] method: &str,
@@ -920,9 +926,9 @@ async fn task_handler_span_keeps_metadata_parent(
 }
 
 #[rstest::rstest]
-#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "get_task")]
-#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "cancel_task")]
-#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "update_task")]
+#[case::get_task("tasks/get", json!({"taskId": "secret-task-id"}), "tasks/get")]
+#[case::cancel_task("tasks/cancel", json!({"taskId": "secret-task-id"}), "tasks/cancel")]
+#[case::update_task("tasks/update", json!({"taskId": "secret-task-id", "inputResponses": {}}), "tasks/update")]
 #[tokio::test]
 async fn task_handler_span_never_records_task_id(
     #[case] method: &str,
@@ -941,13 +947,13 @@ async fn task_handler_span_never_records_task_id(
 }
 
 #[rstest::rstest]
-#[case::tools("tools/list", json!({}), "list_tools")]
-#[case::resources("resources/list", json!({}), "list_resources")]
-#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
-#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
-#[case::prompts("prompts/list", json!({}), "list_prompts")]
-#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
-#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[case::tools("tools/list", json!({}), "tools/list")]
+#[case::resources("resources/list", json!({}), "resources/list")]
+#[case::resource_templates("resources/templates/list", json!({}), "resources/templates/list")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "resources/read")]
+#[case::prompts("prompts/list", json!({}), "prompts/list")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "prompts/get")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "logging/setLevel")]
 #[tokio::test]
 async fn each_http_handler_records_mcp_method_name(
     #[case] method: &str,
@@ -959,6 +965,36 @@ async fn each_http_handler_records_mcp_method_name(
         attribute(named(&spans, name), "mcp.method.name").as_deref(),
         Some(method)
     );
+}
+
+#[rstest::rstest]
+#[case::tools("tools/list", json!({}), "tools/list")]
+#[case::resources("resources/list", json!({}), "resources/list")]
+#[case::resource_templates("resources/templates/list", json!({}), "resources/templates/list")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "resources/read")]
+#[case::prompts("prompts/list", json!({}), "prompts/list")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "prompts/get")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "logging/setLevel")]
+#[tokio::test]
+async fn each_http_handler_span_is_a_server_span(
+    #[case] method: &str,
+    #[case] params: Value,
+    #[case] name: &str,
+) {
+    let spans = http_handler_spans(method, params).await;
+    assert_eq!(named(&spans, name).span_kind, SpanKind::Server);
+}
+
+#[tokio::test]
+async fn unknown_tool_span_leaves_the_name_out_of_its_span_name() {
+    // A client can send any tool name, so a caller error keeps it out of the
+    // span name, the same way the duration metric leaves it out.
+    let spans = http_handler_spans("tools/call", json!({"name": "Unknown", "arguments": {}})).await;
+    let handler = spans
+        .iter()
+        .find(|span| attribute(span, "mcp.method.name").as_deref() == Some("tools/call"))
+        .expect("a tools/call span");
+    assert_eq!(handler.name, "tools/call");
 }
 
 /// Sends `initialize` asking for `protocol_version` and returns its handler span.
@@ -1020,13 +1056,13 @@ fn session_request(session: &http::HeaderValue, body: Value) -> Request<Body> {
 /// On a stateful session, rmcp dispatches requests to the session's worker task, so a handler
 /// span parents to the HTTP request span only if the handler names it explicitly.
 #[rstest::rstest]
-#[case::tools("tools/list", json!({}), "list_tools")]
-#[case::resources("resources/list", json!({}), "list_resources")]
-#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
-#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
-#[case::prompts("prompts/list", json!({}), "list_prompts")]
-#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
-#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[case::tools("tools/list", json!({}), "tools/list")]
+#[case::resources("resources/list", json!({}), "resources/list")]
+#[case::resource_templates("resources/templates/list", json!({}), "resources/templates/list")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "resources/read")]
+#[case::prompts("prompts/list", json!({}), "prompts/list")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "prompts/get")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "logging/setLevel")]
 #[tokio::test]
 async fn http_request_span_parents_each_session_handler(
     #[case] method: &str,
@@ -1119,7 +1155,7 @@ async fn metadata_parents_http_subscription_through_readiness_and_cancellation()
     drop(reader);
     running.tool_list_changes.closed().await;
     let spans = spans.collect();
-    let handler = named(&spans, "listen");
+    let handler = named(&spans, "subscriptions/listen");
     assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
     assert_eq!(
         attribute(handler, "mcp.method.name").as_deref(),
@@ -1224,7 +1260,7 @@ async fn formatted_handler_logs_retain_http_scope_with_metadata_otel_parent() {
     response.into_body().collect().await.unwrap();
     provider.force_flush().unwrap();
     let spans = exporter.get_finished_spans().unwrap();
-    let handler = named(&spans, "set_level");
+    let handler = named(&spans, "logging/setLevel");
     assert_eq!(handler.parent_span_id.to_string(), REMOTE_SPAN_ID);
     assert_eq!(handler.span_context.trace_id().to_string(), REMOTE_TRACE_ID);
     let logs = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
@@ -1235,7 +1271,7 @@ async fn formatted_handler_logs_retain_http_scope_with_metadata_otel_parent() {
     assert!(
         handler_event.contains("POST /mcp")
             && handler_event.contains("url.path=\"/mcp\"")
-            && handler_event.contains("set_level"),
+            && handler_event.contains("logging/setLevel"),
         "handler lost its HTTP tracing scope: {handler_event}"
     );
     // Session attribution happens after the response is accepted, so it is
@@ -1281,13 +1317,13 @@ async fn detached_tasks_preserve_metadata_and_rhai_context(
 }
 
 #[rstest::rstest]
-#[case::tools("tools/list", json!({}), "list_tools")]
-#[case::resources("resources/list", json!({}), "list_resources")]
-#[case::resource_templates("resources/templates/list", json!({}), "list_resource_templates")]
-#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "read_resource")]
-#[case::prompts("prompts/list", json!({}), "list_prompts")]
-#[case::get_prompt("prompts/get", json!({"name": "missing"}), "get_prompt")]
-#[case::set_level("logging/setLevel", json!({"level": "debug"}), "set_level")]
+#[case::tools("tools/list", json!({}), "tools/list")]
+#[case::resources("resources/list", json!({}), "resources/list")]
+#[case::resource_templates("resources/templates/list", json!({}), "resources/templates/list")]
+#[case::read_resource("resources/read", json!({"uri": "file:///missing"}), "resources/read")]
+#[case::prompts("prompts/list", json!({}), "prompts/list")]
+#[case::get_prompt("prompts/get", json!({"name": "missing"}), "prompts/get")]
+#[case::set_level("logging/setLevel", json!({"level": "debug"}), "logging/setLevel")]
 #[tokio::test]
 async fn each_http_handler_records_jsonrpc_request_id(
     #[case] method: &str,
@@ -1310,7 +1346,7 @@ async fn each_http_handler_records_jsonrpc_request_id(
 async fn http_handler_records_request_attribute(#[case] key: &str, #[case] expected: &str) {
     let spans = http_handler_spans("tools/list", json!({})).await;
     assert_eq!(
-        attribute(named(&spans, "list_tools"), key).as_deref(),
+        attribute(named(&spans, "tools/list"), key).as_deref(),
         Some(expected)
     );
 }
@@ -1331,7 +1367,7 @@ fn duplicate_attribute_keys(span: &SpanData) -> Vec<&str> {
 async fn http_handler_records_each_attribute_once() {
     let spans = http_handler_spans("tools/list", json!({})).await;
     assert_eq!(
-        duplicate_attribute_keys(named(&spans, "list_tools")),
+        duplicate_attribute_keys(named(&spans, "tools/list")),
         Vec::<&str>::new()
     );
 }
@@ -1340,7 +1376,7 @@ async fn http_handler_records_each_attribute_once() {
 async fn call_tool_span_records_each_attribute_once() {
     let (spans, _) = http_tool_call(json!({}), vec![], "2026-07-28").await;
     assert_eq!(
-        duplicate_attribute_keys(named(&spans, "call_tool")),
+        duplicate_attribute_keys(named(&spans, "tools/call Hello")),
         Vec::<&str>::new()
     );
 }
@@ -1349,7 +1385,7 @@ async fn call_tool_span_records_each_attribute_once() {
 async fn stateless_handler_omits_mcp_session_id() {
     let spans = http_handler_spans("tools/list", json!({})).await;
     assert_eq!(
-        attribute(named(&spans, "list_tools"), "mcp.session.id"),
+        attribute(named(&spans, "tools/list"), "mcp.session.id"),
         None
     );
 }
@@ -1375,7 +1411,7 @@ async fn stateless_request_with_session_header_spans() -> Vec<SpanData> {
 async fn stateless_handler_ignores_session_header() {
     let spans = stateless_request_with_session_header_spans().await;
     assert_eq!(
-        attribute(named(&spans, "list_tools"), "mcp.session.id"),
+        attribute(named(&spans, "tools/list"), "mcp.session.id"),
         None
     );
 }
@@ -1419,7 +1455,7 @@ async fn session_handler_records_mcp_session_id() {
 
     let spans = spans.collect();
     assert_eq!(
-        attribute(named(&spans, "list_tools"), "mcp.session.id").as_deref(),
+        attribute(named(&spans, "tools/list"), "mcp.session.id").as_deref(),
         session.to_str().ok()
     );
 }
@@ -1428,7 +1464,7 @@ async fn session_handler_records_mcp_session_id() {
 async fn read_resource_span_records_resource_uri() {
     let spans = http_handler_spans("resources/read", json!({"uri": "file:///missing"})).await;
     assert_eq!(
-        attribute(named(&spans, "read_resource"), "mcp.resource.uri").as_deref(),
+        attribute(named(&spans, "resources/read"), "mcp.resource.uri").as_deref(),
         Some("file:///missing")
     );
 }
@@ -1437,7 +1473,7 @@ async fn read_resource_span_records_resource_uri() {
 async fn get_prompt_span_records_prompt_name() {
     let spans = http_handler_spans("prompts/get", json!({"name": "missing"})).await;
     assert_eq!(
-        attribute(named(&spans, "get_prompt"), "gen_ai.prompt.name").as_deref(),
+        attribute(named(&spans, "prompts/get"), "gen_ai.prompt.name").as_deref(),
         Some("missing")
     );
 }
@@ -1469,6 +1505,14 @@ async fn get_prompt_spans_with_filter(
     http_handler_spans_on(running, filter, "prompts/get", params).await
 }
 
+/// The `prompts/get` span, named with or without the prompt it targets.
+fn prompt_span(spans: &[SpanData]) -> &SpanData {
+    spans
+        .iter()
+        .find(|span| attribute(span, "mcp.method.name").as_deref() == Some("prompts/get"))
+        .expect("a prompts/get span")
+}
+
 fn prompt_variable_keys(span: &SpanData) -> Vec<&str> {
     span.attributes
         .iter()
@@ -1488,7 +1532,7 @@ async fn get_prompt_span_records_prompt_variables_with_gen_ai_content(
 ) {
     let spans = get_prompt_spans(json!({"name": "greet", "arguments": arguments}), true).await;
     assert_eq!(
-        attribute(named(&spans, "get_prompt"), key).as_deref(),
+        attribute(named(&spans, "prompts/get greet"), key).as_deref(),
         Some(expected)
     );
 }
@@ -1497,7 +1541,7 @@ async fn get_prompt_span_records_prompt_variables_with_gen_ai_content(
 async fn get_prompt_span_omits_prompt_variables_without_gen_ai_content() {
     let params = json!({"name": "greet", "arguments": {"name": "Alice"}});
     let spans = get_prompt_spans(params, false).await;
-    assert!(prompt_variable_keys(named(&spans, "get_prompt")).is_empty());
+    assert!(prompt_variable_keys(named(&spans, "prompts/get greet")).is_empty());
 }
 
 #[tokio::test]
@@ -1523,14 +1567,14 @@ async fn get_prompt_span_records_only_declared_arguments_the_client_sent(
     #[case] expected: &[&str],
 ) {
     let spans = get_prompt_spans(params, true).await;
-    assert_eq!(prompt_variable_keys(named(&spans, "get_prompt")), expected);
+    assert_eq!(prompt_variable_keys(prompt_span(&spans)), expected);
 }
 
 #[tokio::test]
 async fn caller_error_leaves_handler_status_unset() {
     // A missing prompt is an invalid-params error, which the caller caused.
     let spans = http_handler_spans("prompts/get", json!({"name": "missing"})).await;
-    assert_eq!(named(&spans, "get_prompt").status, Status::Unset);
+    assert_eq!(named(&spans, "prompts/get").status, Status::Unset);
 }
 
 /// Runs a handler that fails with `error` in a span shaped like a request span.
@@ -1589,7 +1633,7 @@ async fn failed_handler_records_rpc_response_status_code(
 async fn caller_error_records_rpc_response_status_code_on_http_handler() {
     let spans = http_handler_spans("prompts/get", json!({"name": "missing"})).await;
     assert_eq!(
-        attribute(named(&spans, "get_prompt"), "rpc.response.status_code").as_deref(),
+        attribute(named(&spans, "prompts/get"), "rpc.response.status_code").as_deref(),
         Some("-32602")
     );
 }

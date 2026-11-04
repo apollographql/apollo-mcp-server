@@ -182,23 +182,12 @@ const named = (spans, name) => spans.find((span) => span.operationName === name)
 const tag = (span, key) => span?.tags.find((t) => t.key === key)?.value;
 const reference = (span, type) => span?.references.find((r) => r.refType === type);
 
-// Checks the server is known to fail, each with the change that fixes it. A
-// known gap doesn't fail the run, but one that starts passing does, so the
-// entry gets removed.
-const KNOWN_GAPS = {
-  'handler span kind is SERVER': 'handler spans are INTERNAL until they adopt the MCP span conventions',
-};
-
 const results = [];
 function check(name, ok, detail = '') {
-  const gap = KNOWN_GAPS[name];
-  const passed = gap ? !ok : Boolean(ok);
+  const passed = Boolean(ok);
   results.push({ name, ok: passed });
-  const status = gap ? (ok ? 'FIXED' : 'GAP') : (ok ? 'PASS' : 'FAIL');
-  const note = gap
-    ? (ok ? ' (now passes: remove it from KNOWN_GAPS)' : ` (${gap})`)
-    : (ok || !detail ? '' : ` (${detail})`);
-  console.log(`${status} ${name}${note}`);
+  const note = passed || !detail ? '' : ` (${detail})`;
+  console.log(`${passed ? 'PASS' : 'FAIL'} ${name}${note}`);
 }
 
 async function startServer(name, extraEnv = {}) {
@@ -237,7 +226,7 @@ async function parentBasedRun() {
   // handler and downstream client spans nest under it.
   const headerSpans = await waitForTrace(viaHeader.trace);
   const http = named(headerSpans, 'POST /mcp');
-  const callTool = named(headerSpans, 'call_tool');
+  const callTool = named(headerSpans, 'tools/call Hello');
   const client = named(headerSpans, 'mcp-graphql-client');
   check('header traceparent parents the HTTP span', reference(http, 'CHILD_OF')?.spanID === viaHeader.span);
   check('handler span nests under the HTTP span', reference(callTool, 'CHILD_OF')?.spanID === http?.spanID);
@@ -257,7 +246,7 @@ async function parentBasedRun() {
 
   // `_meta` context: it parents the handler span, which links to the HTTP span.
   const metaSpans = await waitForTrace(viaMeta.trace);
-  const metaHandler = named(metaSpans, 'call_tool');
+  const metaHandler = named(metaSpans, 'tools/call Hello');
   check('_meta traceparent parents the handler span', reference(metaHandler, 'CHILD_OF')?.spanID === viaMeta.span);
   const transportSpans = await waitForTrace(transport.trace);
   const transportHttp = named(transportSpans, 'POST /mcp');

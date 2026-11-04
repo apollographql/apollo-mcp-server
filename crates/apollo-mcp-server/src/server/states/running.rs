@@ -6,7 +6,7 @@ use std::time::Instant;
 use apollo_compiler::{Schema, validation::Valid};
 use axum_tracing_opentelemetry::tracing_opentelemetry_instrumentation_sdk::http::http_flavor;
 use opentelemetry::KeyValue;
-use opentelemetry::trace::FutureExt as _;
+use opentelemetry::trace::{FutureExt as _, TraceContextExt as _};
 use opentelemetry_semantic_conventions::attribute::{
     ERROR_TYPE, NETWORK_PROTOCOL_NAME, NETWORK_PROTOCOL_VERSION, NETWORK_TRANSPORT,
 };
@@ -743,6 +743,9 @@ macro_rules! request_span {
         tracing::info_span!(
             parent: get_parent_span($context),
             $name,
+            // `OperationMetric::name_with_target` adds the tool or prompt name.
+            otel.name = <$method>::VALUE,
+            otel.kind = ?opentelemetry::trace::SpanKind::Server,
             mcp.method.name = <$method>::VALUE,
             jsonrpc.request.id = %$context.id,
             error.type = tracing::field::Empty,
@@ -951,6 +954,7 @@ impl ServerHandler for McpService {
             .attributes
             .push(KeyValue::new("gen_ai.operation.name", "execute_tool"));
         metric.record_on(&span);
+        let handler_span = span.clone();
         let execution_span = span.clone();
         let execution_parent = parent_context.clone();
         let response = async {
@@ -1045,6 +1049,7 @@ impl ServerHandler for McpService {
             &response,
             Ok(CallToolResponse::Complete(result)) if result.is_error == Some(true)
         );
+        metric.name_with_target(&handler_span, response.as_ref().err());
         metric.record(start, response.as_ref().err(), tool_error);
         response
     }
@@ -1440,6 +1445,7 @@ pub(super) async fn in_request_span<T>(
         .with_context(parent_context)
         .await;
     record_error(&span, &result);
+    metric.name_with_target(&span, result.as_ref().err());
     metric.record(start, result.as_ref().err(), false);
     result
 }
@@ -1471,6 +1477,7 @@ const OPERATION_DURATION_BOUNDARIES: [f64; 14] = [
 /// One `mcp.server.operation.duration` measurement, built up as the request
 /// is handled.
 pub(super) struct OperationMetric {
+    method: &'static str,
     attributes: Vec<KeyValue>,
     /// The tool or prompt the request names. A client can send any name, so
     /// it's dropped when the request fails with a caller error, such as an
@@ -1497,6 +1504,7 @@ impl OperationMetric {
             None => attributes.push(KeyValue::new(NETWORK_TRANSPORT, "pipe")),
         }
         Self {
+            method,
             attributes,
             target: None,
         }
@@ -1532,11 +1540,25 @@ impl OperationMetric {
         }
     }
 
+    /// Adds the target to `span`'s name once the request has finished
+    /// without a caller error, for the same reason the measurement drops it
+    /// otherwise. A request that never finishes keeps the bare method.
+    /// `tracing-opentelemetry` ignores `otel.name` on a started span, so this
+    /// renames the OpenTelemetry span directly.
+    fn name_with_target(&self, span: &tracing::Span, error: Option<&McpError>) {
+        if let Some(target) = &self.target
+            && !is_caller_error(error)
+        {
+            let name = format!("{} {}", self.method, target.value.as_str());
+            span.context().span().update_name(name);
+        }
+    }
+
     /// The measurement's attributes for a request that ended with `error`, or
     /// with a tool result that has `isError: true` when `tool_error` is set.
     fn finish(self, error: Option<&McpError>, tool_error: bool) -> Vec<KeyValue> {
         let mut attributes = self.attributes;
-        let caller_error = error.is_some_and(|e| !is_server_error(e.code));
+        let caller_error = is_caller_error(error);
         if !caller_error {
             attributes.extend(self.target);
         }
@@ -1563,6 +1585,10 @@ impl OperationMetric {
                 &self.finish(error, tool_error),
             );
     }
+}
+
+fn is_caller_error(error: Option<&McpError>) -> bool {
+    error.is_some_and(|e| !is_server_error(e.code))
 }
 
 /// JSON-RPC codes the MCP semantic conventions treat as caller mistakes
