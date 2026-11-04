@@ -224,15 +224,17 @@ The resource carries the schema URL `https://opentelemetry.io/schemas/1.42.0`. T
 
 <Caution>
 
-Telemetry that follows the GenAI conventions is experimental. This covers the MCP handler span names, the `mcp.server.operation.duration` metric, and the `mcp.*`, `gen_ai.*`, and `jsonrpc.*` attributes. The MCP conventions are in Development status, and the server follows their changes in minor releases, so any of these names can change in a minor release.
+Telemetry that follows the GenAI conventions is experimental. This covers the MCP handler span names, the `mcp.server.operation.duration` metric, and the `mcp.*`, `gen_ai.*`, and `jsonrpc.*` attributes. The MCP conventions are in development, and the server adopts their changes in a minor release.
 
 </Caution>
 
-The `apollo.*` metrics and attributes, and metric attributes without a namespace such as `tool_name`, are Apollo's own and don't follow the semantic conventions. Where a convention covers the same data, the server emits both, for example `apollo.mcp.tool_name` and `gen_ai.tool.name` on spans. The Apollo names don't change when the conventions do, so use them for dashboards and alerts that must keep working across upgrades. Once the MCP conventions become stable, Apollo may deprecate the names that only duplicate a convention name. The release notes will announce that before any is removed.
+The `apollo.*` metrics and attributes, and metric attributes without a namespace such as `tool_name`, are Apollo's own and don't follow the semantic conventions. Where a convention covers the same data, the server emits both names. For example, spans carry both `apollo.mcp.tool_name` and `gen_ai.tool.name`.
+
+The Apollo names don't change when the conventions do, so use them for dashboards and alerts that must keep working across upgrades. After the MCP conventions become stable, Apollo might deprecate Apollo names that only duplicate a convention name. Apollo announces each deprecation in the release notes before it removes the name.
 
 ### When the conventions change
 
-The server adopts newer conventions in minor releases. If an update renames or removes a span, metric, or attribute, the release notes list the change under breaking changes. The server doesn't emit a convention's old and new names side by side, and it doesn't read `OTEL_SEMCONV_STABILITY_OPT_IN`. Before you upgrade, check the release notes and update the dashboards, alerts, and queries that use a renamed name.
+The server adopts newer conventions in minor releases. If an update renames or removes a span, metric, or attribute, the release notes list the change under breaking changes. The server doesn't emit a convention's old and new names side by side, and it doesn't read `OTEL_SEMCONV_STABILITY_OPT_IN`. Before you upgrade, check the release notes and update the dashboards, alerts, and queries that use a renamed span, metric, or attribute.
 
 ## Emitted Metrics
 
