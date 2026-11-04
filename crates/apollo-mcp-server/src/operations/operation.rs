@@ -3579,6 +3579,7 @@ mod tests {
                                 "description": String("the filter.filter field"),
                                 "anyOf": Array [
                                     Object {
+                                        "type": String("object"),
                                         "$ref": String("#/definitions/Filter"),
                                     },
                                     Object {

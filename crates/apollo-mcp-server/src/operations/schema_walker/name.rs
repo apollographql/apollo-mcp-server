@@ -250,7 +250,7 @@ mod tests {
 
     fn cached_type_schema(type_name: &str, type_definition: &str) -> JSONSchema {
         let schema = GraphQLSchema::parse_and_validate(
-            &format!("type Query {{ dummy: String }} {type_definition}"),
+            format!("type Query {{ dummy: String }} {type_definition}"),
             "schema.graphql",
         )
         .unwrap()
