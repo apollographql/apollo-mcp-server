@@ -173,6 +173,12 @@ pub struct TracingExporters {
     /// Other `gen_ai.*` attributes are always exported.
     #[serde(default)]
     gen_ai_content: bool,
+    /// Record the client's IP address and port on the HTTP request span and
+    /// MCP handler spans, as `client.address`, `client.port`, and
+    /// `network.peer.*`. Off by default because an IP address is personal
+    /// data in many jurisdictions.
+    #[serde(default)]
+    client_address: bool,
     /// Follow the sampling decision of an incoming trace context, such as a
     /// `traceparent` header or MCP `_meta`, and apply `sampler` only to
     /// requests without one. Defaults to true.
@@ -191,6 +197,14 @@ impl Telemetry {
             .as_ref()
             .and_then(|exporters| exporters.tracing.as_ref())
             .is_some_and(|tracing| tracing.gen_ai_content)
+    }
+
+    /// Whether spans record the client's address.
+    pub fn client_address(&self) -> bool {
+        self.exporters
+            .as_ref()
+            .and_then(|exporters| exporters.tracing.as_ref())
+            .is_some_and(|tracing| tracing.client_address)
     }
 }
 
@@ -897,6 +911,7 @@ mod tests {
             sampler: None,
             omitted_attributes: Some(omitted.iter().copied().collect()),
             gen_ai_content: true,
+            client_address: false,
             parent_based_sampler: true,
         };
         let expected: HashSet<Key> = expected.iter().map(|k| Key::from_static_str(k)).collect();
@@ -958,6 +973,16 @@ mod tests {
         assert_eq!(telemetry.gen_ai_content(), expected);
     }
 
+    #[rstest]
+    #[case::unset(serde_json::json!({}), false)]
+    #[case::disabled(serde_json::json!({"client_address": false}), false)]
+    #[case::enabled(serde_json::json!({"client_address": true}), true)]
+    fn client_address_defaults_to_off(#[case] tracing: serde_json::Value, #[case] expected: bool) {
+        let telemetry: Telemetry =
+            serde_json::from_value(serde_json::json!({"exporters": {"tracing": tracing}})).unwrap();
+        assert_eq!(telemetry.client_address(), expected);
+    }
+
     fn test_config(
         service_name: Option<&str>,
         version: Option<&str>,
@@ -992,6 +1017,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: Some(ommitted),
                 gen_ai_content: false,
+                client_address: false,
                 parent_based_sampler: true,
             }),
         );
@@ -1035,6 +1061,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                client_address: false,
                 parent_based_sampler: true,
             }),
         );
@@ -1059,6 +1086,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                client_address: false,
                 parent_based_sampler: true,
             }),
         );
@@ -1083,6 +1111,7 @@ mod tests {
                 sampler: Some(SamplerOption::default()),
                 omitted_attributes: None,
                 gen_ai_content: false,
+                client_address: false,
                 parent_based_sampler: true,
             }),
         );

@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use crate::generated::telemetry::TelemetryAttribute;
 use axum::body::Body;
-use axum::extract::{MatchedPath, Request};
+use axum::extract::{ConnectInfo, MatchedPath, Request};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_tracing_opentelemetry::tracing_opentelemetry_instrumentation_sdk::http::{
@@ -21,7 +22,8 @@ use opentelemetry::propagation::{Extractor, TextMapCompositePropagator};
 use opentelemetry::trace::{SpanKind, TraceContextExt, TraceId};
 use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 use opentelemetry_semantic_conventions::attribute::{
-    ERROR_TYPE, HTTP_REQUEST_METHOD_ORIGINAL, HTTP_RESPONSE_STATUS_CODE, HTTP_ROUTE,
+    CLIENT_ADDRESS, CLIENT_PORT, ERROR_TYPE, HTTP_REQUEST_METHOD_ORIGINAL,
+    HTTP_RESPONSE_STATUS_CODE, HTTP_ROUTE, NETWORK_PEER_ADDRESS, NETWORK_PEER_PORT,
     OTEL_STATUS_CODE, SERVER_ADDRESS, SERVER_PORT, USER_AGENT_ORIGINAL,
 };
 use rmcp::RoleServer;
@@ -141,6 +143,48 @@ pub fn w3c_text_map_propagator() -> TextMapCompositePropagator {
         Box::new(TraceContextPropagator::new()),
         Box::new(BaggagePropagator::new()),
     ])
+}
+
+/// The TCP peer of an HTTP request, for spans to record as the client.
+///
+/// Present only when `telemetry.exporters.tracing.client_address` opts in: an
+/// IP address is personal data in many jurisdictions.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ClientAddress(SocketAddr);
+
+impl ClientAddress {
+    /// The IP address, with an IPv4-mapped IPv6 address shown as IPv4.
+    fn ip(self) -> String {
+        self.0.ip().to_canonical().to_string()
+    }
+
+    fn port(self) -> i64 {
+        i64::from(self.0.port())
+    }
+
+    /// Sets the IP under each of `ip_keys` and the port under `port_key`.
+    /// These are OpenTelemetry attributes rather than `tracing` fields, so
+    /// they reach exported traces but not text logs.
+    fn set_on(self, span: &tracing::Span, ip_keys: &[&'static str], port_key: &'static str) {
+        let ip = self.ip();
+        for &key in ip_keys {
+            span.set_attribute(key, ip.clone());
+        }
+        span.set_attribute(port_key, self.port());
+    }
+}
+
+/// Exposes the connection's peer to the telemetry middleware and the MCP
+/// handlers as a [`ClientAddress`].
+pub(crate) async fn expose_client_address(mut request: Request, next: Next) -> Response {
+    if let Some(ConnectInfo(peer)) = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .copied()
+    {
+        request.extensions_mut().insert(ClientAddress(peer));
+    }
+    next.run(request).await
 }
 
 /// Open the OpenTelemetry `SERVER` span that every inbound request runs in,
@@ -321,6 +365,15 @@ fn server_span(request: &Request) -> tracing::Span {
     if !user_agent.is_empty() {
         span.record(USER_AGENT_ORIGINAL, user_agent);
     }
+    // Without a trusted proxy to vouch for a forwarded address, the client is
+    // the peer itself. `client.port` is opt-in for HTTP server spans.
+    if let Some(client) = request.extensions().get::<ClientAddress>().copied() {
+        client.set_on(
+            &span,
+            &[CLIENT_ADDRESS, NETWORK_PEER_ADDRESS],
+            NETWORK_PEER_PORT,
+        );
+    }
     span
 }
 
@@ -374,14 +427,15 @@ pub(super) fn with_request_context(
     {
         span.add_link(ambient);
     }
-    // The handler runs only for a request the transport accepted, and reads
-    // the header the same way the HTTP span does for `apollo.mcp.session_id`.
-    if let Some(id) = context
-        .extensions
-        .get::<axum::http::request::Parts>()
-        .and_then(|parts| inbound_session_id(&parts.headers))
-    {
-        span.record("mcp.session.id", id);
+    if let Some(parts) = context.extensions.get::<axum::http::request::Parts>() {
+        // The handler runs only for a request the transport accepted, and reads
+        // the header the same way the HTTP span does for `apollo.mcp.session_id`.
+        if let Some(id) = inbound_session_id(&parts.headers) {
+            span.record("mcp.session.id", id);
+        }
+        if let Some(client) = parts.extensions.get::<ClientAddress>().copied() {
+            client.set_on(&span, &[CLIENT_ADDRESS], CLIENT_PORT);
+        }
     }
     (span, parent)
 }

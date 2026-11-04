@@ -20,7 +20,7 @@ use tracing_subscriber::registry;
 
 use super::running::Running;
 use super::running::test_support::{create_test_running, create_test_running_with_operation};
-use super::starting::{build_http_service, with_telemetry_layers};
+use super::starting::{build_http_service, with_client_address, with_telemetry_layers};
 use super::telemetry::w3c_text_map_propagator;
 use crate::generated::telemetry::TelemetryAttribute;
 use crate::health::{HealthCheck, HealthCheckConfig};
@@ -407,6 +407,151 @@ mod server_span {
         let span = server_span_for(mcp_request("/mcp")).await;
 
         assert_eq!(attribute(&span, key), None);
+    }
+}
+
+mod client_address {
+    use std::net::SocketAddr;
+
+    use axum::extract::ConnectInfo;
+
+    use super::*;
+
+    /// An IPv4 client as a dual-stack listener reports it.
+    const PEER: &str = "[::ffff:203.0.113.7]:51234";
+
+    /// Run an `initialize` request from [`PEER`] and return every exported span.
+    async fn spans_from_peer(record_client_address: bool) -> Vec<SpanData> {
+        let mut router = production_router(create_test_running());
+        if record_client_address {
+            router = with_client_address(router);
+        }
+        let mut request = mcp_request("/mcp");
+        let peer: SocketAddr = PEER.parse().expect("valid socket address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+
+        let spans = ExportedSpans::capture();
+        router.oneshot(request).await.expect("router responds");
+        spans.collect()
+    }
+
+    fn span<'a>(spans: &'a [SpanData], name: &str) -> &'a SpanData {
+        spans
+            .iter()
+            .find(|span| span.name == name)
+            .unwrap_or_else(|| panic!("no {name} span among {spans:#?}"))
+    }
+
+    #[rstest::rstest]
+    #[case::client_address("client.address")]
+    #[case::network_peer_address("network.peer.address")]
+    #[tokio::test]
+    async fn records_the_peer_ip_on_the_server_span(#[case] key: &str) {
+        let spans = spans_from_peer(true).await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, "POST /mcp"), key).as_str(),
+            "203.0.113.7"
+        );
+    }
+
+    #[tokio::test]
+    async fn records_the_peer_port_on_the_server_span() {
+        let spans = spans_from_peer(true).await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, "POST /mcp"), "network.peer.port"),
+            &OtelValue::I64(51234)
+        );
+    }
+
+    #[tokio::test]
+    async fn leaves_the_opt_in_client_port_off_the_server_span() {
+        let spans = spans_from_peer(true).await;
+
+        assert_eq!(attribute(span(&spans, "POST /mcp"), "client.port"), None);
+    }
+
+    #[tokio::test]
+    async fn records_the_client_ip_on_the_handler_span() {
+        let spans = spans_from_peer(true).await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, "initialize"), "client.address").as_str(),
+            "203.0.113.7"
+        );
+    }
+
+    #[tokio::test]
+    async fn records_the_client_port_on_the_handler_span() {
+        let spans = spans_from_peer(true).await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, "initialize"), "client.port"),
+            &OtelValue::I64(51234)
+        );
+    }
+
+    #[rstest::rstest]
+    #[case::client_address("client.address")]
+    #[case::client_port("client.port")]
+    #[case::network_peer_address("network.peer.address")]
+    #[case::network_peer_port("network.peer.port")]
+    #[tokio::test]
+    async fn is_not_recorded_unless_enabled(#[case] key: &str) {
+        let spans = spans_from_peer(false).await;
+
+        let recorded: Vec<_> = spans
+            .iter()
+            .filter(|span| attribute(span, key).is_some())
+            .map(|span| &span.name)
+            .collect();
+        assert!(recorded.is_empty(), "{key} recorded on {recorded:?}");
+    }
+
+    #[tokio::test]
+    async fn stays_out_of_text_logs() {
+        let logs = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = logs.clone();
+        let provider = SdkTracerProvider::builder().build();
+        let subscriber = registry()
+            .with(OpenTelemetryLayer::new(provider.tracer("test")))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    // A span's close event prints every field it recorded.
+                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::CLOSE)
+                    .with_writer(move || LogWriter(writer.clone())),
+            );
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let mut request = mcp_request("/mcp");
+        let peer: SocketAddr = PEER.parse().expect("valid socket address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+
+        with_client_address(production_router(create_test_running()))
+            .oneshot(request)
+            .await
+            .expect("router responds");
+
+        let logs = String::from_utf8(logs.lock().expect("log buffer").clone()).expect("UTF-8");
+        assert!(logs.contains("close"), "no span close events: {logs}");
+        assert!(
+            !logs.contains("203.0.113.7"),
+            "client address logged: {logs}"
+        );
+    }
+
+    struct LogWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("log buffer").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 }
 

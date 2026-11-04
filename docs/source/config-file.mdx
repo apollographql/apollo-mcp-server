@@ -682,6 +682,7 @@ export APOLLO_MCP_TELEMETRY__EXPORTERS__METRICS__OTLP__METADATA__API_KEY="${YOUR
 | `parent_based_sampler` | `bool`              | `true`                      | Follow the sampling decision of an incoming trace context and apply `sampler` only to requests without one. |
 | `omitted_attributes` | `List<String>`        |                             | Supported Apollo span attributes to omit before export. |
 | `gen_ai_content`     | `bool`                | `false`                     | Export the `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`, and `gen_ai.prompt.variable.<name>` span attributes. |
+| `client_address`     | `bool`                | `false`                     | Record the client's IP address and port on spans. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
 
 #### OTLP Trace Exporter
 
