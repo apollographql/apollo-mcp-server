@@ -813,8 +813,18 @@ fn metadata_request_with_capabilities(
 
 /// Sends one MCP request over HTTP and returns the exported spans.
 async fn http_handler_spans(method: &str, params: Value) -> Vec<SpanData> {
-    let spans = ExportedSpans::capture();
-    let running = create_test_running();
+    http_handler_spans_on(create_test_running(), "trace", method, params).await
+}
+
+/// Sends one MCP request over HTTP to `running` and returns the spans that
+/// `filter` lets through.
+async fn http_handler_spans_on(
+    running: Running,
+    filter: &str,
+    method: &str,
+    params: Value,
+) -> Vec<SpanData> {
+    let spans = ExportedSpans::capture_with_filter(tracing_subscriber::EnvFilter::new(filter));
     let service = build_http_service(running, false, &Default::default());
     let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
     let response = router
@@ -1430,6 +1440,90 @@ async fn get_prompt_span_records_prompt_name() {
         attribute(named(&spans, "get_prompt"), "gen_ai.prompt.name").as_deref(),
         Some("missing")
     );
+}
+
+/// Sends `prompts/get` with `params` to a server whose only prompt, `greet`,
+/// declares `name` and `count` arguments.
+async fn get_prompt_spans(params: Value, gen_ai_content: bool) -> Vec<SpanData> {
+    get_prompt_spans_with_filter(params, gen_ai_content, "trace").await
+}
+
+async fn get_prompt_spans_with_filter(
+    params: Value,
+    gen_ai_content: bool,
+    filter: &str,
+) -> Vec<SpanData> {
+    let mut running = create_test_running();
+    running.gen_ai_content = gen_ai_content;
+    running.prompts = vec![crate::prompts::PromptFile {
+        prompt: rmcp::model::Prompt::new(
+            "greet",
+            None::<String>,
+            Some(vec![
+                rmcp::model::PromptArgument::new("name"),
+                rmcp::model::PromptArgument::new("count"),
+            ]),
+        ),
+        template: "Hello {{name}}".to_string(),
+    }];
+    http_handler_spans_on(running, filter, "prompts/get", params).await
+}
+
+fn prompt_variable_keys(span: &SpanData) -> Vec<&str> {
+    span.attributes
+        .iter()
+        .map(|kv| kv.key.as_str())
+        .filter(|key| key.starts_with("gen_ai.prompt.variable."))
+        .collect()
+}
+
+#[rstest::rstest]
+#[case::string(json!({"name": "Alice"}), "gen_ai.prompt.variable.name", "Alice")]
+#[case::non_string_as_json(json!({"count": 3}), "gen_ai.prompt.variable.count", "3")]
+#[tokio::test]
+async fn get_prompt_span_records_prompt_variables_with_gen_ai_content(
+    #[case] arguments: Value,
+    #[case] key: &str,
+    #[case] expected: &str,
+) {
+    let spans = get_prompt_spans(json!({"name": "greet", "arguments": arguments}), true).await;
+    assert_eq!(
+        attribute(named(&spans, "get_prompt"), key).as_deref(),
+        Some(expected)
+    );
+}
+
+#[tokio::test]
+async fn get_prompt_span_omits_prompt_variables_without_gen_ai_content() {
+    let params = json!({"name": "greet", "arguments": {"name": "Alice"}});
+    let spans = get_prompt_spans(params, false).await;
+    assert!(prompt_variable_keys(named(&spans, "get_prompt")).is_empty());
+}
+
+#[tokio::test]
+async fn filtered_get_prompt_span_records_prompt_variables_on_no_other_span() {
+    let params = json!({"name": "greet", "arguments": {"name": "Alice"}});
+    let spans = get_prompt_spans_with_filter(params, true, HANDLER_OFF).await;
+    let recorded: Vec<_> = spans
+        .iter()
+        .filter(|span| !prompt_variable_keys(span).is_empty())
+        .map(|span| span.name.as_ref())
+        .collect();
+    assert!(recorded.is_empty(), "recorded on {recorded:?}");
+}
+
+#[rstest::rstest]
+#[case::undeclared_argument(json!({"name": "greet", "arguments": {"name": "Alice", "extra": "x"}}), &["gen_ai.prompt.variable.name"])]
+#[case::declared_argument_not_sent(json!({"name": "greet", "arguments": {"count": 3}}), &["gen_ai.prompt.variable.count"])]
+#[case::no_arguments(json!({"name": "greet"}), &[])]
+#[case::unknown_prompt(json!({"name": "missing", "arguments": {"name": "Alice"}}), &[])]
+#[tokio::test]
+async fn get_prompt_span_records_only_declared_arguments_the_client_sent(
+    #[case] params: Value,
+    #[case] expected: &[&str],
+) {
+    let spans = get_prompt_spans(params, true).await;
+    assert_eq!(prompt_variable_keys(named(&spans, "get_prompt")), expected);
 }
 
 #[tokio::test]

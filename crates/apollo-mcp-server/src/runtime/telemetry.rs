@@ -168,8 +168,9 @@ pub struct TracingExporters {
     /// Apollo span attributes excluded before export.
     omitted_attributes: Option<HashSet<TelemetryAttribute>>,
     /// Export the opt-in OpenTelemetry GenAI content attributes
-    /// (`gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`), which may
-    /// contain sensitive data. Other `gen_ai.*` attributes are always exported.
+    /// (`gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`, and
+    /// `gen_ai.prompt.variable.<name>`), which may contain sensitive data.
+    /// Other `gen_ai.*` attributes are always exported.
     #[serde(default)]
     gen_ai_content: bool,
     /// Follow the sampling decision of an incoming trace context, such as a

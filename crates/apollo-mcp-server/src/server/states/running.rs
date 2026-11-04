@@ -36,6 +36,7 @@ use serde_json::Value;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument as _, debug, error, info};
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use url::Url;
 
 use crate::apps::app::AppTarget;
@@ -1250,7 +1251,7 @@ impl ServerHandler for McpService {
         request: GetPromptRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<GetPromptResponse, McpError> {
-        let request_span = with_request_context(
+        let (span, parent_context) = with_request_context(
             request_span!(
                 &context,
                 "get_prompt",
@@ -1262,7 +1263,12 @@ impl ServerHandler for McpService {
         );
         let metric = OperationMetric::for_request(GetPromptRequestMethod::VALUE, &context)
             .with_target("gen_ai.prompt.name", request.name.clone());
-        in_request_span(request_span, metric, async {
+        // Record on the handler span itself: when it's filtered out,
+        // `Span::current()` is an enclosing span instead.
+        in_request_span((span.clone(), parent_context), metric, async {
+            if self.application.gen_ai_content {
+                record_prompt_variables(&span, &self.application.prompts, &request);
+            }
             self.application.get_prompt_impl(request).map(Into::into)
         })
         .await
@@ -1376,6 +1382,31 @@ fn record_tool_result(
             }
         }
         Err(_) => record_error(span, result),
+    }
+}
+
+/// Records each argument the requested prompt declares as
+/// `gen_ai.prompt.variable.<name>`. Arguments the prompt doesn't declare are
+/// skipped, so the server's prompt files, not the client, bound the keys.
+fn record_prompt_variables(
+    span: &tracing::Span,
+    prompts: &[crate::prompts::PromptFile],
+    request: &GetPromptRequestParams,
+) {
+    let Some(arguments) = &request.arguments else {
+        return;
+    };
+    let Some(prompt) = prompts.iter().find(|p| p.prompt.name == request.name) else {
+        return;
+    };
+    for declared in prompt.prompt.arguments.iter().flatten() {
+        if let Some(value) = arguments.get(&declared.name) {
+            // Match how the template substitutes the value.
+            let value = value
+                .as_str()
+                .map_or_else(|| value.to_string(), str::to_owned);
+            span.set_attribute(format!("gen_ai.prompt.variable.{}", declared.name), value);
+        }
     }
 }
 
