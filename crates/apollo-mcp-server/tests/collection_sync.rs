@@ -122,6 +122,7 @@ async fn collection_sync_with_bad_variables_keeps_server_alive() {
             path: Default::default(),
             stateful_mode: false,
             host_validation: HostValidationConfig::default(),
+            trusted_proxies: Default::default(),
         })
         .schema_source(SchemaSource::from(
             "type Query { user: User } type User { name: String }",
