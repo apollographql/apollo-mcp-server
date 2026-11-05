@@ -119,19 +119,25 @@ async fn spans_for(request: Request<Body>) -> Vec<SpanData> {
     spans.collect()
 }
 
-/// Run one request through the production router and return its `SERVER` span.
+/// Run one request through the production router and return its HTTP
+/// `SERVER` span.
 async fn server_span_for(request: Request<Body>) -> SpanData {
     let mut server_spans = spans_for(request)
         .await
         .into_iter()
-        .filter(|span| span.span_kind == SpanKind::Server)
+        .filter(is_http_server_span)
         .collect::<Vec<_>>();
     assert_eq!(
         server_spans.len(),
         1,
-        "expected exactly one SERVER span, got {server_spans:#?}"
+        "expected exactly one HTTP SERVER span, got {server_spans:#?}"
     );
     server_spans.remove(0)
+}
+
+/// MCP handler spans are `SERVER` spans too; the HTTP one carries the method.
+fn is_http_server_span(span: &SpanData) -> bool {
+    span.span_kind == SpanKind::Server && attribute(span, "http.request.method").is_some()
 }
 
 fn attribute<'a>(span: &'a SpanData, key: &str) -> Option<&'a OtelValue> {
@@ -149,11 +155,11 @@ mod server_span {
     use super::*;
 
     #[tokio::test]
-    async fn is_the_only_server_span_exported_for_a_request() {
+    async fn is_the_only_http_server_span_exported_for_a_request() {
         let server_spans = spans_for(mcp_request("/mcp"))
             .await
             .into_iter()
-            .filter(|span| span.span_kind == SpanKind::Server)
+            .filter(is_http_server_span)
             .count();
 
         assert_eq!(server_spans, 1);
@@ -319,7 +325,7 @@ mod server_span {
         drop(router);
         let second = collected
             .into_iter()
-            .rfind(|span| span.span_kind == SpanKind::Server)
+            .rfind(is_http_server_span)
             .expect("two SERVER spans");
         assert_eq!(
             attribute_or_panic(&second, TelemetryAttribute::SessionId.as_str()).as_str(),
@@ -583,9 +589,9 @@ mod span_status {
         let mut spans = spans
             .collect()
             .into_iter()
-            .filter(|span| span.span_kind == SpanKind::Server)
+            .filter(is_http_server_span)
             .collect::<Vec<_>>();
-        assert_eq!(spans.len(), 1, "expected one SERVER span: {spans:#?}");
+        assert_eq!(spans.len(), 1, "expected one HTTP SERVER span: {spans:#?}");
         spans.remove(0)
     }
 
@@ -754,15 +760,16 @@ mod span_tree {
     }
 
     #[tokio::test]
-    async fn exports_one_server_span_for_the_whole_call() {
+    async fn exports_a_server_span_for_the_http_request_and_the_mcp_request() {
         let spans = spans_for_a_tool_call().await;
 
-        let server_spans: Vec<_> = spans
+        let mut server_spans: Vec<_> = spans
             .iter()
             .filter(|span| span.span_kind == SpanKind::Server)
-            .map(|span| &span.name)
+            .map(|span| span.name.as_ref())
             .collect();
-        assert_eq!(server_spans, vec!["POST /mcp"]);
+        server_spans.sort_unstable();
+        assert_eq!(server_spans, vec!["POST /mcp", "tools/call Hello"]);
     }
 
     #[tokio::test]
@@ -770,7 +777,7 @@ mod span_tree {
         let spans = spans_for_a_tool_call().await;
 
         assert_eq!(
-            named(&spans, "call_tool").parent_span_id,
+            named(&spans, "tools/call Hello").parent_span_id,
             named(&spans, "POST /mcp").span_context.span_id()
         );
     }
@@ -781,7 +788,7 @@ mod span_tree {
 
         assert_eq!(
             named(&spans, "execute").parent_span_id,
-            named(&spans, "call_tool").span_context.span_id()
+            named(&spans, "tools/call Hello").span_context.span_id()
         );
     }
 
@@ -796,7 +803,7 @@ mod span_tree {
     }
 
     #[rstest::rstest]
-    #[case::handler("call_tool")]
+    #[case::handler("tools/call Hello")]
     #[case::execution("execute")]
     #[case::graphql_client("mcp-graphql-client")]
     #[tokio::test]
@@ -817,7 +824,7 @@ mod span_tree {
         let spans = spans_for_a_tool_call().await;
 
         assert!(
-            named(&spans, "POST /mcp").end_time >= named(&spans, "call_tool").end_time,
+            named(&spans, "POST /mcp").end_time >= named(&spans, "tools/call Hello").end_time,
             "SERVER span ended before its child: {spans:#?}"
         );
     }
@@ -879,8 +886,8 @@ mod body_lifetime {
         let span = spans
             .collect()
             .into_iter()
-            .find(|span| span.span_kind == SpanKind::Server)
-            .expect("a SERVER span");
+            .find(is_http_server_span)
+            .expect("an HTTP SERVER span");
         span.end_time.duration_since(head).unwrap_or(Duration::ZERO)
     }
 

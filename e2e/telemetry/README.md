@@ -45,8 +45,4 @@ the ratio when `parent_based_sampler` is off.
 - `mcp.server.operation.duration`, the `apollo.mcp.*` metrics, and the HTTP
   server metrics arrive in Prometheus.
 
-`KNOWN_GAPS` in `run.mjs` lists checks the server is known to fail. They're
-reported as `GAP` and don't fail the run, but a known gap that starts passing
-does, so the entry gets removed.
-
 Each run writes the server and fixture logs to `artifacts/run-*/`.
