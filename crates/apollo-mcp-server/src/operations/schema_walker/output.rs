@@ -102,6 +102,14 @@ struct SelectedField<'a> {
     field: &'a Node<Field>,
     declared_on: &'a ExtendedType,
     members: Rc<[usize]>,
+    /// The field or an enclosing fragment carries `@include` or `@skip`.
+    gated: bool,
+}
+
+fn has_conditional_directive(directives: &apollo_compiler::ast::DirectiveList) -> bool {
+    directives
+        .iter()
+        .any(|directive| matches!(directive.name.as_str(), "include" | "skip"))
 }
 
 /// Expand the fragment graph once per selection set. The visited key includes the
@@ -114,9 +122,10 @@ fn collect_selected_fields<'a>(
     member_names: &[&str],
     member_index: &HashMap<&str, usize>,
     applicable: Rc<[usize]>,
+    gated: bool,
     graphql_schema: &'a GraphQLSchema,
     named_fragments: &'a HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
-    visited: &mut HashSet<(String, Vec<usize>)>,
+    visited: &mut HashSet<(String, Vec<usize>, bool)>,
     fields: &mut Vec<SelectedField<'a>>,
 ) {
     for selection in selection_set {
@@ -125,6 +134,7 @@ fn collect_selected_fields<'a>(
                 field,
                 declared_on,
                 members: applicable.clone(),
+                gated: gated || has_conditional_directive(&field.directives),
             }),
             Selection::InlineFragment(fragment) => {
                 let target = fragment
@@ -149,6 +159,7 @@ fn collect_selected_fields<'a>(
                         member_names,
                         member_index,
                         Rc::from(matching),
+                        gated || has_conditional_directive(&fragment.directives),
                         graphql_schema,
                         named_fragments,
                         visited,
@@ -167,8 +178,13 @@ fn collect_selected_fields<'a>(
                         next,
                         graphql_schema,
                     );
+                    let spread_gated = gated || has_conditional_directive(&spread.directives);
                     if !matching.is_empty()
-                        && visited.insert((spread.fragment_name.to_string(), matching.clone()))
+                        && visited.insert((
+                            spread.fragment_name.to_string(),
+                            matching.clone(),
+                            spread_gated,
+                        ))
                     {
                         collect_selected_fields(
                             &fragment.selection_set,
@@ -176,6 +192,7 @@ fn collect_selected_fields<'a>(
                             member_names,
                             member_index,
                             Rc::from(matching),
+                            spread_gated,
                             graphql_schema,
                             named_fragments,
                             visited,
@@ -258,6 +275,7 @@ fn build_selection_set_schema(
         &member_names,
         &member_index,
         Rc::from(all_members),
+        false,
         graphql_schema,
         named_fragments,
         &mut HashSet::new(),
@@ -445,7 +463,11 @@ fn build_fields_schema(
         } else if let Some(definition) =
             get_field_definition(selected_field.declared_on, field.name.as_str())
         {
-            if definition.ty.is_non_null() && required_seen.insert(key.clone()) {
+            // A gated field may be absent from the response even when non-null.
+            if definition.ty.is_non_null()
+                && !selected_field.gated
+                && required_seen.insert(key.clone())
+            {
                 required.push(key.clone());
             }
             let child_private_tree = private_tree.children.get(&key).cloned().unwrap_or_default();
@@ -1155,6 +1177,83 @@ mod tests {
         assert!(
             !output_str.contains("email"),
             "email should be excluded from schema because it is marked @private, but got: {output_str}"
+        );
+    }
+
+    fn user_required_keys(value: &Value, out: &mut BTreeSet<String>) {
+        match value {
+            Value::Object(map) => {
+                let is_user = map
+                    .get("properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(|properties| properties.contains_key("id"));
+                if is_user && let Some(Value::Array(required)) = map.get("required") {
+                    out.extend(required.iter().filter_map(Value::as_str).map(String::from));
+                }
+                map.values()
+                    .for_each(|child| user_required_keys(child, out));
+            }
+            Value::Array(items) => items.iter().for_each(|item| user_required_keys(item, out)),
+            _ => {}
+        }
+    }
+
+    #[rstest]
+    #[case::include_on_field("staffNumber @include(if: $flag)", false)]
+    #[case::skip_on_field("staffNumber @skip(if: $flag)", false)]
+    #[case::include_on_inline_fragment("... @include(if: $flag) { staffNumber }", false)]
+    #[case::skip_on_fragment_spread("...Staff @skip(if: $flag)", false)]
+    #[case::ungated_fragment_spread("...Staff", true)]
+    #[case::also_selected_ungated("staffNumber @include(if: $flag) staffNumber", true)]
+    fn conditionally_selected_non_null_fields_are_not_required(
+        #[case] selection: &str,
+        #[case] staff_number_required: bool,
+    ) {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user(id: ID!): User
+            }
+
+            type User {
+                id: ID!
+                staffNumber: String!
+            }
+            "#,
+        );
+        let query = format!(
+            r#"
+            query GetUser($id: ID!, $flag: Boolean!) {{
+                user(id: $id) {{
+                    id
+                    {selection}
+                }}
+            }}
+
+            fragment Staff on User {{
+                staffNumber
+            }}
+            "#
+        );
+        let (doc, selection_set) = parse_operation(&query);
+        let named_fragments = collect_named_fragments(&doc);
+
+        let output_schema = selection_set_to_schema(
+            &selection_set,
+            schema.types.get("Query").unwrap(),
+            &schema,
+            None,
+            &named_fragments,
+            None,
+        );
+
+        let mut required = BTreeSet::new();
+        user_required_keys(&output_schema.into(), &mut required);
+        assert!(required.contains("id"), "required = {required:?}");
+        assert_eq!(
+            required.contains("staffNumber"),
+            staff_number_required,
+            "required = {required:?}"
         );
     }
 }
