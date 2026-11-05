@@ -46,6 +46,7 @@ pub fn selection_set_to_schema(
         named_fragments,
         &mut definitions,
         private_tree.unwrap_or(&PrivateFieldTree::default()),
+        false,
     );
 
     // Wrap in standard GraphQL response envelope
@@ -106,10 +107,19 @@ struct SelectedField<'a> {
     gated: bool,
 }
 
+/// `@include(if: true)` and `@skip(if: false)` always keep the selection.
 fn has_conditional_directive(directives: &apollo_compiler::ast::DirectiveList) -> bool {
-    directives
-        .iter()
-        .any(|directive| matches!(directive.name.as_str(), "include" | "skip"))
+    directives.iter().any(|directive| {
+        let keeps_when = match directive.name.as_str() {
+            "include" => true,
+            "skip" => false,
+            _ => return false,
+        };
+        directive
+            .specified_argument_by_name("if")
+            .and_then(|value| value.to_bool())
+            != Some(keeps_when)
+    })
 }
 
 /// Expand the fragment graph once per selection set. The visited key includes the
@@ -245,6 +255,7 @@ fn build_selection_set_schema(
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     private_tree: &PrivateFieldTree,
+    optional_subtree: bool,
 ) -> JSONSchema {
     let member_names: Vec<&str> = match parent_type {
         ExtendedType::Union(union) => union.members.iter().map(|m| m.as_str()).collect(),
@@ -275,12 +286,18 @@ fn build_selection_set_schema(
         &member_names,
         &member_index,
         Rc::from(all_members),
-        false,
+        optional_subtree,
         graphql_schema,
         named_fragments,
         &mut HashSet::new(),
         &mut fields,
     );
+    let mut seen_keys = HashSet::new();
+    let duplicate_keys: HashSet<_> = fields
+        .iter()
+        .map(|field| response_key(field.field))
+        .filter(|key| !seen_keys.insert(key.clone()))
+        .collect();
 
     let common: Vec<_> = fields
         .iter()
@@ -294,6 +311,8 @@ fn build_selection_set_schema(
         named_fragments,
         definitions,
         private_tree,
+        optional_subtree,
+        &duplicate_keys,
     );
     let conditional: Vec<_> = fields
         .iter()
@@ -379,6 +398,8 @@ fn build_selection_set_schema(
             named_fragments,
             definitions,
             private_tree,
+            optional_subtree,
+            &duplicate_keys,
         );
         let name = format!("$sharedField{}", definitions.len());
         definitions.insert(name.clone(), schema.into());
@@ -404,6 +425,8 @@ fn build_selection_set_schema(
             named_fragments,
             definitions,
             private_tree,
+            optional_subtree,
+            &duplicate_keys,
         );
         let shared: Vec<_> = signature
             .iter()
@@ -444,6 +467,8 @@ fn build_fields_schema(
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     private_tree: &PrivateFieldTree,
+    optional_subtree: bool,
+    duplicate_keys: &HashSet<String>,
 ) -> JSONSchema {
     let mut field_schemas: CompilerIndexMap<String, Vec<Value>> = CompilerIndexMap::default();
     let mut required = Vec::new();
@@ -471,6 +496,10 @@ fn build_fields_schema(
                 required.push(key.clone());
             }
             let child_private_tree = private_tree.children.get(&key).cloned().unwrap_or_default();
+            // Every occurrence's schema applies to a merged key, so a gated one must not
+            // impose its nested requirements when another occurrence is selected alone.
+            let child_optional =
+                optional_subtree || (selected_field.gated && duplicate_keys.contains(&key));
             build_field_schema(
                 field,
                 &definition.ty,
@@ -481,6 +510,7 @@ fn build_fields_schema(
                 definitions,
                 definition.description.as_ref().map(ToString::to_string),
                 &child_private_tree,
+                child_optional,
             )
         } else {
             warn!(field = %field.name, parent_type = %selected_field.declared_on.name(), "Field not found in parent type");
@@ -534,6 +564,7 @@ fn build_field_schema(
     definitions: &mut Map<String, Value>,
     description: Option<String>,
     private_tree: &PrivateFieldTree,
+    optional_subtree: bool,
 ) -> JSONSchema {
     let schema = type_to_output_schema(
         field_type,
@@ -544,6 +575,7 @@ fn build_field_schema(
         named_fragments,
         definitions,
         private_tree,
+        optional_subtree,
     );
 
     with_description(schema, description)
@@ -560,6 +592,7 @@ fn type_to_output_schema(
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     private_tree: &PrivateFieldTree,
+    optional_subtree: bool,
 ) -> JSONSchema {
     match graphql_type {
         // Non-null types - just unwrap
@@ -572,6 +605,7 @@ fn type_to_output_schema(
             named_fragments,
             definitions,
             private_tree,
+            optional_subtree,
         ),
         GraphQLType::NonNullList(inner) => {
             let items = type_to_output_schema(
@@ -583,6 +617,7 @@ fn type_to_output_schema(
                 named_fragments,
                 definitions,
                 private_tree,
+                optional_subtree,
             );
             json_schema!({
                 "type": "array",
@@ -602,6 +637,7 @@ fn type_to_output_schema(
                 named_fragments,
                 definitions,
                 private_tree,
+                optional_subtree,
             );
             json_schema!({
                 "anyOf": [inner, {"type": "null"}]
@@ -617,6 +653,7 @@ fn type_to_output_schema(
                 named_fragments,
                 definitions,
                 private_tree,
+                optional_subtree,
             );
             json_schema!({
                 "anyOf": [
@@ -639,6 +676,7 @@ fn named_type_to_output_schema(
     named_fragments: &HashMap<String, Node<apollo_compiler::ast::FragmentDefinition>>,
     definitions: &mut Map<String, Value>,
     private_tree: &PrivateFieldTree,
+    optional_subtree: bool,
 ) -> JSONSchema {
     match name.as_str() {
         // Built-in scalars
@@ -675,6 +713,7 @@ fn named_type_to_output_schema(
                         named_fragments,
                         definitions,
                         private_tree,
+                        optional_subtree,
                     )
                 }
             }
@@ -693,6 +732,7 @@ fn named_type_to_output_schema(
                         named_fragments,
                         definitions,
                         private_tree,
+                        optional_subtree,
                     )
                 }
             }
@@ -711,6 +751,7 @@ fn named_type_to_output_schema(
                         named_fragments,
                         definitions,
                         private_tree,
+                        optional_subtree,
                     )
                 }
             }
@@ -802,6 +843,7 @@ mod tests {
     use super::*;
     use apollo_compiler::parser::Parser;
     use rstest::rstest;
+    use serde_json::json;
 
     use crate::operations::private_fields::{collect_named_fragments, collect_private_fields};
 
@@ -1205,6 +1247,10 @@ mod tests {
     #[case::skip_on_fragment_spread("...Staff @skip(if: $flag)", false)]
     #[case::ungated_fragment_spread("...Staff", true)]
     #[case::also_selected_ungated("staffNumber @include(if: $flag) staffNumber", true)]
+    #[case::literal_include_true("staffNumber @include(if: true)", true)]
+    #[case::literal_skip_false("staffNumber @skip(if: false)", true)]
+    #[case::literal_include_false("staffNumber @include(if: false)", false)]
+    #[case::literal_skip_true("staffNumber @skip(if: true)", false)]
     fn conditionally_selected_non_null_fields_are_not_required(
         #[case] selection: &str,
         #[case] staff_number_required: bool,
@@ -1254,6 +1300,66 @@ mod tests {
             required.contains("staffNumber"),
             staff_number_required,
             "required = {required:?}"
+        );
+    }
+
+    #[rstest]
+    #[case::gated_duplicate_omits_nested(
+        "user { id } user @include(if: $flag) { staffNumber }",
+        json!({"user": {"id": "1"}}),
+        true
+    )]
+    #[case::gated_duplicate_omits_deeply_nested(
+        "user { id manager { id } } user @include(if: $flag) { manager { staffNumber } }",
+        json!({"user": {"id": "1", "manager": {"id": "2"}}}),
+        true
+    )]
+    #[case::ungated_occurrence_keeps_its_requirements(
+        "user { id } user @include(if: $flag) { staffNumber }",
+        json!({"user": {"staffNumber": "7"}}),
+        false
+    )]
+    #[case::single_gated_occurrence_keeps_nested(
+        "user @include(if: $flag) { id staffNumber }",
+        json!({"user": {"id": "1"}}),
+        false
+    )]
+    fn gated_duplicate_selections_do_not_require_nested_fields(
+        #[case] selection: &str,
+        #[case] data: Value,
+        #[case] valid: bool,
+    ) {
+        let schema = parse_schema(
+            r#"
+            type Query {
+                user: User
+            }
+
+            type User {
+                id: ID!
+                staffNumber: String!
+                manager: User!
+            }
+            "#,
+        );
+        let query = format!("query GetUser($flag: Boolean!) {{ {selection} }}");
+        let (doc, selection_set) = parse_operation(&query);
+        let named_fragments = collect_named_fragments(&doc);
+
+        let output_schema: Value = selection_set_to_schema(
+            &selection_set,
+            schema.types.get("Query").unwrap(),
+            &schema,
+            None,
+            &named_fragments,
+            None,
+        )
+        .into();
+
+        assert_eq!(
+            jsonschema::is_valid(&output_schema, &json!({"data": data})),
+            valid,
+            "schema = {output_schema}"
         );
     }
 }
