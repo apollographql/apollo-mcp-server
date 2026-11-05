@@ -409,7 +409,25 @@ telemetry:
 
 The HTTP request span then records `client.address`, `network.peer.address`, and `network.peer.port`, and MCP handler spans record `client.address` and `client.port`. Requests over stdio have no client address. These attributes go only to exported traces: they don't appear in the span context of log lines. Metrics never carry them either, because every client address would add a time series.
 
-The server takes the address from the TCP connection. It doesn't read `Forwarded` or `X-Forwarded-For`, because a caller can set them to any value. Behind a reverse proxy or load balancer, the recorded address is therefore the proxy's, not the original client's.
+By default, the server takes the address from the TCP connection. Behind a reverse proxy or load balancer, that address is the proxy's, not the original client's. To record the original client, list your proxies under `transport.trusted_proxies`, as CIDR ranges or single IP addresses:
+
+```yaml title="config.yaml"
+transport:
+  type: streamable_http
+  trusted_proxies:
+    - 10.0.4.0/24 # the load balancer subnet
+    - 192.168.1.10
+```
+
+When a request's TCP peer is a trusted proxy, the server reads the `X-Forwarded-For` header from right to left and skips each trusted address. The first address that isn't trusted becomes `client.address`. Spans then don't record `client.port`, because the server ignores any port in `X-Forwarded-For`, and `network.peer.address` and `network.peer.port` still record the proxy. The server ignores `X-Forwarded-For` on requests from any other peer, because a caller can set the header to any value. It doesn't read the `Forwarded` header.
+
+<Caution>
+
+List only proxies that you control and that append the address they received the request from to `X-Forwarded-For`. A range that includes clients lets those clients choose their recorded address. The server logs a warning at startup if the list contains a range that matches every address, such as `0.0.0.0/0`.
+
+</Caution>
+
+`trusted_proxies` changes only which address the server records. It has no effect unless `client_address` is enabled, and the server logs a warning at startup if you set it without enabling `client_address`.
 
 ### Sampling and attribute filtering
 

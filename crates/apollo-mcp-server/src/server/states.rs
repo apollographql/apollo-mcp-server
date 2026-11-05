@@ -560,6 +560,7 @@ mod tests {
                 path: Default::default(),
                 stateful_mode: false,
                 host_validation: HostValidationConfig::default(),
+                trusted_proxies: Default::default(),
             },
             endpoint: "http://localhost:4000".parse().unwrap(),
             headers: HeaderMap::new(),

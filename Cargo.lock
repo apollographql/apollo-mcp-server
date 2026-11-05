@@ -257,6 +257,7 @@ dependencies = [
  "http-body-util",
  "humantime-serde",
  "insta",
+ "ipnet",
  "jsonschema",
  "jsonwebtoken",
  "jwks",

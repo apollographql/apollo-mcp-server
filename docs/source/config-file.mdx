@@ -439,7 +439,7 @@ SSE transport is no longer supported by Apollo MCP Server as of v1.5.0. Use `str
 
 ##### Transport Type Specific options
 
-Some transport types support further configuration. For `streamable_http`, you can set `address`, `port`, `path`, `stateful_mode`, and `host_validation`.
+Some transport types support further configuration. For `streamable_http`, you can set `address`, `port`, `path`, `stateful_mode`, `host_validation`, and `trusted_proxies`.
 
 | Option            | Type             | Default     | Description                                                    |
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
@@ -448,6 +448,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. The root path (`/`), a trailing `/`, and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
 | `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
+| `trusted_proxies` | `List<string>`   | `[]`        | Reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. Spans record the client a trusted proxy names in `X-Forwarded-For` as the client address. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
 
 <Note>
 

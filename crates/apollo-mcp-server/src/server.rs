@@ -22,6 +22,7 @@ use crate::host_validation::HostValidationConfig;
 use crate::operations::{AnnotationOverrides, MutationMode, OperationSource, ParamHeaders};
 use crate::scope_requirements::{OperationRequiredScopes, OperationScopeRequirements};
 use crate::server_info::ServerInfoConfig;
+use crate::trusted_proxies::TrustedProxies;
 
 mod endpoint_path;
 pub(crate) mod states;
@@ -130,6 +131,13 @@ pub enum Transport {
         /// and cross-origin protection.
         #[serde(default)]
         host_validation: HostValidationConfig,
+
+        /// Reverse proxies and load balancers in front of the server, as CIDR
+        /// ranges or single IP addresses. When a request comes from one of
+        /// them, spans record the client it names in `X-Forwarded-For` as
+        /// `client.address`. Empty by default, so the TCP peer is the client.
+        #[serde(default)]
+        trusted_proxies: TrustedProxies,
     },
 }
 

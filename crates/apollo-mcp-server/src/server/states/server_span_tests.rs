@@ -419,6 +419,8 @@ mod server_span {
 mod client_address {
     use std::net::SocketAddr;
 
+    use crate::trusted_proxies::TrustedProxies;
+
     use axum::extract::ConnectInfo;
 
     use super::*;
@@ -430,11 +432,34 @@ mod client_address {
     async fn spans_from_peer(record_client_address: bool) -> Vec<SpanData> {
         let mut router = production_router(create_test_running());
         if record_client_address {
-            router = with_client_address(router);
+            router = with_client_address(router, TrustedProxies::default());
         }
         let mut request = mcp_request("/mcp");
         let peer: SocketAddr = PEER.parse().expect("valid socket address");
         request.extensions_mut().insert(ConnectInfo(peer));
+
+        let spans = ExportedSpans::capture();
+        router.oneshot(request).await.expect("router responds");
+        spans.collect()
+    }
+
+    /// The client a proxy at [`PEER`] forwards for.
+    const FORWARDED_CLIENT: &str = "198.51.100.9";
+
+    /// Run an `initialize` request that [`PEER`] forwards for
+    /// [`FORWARDED_CLIENT`], and return every exported span.
+    async fn spans_forwarded_by(trusted_proxies: &str) -> Vec<SpanData> {
+        let trusted_proxies: TrustedProxies =
+            serde_json::from_value(serde_json::json!([trusted_proxies]))
+                .expect("valid trusted proxies");
+        let router = with_client_address(production_router(create_test_running()), trusted_proxies);
+        let mut request = mcp_request("/mcp");
+        let peer: SocketAddr = PEER.parse().expect("valid socket address");
+        request.extensions_mut().insert(ConnectInfo(peer));
+        request.headers_mut().insert(
+            "x-forwarded-for",
+            http::HeaderValue::from_static(FORWARDED_CLIENT),
+        );
 
         let spans = ExportedSpans::capture();
         router.oneshot(request).await.expect("router responds");
@@ -499,6 +524,49 @@ mod client_address {
     }
 
     #[rstest::rstest]
+    #[case::server_span("POST /mcp")]
+    #[case::handler_span("initialize")]
+    #[tokio::test]
+    async fn records_the_client_a_trusted_proxy_forwards_for(#[case] name: &str) {
+        let spans = spans_forwarded_by("203.0.113.0/24").await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, name), "client.address").as_str(),
+            FORWARDED_CLIENT
+        );
+    }
+
+    #[tokio::test]
+    async fn records_the_trusted_proxy_as_the_network_peer() {
+        let spans = spans_forwarded_by("203.0.113.0/24").await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, "POST /mcp"), "network.peer.address").as_str(),
+            "203.0.113.7"
+        );
+    }
+
+    #[tokio::test]
+    async fn leaves_the_port_of_a_forwarded_client_unknown() {
+        let spans = spans_forwarded_by("203.0.113.0/24").await;
+
+        assert_eq!(attribute(span(&spans, "initialize"), "client.port"), None);
+    }
+
+    #[rstest::rstest]
+    #[case::server_span("POST /mcp")]
+    #[case::handler_span("initialize")]
+    #[tokio::test]
+    async fn ignores_the_forwarded_client_of_an_untrusted_peer(#[case] name: &str) {
+        let spans = spans_forwarded_by("10.0.0.0/8").await;
+
+        assert_eq!(
+            attribute_or_panic(span(&spans, name), "client.address").as_str(),
+            "203.0.113.7"
+        );
+    }
+
+    #[rstest::rstest]
     #[case::client_address("client.address")]
     #[case::client_port("client.port")]
     #[case::network_peer_address("network.peer.address")]
@@ -534,10 +602,13 @@ mod client_address {
         let peer: SocketAddr = PEER.parse().expect("valid socket address");
         request.extensions_mut().insert(ConnectInfo(peer));
 
-        with_client_address(production_router(create_test_running()))
-            .oneshot(request)
-            .await
-            .expect("router responds");
+        with_client_address(
+            production_router(create_test_running()),
+            TrustedProxies::default(),
+        )
+        .oneshot(request)
+        .await
+        .expect("router responds");
 
         let logs = String::from_utf8(logs.lock().expect("log buffer").clone()).expect("UTF-8");
         assert!(logs.contains("close"), "no span close events: {logs}");
