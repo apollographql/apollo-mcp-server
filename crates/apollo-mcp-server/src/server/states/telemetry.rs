@@ -1,11 +1,13 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use crate::generated::telemetry::TelemetryAttribute;
+use crate::trusted_proxies::TrustedProxies;
 use axum::body::Body;
-use axum::extract::{ConnectInfo, MatchedPath, Request};
+use axum::extract::{ConnectInfo, MatchedPath, Request, State};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum_tracing_opentelemetry::tracing_opentelemetry_instrumentation_sdk::http::{
@@ -145,44 +147,75 @@ pub fn w3c_text_map_propagator() -> TextMapCompositePropagator {
     ])
 }
 
-/// The TCP peer of an HTTP request, for spans to record as the client.
+/// Who sent an HTTP request, for spans to record as the client.
 ///
 /// Present only when `telemetry.exporters.tracing.client_address` opts in: an
 /// IP address is personal data in many jurisdictions.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ClientAddress(SocketAddr);
+pub(crate) struct ClientAddress {
+    /// The TCP peer, which is the proxy when the request was forwarded.
+    peer: SocketAddr,
+    /// The original client a trusted proxy named, if any.
+    forwarded_for: Option<IpAddr>,
+}
 
 impl ClientAddress {
-    /// The IP address, with an IPv4-mapped IPv6 address shown as IPv4.
-    fn ip(self) -> String {
-        self.0.ip().to_canonical().to_string()
+    /// The client's IP address, with an IPv4-mapped IPv6 address shown as IPv4.
+    fn client_ip(self) -> String {
+        self.forwarded_for
+            .unwrap_or_else(|| self.peer.ip())
+            .to_canonical()
+            .to_string()
     }
 
-    fn port(self) -> i64 {
-        i64::from(self.0.port())
+    /// The client's port, known only when the client is the peer itself:
+    /// `X-Forwarded-For` doesn't carry one.
+    fn client_port(self) -> Option<i64> {
+        self.forwarded_for
+            .is_none()
+            .then(|| i64::from(self.peer.port()))
     }
 
-    /// Sets the IP under each of `ip_keys` and the port under `port_key`.
-    /// These are OpenTelemetry attributes rather than `tracing` fields, so
-    /// they reach exported traces but not text logs.
-    fn set_on(self, span: &tracing::Span, ip_keys: &[&'static str], port_key: &'static str) {
-        let ip = self.ip();
-        for &key in ip_keys {
-            span.set_attribute(key, ip.clone());
+    // These are OpenTelemetry attributes rather than `tracing` fields, so they
+    // reach exported traces but not text logs.
+
+    /// Records the client and the peer on the HTTP request span.
+    /// `client.port` is opt-in for HTTP server spans, so it's left off.
+    fn set_on_request_span(self, span: &tracing::Span) {
+        span.set_attribute(CLIENT_ADDRESS, self.client_ip());
+        span.set_attribute(
+            NETWORK_PEER_ADDRESS,
+            self.peer.ip().to_canonical().to_string(),
+        );
+        span.set_attribute(NETWORK_PEER_PORT, i64::from(self.peer.port()));
+    }
+
+    /// Records the client on an MCP handler span.
+    fn set_on_handler_span(self, span: &tracing::Span) {
+        span.set_attribute(CLIENT_ADDRESS, self.client_ip());
+        if let Some(port) = self.client_port() {
+            span.set_attribute(CLIENT_PORT, port);
         }
-        span.set_attribute(port_key, self.port());
     }
 }
 
-/// Exposes the connection's peer to the telemetry middleware and the MCP
+/// Exposes who sent each request to the telemetry middleware and the MCP
 /// handlers as a [`ClientAddress`].
-pub(crate) async fn expose_client_address(mut request: Request, next: Next) -> Response {
+pub(crate) async fn expose_client_address(
+    State(trusted_proxies): State<Arc<TrustedProxies>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     if let Some(ConnectInfo(peer)) = request
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
         .copied()
     {
-        request.extensions_mut().insert(ClientAddress(peer));
+        let forwarded_for = trusted_proxies.forwarded_client(peer.ip(), request.headers());
+        request.extensions_mut().insert(ClientAddress {
+            peer,
+            forwarded_for,
+        });
     }
     next.run(request).await
 }
@@ -365,14 +398,8 @@ fn server_span(request: &Request) -> tracing::Span {
     if !user_agent.is_empty() {
         span.record(USER_AGENT_ORIGINAL, user_agent);
     }
-    // Without a trusted proxy to vouch for a forwarded address, the client is
-    // the peer itself. `client.port` is opt-in for HTTP server spans.
     if let Some(client) = request.extensions().get::<ClientAddress>().copied() {
-        client.set_on(
-            &span,
-            &[CLIENT_ADDRESS, NETWORK_PEER_ADDRESS],
-            NETWORK_PEER_PORT,
-        );
+        client.set_on_request_span(&span);
     }
     span
 }
@@ -434,7 +461,7 @@ pub(super) fn with_request_context(
             span.record("mcp.session.id", id);
         }
         if let Some(client) = parts.extensions.get::<ClientAddress>().copied() {
-            client.set_on(&span, &[CLIENT_ADDRESS], CLIENT_PORT);
+            client.set_on_handler_span(&span);
         }
     }
     (span, parent)
