@@ -52,6 +52,7 @@ impl From<Name<'_>> for JSONSchema {
                         "type": "object",
                         "$ref": reference,
                     }),
+                    Some(ExtendedType::Scalar(_)) => typed_ref(cache, cached),
                     _ => JSONSchema::new_ref(reference),
                 }
             }
@@ -213,7 +214,7 @@ impl From<Name<'_>> for JSONSchema {
                         );
                     }
 
-                    JSONSchema::new_ref(format!("#/definitions/{other}"))
+                    typed_ref(cache, other)
                 }
 
                 // Anything else is unhandled
@@ -226,10 +227,30 @@ impl From<Name<'_>> for JSONSchema {
     }
 }
 
+/// A `$ref` to a cached definition, carrying that definition's top-level `type` when it has
+/// one, so MCP clients that don't dereference `$ref` can still classify the value.
+///
+/// Used for custom scalars, whose type comes from the `custom_scalars` mapping. Without a
+/// mapping, or with one that declares no `type`, the reference stays bare.
+fn typed_ref(cache: &Map<String, Value>, name: &str) -> JSONSchema {
+    let reference = format!("#/definitions/{name}");
+    match cache
+        .get(name)
+        .and_then(|definition| definition.get("type"))
+    {
+        Some(r#type) => json_schema!({
+            "type": r#type,
+            "$ref": reference,
+        }),
+        None => JSONSchema::new_ref(reference),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::str::FromStr;
 
     fn builtin_type_schema(type_name: &str) -> JSONSchema {
         let schema =
@@ -266,6 +287,70 @@ mod tests {
             schema: &schema,
         }
         .into()
+    }
+
+    /// Converts the custom scalar `DateTime` twice with a shared cache, returning the schema
+    /// from the first (uncached) and second (cached) conversions.
+    fn custom_scalar_schemas(custom_scalars: Option<&str>) -> (Value, Value) {
+        let schema = GraphQLSchema::parse_and_validate(
+            "type Query { dummy: String } scalar DateTime",
+            "schema.graphql",
+        )
+        .unwrap()
+        .into_inner();
+        let custom_scalar_map = custom_scalars.map(|map| CustomScalarMap::from_str(map).unwrap());
+        let name = GraphQLName::new("DateTime").unwrap();
+        let mut cache = Map::new();
+
+        let mut convert = || -> Value {
+            json!(JSONSchema::from(Name {
+                cache: &mut cache,
+                custom_scalar_map: custom_scalar_map.as_ref(),
+                name: &name,
+                schema: &schema,
+            }))
+        };
+        let uncached = convert();
+        let cached = convert();
+        (uncached, cached)
+    }
+
+    #[test]
+    fn mapped_custom_scalar_reference_carries_mapped_type() {
+        let (uncached, cached) =
+            custom_scalar_schemas(Some(r#"{ "DateTime": { "type": "string" } }"#));
+        let expected = json!({"type": "string", "$ref": "#/definitions/DateTime"});
+        assert_eq!(uncached, expected);
+        assert_eq!(cached, expected);
+    }
+
+    #[test]
+    fn mapped_custom_scalar_with_type_array_copies_it_verbatim() {
+        let (uncached, cached) =
+            custom_scalar_schemas(Some(r#"{ "DateTime": { "type": ["string", "null"] } }"#));
+        let expected = json!({"type": ["string", "null"], "$ref": "#/definitions/DateTime"});
+        assert_eq!(uncached, expected);
+        assert_eq!(cached, expected);
+    }
+
+    #[test]
+    fn mapped_custom_scalar_without_type_stays_a_bare_reference() {
+        let (uncached, cached) = custom_scalar_schemas(Some(
+            r#"{ "DateTime": { "description": "An ISO-8601 date" } }"#,
+        ));
+        let expected = json!({"$ref": "#/definitions/DateTime"});
+        assert_eq!(uncached, expected);
+        assert_eq!(cached, expected);
+    }
+
+    #[test]
+    fn unmapped_custom_scalar_stays_a_bare_reference() {
+        let expected = json!({"$ref": "#/definitions/DateTime"});
+        for custom_scalars in [None, Some("{}")] {
+            let (uncached, cached) = custom_scalar_schemas(custom_scalars);
+            assert_eq!(uncached, expected);
+            assert_eq!(cached, expected);
+        }
     }
 
     #[test]

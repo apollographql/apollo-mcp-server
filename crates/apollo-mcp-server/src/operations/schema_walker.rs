@@ -241,6 +241,10 @@ mod tests {
             name: String!
         }
 
+        input Window {
+            after: BigInt
+        }
+
         type Query {
             things(filter: Filter): String
         }
@@ -264,18 +268,43 @@ mod tests {
     /// Runs `type_to_schema` for a variable definition, returning the property schema
     /// and the collected definitions.
     fn convert(definition: &str, description: Option<&str>) -> (Value, Map<String, Value>) {
+        convert_with_custom_scalars(definition, description, None)
+    }
+
+    /// Like `convert`, with a `custom_scalars` mapping given as JSON.
+    fn convert_with_custom_scalars(
+        definition: &str,
+        description: Option<&str>,
+        custom_scalars: Option<&str>,
+    ) -> (Value, Map<String, Value>) {
         let schema = schema();
         let variable = variable(&schema, definition);
+        let custom_scalar_map = custom_scalars.map(|map| map.parse::<CustomScalarMap>().unwrap());
         let mut definitions = Map::new();
         let converted = type_to_schema(
             &variable.ty,
             &schema,
             &mut definitions,
-            None,
+            custom_scalar_map.as_ref(),
             description.map(str::to_string),
             variable.default_value.as_deref(),
         );
         (json!(converted), definitions)
+    }
+
+    #[test]
+    fn mapped_custom_scalar_carries_mapped_type_in_lists_and_input_fields() {
+        let custom_scalars = Some(r#"{ "BigInt": { "type": "string" } }"#);
+        let typed_ref = json!({"type": "string", "$ref": "#/definitions/BigInt"});
+
+        let (list, _) = convert_with_custom_scalars("$v: [BigInt!]!", None, custom_scalars);
+        assert_eq!(list["items"], typed_ref);
+
+        let (_, definitions) = convert_with_custom_scalars("$v: Window!", None, custom_scalars);
+        assert_eq!(
+            definitions["Window"]["properties"]["after"],
+            json!({"anyOf": [typed_ref, {"type": "null"}]})
+        );
     }
 
     #[test]

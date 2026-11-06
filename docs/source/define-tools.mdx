@@ -546,9 +546,9 @@ produce this `inputSchema`:
 | Enum | `$ref` to a `definitions` entry with `"type": "string"` and `enum` listing the values. The entry's description combines the enum's description with each value and its description. |
 | Input object | `$ref` to a `definitions` entry with `"type": "object"`, `properties` for every field, and `required` for non-nullable fields without a default. |
 | List | `{"type": "array", "items": ...}`, with `items` mapped by the same rules. |
-| Custom scalar | The schema from the matching [`custom_scalars`](/apollo-mcp-server/custom-scalars) entry. Without an entry, an unconstrained schema `{}` carrying the scalar's description. |
+| Custom scalar | `$ref` to a `definitions` entry holding the schema from the matching [`custom_scalars`](/apollo-mcp-server/custom-scalars) entry. Without an entry, the definition is an unconstrained schema `{}` carrying the scalar's description. |
 
-Each named type appears once in `definitions`, and every use of it is a `$ref`, so recursive input types don't expand indefinitely.
+Each named type appears once in `definitions`, and every use of it is a `$ref`, so recursive input types don't expand indefinitely. Each `$ref` also carries the definition's top-level `type` (`"string"` for enums, `"object"` for input objects, and the mapped `type` for custom scalars whose entry declares one) so that clients that don't dereference `$ref` can still tell what kind of value to send.
 
 ### Nullability and `required`
 
