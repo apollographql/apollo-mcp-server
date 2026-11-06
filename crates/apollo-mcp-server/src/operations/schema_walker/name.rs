@@ -331,15 +331,14 @@ mod tests {
         })
     }
 
-    #[test]
-    fn mapped_scalar_reference_carries_mapped_type() {
-        let mapping: CustomScalarMap =
-            r#"{"Date": {"type": "string", "format": "date"}}"#.parse().unwrap();
+    #[rstest::rstest]
+    #[case::plain(r#"{"Date": {"type": "string", "format": "date"}}"#, json!({"type": "string", "$ref": "#/definitions/Date"}))]
+    #[case::union(r#"{"Date": {"type": ["string", "null"]}}"#, json!({"type": ["string", "null"], "$ref": "#/definitions/Date"}))]
+    #[case::typeless(r#"{"Date": {"enum": ["2026-01-01"]}}"#, json!({"$ref": "#/definitions/Date"}))]
+    fn mapped_scalar_reference_carries_mapped_type(#[case] mapping: &str, #[case] expected: Value) {
+        let mapping: CustomScalarMap = mapping.parse().unwrap();
         for reference in scalar_references(Some(&mapping)) {
-            assert_eq!(
-                json!(reference),
-                json!({"type": "string", "$ref": "#/definitions/Date"})
-            );
+            assert_eq!(json!(reference), expected);
         }
     }
 
