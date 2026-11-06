@@ -159,7 +159,7 @@ impl Running {
             && protocol_version.is_some_and(|v| *v >= ProtocolVersion::V_2025_06_18)
     }
 
-    /// Rebuilds the current predefined operation catalog against a new schema.
+    /// Rebuilds the current predefined operation catalog and the search index against a new schema.
     ///
     /// Only state behind shared locks changes, so active server clones observe the update.
     pub(super) async fn update_schema(&self, schema: Valid<Schema>) {
@@ -199,6 +199,13 @@ impl Running {
             operations.len(),
             serde_json::to_string_pretty(&operations).unwrap_or_default()
         );
+        // The search index is built from a snapshot of the schema, so it must be rebuilt too
+        if let Some(search_tool) = &self.search_tool
+            && let Err(error) = search_tool.reindex(&schema).await
+        {
+            error!("Failed to rebuild the search index: {}", error);
+        }
+
         // Update the schema itself
         *self.schema.write().await = schema;
 
@@ -3491,6 +3498,31 @@ mod tests {
             );
             running.explorer_tool = Some(Explorer::new("mcp-example@mcp".to_string()));
             running
+        }
+
+        #[tokio::test]
+        async fn update_schema_should_rebuild_search_index() {
+            let running = running_with_builtin_tools();
+            let schema = Schema::parse_and_validate(
+                "type Query { id: String, added: Added } type Added { id: ID }",
+                "reloaded.graphql",
+            )
+            .unwrap();
+
+            running.update_schema(schema).await;
+
+            let input = serde_json::from_value(serde_json::json!({ "terms": ["Added"] })).unwrap();
+            let result = running
+                .search_tool
+                .as_ref()
+                .unwrap()
+                .execute(input)
+                .await
+                .unwrap();
+            assert!(result.content.iter().any(|content| matches!(
+                content,
+                rmcp::model::ContentBlock::Text(text) if text.text.contains("type Added")
+            )));
         }
 
         // Per-tool unit tests pin the hint policy; this one proves the listing path keeps it.
