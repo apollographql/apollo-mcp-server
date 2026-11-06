@@ -101,6 +101,8 @@ impl Search {
 
     #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
+        // Taken before the index, so a schema update cannot swap the index between the two reads
+        let schema = self.schema.read().await;
         let mut root_paths = self
             .index
             .read()
@@ -125,7 +127,6 @@ impl Search {
                 .join("\n"),
         );
 
-        let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         for root_path in root_paths {
             let path_len = root_path.inner.len();

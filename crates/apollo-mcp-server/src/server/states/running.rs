@@ -199,7 +199,9 @@ impl Running {
             operations.len(),
             serde_json::to_string_pretty(&operations).unwrap_or_default()
         );
-        // The search index is built from a snapshot of the schema, so it must be rebuilt too
+        // The search index is built from a snapshot of the schema, so it must be rebuilt too.
+        // It is swapped under the schema lock, so a search never sees the new index with the old schema.
+        let mut schema_lock = self.schema.write().await;
         if let Some(search_tool) = &self.search_tool
             && let Err(error) = search_tool.reindex(&schema).await
         {
@@ -207,7 +209,8 @@ impl Running {
         }
 
         // Update the schema itself
-        *self.schema.write().await = schema;
+        *schema_lock = schema;
+        drop(schema_lock);
 
         warn_unmatched_operations(&self.param_headers, &operations);
         *operations_lock = operations;
