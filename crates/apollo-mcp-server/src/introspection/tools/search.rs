@@ -92,6 +92,12 @@ impl Search {
 
     #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
+        if input.terms.is_empty() {
+            return Ok(CallToolResult::error(vec![ContentBlock::text(
+                "Provide at least one search term",
+            )]));
+        }
+
         let mut root_paths = self
             .index
             .search(input.terms.clone(), Options::default())
@@ -149,28 +155,40 @@ impl Search {
 
         let shaken = tree_shaker.shaken().unwrap_or_else(|schema| schema.partial);
 
-        Ok(CallToolResult::success(
-            shaken
-                .types
+        let content: Vec<ContentBlock> = shaken
+            .types
+            .iter()
+            .filter(|(_name, extended_type)| {
+                !extended_type.is_built_in()
+                    && schema
+                        .root_operation(AstOperationType::Mutation)
+                        .is_none_or(|root_name| {
+                            extended_type.name() != root_name || self.allow_mutations
+                        })
+            })
+            .map(|(_, extended_type)| {
+                if self.minify {
+                    extended_type.minify()
+                } else {
+                    extended_type.serialize().to_string()
+                }
+            })
+            .map(ContentBlock::text)
+            .collect();
+
+        if content.is_empty() {
+            let terms = input
+                .terms
                 .iter()
-                .filter(|(_name, extended_type)| {
-                    !extended_type.is_built_in()
-                        && schema
-                            .root_operation(AstOperationType::Mutation)
-                            .is_none_or(|root_name| {
-                                extended_type.name() != root_name || self.allow_mutations
-                            })
-                })
-                .map(|(_, extended_type)| {
-                    if self.minify {
-                        extended_type.minify()
-                    } else {
-                        extended_type.serialize().to_string()
-                    }
-                })
-                .map(ContentBlock::text)
-                .collect(),
-        ))
+                .map(|term| format!("`{term}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Ok(CallToolResult::success(vec![ContentBlock::text(format!(
+                "No types matched {terms}. Try different search terms."
+            ))]));
+        }
+
+        Ok(CallToolResult::success(content))
     }
 }
 
@@ -239,6 +257,65 @@ mod tests {
         assert!(
             content_to_snapshot(result).contains("createUser"),
             "Expected to find the createUser mutation in search results"
+        );
+    }
+
+    #[rstest]
+    #[case::single_term(&["zzzqqq"], "No types matched `zzzqqq`. Try different search terms.")]
+    #[case::multiple_terms(
+        &["zzzqqq", "xxyyzz"],
+        "No types matched `zzzqqq`, `xxyyzz`. Try different search terms."
+    )]
+    #[tokio::test]
+    async fn search_with_no_match_returns_message(
+        schema: Valid<Schema>,
+        #[case] terms: &[&str],
+        #[case] message: &str,
+    ) {
+        let search = Search::new(
+            Arc::new(RwLock::new(schema)),
+            false,
+            1,
+            15_000_000,
+            false,
+            None,
+        )
+        .expect("Failed to create search tool");
+
+        let result = search
+            .execute(Input {
+                terms: terms.iter().map(ToString::to_string).collect(),
+            })
+            .await
+            .expect("Search execution failed");
+
+        assert_eq!(
+            result,
+            CallToolResult::success(vec![ContentBlock::text(message)])
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn search_with_empty_terms_returns_error(schema: Valid<Schema>) {
+        let search = Search::new(
+            Arc::new(RwLock::new(schema)),
+            false,
+            1,
+            15_000_000,
+            false,
+            None,
+        )
+        .expect("Failed to create search tool");
+
+        let result = search
+            .execute(Input { terms: vec![] })
+            .await
+            .expect("Search execution failed");
+
+        assert_eq!(
+            result,
+            CallToolResult::error(vec![ContentBlock::text("Provide at least one search term")])
         );
     }
 
