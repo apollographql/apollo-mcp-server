@@ -30,9 +30,10 @@ const MAX_SEARCH_RESULTS: usize = 5;
 #[derive(Clone)]
 pub struct Search {
     schema: Arc<RwLock<Valid<Schema>>>,
-    index: SchemaIndex,
+    index: Arc<RwLock<SchemaIndex>>,
     allow_mutations: bool,
     leaf_depth: usize,
+    index_memory_bytes: usize,
     minify: bool,
     pub tool: Tool,
 }
@@ -63,11 +64,6 @@ impl Search {
         minify: bool,
         description_hint: Option<&str>,
     ) -> Result<Self, IndexingError> {
-        let root_types = if allow_mutations {
-            OperationType::Query | OperationType::Mutation
-        } else {
-            OperationType::Query.into()
-        };
         let locked = &schema.try_read()?;
         let default_description = format!(
             "Search a GraphQL schema for types matching the provided search terms. Returns complete type definitions including all related types needed to construct GraphQL operations. Instructions: If the introspect tool is also available, you can discover type names by using the introspect tool starting from the root Query or Mutation types. Avoid reusing previously searched terms for more efficient exploration.{}",
@@ -81,19 +77,36 @@ impl Search {
             append_description_hint(&default_description, description_hint).into_owned();
         Ok(Self {
             schema: schema.clone(),
-            index: SchemaIndex::new(locked, root_types, index_memory_bytes)?,
+            index: Arc::new(RwLock::new(build_index(
+                locked,
+                allow_mutations,
+                index_memory_bytes,
+            )?)),
             allow_mutations,
             leaf_depth,
+            index_memory_bytes,
             minify,
             tool: Tool::new(SEARCH_TOOL_NAME, description, schema_from_type!(Input))
                 .annotate(super::schema_lookup_annotations()),
         })
     }
 
+    /// Rebuilds the search index for a new schema, so searches stop returning removed types and
+    /// find added ones. The index is shared, so every clone of this tool observes the rebuild.
+    pub async fn reindex(&self, schema: &Valid<Schema>) -> Result<(), IndexingError> {
+        let index = build_index(schema, self.allow_mutations, self.index_memory_bytes)?;
+        *self.index.write().await = index;
+        Ok(())
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn execute(&self, input: Input) -> Result<CallToolResult, McpError> {
+        // Taken before the index, so a schema update cannot swap the index between the two reads
+        let schema = self.schema.read().await;
         let mut root_paths = self
             .index
+            .read()
+            .await
             .search(input.terms.clone(), Options::default())
             .map_err(|e| {
                 McpError::new(
@@ -114,7 +127,6 @@ impl Search {
                 .join("\n"),
         );
 
-        let schema = self.schema.read().await;
         let mut tree_shaker = SchemaTreeShaker::new(&schema);
         for root_path in root_paths {
             let path_len = root_path.inner.len();
@@ -174,6 +186,19 @@ impl Search {
     }
 }
 
+fn build_index(
+    schema: &Valid<Schema>,
+    allow_mutations: bool,
+    index_memory_bytes: usize,
+) -> Result<SchemaIndex, IndexingError> {
+    let root_types = if allow_mutations {
+        OperationType::Query | OperationType::Mutation
+    } else {
+        OperationType::Query.into()
+    };
+    Ok(SchemaIndex::new(schema, root_types, index_memory_bytes)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +243,38 @@ mod tests {
 
         assert!(!result.is_error.unwrap_or(false));
         insta::assert_snapshot!(content_to_snapshot(result));
+    }
+
+    const OLD_SCHEMA: &str = "type Query { oldField: Old } type Old { id: ID }";
+    const NEW_SCHEMA: &str = "type Query { newField: New } type New { id: ID }";
+
+    async fn search_after_reindex(term: &str) -> String {
+        let parse = |sdl| Schema::parse_and_validate(sdl, "schema.graphql").unwrap();
+        let schema = Arc::new(RwLock::new(parse(OLD_SCHEMA)));
+        let search = Search::new(schema.clone(), false, 1, 15_000_000, false, None)
+            .expect("Failed to create search tool");
+
+        let updated = parse(NEW_SCHEMA);
+        search.reindex(&updated).await.expect("Failed to reindex");
+        *schema.write().await = updated;
+
+        let result = search
+            .execute(Input {
+                terms: vec![term.to_string()],
+            })
+            .await
+            .expect("Search execution failed");
+        content_to_snapshot(result)
+    }
+
+    #[tokio::test]
+    async fn reindex_should_find_added_types() {
+        assert!(search_after_reindex("New").await.contains("type New"));
+    }
+
+    #[tokio::test]
+    async fn reindex_should_drop_removed_types() {
+        assert!(search_after_reindex("Old").await.is_empty());
     }
 
     #[rstest]
