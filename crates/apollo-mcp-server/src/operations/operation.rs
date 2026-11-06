@@ -3005,6 +3005,7 @@ mod tests {
                     "id": Object {
                         "anyOf": Array [
                             Object {
+                                "type": String("string"),
                                 "$ref": String("#/definitions/RealCustomScalar"),
                             },
                             Object {

@@ -52,6 +52,7 @@ impl From<Name<'_>> for JSONSchema {
                         "type": "object",
                         "$ref": reference,
                     }),
+                    Some(ExtendedType::Scalar(_)) => scalar_reference(cached, cache),
                     _ => JSONSchema::new_ref(reference),
                 }
             }
@@ -213,7 +214,7 @@ impl From<Name<'_>> for JSONSchema {
                         );
                     }
 
-                    JSONSchema::new_ref(format!("#/definitions/{other}"))
+                    scalar_reference(other, cache)
                 }
 
                 // Anything else is unhandled
@@ -224,6 +225,17 @@ impl From<Name<'_>> for JSONSchema {
             },
         }
     }
+}
+
+/// Copy the custom scalar's mapped `type` next to its `$ref`, like enums and input objects
+fn scalar_reference(name: &str, cache: &Map<String, Value>) -> JSONSchema {
+    let mut reference = JSONSchema::new_ref(format!("#/definitions/{name}"));
+    if let Some(mapped_type) = cache.get(name).and_then(|schema| schema.get("type")) {
+        reference
+            .ensure_object()
+            .insert("type".to_string(), mapped_type.clone());
+    }
+    reference
 }
 
 #[cfg(test)]
@@ -296,5 +308,45 @@ mod tests {
             json!(schema),
             json!({"type": "object", "$ref": "#/definitions/Filter"})
         );
+    }
+
+    fn scalar_references(custom_scalar_map: Option<&CustomScalarMap>) -> [JSONSchema; 2] {
+        let schema = GraphQLSchema::parse_and_validate(
+            "type Query { dummy: String } scalar Date",
+            "schema.graphql",
+        )
+        .unwrap()
+        .into_inner();
+        let name = GraphQLName::new("Date").unwrap();
+        let mut cache = Map::new();
+
+        [(); 2].map(|_| {
+            Name {
+                cache: &mut cache,
+                custom_scalar_map,
+                name: &name,
+                schema: &schema,
+            }
+            .into()
+        })
+    }
+
+    #[test]
+    fn mapped_scalar_reference_carries_mapped_type() {
+        let mapping: CustomScalarMap =
+            r#"{"Date": {"type": "string", "format": "date"}}"#.parse().unwrap();
+        for reference in scalar_references(Some(&mapping)) {
+            assert_eq!(
+                json!(reference),
+                json!({"type": "string", "$ref": "#/definitions/Date"})
+            );
+        }
+    }
+
+    #[test]
+    fn unmapped_scalar_reference_stays_untyped() {
+        for reference in scalar_references(None) {
+            assert_eq!(json!(reference), json!({"$ref": "#/definitions/Date"}));
+        }
     }
 }
