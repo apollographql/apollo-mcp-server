@@ -165,6 +165,16 @@ impl Running {
     pub(super) async fn update_schema(&self, schema: Valid<Schema>) {
         debug!("Schema updated:\n{}", schema);
 
+        // The search index is built from a snapshot of the schema, so it must be rebuilt too.
+        // This is done before taking any lock, because every tool call reads the operations lock.
+        // Updates run one at a time from the server's event loop, so builds cannot be reordered.
+        let search_index = self.search_tool.as_ref().and_then(|search_tool| {
+            search_tool
+                .build_index(&schema)
+                .inspect_err(|error| error!("Failed to rebuild the search index: {}", error))
+                .ok()
+        });
+
         // We hold this lock for the entire update process to make sure there are no race conditions with simultaneous updates
         let mut operations_lock = self.operations.write().await;
 
@@ -199,13 +209,10 @@ impl Running {
             operations.len(),
             serde_json::to_string_pretty(&operations).unwrap_or_default()
         );
-        // The search index is built from a snapshot of the schema, so it must be rebuilt too.
-        // It is swapped under the schema lock, so a search never sees the new index with the old schema.
+        // The index is swapped under the schema lock, so a search never sees the new index with the old schema.
         let mut schema_lock = self.schema.write().await;
-        if let Some(search_tool) = &self.search_tool
-            && let Err(error) = search_tool.reindex(&schema).await
-        {
-            error!("Failed to rebuild the search index: {}", error);
+        if let (Some(search_tool), Some(search_index)) = (&self.search_tool, search_index) {
+            search_tool.replace_index(search_index).await;
         }
 
         // Update the schema itself

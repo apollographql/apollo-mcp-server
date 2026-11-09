@@ -91,12 +91,16 @@ impl Search {
         })
     }
 
-    /// Rebuilds the search index for a new schema, so searches stop returning removed types and
-    /// find added ones. The index is shared, so every clone of this tool observes the rebuild.
-    pub async fn reindex(&self, schema: &Valid<Schema>) -> Result<(), IndexingError> {
-        let index = build_index(schema, self.allow_mutations, self.index_memory_bytes)?;
+    /// Builds a search index for a new schema without touching the one in use, so the caller can
+    /// run this slow step before taking any lock and swap the result in with `replace_index`.
+    pub fn build_index(&self, schema: &Valid<Schema>) -> Result<SchemaIndex, IndexingError> {
+        build_index(schema, self.allow_mutations, self.index_memory_bytes)
+    }
+
+    /// Replaces the search index, so searches stop returning removed types and find added ones.
+    /// The index is shared, so every clone of this tool observes the replacement.
+    pub async fn replace_index(&self, index: SchemaIndex) {
         *self.index.write().await = index;
-        Ok(())
     }
 
     #[tracing::instrument(skip(self))]
@@ -255,7 +259,10 @@ mod tests {
             .expect("Failed to create search tool");
 
         let updated = parse(NEW_SCHEMA);
-        search.reindex(&updated).await.expect("Failed to reindex");
+        let index = search
+            .build_index(&updated)
+            .expect("Failed to build the index");
+        search.replace_index(index).await;
         *schema.write().await = updated;
 
         let result = search
@@ -275,6 +282,26 @@ mod tests {
     #[tokio::test]
     async fn reindex_should_drop_removed_types() {
         assert!(search_after_reindex("Old").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn build_index_should_keep_the_current_index_until_replaced() {
+        let parse = |sdl| Schema::parse_and_validate(sdl, "schema.graphql").unwrap();
+        let schema = Arc::new(RwLock::new(parse(OLD_SCHEMA)));
+        let search = Search::new(schema, false, 1, 15_000_000, false, None)
+            .expect("Failed to create search tool");
+
+        search
+            .build_index(&parse(NEW_SCHEMA))
+            .expect("Failed to build the index");
+
+        let result = search
+            .execute(Input {
+                terms: vec!["Old".to_string()],
+            })
+            .await
+            .expect("Search execution failed");
+        assert!(content_to_snapshot(result).contains("type Old"));
     }
 
     #[rstest]
