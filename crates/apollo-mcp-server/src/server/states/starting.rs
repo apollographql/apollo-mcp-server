@@ -24,6 +24,7 @@ use crate::{
     operations::{MutationMode, RawOperation, warn_app_tool_collisions, warn_unmatched_operations},
     scope_requirements::OperationRequiredScopes,
     server::{EndpointPath, Transport},
+    trusted_proxies::TrustedProxies,
 };
 use apollo_mcp_rhai::{SharedRhaiEngine, checkpoints};
 
@@ -217,9 +218,11 @@ impl Starting {
                 path,
                 stateful_mode,
                 host_validation,
+                trusted_proxies,
             } => {
                 info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
+                trusted_proxies.warn_if_misconfigured(self.config.client_address);
                 let listen_address = SocketAddr::new(address, port);
                 let service = build_http_service(running, stateful_mode, &host_validation);
                 let health_check = health_check.filter(|h| h.config().enabled);
@@ -228,7 +231,7 @@ impl Starting {
                     ListenerBuilder::new(listen_address, path, service, self.config.cors.clone())
                         .with_auth(auth, self.config.required_scopes.clone(), stateful_mode)?
                         .with_cors()?
-                        .with_telemetry(self.config.client_address)
+                        .with_telemetry(self.config.client_address, trusted_proxies)
                         .with_health(health_check.as_ref())?;
 
                 // Bind every listener before spawning any serving task, so a later bind
@@ -287,10 +290,17 @@ pub(super) fn with_telemetry_layers(router: axum::Router) -> axum::Router {
         .layer(axum::middleware::from_fn(otel_context_middleware))
 }
 
-/// Expose each request's TCP peer to the telemetry layers, which must already
-/// wrap `router`, so spans record it as the client.
-pub(super) fn with_client_address(router: axum::Router) -> axum::Router {
-    router.layer(axum::middleware::from_fn(expose_client_address))
+/// Expose who sent each request to the telemetry layers, which must already
+/// wrap `router`, so spans record it as the client: the TCP peer, or the client
+/// a trusted proxy names in `X-Forwarded-For`.
+pub(super) fn with_client_address(
+    router: axum::Router,
+    trusted_proxies: TrustedProxies,
+) -> axum::Router {
+    router.layer(axum::middleware::from_fn_with_state(
+        Arc::new(trusted_proxies),
+        expose_client_address,
+    ))
 }
 
 /// Construct the production transport, including cancellation of open streams.
@@ -435,10 +445,10 @@ impl ListenerBuilder {
         Ok(self)
     }
 
-    fn with_telemetry(mut self, client_address: bool) -> Self {
+    fn with_telemetry(mut self, client_address: bool, trusted_proxies: TrustedProxies) -> Self {
         self.router = with_telemetry_layers(self.router);
         if client_address {
-            self.router = with_client_address(self.router);
+            self.router = with_client_address(self.router, trusted_proxies);
         }
         self
     }
@@ -520,6 +530,7 @@ mod tests {
                 path: Default::default(),
                 stateful_mode: false,
                 host_validation: HostValidationConfig::default(),
+                trusted_proxies: Default::default(),
             },
             endpoint: Url::parse("http://localhost:4000").expect("valid url"),
             mutation_mode: MutationMode::All,
@@ -790,7 +801,7 @@ mod tests {
             .insert(axum::extract::ConnectInfo(peer));
 
         let response = builder
-            .with_telemetry(enabled)
+            .with_telemetry(enabled, TrustedProxies::default())
             .router
             .oneshot(request)
             .await
@@ -806,16 +817,19 @@ mod tests {
     async fn serve_http_exposes_the_peer_to_the_client_address_layer() {
         use crate::server::states::telemetry::ClientAddress;
 
-        let router = with_client_address(axum::Router::new().route(
-            "/",
-            axum::routing::get(|request: Request<Body>| async move {
-                request
-                    .extensions()
-                    .get::<ClientAddress>()
-                    .is_some()
-                    .to_string()
-            }),
-        ));
+        let router = with_client_address(
+            axum::Router::new().route(
+                "/",
+                axum::routing::get(|request: Request<Body>| async move {
+                    request
+                        .extensions()
+                        .get::<ClientAddress>()
+                        .is_some()
+                        .to_string()
+                }),
+            ),
+            TrustedProxies::default(),
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let shutdown = CancellationToken::new();
