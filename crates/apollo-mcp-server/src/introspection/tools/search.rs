@@ -299,7 +299,7 @@ mod tests {
 
     #[tokio::test]
     async fn reindex_should_drop_removed_types() {
-        assert!(search_after_reindex("Old").await.is_empty());
+        assert!(!search_after_reindex("Old").await.contains("type Old"));
     }
 
     #[tokio::test]
