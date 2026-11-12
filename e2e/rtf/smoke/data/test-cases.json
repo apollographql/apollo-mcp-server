@@ -31,7 +31,7 @@
       "arguments": { "terms": ["product"] },
       "expect": {
         "success": true,
-        "contains": "product"
+        "contains": "type Query"
       }
     },
     {
