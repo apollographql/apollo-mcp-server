@@ -222,14 +222,23 @@ impl Starting {
             } => {
                 info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
                 let running = running.clone();
-                trusted_proxies.warn_if_misconfigured(self.config.client_address);
+                let per_client_rate_limit = auth
+                    .as_ref()
+                    .is_some_and(|auth| auth.rate_limit.limits_per_client());
+                trusted_proxies
+                    .warn_if_misconfigured(self.config.client_address || per_client_rate_limit);
                 let listen_address = SocketAddr::new(address, port);
                 let service = build_http_service(running, stateful_mode, &host_validation);
                 let health_check = health_check.filter(|h| h.config().enabled);
 
                 let listeners =
                     ListenerBuilder::new(listen_address, path, service, self.config.cors.clone())
-                        .with_auth(auth, self.config.required_scopes.clone(), stateful_mode)?
+                        .with_auth(
+                            auth,
+                            self.config.required_scopes.clone(),
+                            stateful_mode,
+                            &trusted_proxies,
+                        )?
                         .with_cors()?
                         .with_telemetry(self.config.client_address, trusted_proxies)
                         .with_health(health_check.as_ref())?;
@@ -421,6 +430,7 @@ impl ListenerBuilder {
         auth: Option<Box<auth::Config>>,
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
+        trusted_proxies: &TrustedProxies,
     ) -> Result<Self, ServerError> {
         if let Some(auth) = auth {
             if !resource_matches_path(&auth.resource, &self.path) {
@@ -432,7 +442,7 @@ impl ListenerBuilder {
                 );
             }
             self.router = auth
-                .enable_middleware(self.router, required_scopes, stateful_mode)
+                .enable_middleware(self.router, required_scopes, stateful_mode, trusted_proxies)
                 .inspect_err(|e| {
                     error!("Failed to enable auth middleware: {}", e);
                 })?;

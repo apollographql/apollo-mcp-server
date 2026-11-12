@@ -7,18 +7,20 @@
 //! rejected credentials use up the budget. Operators that already rate limit
 //! upstream can turn the layer off with `transport.auth.rate_limit.enabled`.
 //!
-//! There is no per-peer limit. Behind a reverse proxy or load balancer the
-//! connection address identifies the proxy, not the client, so keying on it
-//! would make unrelated clients share one bucket.
+//! With `per_client`, each client address gets a bucket too, so a client that
+//! invents a new token per request is still limited. The address is resolved
+//! through `transport.trusted_proxies`; behind a proxy that isn't listed there,
+//! every client shares the proxy's bucket, so the limit is off by default.
 
 use std::collections::{HashMap, hash_map::RandomState};
 use std::hash::BuildHasher;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{StatusCode, header::AUTHORIZATION},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -29,6 +31,7 @@ use serde::Deserialize;
 
 use crate::generated::telemetry::TelemetryMetric;
 use crate::meter;
+use crate::trusted_proxies::TrustedProxies;
 
 use super::log_throttle::LogThrottle;
 
@@ -50,6 +53,11 @@ pub struct RateLimitConfig {
     /// Failed authentications a credential can make in a burst before the
     /// sustained rate applies.
     pub burst: NonZeroU32,
+
+    /// Also limit failed authentications from each client address, at the same
+    /// rate and burst. Behind a reverse proxy or load balancer, list it under
+    /// `transport.trusted_proxies`, or every client shares its bucket.
+    pub per_client: bool,
 }
 
 impl Default for RateLimitConfig {
@@ -58,7 +66,15 @@ impl Default for RateLimitConfig {
             enabled: true,
             requests_per_second: DEFAULT_REQUESTS_PER_SECOND,
             burst: DEFAULT_BURST,
+            per_client: false,
         }
+    }
+}
+
+impl RateLimitConfig {
+    /// Whether the layer limits each client address as well as each credential.
+    pub(crate) fn limits_per_client(&self) -> bool {
+        self.enabled && self.per_client
     }
 }
 
@@ -112,6 +128,35 @@ impl KeyedRateLimiter {
     /// Consumes one token when the key is tracked and allowed. A new key is
     /// allowed without insertion when the bounded map has no space.
     fn check(&self, key: u64, now: Instant) -> LimitOutcome {
+        self.with_bucket(key, now, |bucket| {
+            if bucket.tokens >= 1.0 {
+                bucket.tokens -= 1.0;
+                LimitOutcome::Allowed
+            } else {
+                LimitOutcome::Rejected
+            }
+        })
+        .unwrap_or(LimitOutcome::AllowedUntracked)
+    }
+
+    /// Takes one token for a request that already ran, even from an empty
+    /// bucket. Every request that was in flight when the bucket ran out still
+    /// pays, so the key waits one refill interval per request, however many
+    /// arrived at once. Returns `false` when the key is untracked because the
+    /// map is full.
+    fn charge(&self, key: u64, now: Instant) -> bool {
+        self.with_bucket(key, now, |bucket| bucket.tokens -= 1.0)
+            .is_some()
+    }
+
+    /// Runs `f` on `key`'s refilled bucket, adding it if needed. Returns
+    /// `None` when a new key can't be added because the map is full.
+    fn with_bucket<R>(
+        &self,
+        key: u64,
+        now: Instant,
+        f: impl FnOnce(&mut Bucket) -> R,
+    ) -> Option<R> {
         let mut state = self.buckets.lock();
 
         if state.map.len() >= self.max_tracked && !state.map.contains_key(&key) {
@@ -129,7 +174,7 @@ impl KeyedRateLimiter {
             }
 
             if state.map.len() >= self.max_tracked {
-                return LimitOutcome::AllowedUntracked;
+                return None;
             }
         }
 
@@ -138,13 +183,17 @@ impl KeyedRateLimiter {
             last_refill: now,
         });
         refill(bucket, self.rate, self.burst, now);
+        Some(f(bucket))
+    }
 
-        if bucket.tokens >= 1.0 {
-            bucket.tokens -= 1.0;
-            LimitOutcome::Allowed
-        } else {
-            LimitOutcome::Rejected
-        }
+    /// Whether `key` has a token left, without taking it. An untracked key
+    /// has a full bucket.
+    fn has_token(&self, key: u64, now: Instant) -> bool {
+        let mut state = self.buckets.lock();
+        state.map.get_mut(&key).is_none_or(|bucket| {
+            refill(bucket, self.rate, self.burst, now);
+            bucket.tokens >= 1.0
+        })
     }
 
     /// Returns one token to a tracked key, up to the burst size.
@@ -194,6 +243,19 @@ impl RateLimitReporter {
         }
     }
 
+    /// Takes a token from `key`'s bucket. Returns `false` when the bucket is
+    /// empty; a full limiter lets the request through untracked.
+    fn take(&self, limiter: &KeyedRateLimiter, key: u64, now: Instant) -> bool {
+        match limiter.check(key, now) {
+            LimitOutcome::Allowed => true,
+            LimitOutcome::Rejected => false,
+            LimitOutcome::AllowedUntracked => {
+                self.record_capacity_exhausted(limiter.max_tracked, now);
+                true
+            }
+        }
+    }
+
     /// Counts a request let through untracked because the limiter is full, and
     /// logs it, throttled.
     fn record_capacity_exhausted(&self, capacity: usize, now: Instant) {
@@ -208,38 +270,102 @@ impl RateLimitReporter {
     }
 }
 
+/// The per-client limit, keyed by the address `trusted_proxies` resolves.
+struct ClientLimiter {
+    limiter: KeyedRateLimiter,
+    trusted_proxies: TrustedProxies,
+}
+
+impl ClientLimiter {
+    /// Returns a keyed hash of the request's client address, or `None` when
+    /// the connection address is unknown.
+    fn key(&self, request: &Request, hasher: &RandomState) -> Option<u64> {
+        let ConnectInfo(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>()?;
+        let client = self
+            .trusted_proxies
+            .forwarded_client(peer.ip(), request.headers())
+            .unwrap_or_else(|| peer.ip().to_canonical());
+        Some(hasher.hash_one(client_prefix(client)))
+    }
+}
+
+/// The NAT64 well-known prefix `64:ff9b::/96`, which embeds an IPv4 client in
+/// its last 32 bits (RFC 6052).
+const NAT64_PREFIX: u128 = 0x0064_ff9b << 96;
+
+/// The address a client is limited by. An IPv6 client is limited by its /64
+/// prefix, because one host usually holds a whole /64 and could otherwise
+/// rotate addresses for a fresh bucket per request. An IPv4 client translated
+/// through NAT64 is limited by its own IPv4 address.
+fn client_prefix(client: IpAddr) -> IpAddr {
+    match client {
+        IpAddr::V4(_) => client,
+        IpAddr::V6(v6) if v6.to_bits() >> 32 == NAT64_PREFIX >> 32 => {
+            IpAddr::V4(Ipv4Addr::from_bits(v6.to_bits() as u32))
+        }
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from_bits(v6.to_bits() & (u128::MAX << 64))),
+    }
+}
+
 /// Shared state for the rate-limit layer.
 #[derive(Clone)]
 pub(crate) struct RateLimitState {
     credential_limiter: Arc<KeyedRateLimiter>,
-    credential_hasher: RandomState,
+    client_limiter: Option<Arc<ClientLimiter>>,
+    hasher: RandomState,
     reporter: Arc<RateLimitReporter>,
 }
 
 impl RateLimitState {
-    pub(crate) fn new(config: &RateLimitConfig) -> Self {
-        Self::with_limiter(KeyedRateLimiter::new(
-            config.requests_per_second.get(),
-            config.burst.get(),
-            MAX_TRACKED_KEYS,
-        ))
+    pub(crate) fn new(config: &RateLimitConfig, trusted_proxies: &TrustedProxies) -> Self {
+        let limiter = || {
+            KeyedRateLimiter::new(
+                config.requests_per_second.get(),
+                config.burst.get(),
+                MAX_TRACKED_KEYS,
+            )
+        };
+        let client_limiter = config.limits_per_client().then(|| ClientLimiter {
+            limiter: limiter(),
+            trusted_proxies: trusted_proxies.clone(),
+        });
+        Self::with_limiters(limiter(), client_limiter)
     }
 
-    fn with_limiter(limiter: KeyedRateLimiter) -> Self {
+    fn with_limiters(
+        credential_limiter: KeyedRateLimiter,
+        client_limiter: Option<ClientLimiter>,
+    ) -> Self {
         Self {
-            credential_limiter: Arc::new(limiter),
-            credential_hasher: RandomState::new(),
+            credential_limiter: Arc::new(credential_limiter),
+            client_limiter: client_limiter.map(Arc::new),
+            hasher: RandomState::new(),
             reporter: Arc::new(RateLimitReporter::default()),
         }
     }
 
     #[cfg(test)]
     pub(super) fn for_test(requests_per_second: u32, burst: u32, max_tracked: usize) -> Self {
-        Self::with_limiter(KeyedRateLimiter::new(
-            requests_per_second,
-            burst,
-            max_tracked,
-        ))
+        Self::with_limiters(
+            KeyedRateLimiter::new(requests_per_second, burst, max_tracked),
+            None,
+        )
+    }
+
+    /// A limiter that never refills, with its own burst for each bucket.
+    #[cfg(test)]
+    fn for_test_per_client(
+        credential_burst: u32,
+        client_burst: u32,
+        trusted_proxies: TrustedProxies,
+    ) -> Self {
+        Self::with_limiters(
+            KeyedRateLimiter::new(0, credential_burst, MAX_TRACKED_KEYS),
+            Some(ClientLimiter {
+                limiter: KeyedRateLimiter::new(0, client_burst, MAX_TRACKED_KEYS),
+                trusted_proxies,
+            }),
+        )
     }
 }
 
@@ -263,37 +389,49 @@ fn too_many_requests() -> Response {
         .into_response()
 }
 
-/// Enforces the bearer-credential limit. Requests without a bearer credential
-/// pass through; the OAuth middleware decides them (401, or admitted by a
-/// `skip_token_validation` rule) without any token validation. A request that
-/// is not answered with 401 gets its token back.
+/// Enforces the bearer-credential limit, and the per-client limit when it's
+/// on. Requests without a bearer credential pass through; the OAuth middleware
+/// decides them (401, or admitted by a `skip_token_validation` rule) without
+/// any token validation. A request that is not answered with 401 gets its
+/// credential token back. The client bucket is only checked up front and
+/// charged once a request is answered with 401, so valid requests in flight
+/// from one address never hold its tokens.
 pub(crate) async fn rate_limit(
     State(state): State<RateLimitState>,
     request: Request,
     next: Next,
 ) -> Response {
-    let Some(fingerprint) = credential_fingerprint(&request, &state.credential_hasher) else {
+    let Some(fingerprint) = credential_fingerprint(&request, &state.hasher) else {
         return next.run(request).await;
     };
+    let client = state.client_limiter.as_deref().and_then(|client| {
+        let key = client.key(&request, &state.hasher)?;
+        Some((&client.limiter, key))
+    });
 
     let now = Instant::now();
-    match state.credential_limiter.check(fingerprint, now) {
-        LimitOutcome::Allowed => {}
-        LimitOutcome::Rejected => {
-            state.reporter.record_rejection(now);
-            return too_many_requests();
-        }
-        LimitOutcome::AllowedUntracked => {
-            state
-                .reporter
-                .record_capacity_exhausted(state.credential_limiter.max_tracked, now);
-            return next.run(request).await;
-        }
+    let client_has_token = client.is_none_or(|(limiter, key)| limiter.has_token(key, now));
+    if !client_has_token
+        || !state
+            .reporter
+            .take(&state.credential_limiter, fingerprint, now)
+    {
+        state.reporter.record_rejection(now);
+        return too_many_requests();
     }
 
     let response = next.run(request).await;
-    if response.status() != StatusCode::UNAUTHORIZED {
-        state.credential_limiter.refund(fingerprint, Instant::now());
+    let now = Instant::now();
+    if response.status() == StatusCode::UNAUTHORIZED {
+        if let Some((limiter, key)) = client
+            && !limiter.charge(key, now)
+        {
+            state
+                .reporter
+                .record_capacity_exhausted(limiter.max_tracked, now);
+        }
+    } else {
+        state.credential_limiter.refund(fingerprint, now);
     }
     response
 }
@@ -312,6 +450,15 @@ mod tests {
             assert!(config.enabled);
             assert_eq!(config.requests_per_second.get(), 10);
             assert_eq!(config.burst.get(), 50);
+        }
+
+        #[rstest]
+        #[case::off_by_default("{}", false)]
+        #[case::on("per_client: true", true)]
+        fn per_client_limit_is_opt_in(#[case] yaml: &str, #[case] expected: bool) {
+            let config: RateLimitConfig = yaml_serde::from_str(yaml).unwrap();
+            let state = RateLimitState::new(&config, &TrustedProxies::default());
+            assert_eq!(state.client_limiter.is_some(), expected);
         }
 
         #[test]
@@ -335,7 +482,7 @@ mod tests {
         fn state_uses_configured_limits() {
             let config: RateLimitConfig =
                 yaml_serde::from_str("requests_per_second: 3\nburst: 7").unwrap();
-            let state = RateLimitState::new(&config);
+            let state = RateLimitState::new(&config, &TrustedProxies::default());
             assert_eq!(state.credential_limiter.rate, 3.0);
             assert_eq!(state.credential_limiter.burst, 7.0);
             assert_eq!(state.credential_limiter.max_tracked, MAX_TRACKED_KEYS);
@@ -346,6 +493,7 @@ mod tests {
             let schema = schemars::schema_for!(RateLimitConfig).to_value();
             let properties = &schema["properties"];
             assert!(properties.get("enabled").is_some());
+            assert!(properties.get("per_client").is_some());
             assert_eq!(properties["requests_per_second"]["minimum"], 1);
             assert_eq!(properties["burst"]["minimum"], 1);
         }
@@ -474,6 +622,30 @@ mod tests {
             assert!(!allowed(&limiter, 1, now), "refund exceeded the burst");
         }
 
+        #[rstest]
+        #[case::ipv4("203.0.113.7", "203.0.113.7")]
+        #[case::ipv6("2001:db8:1:2:3:4:5:6", "2001:db8:1:2::")]
+        #[case::nat64("64:ff9b::203.0.113.7", "203.0.113.7")]
+        fn limits_a_client_by_its_prefix(#[case] client: &str, #[case] expected: &str) {
+            assert_eq!(
+                super::client_prefix(client.parse().unwrap()),
+                expected.parse::<std::net::IpAddr>().unwrap()
+            );
+        }
+
+        #[test]
+        fn charge_takes_a_token_for_every_request_past_empty() {
+            let limiter = KeyedRateLimiter::new(1, 1, MAX_TRACKED_KEYS);
+            let start = Instant::now();
+            for _ in 0..5 {
+                assert!(limiter.charge(1, start));
+            }
+
+            // The balance is -4, so it takes five seconds to refill one token.
+            assert!(!limiter.has_token(1, start + Duration::from_secs(4)));
+            assert!(limiter.has_token(1, start + Duration::from_secs(5)));
+        }
+
         #[test]
         fn refund_does_not_track_unknown_keys() {
             let limiter = KeyedRateLimiter::new(0, 1, MAX_TRACKED_KEYS);
@@ -496,8 +668,7 @@ mod tests {
 
         /// Stands in for the OAuth middleware: `Bearer valid` passes
         /// authentication and every other request is answered with 401.
-        fn app(requests_per_second: u32, burst: u32, max_tracked: usize) -> Router {
-            let state = RateLimitState::for_test(requests_per_second, burst, max_tracked);
+        fn limited_by(state: RateLimitState) -> Router {
             Router::new()
                 .route(
                     "/test",
@@ -509,6 +680,14 @@ mod tests {
                     }),
                 )
                 .layer(from_fn_with_state(state, rate_limit))
+        }
+
+        fn app(requests_per_second: u32, burst: u32, max_tracked: usize) -> Router {
+            limited_by(RateLimitState::for_test(
+                requests_per_second,
+                burst,
+                max_tracked,
+            ))
         }
 
         fn request(authorization: Option<&str>) -> Request<Body> {
@@ -561,9 +740,8 @@ mod tests {
                 StatusCode::TOO_MANY_REQUESTS
             );
 
-            // Known gap: with no per-peer limit, a client that invents a new
-            // token per request is never limited here. Each token still costs
-            // one bounded validation, and the kid-miss JWKS guard still applies.
+            // Without `per_client`, a client that invents a new token per
+            // request is never limited here.
             for token in ["Bearer token-b", "Bearer token-c"] {
                 assert_eq!(
                     status(&app, Some(token)).await,
@@ -644,6 +822,187 @@ mod tests {
             assert!(logs_contain(
                 "rate limiter capacity exhausted; request allowed untracked"
             ));
+        }
+
+        mod per_client {
+            use super::*;
+            use std::net::SocketAddr;
+
+            const PROXY: &str = "10.0.0.1:443";
+
+            fn app(trusted_proxies: &[&str]) -> Router {
+                let trusted_proxies = TrustedProxies::try_from(
+                    trusted_proxies
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap();
+                limited_by(RateLimitState::for_test_per_client(1, 1, trusted_proxies))
+            }
+
+            async fn status_from(
+                app: &Router,
+                peer: &str,
+                forwarded_for: Option<&str>,
+                authorization: &str,
+            ) -> StatusCode {
+                let mut request = request(Some(authorization));
+                request
+                    .extensions_mut()
+                    .insert(ConnectInfo(peer.parse::<SocketAddr>().unwrap()));
+                if let Some(forwarded_for) = forwarded_for {
+                    request
+                        .headers_mut()
+                        .insert("x-forwarded-for", forwarded_for.parse().unwrap());
+                }
+                app.clone().oneshot(request).await.unwrap().status()
+            }
+
+            #[tokio::test]
+            async fn limits_a_client_that_rotates_tokens() {
+                let app = app(&[]);
+                let peer = "198.51.100.9:5000";
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-a").await,
+                    StatusCode::UNAUTHORIZED
+                );
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-b").await,
+                    StatusCode::TOO_MANY_REQUESTS
+                );
+            }
+
+            #[tokio::test]
+            async fn each_client_gets_its_own_bucket() {
+                let app = app(&[]);
+                for (peer, token) in [
+                    ("198.51.100.9:5000", "Bearer token-a"),
+                    ("198.51.100.10:5000", "Bearer token-b"),
+                ] {
+                    assert_eq!(
+                        status_from(&app, peer, None, token).await,
+                        StatusCode::UNAUTHORIZED,
+                        "{peer}"
+                    );
+                }
+            }
+
+            #[tokio::test]
+            async fn limits_an_ipv6_client_by_its_prefix() {
+                let app = app(&[]);
+                assert_eq!(
+                    status_from(&app, "[2001:db8::1]:5000", None, "Bearer token-a").await,
+                    StatusCode::UNAUTHORIZED
+                );
+                assert_eq!(
+                    status_from(&app, "[2001:db8::2]:5000", None, "Bearer token-b").await,
+                    StatusCode::TOO_MANY_REQUESTS
+                );
+            }
+
+            #[tokio::test]
+            async fn keys_on_the_client_a_trusted_proxy_forwards_for() {
+                let app = app(&["10.0.0.0/8"]);
+                for (client, token) in [
+                    ("198.51.100.9", "Bearer token-a"),
+                    ("198.51.100.10", "Bearer token-b"),
+                ] {
+                    assert_eq!(
+                        status_from(&app, PROXY, Some(client), token).await,
+                        StatusCode::UNAUTHORIZED,
+                        "{client}"
+                    );
+                }
+            }
+
+            #[tokio::test]
+            async fn keys_on_an_untrusted_proxy_itself() {
+                let app = app(&[]);
+                assert_eq!(
+                    status_from(&app, PROXY, Some("198.51.100.9"), "Bearer token-a").await,
+                    StatusCode::UNAUTHORIZED
+                );
+                assert_eq!(
+                    status_from(&app, PROXY, Some("198.51.100.10"), "Bearer token-b").await,
+                    StatusCode::TOO_MANY_REQUESTS
+                );
+            }
+
+            #[tokio::test]
+            async fn authenticated_requests_do_not_use_up_the_client_budget() {
+                let app = app(&[]);
+                let peer = "198.51.100.9:5000";
+                for _ in 0..3 {
+                    assert_eq!(
+                        status_from(&app, peer, None, "Bearer valid").await,
+                        StatusCode::OK
+                    );
+                }
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-a").await,
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+
+            #[tokio::test]
+            async fn valid_requests_in_flight_do_not_hold_the_client_budget() {
+                let entered = Arc::new(tokio::sync::Notify::new());
+                let release = Arc::new(tokio::sync::Semaphore::new(0));
+                let handler = {
+                    let (entered, release) = (entered.clone(), release.clone());
+                    move || async move {
+                        entered.notify_one();
+                        let _permit = release.acquire().await.unwrap();
+                        StatusCode::OK
+                    }
+                };
+                let app = Router::new()
+                    .route("/test", get(handler))
+                    .layer(from_fn_with_state(
+                        RateLimitState::for_test_per_client(1, 1, TrustedProxies::default()),
+                        rate_limit,
+                    ));
+                let peer = "198.51.100.9:5000";
+
+                let first = tokio::spawn({
+                    let app = app.clone();
+                    async move { status_from(&app, peer, None, "Bearer valid-a").await }
+                });
+                entered.notified().await;
+                let second = tokio::spawn({
+                    let app = app.clone();
+                    async move { status_from(&app, peer, None, "Bearer valid-b").await }
+                });
+                entered.notified().await;
+                release.add_permits(2);
+
+                assert_eq!(first.await.unwrap(), StatusCode::OK);
+                assert_eq!(second.await.unwrap(), StatusCode::OK);
+            }
+
+            #[tokio::test]
+            async fn a_limited_credential_does_not_use_up_the_client_budget() {
+                let app = limited_by(RateLimitState::for_test_per_client(
+                    1,
+                    2,
+                    TrustedProxies::default(),
+                ));
+                let peer = "198.51.100.9:5000";
+
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-a").await,
+                    StatusCode::UNAUTHORIZED
+                );
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-a").await,
+                    StatusCode::TOO_MANY_REQUESTS
+                );
+                assert_eq!(
+                    status_from(&app, peer, None, "Bearer token-b").await,
+                    StatusCode::UNAUTHORIZED
+                );
+            }
         }
     }
 }

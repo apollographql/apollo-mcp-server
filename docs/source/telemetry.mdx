@@ -427,7 +427,7 @@ List only proxies that you control and that append the address they received the
 
 </Caution>
 
-`trusted_proxies` changes only which address the server records. It has no effect unless `client_address` is enabled, and the server logs a warning at startup if you set it without enabling `client_address`.
+`trusted_proxies` changes only which address the server uses for a client. The [per-client authentication rate limit](/apollo-mcp-server/auth#limit-authentication-rates) uses the same address. If you set `trusted_proxies` without enabling `client_address` or `transport.auth.rate_limit.per_client`, it has no effect, and the server logs a warning at startup.
 
 ### Sampling and attribute filtering
 

@@ -448,7 +448,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. The root path (`/`), a trailing `/`, and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
 | `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
-| `trusted_proxies` | `List<string>`   | `[]`        | Reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. Spans record the client a trusted proxy names in `X-Forwarded-For` as the client address. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
+| `trusted_proxies` | `List<string>`   | `[]`        | Reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. Spans and the per-client rate limit use the client a trusted proxy names in `X-Forwarded-For` as the client address. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
 
 <Note>
 
@@ -520,6 +520,7 @@ Authentication is available only for `streamable_http`. Because the default tran
 | `rate_limit.enabled`              | `bool`                | `true`        | Rate limit bearer credentials that fail authentication, before any token validation runs. Set to `false` when requests are already rate limited before they reach the server. See [limit authentication rates](/apollo-mcp-server/auth#limit-authentication-rates). |
 | `rate_limit.requests_per_second`  | `number`              | `10`          | Sustained requests per second allowed for each failing bearer credential. Must be at least `1`.                                                                                                                  |
 | `rate_limit.burst`                | `number`              | `50`          | Requests a credential can make in a burst before the sustained rate applies. Must be at least `1`.                                                                                                                |
+| `rate_limit.per_client`           | `bool`                | `false`       | Also rate limit each client address that fails authentication, at the same rate and burst. Behind a proxy, list it under `transport.trusted_proxies`. See [limit authentication rates](/apollo-mcp-server/auth#limit-authentication-rates). |
 | `tls.ca_cert`                     | `string`              |               | Path to a CA certificate to trust (PEM format).                                                                                                                                                                  |
 | `tls.danger_accept_invalid_certs` | `bool`                | `false`       | Accepts invalid TLS certificates. Set this to `true` for development or testing purposes only.                                                                                                                   |
 
@@ -580,6 +581,7 @@ transport:
       enabled: true
       requests_per_second: 10
       burst: 50
+      per_client: false
 
     # Requests that skip token validation. Each list applies only when the
     # request carries no Authorization header. Every other request is validated.
