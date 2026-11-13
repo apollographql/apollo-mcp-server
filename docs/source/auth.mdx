@@ -318,7 +318,7 @@ The limiter is process-local. By default, each bearer credential can make `10` r
 
 Only requests that fail authentication use up the budget. When a request is not rejected with `401 Unauthorized`, its credential gets the request back, so clients that share one valid bearer token aren't limited by this layer. Because the request is returned only after validation finishes, a very large concurrent burst on one credential can still receive some `429` responses.
 
-Requests over the limit receive `429 Too Many Requests` with a `Retry-After` header before the server does any token parsing or JWKS fetching. Requests without a bearer credential aren't rate limited by this layer. Unless they match a `skip_token_validation` list, the OAuth middleware rejects them with `401` without any token validation. Traffic admitted by those lists isn't limited by this layer. A planned per-client limit that understands trusted proxies would cover it. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
+Requests over the limit receive `429 Too Many Requests` with a `Retry-After` header before the server does any token parsing or JWKS fetching. Requests without a bearer credential aren't rate limited by this layer. Unless they match a `skip_token_validation` list, the OAuth middleware rejects them with `401` without any token validation. Traffic admitted by those lists isn't limited by this layer. OAuth discovery endpoints (`/.well-known/...`) are not rate limited.
 
 The limiter is on by default. Use `rate_limit` to tune it, or to turn it off when a gateway in front of the server already rate limits clients:
 
@@ -334,7 +334,27 @@ transport:
 
 Both `requests_per_second` and `burst` must be at least `1`. With `enabled: false`, the layer isn't mounted at all, and the server logs that at startup.
 
-There is no per-IP limit. Behind a reverse proxy, load balancer, or shared NAT, the connection address identifies the proxy instead of the client, so a per-IP limit would make unrelated clients share one bucket. A client that rotates fabricated bearer tokens is therefore not limited by this layer. Each token still costs at most one bounded signature check, and the per-issuer JWKS refresh guard still applies. A per-client limit that understands trusted proxies is planned as a follow-up.
+By default, a client that rotates fabricated bearer tokens isn't limited by this layer, because each new token gets its own bucket. Each token still costs at most one bounded signature check per configured authorization server, and the per-issuer JWKS refresh guard still applies. To limit such a client, set `per_client: true`:
+
+```yaml title="mcp.yaml"
+transport:
+  type: streamable_http
+  trusted_proxies:
+    - 10.0.4.0/24 # the load balancer subnet
+  auth:
+    rate_limit:
+      per_client: true
+```
+
+Each client address then gets its own bucket too, with the same `requests_per_second` and `burst`. A request must have tokens in both its credential's bucket and its client's bucket. Like the credential limit, the client limit counts only requests that fail authentication. An IPv6 client is limited by its `/64` prefix, because one host usually holds a whole `/64` and could otherwise use a new address for each request.
+
+The server takes the client address from the TCP connection, or from `X-Forwarded-For` when the connection comes from a [trusted proxy](/apollo-mcp-server/telemetry#client-addresses).
+
+<Caution>
+
+Behind a reverse proxy or load balancer that isn't listed in `transport.trusted_proxies`, every client shares the proxy's bucket. One client's failed authentications can then get every other client's requests rejected with `429`. Clients behind one shared NAT also share a bucket. That's why `per_client` is off by default.
+
+</Caution>
 
 The limiter tracks up to 50,000 credentials. If the map is full and no idle bucket can be evicted, new credentials are let through untracked instead of displacing active buckets. Rejections and fail-open events increment metrics. The first event in each category is logged immediately, and subsequent events are summarized at most once every 60 seconds with a `suppressed` count. Rejections use `WARN`; capacity fail-open uses `ERROR`. These logs don't include bearer credentials.
 

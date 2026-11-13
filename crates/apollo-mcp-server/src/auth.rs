@@ -32,6 +32,7 @@ use url::Url;
 
 use crate::apps::app_param_from_query;
 use crate::scope_requirements::OperationRequiredScopes;
+use crate::trusted_proxies::TrustedProxies;
 
 mod log_throttle;
 mod networked_key_resolver;
@@ -537,9 +538,13 @@ impl Config {
         router: Router,
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
+        trusted_proxies: &TrustedProxies,
     ) -> Result<Router, TlsConfigError> {
         let rate_limit_state = if self.rate_limit.enabled {
-            Some(rate_limit::RateLimitState::new(&self.rate_limit))
+            Some(rate_limit::RateLimitState::new(
+                &self.rate_limit,
+                trusted_proxies,
+            ))
         } else {
             tracing::info!("auth rate limiting is disabled by configuration");
             None
@@ -1732,7 +1737,7 @@ mod tests {
 
             let router = Router::new();
             let err = config
-                .enable_middleware(router, HashMap::new(), true)
+                .enable_middleware(router, HashMap::new(), true, &Default::default())
                 .unwrap_err();
 
             assert!(matches!(
@@ -2132,7 +2137,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("file:///some/path").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new(), true)
+                .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
                 .unwrap_err();
 
             assert!(matches!(
@@ -2147,7 +2152,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new(), true)
+                .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
                 .unwrap_err();
 
             assert!(matches!(
@@ -2161,7 +2166,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new(), HashMap::new(), true);
+            let result =
+                config.enable_middleware(Router::new(), HashMap::new(), true, &Default::default());
 
             assert!(result.is_ok());
         }
@@ -2171,7 +2177,8 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             let mut config = test_config();
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
-            let result = config.enable_middleware(Router::new(), HashMap::new(), true);
+            let result =
+                config.enable_middleware(Router::new(), HashMap::new(), true, &Default::default());
 
             assert!(result.is_ok());
         }
@@ -2187,7 +2194,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new(), true)
+                .enable_middleware(base_router, HashMap::new(), true, &Default::default())
                 .unwrap();
 
             let req = Request::builder()
@@ -2215,7 +2222,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/my-service/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new(), true)
+                .enable_middleware(base_router, HashMap::new(), true, &Default::default())
                 .unwrap();
 
             let req = Request::builder()
@@ -2233,7 +2240,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
             let base_router = Router::new().route("/mcp", get(|| async { "ok" }));
             let app = config
-                .enable_middleware(base_router, HashMap::new(), true)
+                .enable_middleware(base_router, HashMap::new(), true, &Default::default())
                 .unwrap();
 
             let req = Request::builder()
@@ -3131,7 +3138,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.allow_anonymous_mcp_discovery = true;
                 config.skip_token_validation = skip(&["server/discover"], &[], &[]);
 
-                let result = config.enable_middleware(Router::new(), HashMap::new(), true);
+                let result = config.enable_middleware(
+                    Router::new(),
+                    HashMap::new(),
+                    true,
+                    &Default::default(),
+                );
 
                 assert!(
                     matches!(result, Err(TlsConfigError::AnonymousDiscoveryConflict)),
@@ -3185,7 +3197,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &["RestrictedOp"], &[]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope(), true)
+                    .enable_middleware(
+                        Router::new(),
+                        required_read_scope(),
+                        true,
+                        &Default::default(),
+                    )
                     .unwrap();
 
                 assert!(logs_contain("RestrictedOp"));
@@ -3199,7 +3216,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &["PublicOp"], &[]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope(), true)
+                    .enable_middleware(
+                        Router::new(),
+                        required_read_scope(),
+                        true,
+                        &Default::default(),
+                    )
                     .unwrap();
 
                 assert!(!logs_contain("skip_token_validation.tools"));
@@ -3212,7 +3234,12 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &[], &["x-api-key"]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), required_read_scope(), true)
+                    .enable_middleware(
+                        Router::new(),
+                        required_read_scope(),
+                        true,
+                        &Default::default(),
+                    )
                     .unwrap();
 
                 assert!(logs_contain("x-api-key"));
@@ -3228,7 +3255,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &[], &["x-api-key"]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true)
+                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(logs_contain("skips token validation for every tool"));
@@ -3245,7 +3272,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scope_mode = ScopeMode::Disabled;
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true)
+                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));
@@ -3259,7 +3286,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scopes = vec![];
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true)
+                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));
@@ -3340,12 +3367,14 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 enabled,
                 requests_per_second: NonZeroU32::new(requests_per_second).unwrap(),
                 burst: NonZeroU32::new(burst).unwrap(),
+                per_client: false,
             };
             config
                 .enable_middleware(
                     Router::new().route("/test", get(|| async { "ok" })),
                     HashMap::new(),
                     true,
+                    &Default::default(),
                 )
                 .unwrap()
         }

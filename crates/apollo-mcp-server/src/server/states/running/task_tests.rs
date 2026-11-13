@@ -653,6 +653,7 @@ async fn task_methods_keep_endpoint_authentication(#[case] method: &str) {
             Router::new().nest_service("/mcp", service),
             HashMap::new(),
             false,
+            &Default::default(),
         )
         .unwrap();
     let response = router

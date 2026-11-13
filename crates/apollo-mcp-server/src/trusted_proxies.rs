@@ -59,16 +59,16 @@ impl TrustedProxies {
     }
 
     /// Warns at startup about a list that trusts every peer, or that has no
-    /// effect because spans don't record client addresses.
-    pub(crate) fn warn_if_misconfigured(&self, client_address: bool) {
+    /// effect because nothing uses client addresses.
+    pub(crate) fn warn_if_misconfigured(&self, client_address_used: bool) {
         if let Some(catch_all) = self.catch_all() {
             tracing::warn!(
-                "transport.trusted_proxies includes {catch_all}, which trusts every peer, so any caller can choose its recorded client address with X-Forwarded-For"
+                "transport.trusted_proxies includes {catch_all}, which trusts every peer, so any caller can choose its client address with X-Forwarded-For, both for spans and for transport.auth.rate_limit.per_client"
             );
         }
-        if !self.0.is_empty() && !client_address {
+        if !self.0.is_empty() && !client_address_used {
             tracing::warn!(
-                "transport.trusted_proxies has no effect because telemetry.exporters.tracing.client_address is disabled"
+                "transport.trusted_proxies has no effect because neither telemetry.exporters.tracing.client_address nor transport.auth.rate_limit.per_client is enabled"
             );
         }
     }

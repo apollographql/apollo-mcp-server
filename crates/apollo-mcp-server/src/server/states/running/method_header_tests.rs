@@ -50,6 +50,7 @@ fn router(handler: McpService, stateful: bool) -> Router {
         Router::new().nest_service("/mcp", service),
         HashMap::new(),
         stateful,
+        &Default::default(),
     )
     .unwrap()
 }
