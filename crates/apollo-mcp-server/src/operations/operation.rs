@@ -1114,12 +1114,18 @@ mod tests {
     }
 
     fn operation_with_defaults() -> Operation {
+        operation_with_defaults_and_configured_variables(None)
+    }
+
+    fn operation_with_defaults_and_configured_variables(
+        variables: Option<HashMap<String, Value>>,
+    ) -> Operation {
         Operation::from_raw(
             RawOperation {
                 source_text: r#"query QueryName($id: ID = "abc", $flag: Boolean! = true, $name: String) { id }"#
                     .to_string(),
                 headers: None,
-                variables: None,
+                variables,
                 source_path: None,
             },
             &SCHEMA,
@@ -1170,6 +1176,33 @@ mod tests {
             .unwrap();
 
         assert_eq!(variables, serde_json::json!({ "id": "xyz", "flag": false }));
+    }
+
+    #[test]
+    fn null_argument_for_variable_with_default_is_dropped_before_configured_variables_are_merged() {
+        let variables = operation_with_defaults_and_configured_variables(Some(HashMap::from([(
+            "name".to_string(),
+            serde_json::json!("configured"),
+        )])))
+        .variables(serde_json::json!({ "id": null, "flag": false }))
+        .unwrap();
+
+        assert_eq!(
+            variables,
+            serde_json::json!({ "flag": false, "name": "configured" })
+        );
+    }
+
+    #[test]
+    fn null_argument_does_not_conflict_with_configured_variable_of_same_name() {
+        let variables = operation_with_defaults_and_configured_variables(Some(HashMap::from([(
+            "id".to_string(),
+            serde_json::json!("configured"),
+        )])))
+        .variables(serde_json::json!({ "id": null }))
+        .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "id": "configured" }));
     }
 
     #[test]
