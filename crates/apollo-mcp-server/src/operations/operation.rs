@@ -49,6 +49,9 @@ pub struct Operation {
     /// `None` when the operation has no `@private` directives.
     #[serde(skip)]
     pub(crate) private_fields: Option<PrivateFieldTree>,
+    /// Variables of list or input object type, whose arguments may arrive as JSON strings.
+    #[serde(skip)]
+    structured_variables: Vec<String>,
 }
 
 impl AsRef<Tool> for Operation {
@@ -227,12 +230,20 @@ impl Operation {
                     operation_name
                 ),
             }
+            let structured_variables = operation
+                .variables
+                .iter()
+                .filter(|variable| is_structured_type(&variable.ty, graphql_schema))
+                .map(|variable| variable.name.to_string())
+                .collect();
+
             Ok(Some(Operation {
                 tool,
                 inner: raw_operation,
                 operation_name,
                 stripped_source_text,
                 private_fields,
+                structured_variables,
             }))
         } else {
             Ok(None)
@@ -369,6 +380,29 @@ impl Operation {
 
         lines.join("\n")
     }
+
+    /// Some clients send a list or input object argument as a JSON string. Parse such a
+    /// string when it holds an object or array; otherwise forward it unchanged.
+    fn with_stringified_json_arguments_parsed(&self, mut input_variables: Value) -> Value {
+        if let Value::Object(arguments) = &mut input_variables {
+            for (name, value) in arguments.iter_mut() {
+                let Value::String(text) = value else {
+                    continue;
+                };
+                if !self.structured_variables.contains(name)
+                    || !text.trim_start().starts_with(['{', '['])
+                {
+                    continue;
+                }
+                if let Ok(parsed @ (Value::Object(_) | Value::Array(_))) =
+                    serde_json::from_str::<Value>(text)
+                {
+                    *value = parsed;
+                }
+            }
+        }
+        input_variables
+    }
 }
 
 impl graphql::Executable for Operation {
@@ -386,6 +420,7 @@ impl graphql::Executable for Operation {
     }
 
     fn variables(&self, input_variables: Value) -> Result<Value, ValidationError> {
+        let input_variables = self.with_stringified_json_arguments_parsed(input_variables);
         if let Some(raw_variables) = self.inner.variables.as_ref() {
             let mut variables = match input_variables {
                 Value::Null => Ok(serde_json::Map::new()),
@@ -612,6 +647,16 @@ fn ensure_properties_exists(json_object: &mut Value) {
         if !props.is_object() {
             *props = Value::Object(serde_json::Map::new());
         }
+    }
+}
+
+fn is_structured_type(ty: &Type, graphql_schema: &GraphqlSchema) -> bool {
+    match ty {
+        Type::List(_) | Type::NonNullList(_) => true,
+        Type::Named(name) | Type::NonNullNamed(name) => matches!(
+            graphql_schema.types.get(name),
+            Some(ExtendedType::InputObject(_))
+        ),
     }
 }
 
@@ -1086,6 +1131,93 @@ mod tests {
             ],
         }
         "#);
+    }
+
+    fn operation_with_structured_variables() -> Operation {
+        Operation::from_raw(
+            RawOperation {
+                source_text:
+                    "query QueryName($input: RealInputObject!, $ids: [ID!], $name: String) { id }"
+                        .to_string(),
+                headers: None,
+                variables: None,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn stringified_object_for_input_object_variable_is_parsed() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "input": r#" {"required": "abc"}"# }))
+            .unwrap();
+
+        assert_eq!(
+            variables,
+            serde_json::json!({ "input": { "required": "abc" } })
+        );
+    }
+
+    #[test]
+    fn stringified_array_for_list_variable_is_parsed() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "ids": r#"["1", "2"]"# }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "ids": ["1", "2"] }));
+    }
+
+    #[test]
+    fn json_string_for_string_variable_is_kept() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "name": r#"{"required": "abc"}"# }))
+            .unwrap();
+
+        assert_eq!(
+            variables,
+            serde_json::json!({ "name": r#"{"required": "abc"}"# })
+        );
+    }
+
+    #[test]
+    fn invalid_json_string_for_input_object_variable_is_kept() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "input": "{required: abc" }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "input": "{required: abc" }));
+    }
+
+    #[test]
+    fn scalar_json_string_for_list_variable_is_kept() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "ids": "42" }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "ids": "42" }));
+    }
+
+    #[test]
+    fn structured_arguments_are_kept() {
+        let variables = operation_with_structured_variables()
+            .variables(serde_json::json!({ "input": { "required": "abc" }, "ids": ["1"] }))
+            .unwrap();
+
+        assert_eq!(
+            variables,
+            serde_json::json!({ "input": { "required": "abc" }, "ids": ["1"] })
+        );
     }
 
     #[test]
@@ -5038,6 +5170,7 @@ mod tests {
             operation_name: "MutationName",
             stripped_source_text: None,
             private_fields: None,
+            structured_variables: [],
         }
         "#);
     }
@@ -5172,6 +5305,7 @@ mod tests {
             operation_name: "MutationName",
             stripped_source_text: None,
             private_fields: None,
+            structured_variables: [],
         }
         "#);
     }
