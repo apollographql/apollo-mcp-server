@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.2.1 (2026-11-18)
+
+### Fixes
+
+#### Prompt argument values are no longer re-expanded
+
+When a prompt argument value contains `{{placeholder}}` text, it now stays as
+literal text in the rendered prompt instead of being filled in by a later
+argument.
+
 ## 2.2.0 (2026-11-18)
 
 ### Features
