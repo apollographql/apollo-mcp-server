@@ -49,6 +49,9 @@ pub struct Operation {
     /// `None` when the operation has no `@private` directives.
     #[serde(skip)]
     pub(crate) private_fields: Option<PrivateFieldTree>,
+    /// Names of the operation's variables that declare a default value.
+    #[serde(skip)]
+    variables_with_defaults: Vec<String>,
     /// Variables of list or input object type, whose arguments may arrive as JSON strings.
     #[serde(skip)]
     structured_variables: Vec<String>,
@@ -69,6 +72,20 @@ impl From<Operation> for Tool {
 impl Operation {
     pub(crate) fn into_inner(self) -> RawOperation {
         self.inner
+    }
+
+    /// An explicit `null` argument overrides a variable's default, so the default never
+    /// applies. Omitting the argument lets the GraphQL server apply the default instead.
+    fn without_null_arguments_for_defaults(&self, input_variables: Value) -> Value {
+        match input_variables {
+            Value::Object(mut variables) => {
+                variables.retain(|name, value| {
+                    !(value.is_null() && self.variables_with_defaults.contains(name))
+                });
+                Value::Object(variables)
+            }
+            other => other,
+        }
     }
 
     #[expect(clippy::too_many_arguments)]
@@ -230,6 +247,12 @@ impl Operation {
                     operation_name
                 ),
             }
+            let variables_with_defaults = operation
+                .variables
+                .iter()
+                .filter(|variable| variable.default_value.is_some())
+                .map(|variable| variable.name.to_string())
+                .collect();
             let structured_variables = operation
                 .variables
                 .iter()
@@ -243,6 +266,7 @@ impl Operation {
                 operation_name,
                 stripped_source_text,
                 private_fields,
+                variables_with_defaults,
                 structured_variables,
             }))
         } else {
@@ -420,6 +444,7 @@ impl graphql::Executable for Operation {
     }
 
     fn variables(&self, input_variables: Value) -> Result<Value, ValidationError> {
+        let input_variables = self.without_null_arguments_for_defaults(input_variables);
         let input_variables = self.with_stringified_json_arguments_parsed(input_variables);
         if let Some(raw_variables) = self.inner.variables.as_ref() {
             let mut variables = match input_variables {
@@ -1218,6 +1243,98 @@ mod tests {
             variables,
             serde_json::json!({ "input": { "required": "abc" }, "ids": ["1"] })
         );
+    }
+
+    fn operation_with_defaults() -> Operation {
+        operation_with_defaults_and_configured_variables(None)
+    }
+
+    fn operation_with_defaults_and_configured_variables(
+        variables: Option<HashMap<String, Value>>,
+    ) -> Operation {
+        Operation::from_raw(
+            RawOperation {
+                source_text: r#"query QueryName($id: ID = "abc", $flag: Boolean! = true, $name: String) { id }"#
+                    .to_string(),
+                headers: None,
+                variables,
+                source_path: None,
+            },
+            &SCHEMA,
+            None,
+            MutationMode::None,
+            false,
+            false,
+            false,
+            &HashMap::new(),
+            &HashMap::new(),
+            &HashMap::new(),
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    fn null_argument_for_variable_with_default_is_dropped() {
+        let variables = operation_with_defaults()
+            .variables(serde_json::json!({ "id": null, "flag": null }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({}));
+    }
+
+    #[test]
+    fn null_argument_for_variable_without_default_is_kept() {
+        let variables = operation_with_defaults()
+            .variables(serde_json::json!({ "name": null }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "name": null }));
+    }
+
+    #[test]
+    fn null_string_argument_for_variable_with_default_is_kept() {
+        let variables = operation_with_defaults()
+            .variables(serde_json::json!({ "flag": "null" }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "flag": "null" }));
+    }
+
+    #[test]
+    fn non_null_arguments_for_variables_with_defaults_are_kept() {
+        let variables = operation_with_defaults()
+            .variables(serde_json::json!({ "id": "xyz", "flag": false }))
+            .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "id": "xyz", "flag": false }));
+    }
+
+    #[test]
+    fn null_argument_for_variable_with_default_is_dropped_before_configured_variables_are_merged() {
+        let variables = operation_with_defaults_and_configured_variables(Some(HashMap::from([(
+            "name".to_string(),
+            serde_json::json!("configured"),
+        )])))
+        .variables(serde_json::json!({ "id": null, "flag": false }))
+        .unwrap();
+
+        assert_eq!(
+            variables,
+            serde_json::json!({ "flag": false, "name": "configured" })
+        );
+    }
+
+    #[test]
+    fn null_argument_does_not_conflict_with_configured_variable_of_same_name() {
+        let variables = operation_with_defaults_and_configured_variables(Some(HashMap::from([(
+            "id".to_string(),
+            serde_json::json!("configured"),
+        )])))
+        .variables(serde_json::json!({ "id": null }))
+        .unwrap();
+
+        assert_eq!(variables, serde_json::json!({ "id": "configured" }));
     }
 
     #[test]
@@ -5170,6 +5287,7 @@ mod tests {
             operation_name: "MutationName",
             stripped_source_text: None,
             private_fields: None,
+            variables_with_defaults: [],
             structured_variables: [],
         }
         "#);
@@ -5305,6 +5423,7 @@ mod tests {
             operation_name: "MutationName",
             stripped_source_text: None,
             private_fields: None,
+            variables_with_defaults: [],
             structured_variables: [],
         }
         "#);
