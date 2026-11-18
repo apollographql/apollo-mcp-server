@@ -291,6 +291,12 @@ Spans are generated for the following actions:
 - **Tool Execution**: `tools/call` spans contain nested spans for the specific tool being executed (e.g., `introspect`, `search`, or a custom GraphQL operation).
 - **Downstream GraphQL Calls**: The `execute` tool in Apollo MCP Server and custom operation tools create child spans for their outgoing `reqwest` HTTP calls, capturing the duration of the downstream request. The `traceparent`, `tracestate`, and `baggage` headers propagate automatically. Baggage is caller-controlled, request-scoped context, not identity. Don't put secrets or personally identifiable information in baggage, and never use it for authorization. If your GraphQL endpoint crosses a trust boundary, filter baggage before forwarding it. Apollo MCP Server doesn't automatically copy baggage onto exported span attributes.
 
+### Operation names in Datadog
+
+Datadog groups the spans it receives over OTLP by an operation name. It derives that name from the span kind and attributes, not from the span name, which becomes the Datadog resource. MCP handler spans are `SERVER` spans, and over Streamable HTTP they record `network.protocol.name` as `http`. So with [Datadog's V2 operation name mapping](https://docs.datadoghq.com/opentelemetry/migrate/migrate_operation_names/), they get the operation name `http.server.request`, the same as the HTTP request span for the same request. Their resource is the span name, such as `tools/call GetUser`.
+
+As a result, Datadog trace metrics such as `trace.http.server.request.hits` can count a request twice when it reaches an MCP handler, such as `tools/call` or `tools/list`: once for the HTTP request span and once for the handler span. Requests without a handler span, such as notifications, `ping`, and `GET` streams, are counted once. To count MCP requests or tool calls, use the [`mcp.server.operation.duration`](#emitted-metrics) metric or the `apollo.mcp.*` metrics. To see only handler spans in APM, filter by resource.
+
 ### Span Attributes
 
 The inbound request span is named `{method} {route}`, for example `POST /mcp`. A request to a subpath of the MCP endpoint, such as `/mcp/anything`, matches no route, so the server names that span after its method alone. The span follows the OpenTelemetry [semantic conventions for HTTP server spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span):
