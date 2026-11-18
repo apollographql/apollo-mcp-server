@@ -23,10 +23,8 @@ The limiter is on by default and configured under `transport.auth.rate_limit`:
 `enabled` turns it off for deployments that already rate limit upstream, and
 `requests_per_second` and `burst` tune the limits.
 
-There is no per-IP limit. Behind a reverse proxy or load balancer the connection
-address identifies the proxy rather than the client, so a per-IP limit would
-make unrelated clients share one bucket. A per-client limit that understands
-trusted proxies is planned as a follow-up.
+To also limit each client address, enable `transport.auth.rate_limit.per_client`
+(see "Rate limit failed authentications per client" below).
 
 Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and
 capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`.
@@ -54,7 +52,7 @@ If you use auth, keep `transport.auth.resource` in line with the new path, for e
 
 #### Record OpenTelemetry MCP and GenAI attributes on tool call spans - @DaleSeo #898
 
-The `call_tool` span now records attributes from the OpenTelemetry semantic conventions for MCP: `mcp.method.name` (`tools/call`), `gen_ai.operation.name` (`execute_tool`), and `gen_ai.tool.name`. When the tool result has `isError: true`, the span also records `error.type` as `tool_error`, and when the call fails with a JSON-RPC server error, it records the error code. In both cases, the span status is set to error. The existing `apollo.mcp.*` attributes are unchanged.
+The `tools/call` span now records attributes from the OpenTelemetry semantic conventions for MCP: `mcp.method.name` (`tools/call`), `gen_ai.operation.name` (`execute_tool`), and `gen_ai.tool.name`. When the tool result has `isError: true`, the span also records `error.type` as `tool_error`, and when the call fails with a JSON-RPC server error, it records the error code. In both cases, the span status is set to error. The existing `apollo.mcp.*` attributes are unchanged.
 
 Set `telemetry.exporters.tracing.gen_ai_content: true` to also export the tool call's input and output as `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`, which observability platforms such as Langfuse show as the call's input and output. They're off by default because they may contain sensitive data. `gen_ai.tool.call.result` is recorded only for a successful call.
 
@@ -83,14 +81,13 @@ MCP handler spans now follow the OpenTelemetry MCP semantic conventions: each on
 | `list_prompts` | `prompts/list` |
 | `set_level` | `logging/setLevel` |
 | `listen` | `subscriptions/listen` |
-| `get_task`, `cancel_task`, `update_task` | `tasks/get`, `tasks/cancel`, `tasks/update` |
 | `initialize` | `initialize` (unchanged) |
 
 Each MCP request over Streamable HTTP now has two `SERVER` spans: the HTTP request span, and the MCP handler span nested under it or parented by `_meta` trace context. Queries that assumed one `SERVER` span per request should also filter on `http.request.method` or `mcp.method.name`.
 
 #### Record `mcp.method.name` on every MCP handler span - @DaleSeo #908
 
-Every MCP handler span, not just `call_tool`, now records the request's method as `mcp.method.name`, as the OpenTelemetry semantic conventions for MCP require. For example, the `list_tools` span has `mcp.method.name` set to `tools/list`, and the `read_resource` span has `resources/read`. Span names are unchanged.
+Every MCP handler span, not just `tools/call`, now records the request's method as `mcp.method.name`, as the OpenTelemetry semantic conventions for MCP require.
 
 #### Record the recommended MCP attributes and links on every MCP handler span - @DaleSeo #917
 
@@ -107,8 +104,8 @@ Every MCP handler span now records the attributes that the OpenTelemetry semanti
 
 - `jsonrpc.request.id` holds the JSON-RPC request ID on every handler span. Omitting `request_id` with `omitted_attributes` also omits `jsonrpc.request.id`.
 - `rpc.response.status_code` holds the JSON-RPC error code when a handler returns an error response.
-- `error.type` and an error span status mark a handler that fails with a server error, not just `call_tool`. Errors caused by the caller, such as an unknown method or invalid parameters, leave the status unset.
-- `mcp.resource.uri` holds the resource URI on the `read_resource` span, and `gen_ai.prompt.name` holds the prompt name on the `get_prompt` span.
+- `error.type` and an error span status mark a handler that fails with a server error, not just `tools/call`. Errors caused by the caller, such as an unknown method or invalid parameters, leave the status unset.
+- `mcp.resource.uri` holds the resource URI on the `resources/read` span, and `gen_ai.prompt.name` holds the prompt name on the `prompts/get` span.
 
 #### Emit the `mcp.server.operation.duration` metric - @DaleSeo #913
 
@@ -199,7 +196,7 @@ The `search` tool now returns a text message that names the search terms when no
 
 #### Trace MCP Tasks requests - @DaleSeo #909
 
-The `tasks/get`, `tasks/cancel`, and `tasks/update` handlers now create spans (`get_task`, `cancel_task`, and `update_task`) like every other MCP handler, so task polling and cancellation show up in traces with the request's trace context. Each span records `mcp.method.name`. The task ID is never recorded, because it can act as a bearer handle.
+The `tasks/get`, `tasks/cancel`, and `tasks/update` handlers now create spans like every other MCP handler, so task polling and cancellation show up in traces with the request's trace context. Each span records `mcp.method.name`. The task ID is never recorded, because it can act as a bearer handle.
 
 #### Add the mapped type to custom scalar references - @alexhof-shyftplan #932
 
