@@ -413,9 +413,7 @@ impl Operation {
                 let Value::String(text) = value else {
                     continue;
                 };
-                if !self.structured_variables.contains(name)
-                    || !text.trim_start().starts_with(['{', '['])
-                {
+                if !self.structured_variables.contains(name) {
                     continue;
                 }
                 if let Ok(parsed @ (Value::Object(_) | Value::Array(_))) =
