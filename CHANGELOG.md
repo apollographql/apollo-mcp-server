@@ -4,6 +4,234 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.2.0 (2026-11-18)
+
+### Features
+
+#### Rate limit the OAuth token validation path - @gocamille #809
+
+When OAuth authentication is configured, the server now rate limits requests
+before it validates the bearer token. Each bearer credential gets its own token
+bucket (10 requests per second, burst of 50 by default). Requests over the limit
+receive `429 Too Many Requests` with `Retry-After: 1` before any JWT parsing or
+JWKS lookup. Only requests that fail authentication count against the limit, so
+clients sharing a valid token are not throttled outside of very large
+concurrent bursts. Requests without a bearer credential and the OAuth discovery
+endpoints under `/.well-known/` are not limited.
+
+The limiter is on by default and configured under `transport.auth.rate_limit`:
+`enabled` turns it off for deployments that already rate limit upstream, and
+`requests_per_second` and `burst` tune the limits.
+
+There is no per-IP limit. Behind a reverse proxy or load balancer the connection
+address identifies the proxy rather than the client, so a per-IP limit would
+make unrelated clients share one bucket. A per-client limit that understands
+trusted proxies is planned as a follow-up.
+
+Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and
+capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`.
+Repeated token-validation warnings are now summarised at most once every 60
+seconds with a count of suppressed events, instead of one log line per failed
+request. Suppressed events are still logged at `DEBUG`.
+
+#### Record client addresses on spans (opt-in) - @DaleSeo #923
+
+Set `telemetry.exporters.tracing.client_address: true` to record the client's IP address on traces. The HTTP request span records `client.address`, `network.peer.address`, and `network.peer.port`, and MCP handler spans record `client.address` and `client.port`, as the OpenTelemetry HTTP and MCP semantic conventions recommend. Requests over stdio have no client address.
+
+The option is off by default because an IP address is personal data in many jurisdictions. Metrics never carry these attributes. By default, the address comes from the TCP connection, so behind a reverse proxy or load balancer it is the proxy's address. To record the original client instead, list your proxies under `transport.trusted_proxies`.
+
+#### Configurable Streamable HTTP endpoint path - @DaleSeo #914
+
+You can now serve the Streamable HTTP transport at a path other than `/mcp` with the new `transport.path` option, for example when a gateway or ingress expects a specific path. The default stays `/mcp`.
+
+```yaml
+transport:
+  type: streamable_http
+  path: /v1/agents
+```
+
+If you use auth, keep `transport.auth.resource` in line with the new path, for example `https://mcp.example.com/v1/agents`, so that clients accept the OAuth protected resource metadata. The server logs a warning at startup when the two don't match.
+
+#### Record OpenTelemetry MCP and GenAI attributes on tool call spans - @DaleSeo #898
+
+The `call_tool` span now records attributes from the OpenTelemetry semantic conventions for MCP: `mcp.method.name` (`tools/call`), `gen_ai.operation.name` (`execute_tool`), and `gen_ai.tool.name`. When the tool result has `isError: true`, the span also records `error.type` as `tool_error`, and when the call fails with a JSON-RPC server error, it records the error code. In both cases, the span status is set to error. The existing `apollo.mcp.*` attributes are unchanged.
+
+Set `telemetry.exporters.tracing.gen_ai_content: true` to also export the tool call's input and output as `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`, which observability platforms such as Langfuse show as the call's input and output. They're off by default because they may contain sensitive data. `gen_ai.tool.call.result` is recorded only for a successful call.
+
+Omitting `tool_name`, `tool_arguments`, or `tool_result` with `omitted_attributes` also removes the matching `gen_ai.*` attribute, even when `gen_ai_content` is enabled.
+
+#### Add JSON log output and `span_id` to log lines - @DaleSeo #907
+
+A new `logging.format` option selects the log output format. `text` (the default) keeps today's human-readable output. `json` writes one JSON object per line, with `timestamp`, `level`, `target`, the current span's name as `span`, and the event's fields as top-level keys, so log pipelines can parse lines without regular expressions. JSON output never contains ANSI styling.
+
+Log lines emitted inside a span now include the span's `span_id` next to its `trace_id`. In `text` format, the prefix is `trace_id=<hex> span_id=<hex>`. In `json` format, both are top-level keys. Lines outside a span have neither. Existing deployments see no change other than the added `span_id`.
+
+#### Name MCP handler spans per the MCP semantic conventions - @DaleSeo #926
+
+MCP handler spans now follow the OpenTelemetry MCP semantic conventions: each one is named after its MCP method and has span kind `SERVER` instead of `INTERNAL`. A `tools/call` span adds the tool name, and a `prompts/get` span adds the prompt name. When a request fails with a caller error, such as an unknown tool, or `omitted_attributes` lists `tool_name`, the name is the method alone. As the [telemetry docs](https://www.apollographql.com/docs/apollo-mcp-server/telemetry#semantic-conventions) note, handler span names are experimental: they track the MCP semantic conventions, which are still in development, so they may change in a future release.
+
+**Migration**: Update any dashboard, alert, or query that filters on the old span names. To match a handler span by method regardless of its target, filter on the `mcp.method.name` attribute instead. Text and JSON logs keep the old span names.
+
+| Before | After |
+| --- | --- |
+| `call_tool` | `tools/call {tool name}` |
+| `get_prompt` | `prompts/get {prompt name}` |
+| `list_tools` | `tools/list` |
+| `list_resources` | `resources/list` |
+| `list_resource_templates` | `resources/templates/list` |
+| `read_resource` | `resources/read` |
+| `list_prompts` | `prompts/list` |
+| `set_level` | `logging/setLevel` |
+| `listen` | `subscriptions/listen` |
+| `get_task`, `cancel_task`, `update_task` | `tasks/get`, `tasks/cancel`, `tasks/update` |
+| `initialize` | `initialize` (unchanged) |
+
+Each MCP request over Streamable HTTP now has two `SERVER` spans: the HTTP request span, and the MCP handler span nested under it or parented by `_meta` trace context. Queries that assumed one `SERVER` span per request should also filter on `http.request.method` or `mcp.method.name`.
+
+#### Record `mcp.method.name` on every MCP handler span - @DaleSeo #908
+
+Every MCP handler span, not just `call_tool`, now records the request's method as `mcp.method.name`, as the OpenTelemetry semantic conventions for MCP require. For example, the `list_tools` span has `mcp.method.name` set to `tools/list`, and the `read_resource` span has `resources/read`. Span names are unchanged.
+
+#### Record the recommended MCP attributes and links on every MCP handler span - @DaleSeo #917
+
+Every MCP handler span now also records what the OpenTelemetry semantic conventions for MCP recommend for requests:
+
+- `mcp.protocol.version` holds the request's MCP protocol version. On the `initialize` span, it's the version the server negotiated rather than the one the client asked for.
+- `network.transport` is `tcp` for Streamable HTTP or `pipe` for stdio. Streamable HTTP requests also record `network.protocol.name` and `network.protocol.version`.
+- `mcp.session.id` holds the session ID for a request on a session, the same value the HTTP request span records as `apollo.mcp.session_id`. Omitting `session_id` with `omitted_attributes` also omits `mcp.session.id`. Neither attribute is recorded for a request using protocol version `2026-07-28` or later, which has no session: the HTTP request span used to record whatever `Mcp-Session-Id` header such a request carried.
+- When `_meta.traceparent` parents a handler span, the span links to the HTTP request span it arrived on, or to the `traceparent` header's context when that span is filtered out.
+
+#### Record MCP request attributes and server errors on every MCP handler span - @DaleSeo #911
+
+Every MCP handler span now records the attributes that the OpenTelemetry semantic conventions for MCP require for requests:
+
+- `jsonrpc.request.id` holds the JSON-RPC request ID on every handler span. Omitting `request_id` with `omitted_attributes` also omits `jsonrpc.request.id`.
+- `rpc.response.status_code` holds the JSON-RPC error code when a handler returns an error response.
+- `error.type` and an error span status mark a handler that fails with a server error, not just `call_tool`. Errors caused by the caller, such as an unknown method or invalid parameters, leave the status unset.
+- `mcp.resource.uri` holds the resource URI on the `read_resource` span, and `gen_ai.prompt.name` holds the prompt name on the `get_prompt` span.
+
+#### Emit the `mcp.server.operation.duration` metric - @DaleSeo #913
+
+The server now emits `mcp.server.operation.duration`, the request duration histogram from the OpenTelemetry semantic conventions for MCP. It records every MCP request in seconds, except `ping`, `server/discover`, and `completion/complete`, with `mcp.method.name`, `mcp.protocol.version`, the network attributes for the transport, the tool or prompt name, and `error.type` and `rpc.response.status_code` when the request fails. The existing `apollo.mcp.*` metrics are unchanged.
+
+#### Follow the caller's sampling decision for traces - @DaleSeo #910
+
+Trace sampling is now parent-based by default. When a request carries a trace context, in a `traceparent` header or in MCP `_meta`, Apollo MCP Server follows the caller's sampling decision, and the configured `sampler` applies only to requests that start a new trace. This keeps traces complete across services and lets you force a trace while troubleshooting by sending a `traceparent` with the sampled flag (`01`), even with a low sampling ratio.
+
+This changes behavior when callers send trace context: a sampled parent is now always recorded, and an unsampled one is never recorded, whatever `sampler` is set to. Set `telemetry.exporters.tracing.parent_based_sampler: false` to keep the previous behavior.
+
+#### Rate limit failed authentications per client - @DaleSeo #937
+
+The new `transport.auth.rate_limit.per_client` option gives each client address its own rate-limit bucket, alongside the bucket for each bearer credential. A client that sends a new fabricated token on every request is now limited too. The client bucket uses the same `requests_per_second` and `burst`, and counts only requests that fail authentication. An IPv6 client is limited by its `/64` prefix. Behind a reverse proxy or load balancer, list it under `transport.trusted_proxies` so the limit applies to the original client instead of the proxy. The option is off by default, because without `trusted_proxies`, every client behind a proxy shares one bucket.
+
+```yaml
+transport:
+  type: streamable_http
+  trusted_proxies:
+    - 10.0.4.0/24
+  auth:
+    rate_limit:
+      per_client: true
+```
+
+#### Record prompt arguments on `prompts/get` spans - @DaleSeo #925
+
+With `telemetry.exporters.tracing.gen_ai_content` enabled, the `prompts/get` span now records each argument the prompt declares as `gen_ai.prompt.variable.<name>`, following the OpenTelemetry MCP semantic conventions. The server skips arguments the prompt doesn't declare, so clients can't add attribute names. Prompt arguments can carry sensitive data, so they're off by default like the other GenAI content attributes.
+
+If you already enable `gen_ai_content`, prompt arguments are exported after you upgrade. `omitted_attributes` can't remove them, so disable `gen_ai_content` if they must stay out of your traces.
+
+#### Record the original client behind trusted proxies - @DaleSeo #930
+
+The new `transport.trusted_proxies` option lists the reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. With `telemetry.exporters.tracing.client_address` enabled, a request from a trusted proxy records the client it names in `X-Forwarded-For` as `client.address`, instead of the proxy's address. `network.peer.address` and `network.peer.port` still record the proxy. The server ignores `X-Forwarded-For` from any other peer, so callers can't choose their recorded address. The list is empty by default, which keeps the current behavior.
+
+```yaml
+transport:
+  type: streamable_http
+  trusted_proxies:
+    - 10.0.4.0/24 # the load balancer subnet
+```
+
+### Fixes
+
+#### Stop exporting per-operation startup spans at the default log level - @DaleSeo #891
+
+The spans that Apollo MCP Server creates while it turns each GraphQL operation into an MCP tool (`load_tool`, `operation_defs`, `tool_description`, `get_json_schema`, and others) are now `DEBUG`-level spans. At the default `INFO` log level, they're no longer exported to your tracing backend, so a large operation set no longer floods traces at startup and on every hot reload. To see them again, set `logging.level` to `debug`.
+
+#### Don't require `@include`/`@skip`-gated fields in `outputSchema` - @alexhof-shyftplan #927
+
+`outputSchema` listed every non-null selected field in `required`, including
+fields gated by `@include(if:)` or `@skip(if:)` on the field, an inline
+fragment, or a fragment spread. GraphQL omits those fields from the response
+when the condition excludes them, so clients that validate tool results
+against `outputSchema` rejected valid responses. Such fields are now left out
+of `required` unless the same response key is also selected without a
+condition. When a gated selection shares its response key with another
+selection, its nested fields are not required either. Literal
+`@include(if: true)` and `@skip(if: false)` still count as unconditional.
+Field types are unchanged.
+
+#### Apply variable defaults when a tool argument is null - @alexhof-shyftplan #939
+
+A variable with a default value is exposed as an optional, nullable tool
+argument. When a client sent an explicit `null` for such an argument, the
+`null` was forwarded and overrode the default. For a `Boolean` used in
+`@include(if:)` or `@skip(if:)`, this made the GraphQL server reject the
+request. The server now omits `null` arguments for variables that declare a
+default, so the default applies. `null` arguments for variables without a
+default are still forwarded unchanged.
+
+#### Default the OTLP exporter `protocol` to `grpc` - @DaleSeo #921
+
+The `protocol` of the trace and metrics OTLP exporters was documented as defaulting to `grpc`, but the server refused to start without it. It's now optional and defaults to `grpc`, and the configuration JSON schema no longer requires it. The `endpoint` of both exporters is required, and the docs no longer list a default for it.
+
+#### Rebuild the `search` index when the schema changes - @asaunin #936
+
+The `search` tool indexed the schema once at startup. When the schema changed
+while the server was running (a local schema file edit, an Uplink or GraphOS
+update), `introspect`, `validate` and `execute` saw the new schema, but
+`search` kept answering from the old index: it missed added types and still
+returned removed ones until the server restarted. The index is now rebuilt on
+every schema update.
+
+#### Explain empty `search` results - @DaleSeo #931
+
+The `search` tool now returns a text message that names the search terms when no type matches them, so clients can tell "nothing matched" apart from a dropped result. Calling `search` with an empty `terms` list now returns a tool error. Before, both cases returned a successful result with no content.
+
+#### Trace MCP Tasks requests - @DaleSeo #909
+
+The `tasks/get`, `tasks/cancel`, and `tasks/update` handlers now create spans (`get_task`, `cancel_task`, and `update_task`) like every other MCP handler, so task polling and cancellation show up in traces with the request's trace context. Each span records `mcp.method.name`. The task ID is never recorded, because it can act as a bearer handle.
+
+#### Add the mapped type to custom scalar references - @alexhof-shyftplan #932
+
+A custom scalar mapped through `custom_scalar_map` is referenced with a bare `$ref` in input schemas. Clients that do not dereference `$ref` cannot tell how to serialize its value. The reference now carries the mapped `type`, such as `{"type": "string", "$ref": "#/definitions/Date"}`, like enum and input object references already do. Scalars without a mapping keep a bare `$ref`.
+
+#### Emit `type` alongside `$ref` for input-object and enum variables - @alexhof-shyftplan #838
+
+The JSON Schema emitted for a bare input-object variable used to be
+`{ "$ref": "#/definitions/<Name>" }`, with no `type` sibling. In
+strict draft-07 that is correct: the referenced schema is
+authoritative, and any sibling to `$ref` is ignored.
+
+Some MCP clients — including the transport used by VS Code's Copilot
+MCP integration — do not dereference `$ref` before deciding how to
+serialise a tool argument, and fall through to `JSON.stringify` on
+whatever value the caller provides. The GraphQL server then rejects
+the stringified payload with `Expected type <Name> to be an object`,
+and the mutation never reaches the schema. Array-of-input-object
+variables are unaffected because the property node already carries
+`"type": "array"`.
+
+This changeset adds `"type": "object"` next to the `$ref` for a
+single input-object variable, and the corresponding `"type": "string"`
+for a single enum variable. Correctly dereferencing clients ignore
+the sibling and continue to use the full schema in `definitions`.
+
+#### Update rmcp to 3.8.0 - @DaleSeo #912
+
+With `stateful_mode` enabled, a Streamable HTTP POST that has no `Mcp-Session-Id` header and is not `initialize` is now rejected with HTTP 400 instead of 422, matching the spec and the existing response for GET and DELETE.
+
+The update also picks up rmcp's transport and model fixes from 3.6.0 through 3.8.0, including a per-request tool schema lookup in the Streamable HTTP server and stricter rejection of malformed JSON-RPC messages.
+
 ## 2.1.0 (2026-10-23)
 
 ### Features
