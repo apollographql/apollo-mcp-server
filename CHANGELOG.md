@@ -10,27 +10,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 #### Rate limit the OAuth token validation path - @gocamille #809
 
-When OAuth authentication is configured, the server now rate limits requests
-before it validates the bearer token. Each bearer credential gets its own token
-bucket (10 requests per second, burst of 50 by default). Requests over the limit
-receive `429 Too Many Requests` with `Retry-After: 1` before any JWT parsing or
-JWKS lookup. Only requests that fail authentication count against the limit, so
-clients sharing a valid token are not throttled outside of very large
-concurrent bursts. Requests without a bearer credential and the OAuth discovery
-endpoints under `/.well-known/` are not limited.
+When OAuth authentication is configured, the server now rate limits requests before it validates the bearer token. Each bearer credential gets its own token bucket (10 requests per second, burst of 50 by default). Requests over the limit receive `429 Too Many Requests` with `Retry-After: 1` before any JWT parsing or JWKS lookup. Only requests that fail authentication count against the limit, so clients sharing a valid token are not throttled outside of very large concurrent bursts. Requests without a bearer credential and the OAuth discovery endpoints under `/.well-known/` are not limited.
 
-The limiter is on by default and configured under `transport.auth.rate_limit`:
-`enabled` turns it off for deployments that already rate limit upstream, and
-`requests_per_second` and `burst` tune the limits.
+The limiter is on by default and configured under `transport.auth.rate_limit`: `enabled` turns it off for deployments that already rate limit upstream, and `requests_per_second` and `burst` tune the limits.
 
-To also limit each client address, enable `transport.auth.rate_limit.per_client`
-(see "Rate limit failed authentications per client" below).
+To also limit each client address, enable `transport.auth.rate_limit.per_client` (see "Rate limit failed authentications per client" below).
 
-Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and
-capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`.
-Repeated token-validation warnings are now summarised at most once every 60
-seconds with a count of suppressed events, instead of one log line per failed
-request. Suppressed events are still logged at `DEBUG`.
+Rejections are counted in the new `apollo.mcp.auth.rate_limit.count` metric and capacity fail-open events in `apollo.mcp.auth.rate_limit.overflow.count`. Repeated token-validation warnings are now summarised at most once every 60 seconds with a count of suppressed events, instead of one log line per failed request. Suppressed events are still logged at `DEBUG`.
 
 #### Record client addresses on spans (opt-in) - @DaleSeo #923
 
@@ -156,26 +142,11 @@ The spans that Apollo MCP Server creates while it turns each GraphQL operation i
 
 #### Don't require `@include`/`@skip`-gated fields in `outputSchema` - @alexhof-shyftplan #927
 
-`outputSchema` listed every non-null selected field in `required`, including
-fields gated by `@include(if:)` or `@skip(if:)` on the field, an inline
-fragment, or a fragment spread. GraphQL omits those fields from the response
-when the condition excludes them, so clients that validate tool results
-against `outputSchema` rejected valid responses. Such fields are now left out
-of `required` unless the same response key is also selected without a
-condition. When a gated selection shares its response key with another
-selection, its nested fields are not required either. Literal
-`@include(if: true)` and `@skip(if: false)` still count as unconditional.
-Field types are unchanged.
+`outputSchema` listed every non-null selected field in `required`, including fields gated by `@include(if:)` or `@skip(if:)` on the field, an inline fragment, or a fragment spread. GraphQL omits those fields from the response when the condition excludes them, so clients that validate tool results against `outputSchema` rejected valid responses. Such fields are now left out of `required` unless the same response key is also selected without a condition. When a gated selection shares its response key with another selection, its nested fields are not required either. Literal `@include(if: true)` and `@skip(if: false)` still count as unconditional. Field types are unchanged.
 
 #### Apply variable defaults when a tool argument is null - @alexhof-shyftplan #939
 
-A variable with a default value is exposed as an optional, nullable tool
-argument. When a client sent an explicit `null` for such an argument, the
-`null` was forwarded and overrode the default. For a `Boolean` used in
-`@include(if:)` or `@skip(if:)`, this made the GraphQL server reject the
-request. The server now omits `null` arguments for variables that declare a
-default, so the default applies. `null` arguments for variables without a
-default are still forwarded unchanged.
+A variable with a default value is exposed as an optional, nullable tool argument. When a client sent an explicit `null` for such an argument, the `null` was forwarded and overrode the default. For a `Boolean` used in `@include(if:)` or `@skip(if:)`, this made the GraphQL server reject the request. The server now omits `null` arguments for variables that declare a default, so the default applies. `null` arguments for variables without a default are still forwarded unchanged.
 
 #### Default the OTLP exporter `protocol` to `grpc` - @DaleSeo #921
 
@@ -183,12 +154,7 @@ The `protocol` of the trace and metrics OTLP exporters was documented as default
 
 #### Rebuild the `search` index when the schema changes - @asaunin #936
 
-The `search` tool indexed the schema once at startup. When the schema changed
-while the server was running (a local schema file edit, an Uplink or GraphOS
-update), `introspect`, `validate` and `execute` saw the new schema, but
-`search` kept answering from the old index: it missed added types and still
-returned removed ones until the server restarted. The index is now rebuilt on
-every schema update.
+The `search` tool indexed the schema once at startup. When the schema changed while the server was running (a local schema file edit, an Uplink or GraphOS update), `introspect`, `validate` and `execute` saw the new schema, but `search` kept answering from the old index: it missed added types and still returned removed ones until the server restarted. The index is now rebuilt on every schema update.
 
 #### Explain empty `search` results - @DaleSeo #931
 
@@ -204,24 +170,11 @@ A custom scalar mapped through `custom_scalar_map` is referenced with a bare `$r
 
 #### Emit `type` alongside `$ref` for input-object and enum variables - @alexhof-shyftplan #838
 
-The JSON Schema emitted for a bare input-object variable used to be
-`{ "$ref": "#/definitions/<Name>" }`, with no `type` sibling. In
-strict draft-07 that is correct: the referenced schema is
-authoritative, and any sibling to `$ref` is ignored.
+The JSON Schema emitted for a bare input-object variable used to be `{ "$ref": "#/definitions/<Name>" }`, with no `type` sibling. In strict draft-07 that is correct: the referenced schema is authoritative, and any sibling to `$ref` is ignored.
 
-Some MCP clients — including the transport used by VS Code's Copilot
-MCP integration — do not dereference `$ref` before deciding how to
-serialise a tool argument, and fall through to `JSON.stringify` on
-whatever value the caller provides. The GraphQL server then rejects
-the stringified payload with `Expected type <Name> to be an object`,
-and the mutation never reaches the schema. Array-of-input-object
-variables are unaffected because the property node already carries
-`"type": "array"`.
+Some MCP clients — including the transport used by VS Code's Copilot MCP integration — do not dereference `$ref` before deciding how to serialise a tool argument, and fall through to `JSON.stringify` on whatever value the caller provides. The GraphQL server then rejects the stringified payload with `Expected type <Name> to be an object`, and the mutation never reaches the schema. Array-of-input-object variables are unaffected because the property node already carries `"type": "array"`.
 
-This changeset adds `"type": "object"` next to the `$ref` for a
-single input-object variable, and the corresponding `"type": "string"`
-for a single enum variable. Correctly dereferencing clients ignore
-the sibling and continue to use the full schema in `definitions`.
+This changeset adds `"type": "object"` next to the `$ref` for a single input-object variable, and the corresponding `"type": "string"` for a single enum variable. Correctly dereferencing clients ignore the sibling and continue to use the full schema in `definitions`.
 
 #### Update rmcp to 3.8.0 - @DaleSeo #912
 
