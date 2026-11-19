@@ -364,14 +364,33 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
 
 /// Clients accept a resource whose URL is a prefix of the MCP endpoint URL, which covers
 /// root resources such as `http://localhost:4000`. A gateway may also add a prefix the
-/// server never sees, so a resource that ends with the endpoint path matches too.
+/// server never sees, so a resource that ends with the endpoint path matches too. At the
+/// root, any resource path can be that prefix, so every resource matches.
 fn resource_matches_path(resource: &url::Url, path: &EndpointPath) -> bool {
+    if path.is_root() {
+        return true;
+    }
     let resource_path = resource.path().trim_end_matches('/');
     let path = path.as_str();
     let is_prefix = path
         .strip_prefix(resource_path)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
     is_prefix || resource_path.ends_with(path)
+}
+
+/// Mounts the MCP service at `path`. Only the root is an exact match; any other path also
+/// routes its subpaths to the service.
+pub(super) fn mount_endpoint(
+    path: &EndpointPath,
+    service: StreamableHttpService<super::running::McpService, LocalSessionManager>,
+) -> axum::Router {
+    if path.is_root() {
+        // axum panics when nesting at the root. Streamable HTTP serves one URL, so an
+        // exact route loses nothing.
+        axum::Router::new().route_service("/", service)
+    } else {
+        axum::Router::new().nest_service(path.as_str(), service)
+    }
 }
 
 /// One HTTP listener to serve, not yet bound to a socket.
@@ -418,7 +437,7 @@ impl ListenerBuilder {
         cors: CorsConfig,
     ) -> Self {
         Self {
-            router: axum::Router::new().nest_service(path.as_str(), service),
+            router: mount_endpoint(&path, service),
             listen_address,
             path,
             cors,
@@ -623,46 +642,116 @@ mod tests {
         assert!(tokio::net::TcpListener::bind(addr).await.is_ok());
     }
 
-    #[tokio::test]
-    async fn serves_mcp_only_at_configured_path() {
+    fn listener_builder(path: &str) -> ListenerBuilder {
         let running = super::super::running::test_support::create_test_running();
         let service = build_http_service(running, false, &Default::default());
-        let path = EndpointPath::try_from("/v1/agents".to_owned()).unwrap();
-        let router = ListenerBuilder::new(
+        ListenerBuilder::new(
             "127.0.0.1:0".parse().unwrap(),
-            path,
+            EndpointPath::try_from(path.to_owned()).unwrap(),
             service,
             CorsConfig::default(),
         )
-        .router;
+    }
 
-        let get = |uri: &str| Request::get(uri).body(Body::empty()).unwrap();
-        let res = router.clone().oneshot(get("/v1/agents")).await.unwrap();
+    fn get(uri: &str) -> Request<Body> {
+        Request::get(uri).body(Body::empty()).unwrap()
+    }
+
+    #[rstest::rstest]
+    #[case::nested("/v1/agents")]
+    #[case::root("/")]
+    #[tokio::test]
+    async fn serves_mcp_at_configured_path(#[case] path: &str) {
+        let router = listener_builder(path).router;
+
+        let res = router.oneshot(get(path)).await.unwrap();
+
         assert_ne!(res.status(), StatusCode::NOT_FOUND);
+    }
 
-        let res = router.oneshot(get("/mcp")).await.unwrap();
+    #[rstest::rstest]
+    #[case::nested_default_path("/v1/agents", "/mcp")]
+    #[case::nested_parent("/v1/agents", "/v1")]
+    #[case::root_default_path("/", "/mcp")]
+    #[case::root_scanner_probe("/", "/scanner-probe")]
+    #[case::root_subpath("/", "/mcp/extra")]
+    #[tokio::test]
+    async fn returns_not_found_outside_configured_path(#[case] path: &str, #[case] uri: &str) {
+        let router = listener_builder(path).router;
+
+        let res = router.oneshot(get(uri)).await.unwrap();
+
         assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
+    #[rstest::rstest]
+    #[case::default_path("/mcp")]
+    #[case::root("/")]
     #[tokio::test]
-    async fn with_health_rejects_endpoint_path() {
+    async fn with_health_rejects_endpoint_path(#[case] path: &str) {
         let health_check = HealthCheck::new(HealthCheckConfig {
             enabled: true,
-            path: "/mcp".to_owned(),
+            path: path.to_owned(),
             ..Default::default()
         });
         let result = ListenerBuilder {
             router: axum::Router::new(),
             listen_address: "127.0.0.1:0".parse().unwrap(),
-            path: EndpointPath::default(),
+            path: EndpointPath::try_from(path.to_owned()).unwrap(),
             cors: CorsConfig::default(),
         }
         .with_health(Some(&health_check));
 
         assert!(matches!(
             result,
-            Err(ServerError::HealthPathConflict { health_path, .. }) if health_path == "/mcp"
+            Err(ServerError::HealthPathConflict { health_path, .. }) if health_path == path
         ));
+    }
+
+    #[tokio::test]
+    async fn with_health_serves_beside_root_endpoint() {
+        let health_check = HealthCheck::new(HealthCheckConfig {
+            enabled: true,
+            ..Default::default()
+        });
+        let listeners = listener_builder("/")
+            .with_health(Some(&health_check))
+            .unwrap();
+        let UnboundListener { router, .. } = listeners.into_iter().next().unwrap();
+
+        let res = router.clone().oneshot(get("/health")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = router.oneshot(get("/")).await.unwrap();
+        assert_ne!(res.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn with_auth_serves_metadata_beside_root_endpoint() {
+        let auth: auth::Config = serde_json::from_value(serde_json::json!({
+            "servers": ["https://auth.example.com"],
+            "resource": "https://mcp.example.com/mcp",
+        }))
+        .unwrap();
+        let router = listener_builder("/")
+            .with_auth(
+                Some(Box::new(auth)),
+                HashMap::new(),
+                true,
+                &TrustedProxies::default(),
+            )
+            .unwrap()
+            .router;
+
+        let res = router
+            .clone()
+            .oneshot(get("/.well-known/oauth-protected-resource/mcp"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let res = router.oneshot(get("/")).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -708,6 +797,16 @@ mod tests {
             resource_matches_path(&resource, &EndpointPath::default()),
             expected
         );
+    }
+
+    #[rstest::rstest]
+    #[case::root("https://mcp.example.com/")]
+    #[case::root_without_slash("http://localhost:4000")]
+    #[case::gateway_prefix("https://mcp.example.com/mcp")]
+    fn resource_matches_root_path_for_any_resource(#[case] resource: &str) {
+        let resource = url::Url::parse(resource).unwrap();
+        let root = EndpointPath::try_from("/".to_owned()).unwrap();
+        assert!(resource_matches_path(&resource, &root));
     }
 
     #[tokio::test]
