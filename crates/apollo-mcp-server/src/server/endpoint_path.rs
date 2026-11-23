@@ -5,8 +5,8 @@ use serde::Deserialize;
 
 /// The URL path that the Streamable HTTP transport serves MCP requests on, such as `/mcp`.
 ///
-/// A valid path is absolute, is not the root (`/`), is not under `/.well-known`, and has
-/// non-empty segments made only of letters, digits, `-`, `_`, `.`, and `~`.
+/// A valid path is either the root (`/`) or an absolute path that is not under `/.well-known`
+/// and has non-empty segments made only of letters, digits, `-`, `_`, `.`, and `~`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(try_from = "String")]
 pub struct EndpointPath(String);
@@ -16,9 +16,6 @@ pub struct EndpointPath(String);
 pub enum EndpointPathError {
     #[error("path {0:?} must start with '/'")]
     NotAbsolute(String),
-
-    #[error("serving at the root path '/' is not supported")]
-    Root,
 
     #[error("path {0:?} must not be under /.well-known")]
     WellKnown(String),
@@ -33,6 +30,10 @@ pub enum EndpointPathError {
 impl EndpointPath {
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn is_root(&self) -> bool {
+        self.0 == "/"
     }
 }
 
@@ -56,7 +57,7 @@ impl TryFrom<String> for EndpointPath {
             return Err(EndpointPathError::NotAbsolute(path));
         };
         if rest.is_empty() {
-            return Err(EndpointPathError::Root);
+            return Ok(Self(path));
         }
         if rest == ".well-known" || rest.starts_with(".well-known/") {
             return Err(EndpointPathError::WellKnown(path));
@@ -92,6 +93,7 @@ mod tests {
     }
 
     #[rstest]
+    #[case::root("/")]
     #[case::single_segment("/api")]
     #[case::nested("/v1/services/mcp")]
     #[case::unreserved_characters("/my-service_v1.2~beta")]
@@ -103,7 +105,6 @@ mod tests {
     #[rstest]
     #[case::relative("mcp", EndpointPathError::NotAbsolute("mcp".into()))]
     #[case::empty("", EndpointPathError::NotAbsolute("".into()))]
-    #[case::root("/", EndpointPathError::Root)]
     #[case::well_known("/.well-known", EndpointPathError::WellKnown("/.well-known".into()))]
     #[case::under_well_known(
         "/.well-known/mcp",
@@ -130,7 +131,7 @@ mod tests {
 
     #[test]
     fn deserialize_rejects_invalid_path() {
-        let err = serde_json::from_str::<EndpointPath>(r#""/""#).unwrap_err();
-        assert!(err.to_string().contains("root path"));
+        let err = serde_json::from_str::<EndpointPath>(r#""mcp""#).unwrap_err();
+        assert!(err.to_string().contains("must start with '/'"));
     }
 }

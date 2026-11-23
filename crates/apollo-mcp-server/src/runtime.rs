@@ -303,6 +303,9 @@ mod test {
             assert_eq!(transport_path(read_config(path)?), "/agents");
 
             jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/");
+            assert_eq!(transport_path(read_config(path)?), "/");
+
+            jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/agents/");
             assert!(read_config(path).is_err());
             Ok(())
         });

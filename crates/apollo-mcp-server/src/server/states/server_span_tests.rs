@@ -20,10 +20,13 @@ use tracing_subscriber::registry;
 
 use super::running::Running;
 use super::running::test_support::{create_test_running, create_test_running_with_operation};
-use super::starting::{build_http_service, with_client_address, with_telemetry_layers};
+use super::starting::{
+    build_http_service, mount_endpoint, with_client_address, with_telemetry_layers,
+};
 use super::telemetry::w3c_text_map_propagator;
 use crate::generated::telemetry::TelemetryAttribute;
 use crate::health::{HealthCheck, HealthCheckConfig};
+use crate::server::EndpointPath;
 
 #[path = "mcp_trace_context_tests.rs"]
 mod mcp_trace_context;
@@ -194,6 +197,24 @@ mod server_span {
         let span = server_span_for(mcp_request("/mcp")).await;
 
         assert_eq!(attribute_or_panic(&span, "http.route").as_str(), "/mcp");
+    }
+
+    #[tokio::test]
+    async fn records_the_root_route() {
+        let spans = ExportedSpans::capture();
+        let service = build_http_service(create_test_running(), true, &Default::default());
+        let root = EndpointPath::try_from("/".to_owned()).expect("valid path");
+        with_telemetry_layers(mount_endpoint(&root, service))
+            .oneshot(mcp_request("/"))
+            .await
+            .expect("router responds");
+        let span = spans
+            .collect()
+            .into_iter()
+            .find(is_http_server_span)
+            .expect("an HTTP server span");
+
+        assert_eq!(attribute_or_panic(&span, "http.route").as_str(), "/");
     }
 
     #[tokio::test]

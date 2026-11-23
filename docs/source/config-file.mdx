@@ -445,7 +445,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. The root path (`/`), a trailing `/`, and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
+| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. Set it to `/` to serve MCP at the root; the server then serves MCP at `/` only, and requests to other paths never reach MCP. With `path: /`, set `auth.resource` to the public URL clients use, including any prefix your proxy strips. A trailing `/` and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
 | `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 | `trusted_proxies` | `List<string>`   | `[]`        | Reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. Spans and the per-client rate limit use the client a trusted proxy names in `X-Forwarded-For` as the client address. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
@@ -552,8 +552,9 @@ transport:
 
     # The externally available URL pointing to this MCP server. Can be `localhost`
     # when testing locally.
-    # Note: Subpaths must be preserved here as well. Append the transport `path`
-    # (`/mcp` by default) when using Streamable HTTP transport.
+    # Note: Use the public URL clients connect to, including any path prefix a
+    # proxy strips. Without a proxy, append the transport `path` (`/mcp` by
+    # default) when using Streamable HTTP transport.
     resource: https://hosted.mcp.server/mcp
 
     # Optional link to more documentation relating to this MCP server.
