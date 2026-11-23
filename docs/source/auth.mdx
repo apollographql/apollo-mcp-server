@@ -235,6 +235,16 @@ Treat `required_scopes` as a manually maintained security policy. Compare its ke
 
 </Caution>
 
+## Match the resource to the URL clients use
+
+Set `transport.auth.resource` to the public URL clients connect to, including any path prefix a proxy or gateway strips before forwarding. MCP clients compare `resource` in the Protected Resource Metadata with that URL and reject the metadata if they don't match. Clients built on the MCP TypeScript SDK accept the same URL or a parent path on the same origin, and report a mismatch with an error like this:
+
+```text
+Protected resource https://mcp.example.com/mcp does not match expected https://mcp.example.com/v1/agents (or origin)
+```
+
+Apollo MCP Server can't check this for you because it doesn't know its public URL. To compare the two, look for the configured resource in the `Serving OAuth protected resource metadata` log message at startup.
+
 ## HTTP error responses
 
 Apollo MCP Server returns different HTTP status codes depending on the type of authorization failure, following [RFC 6750](https://datatracker.ietf.org/doc/html/rfc6750#section-3.1) and the MCP specification.

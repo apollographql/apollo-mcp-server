@@ -9,7 +9,7 @@ use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServiceExt as _, transport::stdio};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::server::states::telemetry::{expose_client_address, otel_context_middleware};
 use crate::{
@@ -362,22 +362,6 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
     }
 }
 
-/// Clients accept a resource whose URL is a prefix of the MCP endpoint URL, which covers
-/// root resources such as `http://localhost:4000`. A gateway may also add a prefix the
-/// server never sees, so a resource that ends with the endpoint path matches too. At the
-/// root, any resource path can be that prefix, so every resource matches.
-fn resource_matches_path(resource: &url::Url, path: &EndpointPath) -> bool {
-    if path.is_root() {
-        return true;
-    }
-    let resource_path = resource.path().trim_end_matches('/');
-    let path = path.as_str();
-    let is_prefix = path
-        .strip_prefix(resource_path)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'));
-    is_prefix || resource_path.ends_with(path)
-}
-
 /// Mounts the MCP service at `path`. Only the root is an exact match; any other path also
 /// routes its subpaths to the service.
 pub(super) fn mount_endpoint(
@@ -452,14 +436,6 @@ impl ListenerBuilder {
         trusted_proxies: &TrustedProxies,
     ) -> Result<Self, ServerError> {
         if let Some(auth) = auth {
-            if !resource_matches_path(&auth.resource, &self.path) {
-                warn!(
-                    resource = %auth.resource,
-                    path = %self.path,
-                    "transport.auth.resource doesn't match transport.path, so OAuth clients may \
-                     reject the protected resource metadata"
-                );
-            }
             self.router = auth
                 .enable_middleware(self.router, required_scopes, stateful_mode, trusted_proxies)
                 .inspect_err(|e| {
@@ -776,37 +752,6 @@ mod tests {
         let req = Request::get("/mcp/health").body(Body::empty()).unwrap();
         let res = router.oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
-    }
-
-    #[rstest::rstest]
-    #[case::same_path("https://mcp.example.com/mcp", true)]
-    #[case::trailing_slash("https://mcp.example.com/mcp/", true)]
-    #[case::root("https://mcp.example.com/", true)]
-    #[case::root_without_slash("http://localhost:4000", true)]
-    #[case::gateway_prefix("https://api.example.com/first-service/mcp", true)]
-    #[case::different_path("https://mcp.example.com/agents", false)]
-    #[case::shared_prefix("https://mcp.example.com/mc", false)]
-    #[case::shared_suffix("https://mcp.example.com/my-mcp", false)]
-    #[case::below_endpoint("https://mcp.example.com/mcp/extra", false)]
-    fn resource_matches_path_accepts_prefix_or_suffix(
-        #[case] resource: &str,
-        #[case] expected: bool,
-    ) {
-        let resource = url::Url::parse(resource).unwrap();
-        assert_eq!(
-            resource_matches_path(&resource, &EndpointPath::default()),
-            expected
-        );
-    }
-
-    #[rstest::rstest]
-    #[case::root("https://mcp.example.com/")]
-    #[case::root_without_slash("http://localhost:4000")]
-    #[case::gateway_prefix("https://mcp.example.com/mcp")]
-    fn resource_matches_root_path_for_any_resource(#[case] resource: &str) {
-        let resource = url::Url::parse(resource).unwrap();
-        let root = EndpointPath::try_from("/".to_owned()).unwrap();
-        assert!(resource_matches_path(&resource, &root));
     }
 
     #[tokio::test]
