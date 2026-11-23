@@ -639,6 +639,11 @@ impl Config {
         let client = self.tls.build_client(self.discovery_headers.clone())?;
         let resource_metadata_url = build_resource_metadata_url(&self.resource);
         let metadata_route_path = resource_metadata_url.path().to_string();
+        tracing::info!(
+            resource = %self.resource,
+            metadata_path = %metadata_route_path,
+            "Serving OAuth protected resource metadata"
+        );
         let auth_state = AuthState {
             config: Arc::new(self.clone()),
             client,
