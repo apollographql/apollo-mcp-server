@@ -27,6 +27,8 @@ use serde_json::json;
 use tokio::time::Instant;
 use tracing::{debug, trace};
 
+use crate::server::EndpointPath;
+
 /// Health status enumeration
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -100,7 +102,7 @@ pub struct HealthCheckConfig {
 
     /// Optionally set a custom healthcheck path
     /// Defaults to /health
-    pub path: String,
+    pub path: EndpointPath,
 
     /// Optionally serve the health check on its own address/port instead of the main
     /// transport's listener. Defaults to unset, which serves the health check on the same
@@ -115,7 +117,7 @@ impl Default for HealthCheckConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: "/health".to_string(),
+            path: EndpointPath::default_health(),
             listen: None,
             readiness: Default::default(),
         }
@@ -240,7 +242,7 @@ impl HealthCheck {
         }
 
         Router::new()
-            .route(&self.config.path, get(health_endpoint))
+            .route(self.config.path.as_str(), get(health_endpoint))
             .with_state(self.clone())
     }
 
@@ -267,7 +269,7 @@ mod tests {
     fn health_check_default_config() {
         let config = HealthCheckConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.path, "/health");
+        assert_eq!(config.path.as_str(), "/health");
         assert_eq!(config.listen, None);
         assert_eq!(config.readiness.allowed, 100);
         assert_eq!(config.readiness.interval.sampling, Duration::from_secs(5));
@@ -386,7 +388,7 @@ mod tests {
         #[tokio::test]
         async fn uses_configured_path() {
             let config = HealthCheckConfig {
-                path: "/custom-health".to_string(),
+                path: EndpointPath::try_from("/custom-health".to_owned()).unwrap(),
                 ..Default::default()
             };
             let health_check = HealthCheck::new(config);

@@ -47,7 +47,7 @@ fn router(handler: McpService, stateful: bool) -> Router {
     )
     .unwrap();
     auth.enable_middleware(
-        Router::new().nest_service("/mcp", service),
+        Router::new().route_service("/mcp", service),
         HashMap::new(),
         stateful,
         &Default::default(),

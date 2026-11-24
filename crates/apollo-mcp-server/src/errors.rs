@@ -99,7 +99,7 @@ pub enum ServerError {
          change health_check.path or transport.path, or set health_check.listen"
     )]
     HealthPathConflict {
-        health_path: String,
+        health_path: crate::server::EndpointPath,
         endpoint_path: crate::server::EndpointPath,
     },
 

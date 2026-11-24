@@ -5616,7 +5616,7 @@ mod integration_tests {
             let (signal, received) = tokio::sync::oneshot::channel();
             let server = tokio::spawn(serve_http(
                 listener,
-                axum::Router::new().nest_service("/mcp", service),
+                axum::Router::new().route_service("/mcp", service),
                 shutdown.clone(),
                 async move {
                     received.await.unwrap();

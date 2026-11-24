@@ -1,13 +1,15 @@
 use std::fmt;
 
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-/// The URL path that the Streamable HTTP transport serves MCP requests on, such as `/mcp`.
+/// A URL path the HTTP server routes, such as the MCP endpoint `/mcp` or the health check
+/// `/health`.
 ///
 /// A valid path is either the root (`/`) or an absolute path that is not under `/.well-known`
-/// and has non-empty segments made only of letters, digits, `-`, `_`, `.`, and `~`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+/// and has non-empty segments made only of letters, digits, `-`, `_`, `.`, and `~`. Trailing
+/// slashes are trimmed, as they are from requests, so `/mcp/` is the same as `/mcp`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
 #[serde(try_from = "String")]
 pub struct EndpointPath(String);
 
@@ -32,8 +34,9 @@ impl EndpointPath {
         &self.0
     }
 
-    pub fn is_root(&self) -> bool {
-        self.0 == "/"
+    /// The default health check path, `/health`.
+    pub(crate) fn default_health() -> Self {
+        Self("/health".to_owned())
     }
 }
 
@@ -56,8 +59,9 @@ impl TryFrom<String> for EndpointPath {
         let Some(rest) = path.strip_prefix('/') else {
             return Err(EndpointPathError::NotAbsolute(path));
         };
+        let rest = rest.trim_end_matches('/');
         if rest.is_empty() {
-            return Ok(Self(path));
+            return Ok(Self("/".to_owned()));
         }
         if rest == ".well-known" || rest.starts_with(".well-known/") {
             return Err(EndpointPathError::WellKnown(path));
@@ -66,7 +70,8 @@ impl TryFrom<String> for EndpointPath {
             let segment = segment.to_owned();
             return Err(EndpointPathError::InvalidSegment { path, segment });
         }
-        Ok(Self(path))
+        // `rest` has no leading or trailing slash, so add the leading one back.
+        Ok(Self(format!("/{rest}")))
     }
 }
 
@@ -103,6 +108,15 @@ mod tests {
     }
 
     #[rstest]
+    #[case::trailing_slash("/mcp/", "/mcp")]
+    #[case::trailing_slashes("/v1/mcp///", "/v1/mcp")]
+    #[case::root_slashes("//", "/")]
+    fn trims_trailing_slashes(#[case] path: &str, #[case] expected: &str) {
+        let parsed = EndpointPath::try_from(path.to_owned()).unwrap();
+        assert_eq!(parsed.as_str(), expected);
+    }
+
+    #[rstest]
     #[case::relative("mcp", EndpointPathError::NotAbsolute("mcp".into()))]
     #[case::empty("", EndpointPathError::NotAbsolute("".into()))]
     #[case::well_known("/.well-known", EndpointPathError::WellKnown("/.well-known".into()))]
@@ -110,7 +124,6 @@ mod tests {
         "/.well-known/mcp",
         EndpointPathError::WellKnown("/.well-known/mcp".into())
     )]
-    #[case::trailing_slash("/mcp/", invalid_segment("/mcp/", ""))]
     #[case::double_slash("/api//mcp", invalid_segment("/api//mcp", ""))]
     #[case::dot_segment("/api/./mcp", invalid_segment("/api/./mcp", "."))]
     #[case::dot_dot_segment("/api/../mcp", invalid_segment("/api/../mcp", ".."))]

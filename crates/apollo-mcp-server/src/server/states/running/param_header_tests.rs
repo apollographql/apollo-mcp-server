@@ -78,7 +78,7 @@ async fn running_with_typed_param_header(
 
 fn router(running: &Running) -> Router {
     let handler = running.for_service();
-    Router::new().nest_service(
+    Router::new().route_service(
         "/mcp",
         StreamableHttpService::new(
             move || Ok(handler.clone()),

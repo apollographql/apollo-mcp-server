@@ -327,9 +327,8 @@ impl HttpBody for BodyWithSpan {
 ///
 /// [HTTP server span conventions]: https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span
 fn server_span(request: &Request) -> tracing::Span {
-    // axum reports no `MatchedPath` for a nested catch-all match, so a subpath
-    // of the MCP endpoint has no route. The conventions want `http.route` left
-    // off entirely in that case, not set to an empty string.
+    // The conventions want `http.route` left off entirely when no route
+    // matched, not set to an empty string.
     let route = request
         .extensions()
         .get::<MatchedPath>()

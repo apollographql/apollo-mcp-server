@@ -157,7 +157,7 @@ async fn http_tool_call_with_filter(
     .unwrap();
     running.rhai_engine = apollo_mcp_rhai::SharedRhaiEngine::load(scripts.path()).unwrap();
     let service = build_http_service(running, false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     let response = router
         .oneshot(
             Request::builder()
@@ -302,7 +302,7 @@ async fn server_error_tool_call_span() -> SpanData {
     .unwrap();
     running.rhai_engine = apollo_mcp_rhai::SharedRhaiEngine::load(scripts.path()).unwrap();
     let service = build_http_service(running, false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     let response = router
         .oneshot(
             Request::builder()
@@ -832,7 +832,7 @@ async fn http_handler_spans_on(
 ) -> Vec<SpanData> {
     let spans = ExportedSpans::capture_with_filter(tracing_subscriber::EnvFilter::new(filter));
     let service = build_http_service(running, false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     let response = router
         .oneshot(metadata_request(1, method, params))
         .await
@@ -882,7 +882,7 @@ async fn task_handler_span(method: &str, params: Value, name: &str) -> SpanData 
     );
     running.tasks = Some(runtime.clone());
     let service = build_http_service(running, false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     let response = router
         .oneshot(metadata_request_with_capabilities(
             1,
@@ -1123,7 +1123,7 @@ async fn metadata_parents_http_subscription_through_readiness_and_cancellation()
     let spans = ExportedSpans::capture();
     let running = create_test_running();
     let service = build_http_service(running.clone(), false, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     let response = router
         .clone()
         .oneshot(metadata_request(1, "server/discover", json!({})))
