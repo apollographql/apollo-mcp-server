@@ -80,12 +80,9 @@ pub(crate) enum AppTarget {
     MCPApps,
 }
 
-impl TryFrom<(Extensions, Option<&ClientCapabilities>)> for AppTarget {
-    type Error = McpError;
-
-    fn try_from(
-        (extensions, client_capabilities): (Extensions, Option<&ClientCapabilities>),
-    ) -> Result<Self, Self::Error> {
+impl AppTarget {
+    /// The target named by the `appTarget` URL parameter, if there is one.
+    pub(crate) fn named(extensions: &Extensions) -> Result<Option<Self>, McpError> {
         let app_target_param = extensions
             .get::<axum::http::request::Parts>()
             .and_then(|parts| parts.uri.query())
@@ -96,8 +93,10 @@ impl TryFrom<(Extensions, Option<&ClientCapabilities>)> for AppTarget {
             });
 
         match app_target_param {
-            Some(app_target) if app_target.to_lowercase() == "openai" => Ok(AppTarget::AppsSDK),
-            Some(app_target) if app_target.to_lowercase() == "mcp" => Ok(AppTarget::MCPApps),
+            Some(app_target) if app_target.to_lowercase() == "openai" => {
+                Ok(Some(AppTarget::AppsSDK))
+            }
+            Some(app_target) if app_target.to_lowercase() == "mcp" => Ok(Some(AppTarget::MCPApps)),
             Some(app_target) => Err(McpError::new(
                 ErrorCode::INVALID_REQUEST,
                 format!(
@@ -105,17 +104,27 @@ impl TryFrom<(Extensions, Option<&ClientCapabilities>)> for AppTarget {
                 ),
                 None,
             )),
-            None => {
-                // If target hasn't been specified in the URL, try to detect it via client capabilities. If we still don't know, we'll default to AppsSDK.
-                if let Some(client_capabilities) = client_capabilities
-                    && has_mcp_app_support(client_capabilities)
-                {
-                    Ok(AppTarget::MCPApps)
-                } else {
-                    Ok(AppTarget::AppsSDK)
-                }
-            }
+            None => Ok(None),
         }
+    }
+
+    /// The target to assume when the URL names none: MCP Apps if the client declares support for it, otherwise Apps SDK.
+    pub(crate) fn inferred(client_capabilities: Option<&ClientCapabilities>) -> Self {
+        if client_capabilities.is_some_and(has_mcp_app_support) {
+            AppTarget::MCPApps
+        } else {
+            AppTarget::AppsSDK
+        }
+    }
+}
+
+impl TryFrom<(Extensions, Option<&ClientCapabilities>)> for AppTarget {
+    type Error = McpError;
+
+    fn try_from(
+        (extensions, client_capabilities): (Extensions, Option<&ClientCapabilities>),
+    ) -> Result<Self, Self::Error> {
+        Ok(Self::named(&extensions)?.unwrap_or_else(|| Self::inferred(client_capabilities)))
     }
 }
 

@@ -36,6 +36,7 @@ pub(crate) async fn get_app_resource(
     request: rmcp::model::ReadResourceRequestParams,
     request_uri: Url,
     app_target: &AppTarget,
+    target_named: bool,
     app_name: &str,
 ) -> Result<(ResourceContents, ResourceOrigin), ErrorData> {
     let Some(app) = apps
@@ -49,20 +50,20 @@ pub(crate) async fn get_app_resource(
     };
 
     let resource_source = match &app.resource {
-        AppResource::Targeted(resource) => match app_target {
-            AppTarget::AppsSDK => resource.openai.as_ref().ok_or_else(|| {
+        AppResource::Targeted(resource) => {
+            let (requested, other, name) = match app_target {
+                AppTarget::AppsSDK => (&resource.openai, &resource.mcp, "openai"),
+                AppTarget::MCPApps => (&resource.mcp, &resource.openai, "mcp"),
+            };
+            // A target the URL didn't name is only a guess, so an app built for the other target is still served.
+            let fallback = if target_named { &None } else { other };
+            requested.as_ref().or(fallback.as_ref()).ok_or_else(|| {
                 ErrorData::resource_not_found(
-                    "Invalid apps target: no resource found for openai".to_string(),
+                    format!("Invalid apps target: no resource found for {name}"),
                     None,
                 )
-            })?,
-            AppTarget::MCPApps => resource.mcp.as_ref().ok_or_else(|| {
-                ErrorData::resource_not_found(
-                    "Invalid apps target: no resource found for mcp".to_string(),
-                    None,
-                )
-            })?,
-        },
+            })?
+        }
         AppResource::Single(app_resource_source) => app_resource_source,
     };
 
@@ -239,6 +240,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &target,
+            true,
             "TestApp",
         )
         .await
@@ -325,6 +327,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            true,
             "TestApp",
         )
         .await
@@ -386,6 +389,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            true,
             "TestApp",
         )
         .await
@@ -438,6 +442,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &target,
+            true,
             "TestApp",
         )
         .await
@@ -468,6 +473,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/NonExistent"),
             "ui://widget/NonExistent".parse().unwrap(),
             &AppTarget::AppsSDK,
+            true,
             "TestApp",
         )
         .await;
@@ -493,6 +499,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            true,
             "WrongApp",
         )
         .await;
@@ -521,6 +528,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::AppsSDK,
+            true,
             "TestApp",
         )
         .await
@@ -553,6 +561,7 @@ mod tests {
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
             &AppTarget::MCPApps,
+            true,
             "TestApp",
         )
         .await
@@ -564,14 +573,26 @@ mod tests {
         assert_eq!(text, "mcp content");
     }
 
+    #[rstest::rstest]
+    #[case::named_openai_on_mcp_only(false, AppTarget::AppsSDK, true, None)]
+    #[case::named_mcp_on_openai_only(true, AppTarget::MCPApps, true, None)]
+    #[case::guessed_openai_on_mcp_only(false, AppTarget::AppsSDK, false, Some("mcp content"))]
+    #[case::guessed_mcp_on_openai_only(true, AppTarget::MCPApps, false, Some("openai content"))]
     #[tokio::test]
-    async fn should_return_error_when_targeted_resource_missing_for_requested_target() {
+    async fn single_target_app_is_served_unless_url_names_the_other_target(
+        #[case] openai_only: bool,
+        #[case] target: AppTarget,
+        #[case] target_named: bool,
+        #[case] expected: Option<&str>,
+    ) {
+        let openai = AppResourceSource::Local("openai content".to_string());
+        let mcp = AppResourceSource::Local("mcp content".to_string());
         let app = App {
             name: "TestApp".to_string(),
             description: None,
             resource: AppResource::Targeted(TargetedAppResource {
-                openai: Some(AppResourceSource::Local("openai content".to_string())),
-                mcp: None,
+                openai: openai_only.then_some(openai),
+                mcp: (!openai_only).then_some(mcp),
             }),
             csp_settings: None,
             widget_settings: None,
@@ -584,11 +605,16 @@ mod tests {
             &[app],
             rmcp::model::ReadResourceRequestParams::new("ui://widget/TestApp"),
             "ui://widget/TestApp".parse().unwrap(),
-            &AppTarget::MCPApps,
+            &target,
+            target_named,
             "TestApp",
         )
         .await;
 
-        assert!(result.is_err());
+        let text = result.ok().map(|(contents, _)| match contents {
+            ResourceContents::TextResourceContents { text, .. } => text,
+            _ => unreachable!(),
+        });
+        assert_eq!(text.as_deref(), expected);
     }
 }

@@ -216,6 +216,8 @@ OpenAI Apps: `https://your-server.com/mcp?app=my-app&appTarget=openai`
 
 MCP Apps: `https://your-server.com/mcp?app=my-app&appTarget=mcp`
 
+Without `appTarget`, the server uses MCP Apps if the client declares support for it, and OpenAI Apps otherwise. If the app is built for only one target, the server serves that build's resource either way. If you set `appTarget`, the app must be built for that target.
+
 ## TypeScript configuration
 
 The template includes TypeScript configuration files (`tsconfig.json`, `tsconfig.app.json`, `tsconfig.node.json`) that enable TypeScript support and allow the build process to extract GraphQL operations from your code.
