@@ -1,15 +1,14 @@
 use std::fmt;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-/// A URL path the HTTP server routes, such as the MCP endpoint `/mcp` or the health check
-/// `/health`.
+/// The URL path that the Streamable HTTP transport serves MCP requests on, such as `/mcp`.
 ///
 /// A valid path is either the root (`/`) or an absolute path that is not under `/.well-known`
 /// and has non-empty segments made only of letters, digits, `-`, `_`, `.`, and `~`. Trailing
 /// slashes are trimmed, as they are from requests, so `/mcp/` is the same as `/mcp`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(try_from = "String")]
 pub struct EndpointPath(String);
 
@@ -32,11 +31,6 @@ pub enum EndpointPathError {
 impl EndpointPath {
     pub fn as_str(&self) -> &str {
         &self.0
-    }
-
-    /// The default health check path, `/health`.
-    pub(crate) fn default_health() -> Self {
-        Self("/health".to_owned())
     }
 }
 

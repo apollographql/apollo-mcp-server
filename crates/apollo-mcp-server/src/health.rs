@@ -27,8 +27,6 @@ use serde_json::json;
 use tokio::time::Instant;
 use tracing::{debug, trace};
 
-use crate::server::EndpointPath;
-
 /// Health status enumeration
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -102,7 +100,7 @@ pub struct HealthCheckConfig {
 
     /// Optionally set a custom healthcheck path
     /// Defaults to /health
-    pub path: EndpointPath,
+    pub path: String,
 
     /// Optionally serve the health check on its own address/port instead of the main
     /// transport's listener. Defaults to unset, which serves the health check on the same
@@ -113,11 +111,22 @@ pub struct HealthCheckConfig {
     pub readiness: ReadinessConfig,
 }
 
+impl HealthCheckConfig {
+    /// The path the health check is routed at. Trailing slashes are trimmed, as they are
+    /// from requests, so `/health/` is the same as `/health`.
+    pub fn route_path(&self) -> &str {
+        match self.path.trim_end_matches('/') {
+            "" => "/",
+            path => path,
+        }
+    }
+}
+
 impl Default for HealthCheckConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            path: EndpointPath::default_health(),
+            path: "/health".to_string(),
             listen: None,
             readiness: Default::default(),
         }
@@ -242,7 +251,7 @@ impl HealthCheck {
         }
 
         Router::new()
-            .route(self.config.path.as_str(), get(health_endpoint))
+            .route(self.config.route_path(), get(health_endpoint))
             .with_state(self.clone())
     }
 
@@ -269,7 +278,7 @@ mod tests {
     fn health_check_default_config() {
         let config = HealthCheckConfig::default();
         assert!(!config.enabled);
-        assert_eq!(config.path.as_str(), "/health");
+        assert_eq!(config.path, "/health");
         assert_eq!(config.listen, None);
         assert_eq!(config.readiness.allowed, 100);
         assert_eq!(config.readiness.interval.sampling, Duration::from_secs(5));
@@ -388,7 +397,7 @@ mod tests {
         #[tokio::test]
         async fn uses_configured_path() {
             let config = HealthCheckConfig {
-                path: EndpointPath::try_from("/custom-health".to_owned()).unwrap(),
+                path: "/custom-health".to_string(),
                 ..Default::default()
             };
             let health_check = HealthCheck::new(config);
@@ -401,6 +410,19 @@ mod tests {
             let res = app.oneshot(req).await.unwrap();
 
             assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[rstest::rstest]
+        #[case::trailing_slash("/custom-health/", "/custom-health")]
+        #[case::root("/", "/")]
+        #[case::well_known("/.well-known/health", "/.well-known/health")]
+        fn route_path_trims_trailing_slashes(#[case] path: &str, #[case] expected: &str) {
+            let config = HealthCheckConfig {
+                path: path.to_string(),
+                ..Default::default()
+            };
+
+            assert_eq!(config.route_path(), expected);
         }
 
         #[tokio::test]

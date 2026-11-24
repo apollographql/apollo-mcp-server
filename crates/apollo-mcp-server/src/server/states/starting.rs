@@ -468,10 +468,10 @@ impl ListenerBuilder {
         };
         let listeners = match health_check.config().listen {
             None => {
-                let health_path = &health_check.config().path;
-                if self.path == *health_path {
+                let health_path = health_check.config().route_path();
+                if self.path.as_str() == health_path {
                     return Err(ServerError::HealthPathConflict {
-                        health_path: health_path.clone(),
+                        health_path: health_path.to_owned(),
                         endpoint_path: self.path,
                     });
                 }
@@ -663,7 +663,7 @@ mod tests {
     async fn with_health_rejects_endpoint_path(#[case] health_path: &str, #[case] path: &str) {
         let health_check = HealthCheck::new(HealthCheckConfig {
             enabled: true,
-            path: EndpointPath::try_from(health_path.to_owned()).unwrap(),
+            path: health_path.to_owned(),
             ..Default::default()
         });
         let result = ListenerBuilder {
@@ -676,7 +676,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(ServerError::HealthPathConflict { health_path, .. }) if health_path.as_str() == path
+            Err(ServerError::HealthPathConflict { health_path, .. }) if health_path == path
         ));
     }
 
@@ -732,7 +732,7 @@ mod tests {
         let service = build_http_service(running, false, &Default::default());
         let health_check = HealthCheck::new(HealthCheckConfig {
             enabled: true,
-            path: EndpointPath::try_from("/mcp/health".to_owned()).unwrap(),
+            path: "/mcp/health".to_owned(),
             ..Default::default()
         });
         let listeners = ListenerBuilder::new(

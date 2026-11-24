@@ -164,7 +164,7 @@ These fields are under the top-level `health_check` key. Learn more about [healt
 | Option                        | Type             | Default     | Description                                                                        |
 |:------------------------------|:-----------------|:------------|:-----------------------------------------------------------------------------------|
 | `enabled`                     | `bool`           | `false`     | Enable health check endpoints                                                      |
-| `path`                        | `string`         | `"/health"` | Custom health check endpoint path. Follows the same rules as `transport.path`.     |
+| `path`                        | `string`         | `"/health"` | Custom health check endpoint path. A trailing `/` is ignored.                       |
 | `listen`                      | `socket address` |             | Serve health checks on a separate address/port instead of the main listener        |
 | `readiness`                   | `object`         |             | Readiness check configuration                                                      |
 | `readiness.allowed`           | `number`         | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |

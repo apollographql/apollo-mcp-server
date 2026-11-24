@@ -82,10 +82,10 @@ fn validate(config: Config) -> Result<Config, figment::Error> {
     if let Transport::StreamableHttp { path, .. } = &config.transport
         && health_check.enabled
         && health_check.listen.is_none()
-        && health_check.path == *path
+        && health_check.route_path() == path.as_str()
     {
         let conflict = ServerError::HealthPathConflict {
-            health_path: health_check.path.clone(),
+            health_path: health_check.route_path().to_owned(),
             endpoint_path: path.clone(),
         };
         return Err(figment::Error::from(conflict.to_string()));
@@ -504,9 +504,7 @@ mod test {
                 forward_headers: [],
                 health_check: HealthCheckConfig {
                     enabled: false,
-                    path: EndpointPath(
-                        "/health",
-                    ),
+                    path: "/health",
                     listen: None,
                     readiness: ReadinessConfig {
                         interval: ReadinessIntervalConfig {
