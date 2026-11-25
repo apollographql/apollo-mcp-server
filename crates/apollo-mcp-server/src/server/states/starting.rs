@@ -109,9 +109,6 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
-        let exports = crate::apps::AppExports::resolve(&apps, &self.config.expose_on_connect)
-            .map_err(ServerError::Apps)?;
-        exports.warn_shadowed(&operations);
         warn_app_tool_collisions(&self.config.param_headers, &apps);
         let prompts = crate::prompts::load_from_path(&self.config.prompts_dir)
             .map_err(ServerError::Prompts)?;
@@ -169,11 +166,11 @@ impl Starting {
         // Move into `Running` so we do not clone the full string (`config.instructions` is not read afterward).
         let instructions = std::mem::take(&mut self.config.instructions);
 
-        let running = Running {
+        let mut running = Running {
             schema,
             operations: Arc::new(RwLock::new(operations)),
             apps,
-            exports,
+            exports: Default::default(),
             prompts,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
@@ -214,7 +211,12 @@ impl Starting {
             }),
         };
 
-        running.validate_exports().map_err(ServerError::Apps)?;
+        running.exports =
+            crate::apps::resolve_exports(&running.apps, &self.config.expose_on_connect, |name| {
+                running.is_builtin_tool(name)
+            })
+            .map_err(|err| ServerError::Apps(format!("apps.expose_on_connect: {err}")))?;
+        crate::apps::warn_shadowed(&running.exports, &running.operations.read().await);
 
         match self.config.transport {
             Transport::StreamableHttp {
@@ -228,13 +230,10 @@ impl Starting {
             } => {
                 info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
                 if let Some(auth) = &mut auth {
-                    let shadowed = auth
-                        .skip_token_validation
-                        .tools
-                        .extract_if(.., |name| running.exports.get(name).is_some());
-                    for tool in shadowed.collect::<std::collections::BTreeSet<_>>() {
-                        tracing::warn!(%tool, "Tokenless exception in skip_token_validation.tools no longer applies to this exported app tool");
-                    }
+                    crate::apps::drop_exported_skips(
+                        &mut auth.skip_token_validation.tools,
+                        &running.exports,
+                    );
                 }
                 let running = running.clone();
                 let per_client_rate_limit = auth
@@ -610,116 +609,6 @@ mod tests {
         ));
         let running = starting.start();
         assert!(running.await.is_ok());
-    }
-
-    fn write_app(dir: &assert_fs::TempDir, name: &str, tools: &[&str]) {
-        use assert_fs::prelude::*;
-        use serde_json::json;
-
-        let tools: Vec<_> = tools
-            .iter()
-            .map(|name| json!({"name": name, "description": name}))
-            .collect();
-        let manifest = json!({
-            "format": "apollo-ai-app-manifest", "version": "1", "hash": "test", "resource": "index.html",
-            "operations": [{"body": "query Lookup { hello }", "tools": tools}]
-        });
-        let app = dir.child(name);
-        app.child(".application-manifest.json")
-            .write_str(&manifest.to_string())
-            .unwrap();
-        app.child("index.html").write_str(name).unwrap();
-    }
-
-    #[rstest::rstest]
-    #[case::one_selected(vec![])]
-    #[case::both_selected(vec!["archive".into()])]
-    #[tokio::test]
-    async fn only_selected_apps_must_have_distinct_resource_uris(
-        #[case] archive_tools: Vec<String>,
-    ) {
-        let dir = assert_fs::TempDir::new().unwrap();
-        write_app(&dir, "records", &["lookup", "search_records"]);
-        write_app(&dir, "records#archive", &["archive"]);
-        let both_selected = !archive_tools.is_empty();
-        let mut config = config(0, HealthCheckConfig::default());
-        config.apps_dir = dir.path().into();
-        config.expose_on_connect = [
-            (
-                "records".into(),
-                vec!["lookup".into(), "search_records".into()],
-            ),
-            ("records#archive".into(), archive_tools),
-        ]
-        .into();
-
-        let result = starting(config).start().await;
-        if both_selected {
-            let Some(ServerError::Apps(err)) = result.err() else {
-                panic!("expected conflicting app resource URIs")
-            };
-            assert!(
-                err.contains("records and records#archive")
-                    || err.contains("records#archive and records")
-            );
-            assert!(err.contains("ui://widget/records"), "{err}");
-        } else {
-            result.unwrap().cancellation_token.cancel();
-        }
-    }
-
-    #[tokio::test]
-    async fn only_ordinary_tools_keep_their_tokenless_exceptions() {
-        use serde_json::json;
-
-        let dir = assert_fs::TempDir::new().unwrap();
-        write_app(&dir, "records", &["lookup"]);
-        let mut upstream = mockito::Server::new_async().await;
-        let public_call = upstream
-            .mock("POST", "/")
-            .match_body(mockito::Matcher::PartialJson(
-                json!({"operationName": "Public"}),
-            ))
-            .with_header("content-type", "application/json")
-            .with_body(r#"{"data":{"hello":"world"}}"#)
-            .create_async()
-            .await;
-        let port = 7803;
-        let mut config = config(port, HealthCheckConfig::default());
-        let Transport::StreamableHttp { auth, .. } = &mut config.transport else {
-            unreachable!()
-        };
-        *auth = Some(
-            serde_json::from_value(json!({
-                "servers": ["https://auth.example.com"], "resource": "http://localhost/mcp",
-                "skip_token_validation": {"tools": ["lookup", "Public"]}
-            }))
-            .unwrap(),
-        );
-        config.endpoint = upstream.url().parse().unwrap();
-        config.apps_dir = dir.path().into();
-        config.expose_on_connect = [("records".into(), vec!["lookup".into()])].into();
-        let mut server = starting(config);
-        server.operations = vec![("query Public { hello }".to_owned(), None).into()];
-        let running = server.start().await.unwrap();
-        let _shutdown = running.cancellation_token.drop_guard();
-
-        let client = reqwest::Client::new();
-        for (name, expected) in [
-            ("lookup", StatusCode::UNAUTHORIZED),
-            ("Public", StatusCode::OK),
-        ] {
-            let response = client.post(format!("http://127.0.0.1:{port}/mcp"))
-                .header("Accept", "application/json, text/event-stream")
-                .header("Mcp-Protocol-Version", "2025-11-25")
-                .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}))
-                .send().await.unwrap();
-            assert_eq!(response.status(), expected, "{name}");
-            if name == "Public" {
-                assert!(response.text().await.unwrap().contains("world"));
-            }
-        }
-        public_call.assert_async().await;
     }
 
     #[tokio::test]

@@ -24,100 +24,89 @@ pub(crate) fn app_param_from_query(query: Option<&str>) -> Option<String> {
     })
 }
 
+/// Manifest tool names to expose on connections without an app parameter, by app name.
 pub type AppAllowlist = BTreeMap<String, Vec<String>>;
 
-/// Resolved against the immutable app manifests at startup. Runtime operation refreshes
-/// only replace ordinary operations, so these indices stay valid for the server lifetime.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct AppExports(Arc<BTreeMap<String, Export>>);
+/// Exposed tool name to owning app name. Tool names are unique across the selected apps.
+pub(crate) type AppExports = Arc<BTreeMap<String, String>>;
 
-#[derive(Debug)]
-pub(crate) struct Export {
-    pub app_name: String,
-    app: usize,
-    tool: usize,
-}
-
-impl Export {
-    pub(crate) fn target<'a>(
-        &self,
-        apps: &'a [App],
-    ) -> Result<(&'a App, &'a app::AppTool), crate::errors::McpError> {
-        apps.get(self.app)
-            .and_then(|app| app.tools.get(self.tool).map(|tool| (app, tool)))
-            .ok_or_else(|| {
-                crate::errors::McpError::internal_error(
-                    "Resolved app export missing from loaded manifests",
-                    None,
-                )
-            })
+fn sole<T>(
+    mut matches: impl Iterator<Item = T>,
+    what: impl std::fmt::Display,
+) -> Result<T, String> {
+    match (matches.next(), matches.next()) {
+        (Some(only), None) => Ok(only),
+        (None, _) => Err(format!("unknown {what}")),
+        _ => Err(format!("ambiguous {what}")),
     }
 }
 
-impl AppExports {
-    pub(crate) fn resolve(apps: &[App], allowlist: &AppAllowlist) -> Result<Self, String> {
-        let mut exports = BTreeMap::new();
-        for (name, tools) in allowlist {
-            let mut matches = apps.iter().enumerate().filter(|(_, app)| &app.name == name);
-            let Some((index, app)) = matches.next() else {
-                return Err(format!("apps.expose_on_connect: unknown app {name}"));
-            };
-            if matches.next().is_some() {
-                return Err(format!("apps.expose_on_connect: ambiguous app {name}"));
+pub(crate) fn resolve_exports(
+    apps: &[App],
+    allowlist: &AppAllowlist,
+    is_builtin: impl Fn(&str) -> bool,
+) -> Result<AppExports, String> {
+    let mut exports = BTreeMap::new();
+    let mut paths = BTreeMap::new();
+    for (app_name, tools) in allowlist {
+        let app = sole(
+            apps.iter().filter(|app| app.name == *app_name),
+            format_args!("app {app_name}"),
+        )?;
+        // Shared resource reads identify the app by its URI path alone.
+        if let Some(other) = paths.insert(app.uri.path(), app_name) {
+            return Err(format!(
+                "{other} and {app_name} share resource path {}",
+                app.uri.path()
+            ));
+        }
+        for tool in tools {
+            sole(
+                app.tools.iter().filter(|t| t.tool.name == *tool),
+                format_args!("tool {app_name}/{tool}"),
+            )?;
+            if is_builtin(tool) {
+                return Err(format!(
+                    "{app_name}/{tool} conflicts with an enabled built-in tool"
+                ));
             }
-            for tool_name in tools {
-                let mut matches = app
-                    .tools
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| t.tool.name == *tool_name);
-                let Some((tool, _)) = matches.next() else {
-                    return Err(format!(
-                        "apps.expose_on_connect: unknown tool {name}/{tool_name}"
-                    ));
-                };
-                if matches.next().is_some() {
-                    return Err(format!(
-                        "apps.expose_on_connect: ambiguous tool {name}/{tool_name}"
-                    ));
-                }
-                let export = Export {
-                    app: index,
-                    app_name: name.clone(),
-                    tool,
-                };
-                if let Some(previous) = exports.insert(tool_name.clone(), export) {
-                    return Err(format!(
-                        "apps.expose_on_connect: {tool_name} claimed by {} and {name}",
-                        previous.app_name
-                    ));
-                }
+            if let Some(other) = exports.insert(tool.clone(), app_name.clone()) {
+                return Err(format!("{tool} claimed by {other} and {app_name}"));
             }
         }
-        Ok(Self(exports.into()))
     }
+    Ok(Arc::new(exports))
+}
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub(crate) fn get(&self, name: &str) -> Option<&Export> {
-        self.0.get(name)
-    }
-
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Export)> {
-        self.0.iter()
-    }
-    pub(crate) fn includes(&self, app: usize) -> bool {
-        self.0.values().any(|e| e.app == app)
-    }
-
-    pub(crate) fn warn_shadowed(&self, operations: &[crate::operations::Operation]) {
-        for operation in operations {
-            let name = &operation.as_ref().name;
-            if let Some(export) = self.get(name) {
-                tracing::warn!(%name, app = %export.app_name, "Configured app export shadows ordinary operation");
-            }
+pub(crate) fn warn_shadowed(exports: &AppExports, operations: &[crate::operations::Operation]) {
+    for operation in operations {
+        let name: &str = &operation.as_ref().name;
+        if let Some(app) = exports.get(name) {
+            tracing::warn!(%name, %app, "Exposed app tool shadows an operation of the same name");
         }
+    }
+}
+
+/// An exposed app tool never inherits the tokenless exception of an operation it shadows.
+pub(crate) fn drop_exported_skips(tools: &mut Vec<String>, exports: &AppExports) {
+    tools.retain(|tool| {
+        let exported = exports.contains_key(tool);
+        if exported {
+            tracing::warn!(%tool, "skip_token_validation.tools entry ignored for exposed app tool");
+        }
+        !exported
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drops_only_exported_names_from_the_skip_list() {
+        let exports = Arc::new([("lookup".to_owned(), "records".to_owned())].into());
+        let mut tools = vec!["lookup".to_owned(), "Public".to_owned()];
+        drop_exported_skips(&mut tools, &exports);
+        assert_eq!(tools, ["Public"]);
     }
 }

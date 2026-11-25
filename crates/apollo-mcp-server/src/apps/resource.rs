@@ -26,11 +26,6 @@ impl ResourceOrigin {
     }
 }
 
-/// Shared resource reads accept stale or omitted manifest hashes.
-pub(crate) fn resource_uri_without_fragment(uri: &Url) -> &str {
-    &uri[..url::Position::AfterQuery]
-}
-
 pub(crate) fn attach_resource_mime_type(mut resource: Resource) -> Resource {
     resource.mime_type = Some(MCP_MIME_TYPE.to_string());
     resource
