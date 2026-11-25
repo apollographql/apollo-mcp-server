@@ -658,11 +658,21 @@ impl Running {
             )
         })?;
         let app_param = extract_app_param(&extensions);
-        let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
+        let named_target = AppTarget::named(&extensions)?;
+        let target_named = named_target.is_some();
+        let app_target =
+            named_target.unwrap_or_else(|| AppTarget::inferred(peer.client_capabilities));
 
         if let Some(app_name) = app_param {
-            let (resource, origin) =
-                get_app_resource(&self.apps, request, request_uri, &app_target, &app_name).await?;
+            let (resource, origin) = get_app_resource(
+                &self.apps,
+                request,
+                request_uri,
+                &app_target,
+                target_named,
+                &app_name,
+            )
+            .await?;
             let result = ReadResourceResult::new(vec![resource]);
             Ok(origin
                 .caching(self.caching)
@@ -3326,6 +3336,41 @@ mod tests {
             assert!(ui_meta.get("prefersBorder").is_some());
             // MCPApps should not have description
             assert!(ui_meta.get("description").is_none());
+        }
+
+        #[tokio::test]
+        async fn read_resource_impl_serves_single_target_app_without_app_target() {
+            let running = running_with_apps(
+                AppResource::Targeted(crate::apps::app::TargetedAppResource {
+                    openai: None,
+                    mcp: Some(AppResourceSource::Local("mcp content".to_string())),
+                }),
+                None,
+                None,
+            );
+
+            let mut extensions = Extensions::new();
+            let request = axum::http::Request::builder()
+                .uri("http://localhost?app=MyApp")
+                .body(())
+                .unwrap();
+            let (parts, _) = request.into_parts();
+            extensions.insert(parts);
+
+            let mut resource = running
+                .read_resource_impl(
+                    ReadResourceRequestParams::new("http://localhost:4000/resource"),
+                    extensions,
+                    PeerContext::default(),
+                )
+                .await
+                .unwrap();
+
+            let Some(ResourceContents::TextResourceContents { text, .. }) = resource.contents.pop()
+            else {
+                panic!("Expected TextResourceContents");
+            };
+            assert_eq!(text, "mcp content");
         }
 
         #[tokio::test]
