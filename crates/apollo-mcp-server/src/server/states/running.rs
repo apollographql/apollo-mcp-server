@@ -319,36 +319,19 @@ impl Running {
         let app_param = extract_app_param(&extensions);
         let app_target = AppTarget::try_from((extensions, peer.client_capabilities))?;
 
-        let mut operation_tools: Vec<_> = self
-            .operations
-            .read()
-            .await
-            .iter()
-            .map(|op| op.as_ref().clone())
-            .collect();
-        // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
-        operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
-
-        // If we get the app param, we'll run in a special "app mode" where we only expose the tools for that app (+execute)
         let mut result = if let Some(app_name) = app_param {
             let app = self.apps.iter().find(|app| app.name == app_name);
 
             match app {
                 Some(app) => ListToolsResult::with_all_items(
-                    operation_tools
-                        .into_iter()
-                        .chain(
-                            self.execute_tool
-                                .as_ref()
-                                .iter()
-                                // When running apps, make the execute tool executable from the app but hidden from the LLM via meta entry on the tool. This prevents the LLM from using the execute tool by limiting it only to the app tools.
-                                .map(|e| make_tool_private(e.tool.clone())),
-                        )
+                    self.execute_tool
+                        .iter()
+                        // The app can use execute, but the model should not see it.
+                        .map(|e| make_tool_private(e.tool.clone()))
                         .chain(
                             app.tools
                                 .iter()
-                                .map(|tool| attach_tool_metadata(app, tool, &app_target))
-                                .collect::<Vec<_>>(),
+                                .map(|tool| attach_tool_metadata(app, tool, &app_target)),
                         )
                         .collect(),
                 ),
@@ -361,6 +344,16 @@ impl Running {
                 }
             }
         } else {
+            let mut operation_tools: Vec<_> = self
+                .operations
+                .read()
+                .await
+                .iter()
+                .map(|op| op.as_ref().clone())
+                .collect();
+            // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
+            operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
+
             ListToolsResult::with_all_items(
                 operation_tools
                     .into_iter()
@@ -3435,17 +3428,20 @@ mod tests {
             running
                 .update_operations(operations(&["alpha", "Zulu", "Alpha"]))
                 .await;
-            let mut expected = vec!["Alpha", "Zulu", "alpha", EXECUTE_TOOL_NAME];
-            if app_mode {
-                expected.push("GetId");
+            let expected: &[&str] = if app_mode {
+                &[EXECUTE_TOOL_NAME, "GetId"]
             } else {
-                expected.extend([
+                &[
+                    "Alpha",
+                    "Zulu",
+                    "alpha",
+                    EXECUTE_TOOL_NAME,
                     INTROSPECT_TOOL_NAME,
                     SEARCH_TOOL_NAME,
                     EXPLORER_TOOL_NAME,
                     VALIDATE_TOOL_NAME,
-                ]);
-            }
+                ]
+            };
 
             async fn assert_order(running: &Running, uri: &str, expected: &[&str]) {
                 for _ in 0..3 {
@@ -3467,7 +3463,7 @@ mod tests {
                 }
             }
 
-            assert_order(&running, uri, &expected).await;
+            assert_order(&running, uri, expected).await;
 
             let schema = Schema::parse_and_validate(
                 "type Query { id: Int, added: String }",
@@ -3476,12 +3472,36 @@ mod tests {
             .unwrap();
             running.update_schema(schema.clone()).await;
             assert_eq!(*running.schema.read().await, schema);
-            assert_order(&running, uri, &expected).await;
+            assert_order(&running, uri, expected).await;
 
             running
                 .update_operations(operations(&["Zulu", "Alpha", "alpha"]))
                 .await;
-            assert_order(&running, uri, &expected).await;
+            assert_order(&running, uri, expected).await;
+        }
+
+        #[tokio::test]
+        async fn app_cannot_call_server_operation() {
+            use crate::server::states::running::integration_tests::stateless_request_at_uri;
+            use serde_json::json;
+
+            let running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".into())),
+                None,
+                None,
+            );
+            running
+                .update_operations(vec![("query ServerOnly { id }".to_string(), None).into()])
+                .await;
+            let response = stateless_request_at_uri(
+                running,
+                "2025-11-25",
+                "tools/call",
+                json!({ "name": "ServerOnly", "arguments": {} }),
+                "/mcp?app=MyApp",
+            )
+            .await;
+            assert_eq!(response["error"]["message"], "Tool ServerOnly not found");
         }
 
         #[tokio::test]
