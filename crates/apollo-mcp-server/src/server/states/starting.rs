@@ -173,7 +173,7 @@ impl Starting {
             schema,
             operations: Arc::new(RwLock::new(operations)),
             apps,
-            exports: exports.clone(),
+            exports,
             prompts,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
@@ -214,11 +214,11 @@ impl Starting {
             }),
         };
 
-        running.validate_export_names().map_err(ServerError::Apps)?;
+        running.validate_exports().map_err(ServerError::Apps)?;
 
         match self.config.transport {
             Transport::StreamableHttp {
-                auth,
+                mut auth,
                 address,
                 port,
                 path,
@@ -227,6 +227,15 @@ impl Starting {
                 trusted_proxies,
             } => {
                 info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
+                if let Some(auth) = &mut auth {
+                    let shadowed = auth
+                        .skip_token_validation
+                        .tools
+                        .extract_if(.., |name| running.exports.get(name).is_some());
+                    for tool in shadowed.collect::<std::collections::BTreeSet<_>>() {
+                        tracing::warn!(%tool, "Tokenless exception in skip_token_validation.tools no longer applies to this exported app tool");
+                    }
+                }
                 let running = running.clone();
                 let per_client_rate_limit = auth
                     .as_ref()
@@ -244,7 +253,6 @@ impl Starting {
                             self.config.required_scopes.clone(),
                             stateful_mode,
                             &trusted_proxies,
-                            exports.clone(),
                         )?
                         .with_cors()?
                         .with_telemetry(self.config.client_address, trusted_proxies)
@@ -441,17 +449,10 @@ impl ListenerBuilder {
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
         trusted_proxies: &TrustedProxies,
-        exports: crate::apps::AppExports,
     ) -> Result<Self, ServerError> {
         if let Some(auth) = auth {
             self.router = auth
-                .enable_middleware_with_exports(
-                    self.router,
-                    required_scopes,
-                    stateful_mode,
-                    trusted_proxies,
-                    exports,
-                )
+                .enable_middleware(self.router, required_scopes, stateful_mode, trusted_proxies)
                 .inspect_err(|e| {
                     error!("Failed to enable auth middleware: {}", e);
                 })?;
@@ -611,6 +612,116 @@ mod tests {
         assert!(running.await.is_ok());
     }
 
+    fn write_app(dir: &assert_fs::TempDir, name: &str, tools: &[&str]) {
+        use assert_fs::prelude::*;
+        use serde_json::json;
+
+        let tools: Vec<_> = tools
+            .iter()
+            .map(|name| json!({"name": name, "description": name}))
+            .collect();
+        let manifest = json!({
+            "format": "apollo-ai-app-manifest", "version": "1", "hash": "test", "resource": "index.html",
+            "operations": [{"body": "query Lookup { hello }", "tools": tools}]
+        });
+        let app = dir.child(name);
+        app.child(".application-manifest.json")
+            .write_str(&manifest.to_string())
+            .unwrap();
+        app.child("index.html").write_str(name).unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case::one_selected(vec![])]
+    #[case::both_selected(vec!["archive".into()])]
+    #[tokio::test]
+    async fn only_selected_apps_must_have_distinct_resource_uris(
+        #[case] archive_tools: Vec<String>,
+    ) {
+        let dir = assert_fs::TempDir::new().unwrap();
+        write_app(&dir, "records", &["lookup", "search_records"]);
+        write_app(&dir, "records#archive", &["archive"]);
+        let both_selected = !archive_tools.is_empty();
+        let mut config = config(0, HealthCheckConfig::default());
+        config.apps_dir = dir.path().into();
+        config.expose_on_connect = [
+            (
+                "records".into(),
+                vec!["lookup".into(), "search_records".into()],
+            ),
+            ("records#archive".into(), archive_tools),
+        ]
+        .into();
+
+        let result = starting(config).start().await;
+        if both_selected {
+            let Some(ServerError::Apps(err)) = result.err() else {
+                panic!("expected conflicting app resource URIs")
+            };
+            assert!(
+                err.contains("records and records#archive")
+                    || err.contains("records#archive and records")
+            );
+            assert!(err.contains("ui://widget/records"), "{err}");
+        } else {
+            result.unwrap().cancellation_token.cancel();
+        }
+    }
+
+    #[tokio::test]
+    async fn only_ordinary_tools_keep_their_tokenless_exceptions() {
+        use serde_json::json;
+
+        let dir = assert_fs::TempDir::new().unwrap();
+        write_app(&dir, "records", &["lookup"]);
+        let mut upstream = mockito::Server::new_async().await;
+        let public_call = upstream
+            .mock("POST", "/")
+            .match_body(mockito::Matcher::PartialJson(
+                json!({"operationName": "Public"}),
+            ))
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"data":{"hello":"world"}}"#)
+            .create_async()
+            .await;
+        let port = 7803;
+        let mut config = config(port, HealthCheckConfig::default());
+        let Transport::StreamableHttp { auth, .. } = &mut config.transport else {
+            unreachable!()
+        };
+        *auth = Some(
+            serde_json::from_value(json!({
+                "servers": ["https://auth.example.com"], "resource": "http://localhost/mcp",
+                "skip_token_validation": {"tools": ["lookup", "Public"]}
+            }))
+            .unwrap(),
+        );
+        config.endpoint = upstream.url().parse().unwrap();
+        config.apps_dir = dir.path().into();
+        config.expose_on_connect = [("records".into(), vec!["lookup".into()])].into();
+        let mut server = starting(config);
+        server.operations = vec![("query Public { hello }".to_owned(), None).into()];
+        let running = server.start().await.unwrap();
+        let _shutdown = running.cancellation_token.drop_guard();
+
+        let client = reqwest::Client::new();
+        for (name, expected) in [
+            ("lookup", StatusCode::UNAUTHORIZED),
+            ("Public", StatusCode::OK),
+        ] {
+            let response = client.post(format!("http://127.0.0.1:{port}/mcp"))
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Protocol-Version", "2025-11-25")
+                .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": name, "arguments": {}}}))
+                .send().await.unwrap();
+            assert_eq!(response.status(), expected, "{name}");
+            if name == "Public" {
+                assert!(response.text().await.unwrap().contains("world"));
+            }
+        }
+        public_call.assert_async().await;
+    }
+
     #[tokio::test]
     async fn health_check_bind_failure_leaves_no_listener_running() {
         // Configuring the health check to listen on the same address as the main transport
@@ -730,7 +841,6 @@ mod tests {
                 HashMap::new(),
                 true,
                 &TrustedProxies::default(),
-                Default::default(),
             )
             .unwrap()
             .router;

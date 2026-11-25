@@ -30,7 +30,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
 use url::Url;
 
-use crate::apps::{AppExports, app_param_from_query};
+use crate::apps::app_param_from_query;
 use crate::scope_requirements::OperationRequiredScopes;
 use crate::trusted_proxies::TrustedProxies;
 
@@ -480,7 +480,6 @@ fn build_resource_metadata_url(resource: &Url) -> Url {
 /// Internal state for the auth middleware, containing both config and pre-built HTTP client
 #[derive(Clone)]
 struct AuthState {
-    exports: AppExports,
     config: Arc<Config>,
     client: reqwest::Client,
     jwks_cache: Arc<RwLock<HashMap<Url, CachedJwks>>>,
@@ -541,23 +540,6 @@ impl Config {
         stateful_mode: bool,
         trusted_proxies: &TrustedProxies,
     ) -> Result<Router, TlsConfigError> {
-        self.enable_middleware_with_exports(
-            router,
-            required_scopes,
-            stateful_mode,
-            trusted_proxies,
-            AppExports::default(),
-        )
-    }
-
-    pub(crate) fn enable_middleware_with_exports(
-        &self,
-        router: Router,
-        required_scopes: HashMap<String, OperationRequiredScopes>,
-        stateful_mode: bool,
-        trusted_proxies: &TrustedProxies,
-        exports: AppExports,
-    ) -> Result<Router, TlsConfigError> {
         let rate_limit_state = if self.rate_limit.enabled {
             Some(rate_limit::RateLimitState::new(
                 &self.rate_limit,
@@ -572,7 +554,6 @@ impl Config {
             required_scopes,
             stateful_mode,
             rate_limit_state,
-            exports,
         )
     }
 
@@ -584,7 +565,6 @@ impl Config {
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
         rate_limit_state: Option<rate_limit::RateLimitState>,
-        exports: AppExports,
     ) -> Result<Router, TlsConfigError> {
         // Parse and validate server URLs once at startup (fail fast on config
         // errors). The parsed list is reused for every request via `AuthState`.
@@ -669,7 +649,6 @@ impl Config {
             client,
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
-            exports,
             required_scopes: Arc::new(required_scopes),
             skip_token_validation: Arc::new(skip_token_validation),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
@@ -933,15 +912,7 @@ async fn oauth_validate(
 
     // Read through the same helper the dispatcher uses, so both layers agree on
     // whether this request targets an app.
-    let app = app_param_from_query(request.uri().query());
-    let targets_app = |peek: &JsonRpcPeek| {
-        app.is_some()
-            || peek
-                .params
-                .as_ref()
-                .and_then(|p| p.name.as_deref())
-                .is_some_and(|name| auth_state.exports.get(name).is_some())
-    };
+    let app_qualified = app_param_from_query(request.uri().query()).is_some();
 
     // Malformed headers can't grant tokenless access, but a tokened request
     // can still be scoped from the body.
@@ -962,7 +933,7 @@ async fn oauth_validate(
     if token.is_none()
         && let Some(peek) = &header_peek
     {
-        if skip.matches_peek(peek, targets_app(peek)) {
+        if skip.matches_peek(peek, app_qualified) {
             let response = next.run(request).await;
             tracing::Span::current().record("status_code", response.status().as_u16());
             return Ok(response);
@@ -1018,7 +989,7 @@ async fn oauth_validate(
     if peek_for_skip
         && body_peek
             .as_ref()
-            .is_some_and(|peek| skip.matches_peek(peek, targets_app(peek)))
+            .is_some_and(|peek| skip.matches_peek(peek, app_qualified))
     {
         let response = next.run(request).await;
         tracing::Span::current().record("status_code", response.status().as_u16());
@@ -1181,7 +1152,6 @@ mod tests {
             client: reqwest::Client::new(),
             resource_metadata_url,
             auth_servers: Arc::from(auth_servers),
-            exports: Default::default(),
             required_scopes: Arc::new(HashMap::new()),
             skip_token_validation: Arc::new(skip_token_validation),
             inflight: Arc::new(Mutex::new(IssuerFetchState::default())),
@@ -3383,7 +3353,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     HashMap::new(),
                     true,
                     Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
-                    Default::default(),
                 )
                 .unwrap()
         }
@@ -3466,7 +3435,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     HashMap::new(),
                     true,
                     Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
-                    Default::default(),
                 )
                 .unwrap();
 
@@ -3495,7 +3463,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                     HashMap::new(),
                     true,
                     Some(rate_limit::RateLimitState::for_test(0, 1, 1_000)),
-                    Default::default(),
                 )
                 .unwrap();
 
@@ -3516,70 +3483,6 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
     mod per_operation_scope_enforcement {
         use super::*;
         use crate::scope_requirements::OperationRequiredScopes;
-
-        #[rstest::rstest]
-        #[case::tokenless(None, StatusCode::UNAUTHORIZED)]
-        #[case::missing_scope(Some("unrelated"), StatusCode::FORBIDDEN)]
-        #[case::required_scope(Some("read"), StatusCode::OK)]
-        #[tokio::test]
-        async fn exported_tool_auth(#[case] scopes: Option<&str>, #[case] expected: StatusCode) {
-            use assert_fs::prelude::*;
-            let dir = assert_fs::TempDir::new().unwrap();
-            let app_dir = dir.child("records");
-            app_dir.child(".application-manifest.json").write_str(r#"{"format":"apollo-ai-app-manifest","version":"1","hash":"1","resource":"index.html","operations":[{"body":"query Lookup { id }","tools":[{"name":"lookup","description":"Record lookup"}]}]}"#).unwrap();
-            app_dir.child("index.html").write_str("records").unwrap();
-            let allowlist = [("records".into(), vec!["lookup".into()])].into();
-            let schema =
-                apollo_compiler::Schema::parse_and_validate("type Query { id: ID }", "schema")
-                    .unwrap();
-            let apps = crate::apps::load_from_path(
-                dir.path(),
-                &schema,
-                None,
-                crate::operations::MutationMode::None,
-                false,
-                false,
-                true,
-            )
-            .unwrap();
-            let exports = crate::apps::AppExports::resolve(&apps, &allowlist).unwrap();
-
-            let issuer = mock_issuer(scopes.unwrap_or_default()).await;
-            let mut config = test_config();
-            config.servers = vec![issuer.server.url()];
-            config.scopes.clear();
-            config.skip_token_validation.tools = vec!["lookup".into()];
-            let rules = [(
-                "lookup".into(),
-                OperationRequiredScopes::new(vec![vec!["read".into()]]).unwrap(),
-            )]
-            .into();
-            let router = config
-                .enable_middleware_with_exports(
-                    Router::new().route("/mcp", axum::routing::post(|| async { "ok" })),
-                    rules,
-                    true,
-                    &TrustedProxies::default(),
-                    exports,
-                )
-                .unwrap();
-            for uri in ["/mcp", "/mcp?app=records"] {
-                let mut req = Request::builder().method("POST").uri(uri);
-                if scopes.is_some() {
-                    req = req.header(AUTHORIZATION, format!("Bearer {}", issuer.token));
-                }
-                assert_eq!(
-                    router
-                        .clone()
-                        .oneshot(req.body(tool_call_body("lookup")).unwrap())
-                        .await
-                        .unwrap()
-                        .status(),
-                    expected,
-                    "{uri}"
-                );
-            }
-        }
 
         fn required() -> HashMap<String, OperationRequiredScopes> {
             HashMap::from([(

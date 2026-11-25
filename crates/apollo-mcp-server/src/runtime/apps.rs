@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ pub struct AppsConfig {
     /// `.application-manifest.json` file is loaded as an app.
     pub path: PathBuf,
     /// Manifest tools to expose on connections without an app parameter.
-    pub expose_on_connect: std::collections::BTreeMap<String, Vec<String>>,
+    pub expose_on_connect: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for AppsConfig {

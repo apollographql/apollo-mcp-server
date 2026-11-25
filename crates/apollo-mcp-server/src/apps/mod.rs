@@ -1,3 +1,5 @@
+use std::{collections::BTreeMap, sync::Arc};
+
 pub(crate) mod app;
 pub(crate) mod manifest;
 pub(crate) mod resource;
@@ -22,12 +24,12 @@ pub(crate) fn app_param_from_query(query: Option<&str>) -> Option<String> {
     })
 }
 
-pub type AppAllowlist = std::collections::BTreeMap<String, Vec<String>>;
+pub type AppAllowlist = BTreeMap<String, Vec<String>>;
 
 /// Resolved against the immutable app manifests at startup. Runtime operation refreshes
 /// only replace ordinary operations, so these indices stay valid for the server lifetime.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct AppExports(std::sync::Arc<std::collections::BTreeMap<String, Export>>);
+pub(crate) struct AppExports(Arc<BTreeMap<String, Export>>);
 
 #[derive(Debug)]
 pub(crate) struct Export {
@@ -54,7 +56,7 @@ impl Export {
 
 impl AppExports {
     pub(crate) fn resolve(apps: &[App], allowlist: &AppAllowlist) -> Result<Self, String> {
-        let mut exports = std::collections::BTreeMap::new();
+        let mut exports = BTreeMap::new();
         for (name, tools) in allowlist {
             let mut matches = apps.iter().enumerate().filter(|(_, app)| &app.name == name);
             let Some((index, app)) = matches.next() else {
@@ -77,13 +79,6 @@ impl AppExports {
                 if matches.next().is_some() {
                     return Err(format!(
                         "apps.expose_on_connect: ambiguous tool {name}/{tool_name}"
-                    ));
-                }
-                if !rmcp::handler::server::tool_name_validation::validate_and_warn_tool_name(
-                    tool_name,
-                ) {
-                    return Err(format!(
-                        "apps.expose_on_connect: invalid MCP tool name {tool_name} in {name}"
                     ));
                 }
                 let export = Export {
@@ -109,6 +104,7 @@ impl AppExports {
     pub(crate) fn get(&self, name: &str) -> Option<&Export> {
         self.0.get(name)
     }
+
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&String, &Export)> {
         self.0.iter()
     }
