@@ -208,11 +208,9 @@ Use the `app` query parameter to specify which app to load: `https://your-server
 
 </Note>
 
-## Expose selected app tools on the shared endpoint
+## Expose app tools without the app parameter
 
-Set `apps.expose_on_connect` in the server YAML to publish specific manifest tools
-when the connection URL omits `?app=`. Use the manifest app name (or the directory
-name if omitted) and the original tool names:
+A client that connects without the `app` parameter sees only server-wide operation tools, so each app needs its own `?app=` connection. To use tools from several apps on one connection, list them by app name under `apps.expose_on_connect` in the server configuration:
 
 ```yaml
 apps:
@@ -221,22 +219,16 @@ apps:
     records: [lookup]
 ```
 
-Clients discover `usage_chart` and `lookup` alongside ordinary operations. Each
-tool keeps its manifest name and opens its app's UI. A connection with
-`?app=analytics` still selects the full analytics app.
+Clients that connect to `/mcp` then see `usage_chart` and `lookup` next to the server-wide tools. Each tool keeps its manifest name and opens its own app's UI. A connection with `?app=analytics` still loads the whole analytics app.
 
-If a selected tool has the same name as an ordinary operation, the app tool
-takes precedence. The server logs a warning, including when operations refresh.
-At startup it also warns if that name appears in `skip_token_validation.tools`
-and ignores the tokenless exception for that tool.
+Tool names must be unique on the connection:
 
-Startup fails if a selected app or tool is missing or ambiguous, if a selected
-tool name conflicts with another selection or an enabled built-in, or if two
-selected apps have the same resource path. An invalid selection in a reloaded
-configuration stops the server at restart.
+- Startup fails if two selected apps list the same tool name, if a selected tool has the name of an enabled built-in tool, or if two selected apps have the same resource path.
+- A selected tool that shares a name with a server-wide operation replaces that operation, and the server logs a warning. An entry for that name in `transport.auth.skip_token_validation.tools` is ignored, so the app tool always requires a token.
 
-The server requires an operation source or an enabled introspection tool.
-App exports alone do not satisfy that requirement.
+Startup also fails if a listed app or tool doesn't exist. The server restarts when its configuration file changes, so a mistake in a reloaded configuration stops the server.
+
+`expose_on_connect` doesn't replace an operation source. The server still needs operations or an enabled introspection tool to start.
 
 ## App target
 
