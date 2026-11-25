@@ -3543,8 +3543,8 @@ mod tests {
             .await
         }
 
-        /// `MyApp` exposes `GetId` and `records` exposes `GetRecord`. `forgotten` is not selected.
-        fn running_with_shared_exports() -> Running {
+        /// `MyApp` has the tool `GetId`, and `records` has `GetRecord` and `ListRecords`.
+        fn running_with_all_apps_exposed() -> Running {
             let mut running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("primary".into())),
                 None,
@@ -3552,32 +3552,26 @@ mod tests {
             );
             running.apps[0].uri = "ui://widget/MyApp#local".parse().unwrap();
             running.apps[0].tools[0].extra_outputs = Some("MyApp".into());
-            for name in ["records", "forgotten"] {
-                let mut app = running.apps[0].clone();
-                app.name = name.into();
-                app.uri = format!("ui://widget/{name}#local").parse().unwrap();
-                app.resource = AppResource::Targeted(crate::apps::app::TargetedAppResource {
-                    mcp: Some(AppResourceSource::Local(name.into())),
-                    openai: None,
-                });
-                app.tools[0].extra_outputs = Some(name.into());
-                app.tools[0].tool.name = "GetRecord".into();
-                let mut unlisted = app.tools[0].clone();
-                unlisted.tool.name = "Unlisted".into();
-                app.tools.push(unlisted);
-                running.apps.push(app);
-            }
-            let allowlist = [("MyApp", "GetId"), ("records", "GetRecord")]
-                .map(|(app, tool)| (app.to_owned(), vec![tool.to_owned()]))
-                .into();
-            running.exports =
-                crate::apps::resolve_exports(&running.apps, &allowlist, |_| false).unwrap();
+            let mut records = running.apps[0].clone();
+            records.name = "records".into();
+            records.uri = "ui://widget/records#local".parse().unwrap();
+            records.resource = AppResource::Targeted(crate::apps::app::TargetedAppResource {
+                mcp: Some(AppResourceSource::Local("records".into())),
+                openai: None,
+            });
+            records.tools[0].extra_outputs = Some("records".into());
+            records.tools[0].tool.name = "GetRecord".into();
+            let mut list_records = records.tools[0].clone();
+            list_records.tool.name = "ListRecords".into();
+            records.tools.push(list_records);
+            running.apps.push(records);
+            running.exports = crate::apps::resolve_exports(&running.apps, |_| false).unwrap();
             running
         }
 
         #[tokio::test]
-        async fn shared_endpoint_lists_selected_app_tools_over_same_named_operations() {
-            let mut running = running_with_shared_exports();
+        async fn shared_endpoint_lists_every_app_tool_over_same_named_operations() {
+            let mut running = running_with_all_apps_exposed();
             running.validate_tool = Some(Validate::new(running.schema.clone(), None));
             running
                 .update_operations(vec![
@@ -3602,6 +3596,7 @@ mod tests {
                 [
                     ("GetId", Some("ui://widget/MyApp#local")),
                     ("GetRecord", Some("ui://widget/records#local")),
+                    ("ListRecords", Some("ui://widget/records#local")),
                     ("Other", None),
                     ("validate", None),
                 ]
@@ -3610,7 +3605,7 @@ mod tests {
 
         #[tokio::test]
         async fn shared_endpoint_calls_the_owning_app_tool() {
-            let mut running = running_with_shared_exports();
+            let mut running = running_with_all_apps_exposed();
             let mut upstream = mockito::Server::new_async().await;
             running.endpoint = upstream.url().parse().unwrap();
             let app_queries = upstream
@@ -3620,7 +3615,7 @@ mod tests {
                 ))
                 .with_header("content-type", "application/json")
                 .with_body(r#"{"data":{"id":"123"}}"#)
-                .expect(2)
+                .expect(3)
                 .create_async()
                 .await;
             running
@@ -3633,18 +3628,21 @@ mod tests {
                     serde_json::json!({"name": name, "arguments": {}}),
                 )
             };
-            for (app, name) in [("MyApp", "GetId"), ("records", "GetRecord")] {
+            for (app, name) in [
+                ("MyApp", "GetId"),
+                ("records", "GetRecord"),
+                ("records", "ListRecords"),
+            ] {
                 let invoked = call(name).await;
                 assert_eq!(invoked["result"]["_meta"]["toolName"], name);
                 assert_eq!(invoked["result"]["structuredContent"]["extra"], app);
             }
             app_queries.assert_async().await;
-            assert!(call("Unlisted").await["error"].is_object());
         }
 
         #[tokio::test]
-        async fn shared_endpoint_serves_only_selected_app_resources() {
-            let running = running_with_shared_exports();
+        async fn shared_endpoint_serves_every_app_resource() {
+            let running = running_with_all_apps_exposed();
             let read = |uri: &'static str| {
                 shared_request(&running, "resources/read", serde_json::json!({"uri": uri}))
             };
@@ -3667,41 +3665,37 @@ mod tests {
             ] {
                 assert_eq!(read(uri).await["result"]["contents"][0]["text"], "records");
             }
-            assert!(read("ui://widget/forgotten#local").await["error"].is_object());
+            assert!(read("ui://widget/missing#local").await["error"].is_object());
         }
 
         #[rstest::rstest]
-        #[case::unknown_app(&[("missing", "GetId")], "0 apps are named missing")]
-        #[case::unknown_tool(&[("MyApp", "missing")], "MyApp has 0 tools named missing")]
-        #[case::ambiguous_app(&[("twin", "GetRecord")], "2 apps are named twin")]
-        #[case::duplicate_tool(
-            &[("forgotten", "GetRecord"), ("records", "GetRecord")],
-            "GetRecord claimed by forgotten and records"
-        )]
-        #[case::builtin_name(
-            &[("records", "Unlisted")],
-            "records/Unlisted conflicts with an enabled built-in tool"
+        #[case::duplicate_app(
+            |apps: &mut Vec<App>| apps.push(apps[1].clone()),
+            "two apps are named records"
         )]
         #[case::shared_resource_path(
-            &[("alias", "GetRecord"), ("records", "GetRecord")],
-            "alias and records share resource path /records"
+            |apps: &mut Vec<App>| apps.push(App { name: "alias".into(), ..apps[1].clone() }),
+            "records and alias share resource path /records"
         )]
-        fn exports_reject_invalid_selections(
-            #[case] selection: &[(&str, &str)],
+        #[case::duplicate_tool_across_apps(
+            |apps: &mut Vec<App>| apps[1].tools[0].tool.name = "GetId".into(),
+            "MyApp and records both have a tool named GetId"
+        )]
+        #[case::duplicate_tool_in_one_app(
+            |apps: &mut Vec<App>| apps[1].tools[1].tool.name = "GetRecord".into(),
+            "records has two tools named GetRecord"
+        )]
+        #[case::builtin_name(
+            |apps: &mut Vec<App>| apps[1].tools[1].tool.name = "search".into(),
+            "records/search conflicts with an enabled built-in tool"
+        )]
+        fn exports_reject_apps_that_cannot_share_a_connection(
+            #[case] break_apps: fn(&mut Vec<App>),
             #[case] reason: &str,
         ) {
-            let mut apps = running_with_shared_exports().apps;
-            let records = apps[1].clone();
-            apps.extend(["twin", "twin", "alias"].map(|name| App {
-                name: name.into(),
-                ..records.clone()
-            }));
-            let allowlist = selection
-                .iter()
-                .map(|(app, tool)| (app.to_string(), vec![tool.to_string()]))
-                .collect();
-            let err = crate::apps::resolve_exports(&apps, &allowlist, |name| name == "Unlisted")
-                .unwrap_err();
+            let mut apps = running_with_all_apps_exposed().apps;
+            break_apps(&mut apps);
+            let err = crate::apps::resolve_exports(&apps, |name| name == "search").unwrap_err();
             assert_eq!(err, reason);
         }
 

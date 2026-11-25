@@ -168,7 +168,7 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .maybe_config_path(config_path.map(Path::to_path_buf))
         .rhai_dir(config.rhai.scripts_dir)
         .apps_dir(config.apps.path)
-        .expose_on_connect(config.apps.expose_on_connect)
+        .expose_apps_without_app_param(config.apps.expose_without_app_param)
         .prompts_dir(config.prompts.path)
         .transport(config.transport)
         .schema_source(schema_source)

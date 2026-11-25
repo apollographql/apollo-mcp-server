@@ -24,41 +24,46 @@ pub(crate) fn app_param_from_query(query: Option<&str>) -> Option<String> {
     })
 }
 
-/// Manifest tool names to expose on connections without an app parameter, by app name.
-pub type AppAllowlist = BTreeMap<String, Vec<String>>;
-
-/// Exposed tool name to owning app name. Tool names are unique across the selected apps.
+/// Exposed tool name to owning app name. Tool names are unique across the apps.
 pub(crate) type AppExports = Arc<BTreeMap<String, String>>;
 
+/// Maps every app tool to its app, for connections without an app parameter.
+///
+/// Fails when the apps can't share one connection: two apps have the same name or
+/// resource path, two tools have the same name, or a tool has the name of an enabled
+/// built-in tool.
 pub(crate) fn resolve_exports(
     apps: &[App],
-    allowlist: &AppAllowlist,
     is_builtin: impl Fn(&str) -> bool,
 ) -> Result<AppExports, String> {
     let mut exports = BTreeMap::new();
     let mut paths = BTreeMap::new();
-    let selected = allowlist
-        .iter()
-        .flat_map(|(app, tools)| tools.iter().map(move |tool| (app, tool)));
-    for (app, tool) in selected {
-        let owners: Vec<_> = apps.iter().filter(|a| a.name == *app).collect();
-        let [owner] = owners[..] else {
-            return Err(format!("{} apps are named {app}", owners.len()));
-        };
-        let tools = owner.tools.iter().filter(|t| t.tool.name == *tool).count();
-        let path = owner.uri.path();
+    for app in apps {
+        let name = &app.name;
+        let path = app.uri.path();
         // Shared resource reads identify the app by its URI path alone.
-        let shares_path = paths.insert(path, app).filter(|other| *other != app);
-        let problem = [
-            (tools != 1).then(|| format!("{app} has {tools} tools named {tool}")),
-            shares_path.map(|other| format!("{other} and {app} share resource path {path}")),
-            is_builtin(tool)
-                .then(|| format!("{app}/{tool} conflicts with an enabled built-in tool")),
-            exports
-                .insert(tool.clone(), app.clone())
-                .map(|other| format!("{tool} claimed by {other} and {app}")),
-        ];
-        problem.into_iter().flatten().next().map_or(Ok(()), Err)?;
+        if let Some(other) = paths.insert(path, name) {
+            return Err(if other == name {
+                format!("two apps are named {name}")
+            } else {
+                format!("{other} and {name} share resource path {path}")
+            });
+        }
+        for tool in &app.tools {
+            let tool = tool.tool.name.as_ref();
+            if is_builtin(tool) {
+                return Err(format!(
+                    "{name}/{tool} conflicts with an enabled built-in tool"
+                ));
+            }
+            if let Some(other) = exports.insert(tool.to_owned(), name.clone()) {
+                return Err(if other == *name {
+                    format!("{name} has two tools named {tool}")
+                } else {
+                    format!("{other} and {name} both have a tool named {tool}")
+                });
+            }
+        }
     }
     Ok(Arc::new(exports))
 }

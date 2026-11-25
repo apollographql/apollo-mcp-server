@@ -211,12 +211,14 @@ impl Starting {
             }),
         };
 
-        running.exports =
-            crate::apps::resolve_exports(&running.apps, &self.config.expose_on_connect, |name| {
-                running.is_builtin_tool(name)
-            })
-            .map_err(|err| ServerError::Apps(format!("apps.expose_on_connect: {err}")))?;
-        crate::apps::warn_shadowed(&running.exports, &running.operations.read().await);
+        if self.config.expose_apps_without_app_param {
+            running.exports =
+                crate::apps::resolve_exports(&running.apps, |name| running.is_builtin_tool(name))
+                    .map_err(|err| {
+                    ServerError::Apps(format!("apps.expose_without_app_param: {err}"))
+                })?;
+            crate::apps::warn_shadowed(&running.exports, &running.operations.read().await);
+        }
 
         match self.config.transport {
             Transport::StreamableHttp {
@@ -524,6 +526,7 @@ impl ListenerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use assert_fs::{TempDir, prelude::*};
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -540,7 +543,7 @@ mod tests {
     fn config(port: u16, health_check: HealthCheckConfig) -> Config {
         Config {
             rhai_dir: std::path::PathBuf::from("rhai"),
-            expose_on_connect: Default::default(),
+            expose_apps_without_app_param: false,
             apps_dir: std::path::PathBuf::from("apps"),
             prompts_dir: std::path::PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {
@@ -609,6 +612,84 @@ mod tests {
         ));
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    /// A config whose apps directory holds one app per `(app, tool)` pair.
+    fn config_with_apps(
+        apps: &[(&str, &str)],
+        expose_apps_without_app_param: bool,
+    ) -> (Config, TempDir) {
+        let apps_dir = TempDir::new().unwrap();
+        for (app, tool) in apps {
+            let manifest = serde_json::json!({
+                "format": "apollo-ai-app-manifest",
+                "version": "1",
+                "hash": "abcdef",
+                "resource": "https://example.com/widget/index.html",
+                "operations": [{
+                    "body": "query Hello { hello }",
+                    "tools": [{ "name": tool, "description": "Says hello" }],
+                }],
+            });
+            apps_dir
+                .child(app)
+                .child(".application-manifest.json")
+                .write_str(&manifest.to_string())
+                .unwrap();
+        }
+        let config = Config {
+            apps_dir: apps_dir.path().into(),
+            expose_apps_without_app_param,
+            ..config(0, HealthCheckConfig::default())
+        };
+        (config, apps_dir)
+    }
+
+    #[tokio::test]
+    async fn exposing_apps_without_app_param_exports_every_app_tool() {
+        let (config, _apps_dir) =
+            config_with_apps(&[("analytics", "UsageChart"), ("records", "Lookup")], true);
+
+        let Ok(running) = starting(config).start().await else {
+            panic!("server should start");
+        };
+
+        let exports: Vec<_> = running.exports.iter().collect();
+        assert_eq!(
+            exports,
+            [
+                (&"Lookup".to_owned(), &"records".to_owned()),
+                (&"UsageChart".to_owned(), &"analytics".to_owned()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn exposing_apps_without_app_param_rejects_apps_that_share_a_tool_name() {
+        let (config, _apps_dir) =
+            config_with_apps(&[("analytics", "Lookup"), ("records", "Lookup")], true);
+
+        let Err(ServerError::Apps(reason)) = starting(config).start().await else {
+            panic!("server should reject the apps");
+        };
+
+        assert!(
+            reason.starts_with("apps.expose_without_app_param: ")
+                && reason.ends_with(" both have a tool named Lookup"),
+            "{reason}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apps_that_share_a_tool_name_start_when_not_exposed() {
+        let (config, _apps_dir) =
+            config_with_apps(&[("analytics", "Lookup"), ("records", "Lookup")], false);
+
+        let Ok(running) = starting(config).start().await else {
+            panic!("server should start");
+        };
+
+        assert!(running.exports.is_empty());
     }
 
     #[tokio::test]

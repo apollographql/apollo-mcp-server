@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -10,16 +10,15 @@ pub struct AppsConfig {
     /// Directory containing MCP Apps. Each subdirectory holding an
     /// `.application-manifest.json` file is loaded as an app.
     pub path: PathBuf,
-    /// App tools to expose on connections without the `app` parameter, as a map of
-    /// app name to manifest tool names.
-    pub expose_on_connect: BTreeMap<String, Vec<String>>,
+    /// Expose every app's tools and resources without the `app` parameter.
+    pub expose_without_app_param: bool,
 }
 
 impl Default for AppsConfig {
     fn default() -> Self {
         Self {
-            expose_on_connect: Default::default(),
             path: PathBuf::from("apps"),
+            expose_without_app_param: false,
         }
     }
 }
@@ -39,6 +38,19 @@ mod tests {
             .expect("Apps config should parse");
 
         assert_eq!(config.path, std::path::PathBuf::from("/config/apps"));
+    }
+
+    #[test]
+    fn expose_without_app_param_is_off_unless_set() {
+        assert!(!AppsConfig::default().expose_without_app_param);
+    }
+
+    #[test]
+    fn deserializes_expose_without_app_param() {
+        let config = yaml_serde::from_str::<AppsConfig>("expose_without_app_param: true\n")
+            .expect("Apps config should parse");
+
+        assert!(config.expose_without_app_param);
     }
 
     #[test]
