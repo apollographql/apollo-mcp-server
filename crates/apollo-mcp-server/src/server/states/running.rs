@@ -71,6 +71,7 @@ use super::tool_list_changes::{LegacyToolNotifications, ToolListChanges};
 pub(super) struct Running {
     pub(super) schema: Arc<RwLock<Valid<Schema>>>,
     pub(super) operations: Arc<RwLock<Vec<Operation>>>,
+    pub(super) exports: crate::apps::AppExports,
     pub(super) apps: Vec<crate::apps::App>,
     pub(super) prompts: Vec<crate::prompts::PromptFile>,
     pub(super) headers: HeaderMap,
@@ -142,6 +143,18 @@ impl Running {
             VALIDATE_TOOL_NAME => self.validate_tool.is_some(),
             _ => false,
         }
+    }
+
+    pub(super) fn validate_export_names(&self) -> Result<(), String> {
+        for (name, export) in self.exports.iter() {
+            if self.is_builtin_tool(name) {
+                return Err(format!(
+                    "apps.expose_on_connect: {}/{} conflicts with an enabled built-in tool",
+                    export.app_name, name
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// Construct an independent rmcp service sharing this application's catalog.
@@ -270,6 +283,7 @@ impl Running {
             updated_operations.len(),
             serde_json::to_string_pretty(&updated_operations).unwrap_or_default()
         );
+        self.exports.warn_shadowed(&updated_operations);
         warn_unmatched_operations(&self.param_headers, &updated_operations);
         *operations_lock = updated_operations;
 
@@ -351,13 +365,30 @@ impl Running {
                 .iter()
                 .map(|op| op.as_ref().clone())
                 .collect();
+            let shared = !self.exports.is_empty();
+            if shared {
+                // Dispatch gives the built-in execute precedence. Only advertise its app-private definition.
+                operation_tools.retain(|tool| {
+                    self.exports.get(&tool.name).is_none()
+                        && !(tool.name == EXECUTE_TOOL_NAME && self.execute_tool.is_some())
+                });
+            }
+            for (_, export) in self.exports.iter() {
+                let (app, tool) = export.target(&self.apps)?;
+                operation_tools.push(attach_tool_metadata(app, tool, &app_target));
+            }
             // Stable ordering supports client tool-list caches and LLM prompt cache reuse.
             operation_tools.sort_by(|a, b| a.name.cmp(&b.name));
-
             ListToolsResult::with_all_items(
                 operation_tools
                     .into_iter()
-                    .chain(self.execute_tool.as_ref().iter().map(|e| e.tool.clone()))
+                    .chain(self.execute_tool.iter().map(|e| {
+                        if shared {
+                            make_tool_private(e.tool.clone())
+                        } else {
+                            e.tool.clone()
+                        }
+                    }))
                     .chain(self.introspect_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.search_tool.as_ref().iter().map(|e| e.tool.clone()))
                     .chain(self.explorer_tool.as_ref().iter().map(|e| e.tool.clone()))
@@ -401,7 +432,7 @@ impl Running {
                 app.name == app_name && app.tools.iter().any(|tool| tool.tool.name == name)
             });
         }
-        operation.is_some()
+        self.exports.get(name).is_some() || operation.is_some()
     }
 
     async fn call_tool_impl(
@@ -415,6 +446,10 @@ impl Running {
         let start = std::time::Instant::now();
         let tool_name = request.name;
         let app_param = extract_app_param(extensions);
+        let export = app_param
+            .is_none()
+            .then(|| self.exports.get(&tool_name))
+            .flatten();
         let axum_parts = extensions.get::<axum::http::request::Parts>();
 
         let mut result = if tool_name == INTROSPECT_TOOL_NAME
@@ -491,10 +526,22 @@ impl Running {
                 self.headers.clone()
             };
 
-            if let Some(app_param) = &app_param {
+            if let Some(export) = export {
+                let (app, tool) = export.target(&self.apps)?;
+                crate::apps::tool::execute_app_tool(
+                    app,
+                    tool,
+                    &headers,
+                    request.arguments.as_ref(),
+                    &self.endpoint,
+                    &self.rhai_engine,
+                    axum_parts,
+                )
+                .await
+            } else if let Some(app_name) = app_param.as_deref() {
                 if let Some(res) = find_and_execute_app_tool(
                     &self.apps,
-                    app_param,
+                    app_name,
                     &tool_name,
                     &headers,
                     request.arguments.as_ref(),
@@ -548,7 +595,8 @@ impl Running {
             .add(1, &attributes);
 
         // MCP Apps rely on structured_content; only strip for non-app calls with older protocol versions.
-        if app_param.is_none()
+        if export.is_none()
+            && app_param.is_none()
             && !self.client_supports_output_schema(protocol_version)
             && let Ok(r) = &mut result
         {
@@ -591,7 +639,12 @@ impl Running {
                 }
             }
         } else {
-            vec![]
+            self.apps
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| self.exports.includes(*i))
+                .map(|(_, app)| attach_resource_mime_type(app.resource()))
+                .collect()
         };
 
         let result = ListResourcesResult::with_all_items(resources);
@@ -656,6 +709,17 @@ impl Running {
         let app_target =
             named_target.unwrap_or_else(|| AppTarget::inferred(peer.client_capabilities));
 
+        let app_param = app_param.or_else(|| {
+            self.apps
+                .iter()
+                .enumerate()
+                .find(|(i, app)| {
+                    self.exports.includes(*i)
+                        && app.uri[..url::Position::AfterQuery]
+                            == request_uri[..url::Position::AfterQuery]
+                })
+                .map(|(_, app)| app.name.clone())
+        });
         if let Some(app_name) = app_param {
             let (resource, origin) = get_app_resource(
                 &self.apps,
@@ -1172,7 +1236,7 @@ impl ServerHandler for McpService {
     /// life of the service, so it's built from static config rather than the operations
     /// that reloads change. Built-in tools have no annotations.
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        if self.application.is_builtin_tool(name) {
+        if self.application.is_builtin_tool(name) || self.application.exports.get(name).is_some() {
             return None;
         }
         let headers = self.application.param_headers.get(name)?;
@@ -1827,6 +1891,7 @@ mod tests {
         Running {
             schema,
             operations: Arc::new(RwLock::new(vec![])),
+            exports: Default::default(),
             apps: vec![],
             prompts: vec![],
             headers: HeaderMap::new(),
@@ -3505,6 +3570,152 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn shared_endpoint_lists_only_selected_tools_and_resources_after_refresh() {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("primary".into())),
+                None,
+                None,
+            );
+            let mut upstream = mockito::Server::new_async().await;
+            running.endpoint = upstream.url().parse().unwrap();
+            let app_queries = upstream
+                .mock("POST", "/")
+                .match_body(mockito::Matcher::PartialJson(
+                    serde_json::json!({"operationName":"GetId"}),
+                ))
+                .with_header("content-type", "application/json")
+                .with_body(r#"{"data":{"id":"123"}}"#)
+                .expect(2)
+                .create_async()
+                .await;
+            running.apps[0].tools[0].extra_outputs = Some("MyApp".into());
+            running.execute_tool = Some(Execute::new(MutationMode::None, None));
+            running.validate_tool = Some(Validate::new(running.schema.clone(), None));
+            for name in ["records", "forgotten"] {
+                let mut app = running.apps[0].clone();
+                app.name = name.into();
+                app.tools[0].extra_outputs = Some(name.into());
+                app.tools[0].tool.name = "GetRecord".into();
+                app.uri = format!("ui://widget/{name}#local").parse().unwrap();
+                app.resource = AppResource::Targeted(crate::apps::app::TargetedAppResource {
+                    mcp: Some(AppResourceSource::Local(name.into())),
+                    openai: None,
+                });
+                let mut unlisted = app.tools[0].clone();
+                unlisted.tool.name = "Unlisted".into();
+                app.tools.push(unlisted);
+                running.apps.push(app);
+            }
+            let allowlist = [
+                ("MyApp".into(), vec!["GetId".into()]),
+                ("records".into(), vec!["GetRecord".into()]),
+            ]
+            .into();
+            running.exports = crate::apps::AppExports::resolve(&running.apps, &allowlist).unwrap();
+            running
+                .update_operations(vec![
+                    ("query execute { id }".to_owned(), None).into(),
+                    ("query GetRecord { id }".to_owned(), None).into(),
+                    ("query Other { id }".to_owned(), None).into(),
+                ])
+                .await;
+            let call = |method, params| {
+                super::super::integration_tests::stateless_request_at_uri(
+                    running.clone(),
+                    "2025-11-25",
+                    method,
+                    params,
+                    "/mcp",
+                )
+            };
+            let tools = call("tools/list", serde_json::json!({})).await;
+            let tools = tools["result"]["tools"].as_array().unwrap();
+            let mut names = tools
+                .iter()
+                .map(|t| t["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(
+                names,
+                ["GetId", "GetRecord", "Other", "execute", "validate"]
+            );
+            let execute = tools.iter().find(|tool| tool["name"] == "execute").unwrap();
+            assert_eq!(
+                execute["_meta"]["ui"]["visibility"],
+                serde_json::json!(["app"])
+            );
+            for (app, name) in [("MyApp", "GetId"), ("records", "GetRecord")] {
+                let invoked = call(
+                    "tools/call",
+                    serde_json::json!({"name":name,"arguments":{}}),
+                )
+                .await;
+                assert_eq!(invoked["result"]["_meta"]["toolName"], name);
+                assert_eq!(invoked["result"]["structuredContent"]["extra"], app);
+            }
+            app_queries.assert_async().await;
+            let resources = call("resources/list", serde_json::json!({})).await;
+            assert_eq!(
+                resources["result"]["resources"].as_array().unwrap().len(),
+                2
+            );
+            for uri in [
+                "ui://widget/records#local",
+                "ui://widget/records",
+                "ui://widget/records#stale",
+            ] {
+                let resource = call("resources/read", serde_json::json!({"uri":uri})).await;
+                assert_eq!(resource["result"]["contents"][0]["text"], "records");
+            }
+            for uri in [
+                "ui://widget/forgotten#local",
+                "ui://other/records#local",
+                "ui://widget/records?version=other",
+            ] {
+                let denied = call("resources/read", serde_json::json!({"uri":uri})).await;
+                assert!(denied["error"].is_object(), "{uri}");
+            }
+            let denied = call(
+                "tools/call",
+                serde_json::json!({"name":"Unlisted","arguments":{}}),
+            )
+            .await;
+            assert!(denied["error"].is_object());
+        }
+
+        #[test]
+        fn exports_reject_unknown_and_ambiguous_selections() {
+            let mut running = running_with_apps(
+                AppResource::Single(AppResourceSource::Local("test".into())),
+                None,
+                None,
+            );
+            let allow = |app: &str, tool: &str| [(app.to_owned(), vec![tool.to_owned()])].into();
+            let resolve =
+                |apps: &[App], config| crate::apps::AppExports::resolve(apps, &config).unwrap_err();
+            assert!(resolve(&running.apps, allow("missing", "GetId")).contains("unknown app"));
+            assert!(resolve(&running.apps, allow("MyApp", "missing")).contains("unknown tool"));
+            running.apps.push(running.apps[0].clone());
+            assert!(resolve(&running.apps, allow("MyApp", "GetId")).contains("ambiguous app"));
+            running.apps[1].name = "records".into();
+            let mut config = allow("MyApp", "GetId");
+            config.extend(allow("records", "GetId"));
+            assert!(resolve(&running.apps, config).contains("GetId claimed by MyApp and records"));
+            running.apps[0].tools[0].tool.name = "execute".into();
+            running.exports =
+                crate::apps::AppExports::resolve(&running.apps, &allow("MyApp", "execute"))
+                    .unwrap();
+            assert!(running.validate_export_names().is_ok());
+            running.execute_tool = Some(Execute::new(MutationMode::None, None));
+            assert!(
+                running
+                    .validate_export_names()
+                    .unwrap_err()
+                    .contains("MyApp/execute")
+            );
+        }
+
+        #[tokio::test]
         async fn list_tools_without_app_parameter() {
             let running = running_with_apps(
                 AppResource::Single(AppResourceSource::Local("test".to_string())),
@@ -4279,6 +4490,7 @@ mod tests {
         use super::*;
         use crate::apps::app::{AppResource, AppResourceSource};
         use crate::operations::RawOperation;
+        use rstest::rstest;
 
         #[tokio::test]
         async fn strips_structured_content_when_protocol_predates_it() {
@@ -4394,8 +4606,11 @@ mod tests {
             );
         }
 
+        #[rstest]
+        #[case::explicit_app("http://localhost?app=MyApp")]
+        #[case::shared_endpoint("http://localhost")]
         #[tokio::test]
-        async fn calls_app_tool_instead_of_operation_when_app_param_present() {
+        async fn calls_selected_app_tool(#[case] uri: &str) {
             let mut server = mockito::Server::new_async().await;
 
             // Mock for the operation "Hello" — should NOT be called
@@ -4476,6 +4691,11 @@ mod tests {
 
             let running = Running {
                 operations: Arc::new(RwLock::new(vec![operation])),
+                exports: crate::apps::AppExports::resolve(
+                    std::slice::from_ref(&app),
+                    &[(app.name.clone(), vec!["Hello".into()])].into(),
+                )
+                .unwrap(),
                 apps: vec![app],
                 endpoint: server.url().parse().unwrap(),
                 enable_output_schema: true,
@@ -4484,21 +4704,19 @@ mod tests {
             };
 
             let mut extensions = Extensions::new();
-            let request = axum::http::Request::builder()
-                .uri("http://localhost?app=MyApp")
-                .body(())
-                .unwrap();
+            let request = axum::http::Request::builder().uri(uri).body(()).unwrap();
             let (parts, _) = request.into_parts();
             extensions.insert(parts);
 
             let mut request = CallToolRequestParams::new("Hello");
             request.arguments = Some(Default::default());
 
-            let _result = running
+            let result = running
                 .call_tool_impl(request, &extensions, None, None)
                 .await
                 .unwrap();
 
+            assert_eq!(result.meta.unwrap().get("toolName").unwrap(), "Hello");
             app_tool_mock.assert();
             operation_mock.assert();
         }
@@ -4603,6 +4821,7 @@ mod integration_tests {
             Running {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![operation])),
+                exports: Default::default(),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -5128,6 +5347,7 @@ mod integration_tests {
             Running {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![operation])),
+                exports: Default::default(),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -6113,6 +6333,7 @@ mod integration_tests {
             Running {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![])),
+                exports: Default::default(),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),
@@ -6300,6 +6521,7 @@ mod integration_tests {
             Running {
                 schema: Arc::new(RwLock::new(schema)),
                 operations: Arc::new(RwLock::new(vec![])),
+                exports: Default::default(),
                 apps: vec![],
                 prompts: vec![],
                 headers: http::HeaderMap::new(),

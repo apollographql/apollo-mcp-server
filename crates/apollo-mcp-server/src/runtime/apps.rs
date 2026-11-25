@@ -10,11 +10,14 @@ pub struct AppsConfig {
     /// Directory containing MCP Apps. Each subdirectory holding an
     /// `.application-manifest.json` file is loaded as an app.
     pub path: PathBuf,
+    /// Manifest tools to expose on connections without an app parameter.
+    pub expose_on_connect: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for AppsConfig {
     fn default() -> Self {
         Self {
+            expose_on_connect: Default::default(),
             path: PathBuf::from("apps"),
         }
     }

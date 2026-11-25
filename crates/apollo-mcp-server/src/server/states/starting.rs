@@ -109,6 +109,9 @@ impl Starting {
             self.config.enable_output_schema,
         )
         .map_err(ServerError::Apps)?;
+        let exports = crate::apps::AppExports::resolve(&apps, &self.config.expose_on_connect)
+            .map_err(ServerError::Apps)?;
+        exports.warn_shadowed(&operations);
         warn_app_tool_collisions(&self.config.param_headers, &apps);
         let prompts = crate::prompts::load_from_path(&self.config.prompts_dir)
             .map_err(ServerError::Prompts)?;
@@ -170,6 +173,7 @@ impl Starting {
             schema,
             operations: Arc::new(RwLock::new(operations)),
             apps,
+            exports: exports.clone(),
             prompts,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
@@ -210,6 +214,8 @@ impl Starting {
             }),
         };
 
+        running.validate_export_names().map_err(ServerError::Apps)?;
+
         match self.config.transport {
             Transport::StreamableHttp {
                 auth,
@@ -238,6 +244,7 @@ impl Starting {
                             self.config.required_scopes.clone(),
                             stateful_mode,
                             &trusted_proxies,
+                            exports.clone(),
                         )?
                         .with_cors()?
                         .with_telemetry(self.config.client_address, trusted_proxies)
@@ -434,10 +441,17 @@ impl ListenerBuilder {
         required_scopes: HashMap<String, OperationRequiredScopes>,
         stateful_mode: bool,
         trusted_proxies: &TrustedProxies,
+        exports: crate::apps::AppExports,
     ) -> Result<Self, ServerError> {
         if let Some(auth) = auth {
             self.router = auth
-                .enable_middleware(self.router, required_scopes, stateful_mode, trusted_proxies)
+                .enable_middleware_with_exports(
+                    self.router,
+                    required_scopes,
+                    stateful_mode,
+                    trusted_proxies,
+                    exports,
+                )
                 .inspect_err(|e| {
                     error!("Failed to enable auth middleware: {}", e);
                 })?;
@@ -526,6 +540,7 @@ mod tests {
     fn config(port: u16, health_check: HealthCheckConfig) -> Config {
         Config {
             rhai_dir: std::path::PathBuf::from("rhai"),
+            expose_on_connect: Default::default(),
             apps_dir: std::path::PathBuf::from("apps"),
             prompts_dir: std::path::PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {
@@ -715,6 +730,7 @@ mod tests {
                 HashMap::new(),
                 true,
                 &TrustedProxies::default(),
+                Default::default(),
             )
             .unwrap()
             .router;

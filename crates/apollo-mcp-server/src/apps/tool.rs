@@ -51,7 +51,7 @@ pub(crate) async fn find_and_execute_app_tool(
     None
 }
 
-async fn execute_app_tool(
+pub(crate) async fn execute_app_tool(
     app: &App,
     tool: &AppTool,
     headers: &HeaderMap,

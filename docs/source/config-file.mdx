@@ -128,11 +128,12 @@ Apollo MCP Server supports OAuth 2.1 authentication that follows best practices 
 
 ### Apps
 
-Set these fields under the top-level `apps` key to tell Apollo MCP Server where to load MCP Apps from. Learn more about [MCP Apps](/apollo-mcp-server/mcp-apps).
+Set these fields under the top-level `apps` key to configure app discovery and shared-endpoint publication. Learn more about [MCP Apps](/apollo-mcp-server/mcp-apps).
 
-| Option | Type       | Default | Description                                                                                                                         |
-| :----- | :--------- | :------ | :---------------------------------------------------------------------------------------------------------------------------------- |
-| `path` | `FilePath` | `apps`  | Directory containing MCP Apps. Apollo MCP Server loads each subdirectory that holds an `.application-manifest.json` file as an app. |
+| Option              | Type                        | Default | Description                                                                                                                                                                                             |
+| :------------------ | :-------------------------- | :------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `path`              | `FilePath`                  | `apps`  | Directory containing MCP Apps. Apollo MCP Server loads each subdirectory that holds an `.application-manifest.json` file as an app.                                                                     |
+| `expose_on_connect` | `Map<String, List<String>>` | `{}`    | Manifest tool names by app name to publish on connections without an `app` parameter. See [shared app exports](/apollo-mcp-server/mcp-apps-reference#expose-selected-app-tools-on-the-shared-endpoint). |
 
 ```yaml title="mcp.yaml"
 apps:

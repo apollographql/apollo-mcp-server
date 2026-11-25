@@ -208,6 +208,40 @@ Use the `app` query parameter to specify which app to load: `https://your-server
 
 </Note>
 
+## Expose selected app tools on the shared endpoint
+
+Set `apps.expose_on_connect` in the server YAML to publish specific manifest tools
+when the connection URL omits `?app=`. Use the manifest app name (or the directory
+name if omitted) and the original tool names:
+
+```yaml
+apps:
+  expose_on_connect:
+    analytics: [usage_chart]
+    records: [lookup]
+```
+
+Clients discover `usage_chart` and `lookup` alongside ordinary operation tools.
+Each tool keeps its manifest name and opens its own app's UI resource. Select
+each name once across the shared endpoint. Selecting the same tool name from
+two apps, or selecting the name of an enabled built-in tool, fails startup.
+
+Enabling the first export makes the configured `execute` tool app-private on the
+shared endpoint. Existing model clients on that URL lose model-visible access
+to `execute`. An empty or omitted mapping preserves the ordinary endpoint.
+A URL with `?app=analytics` continues to select the full analytics app with
+its original tool names.
+
+Configure an operation source or enable an introspection tool alongside the
+exports. The server checks app and tool names at startup. A reload that refers
+to a missing or ambiguous selection can stop the server during restart.
+
+A configured app export takes precedence over an ordinary operation with the
+same name and logs a warning, including when operations refresh. The same
+OAuth scope rule applies to the tool on the shared endpoint and the app's own
+URL. Tool-name entries in
+`skip_token_validation.tools` cannot grant tokenless access to an app export.
+
 ## App target
 
 Apollo MCP Server supports two targets: OpenAI Apps (for hosts supporting OpenAI's Apps SDK specification) and MCP Apps (for MCP-compatible clients). Use the `appTarget` query parameter to specify the target.
