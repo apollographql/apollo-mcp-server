@@ -30,17 +30,6 @@ pub type AppAllowlist = BTreeMap<String, Vec<String>>;
 /// Exposed tool name to owning app name. Tool names are unique across the selected apps.
 pub(crate) type AppExports = Arc<BTreeMap<String, String>>;
 
-fn sole<T>(
-    mut matches: impl Iterator<Item = T>,
-    what: impl std::fmt::Display,
-) -> Result<T, String> {
-    match (matches.next(), matches.next()) {
-        (Some(only), None) => Ok(only),
-        (None, _) => Err(format!("unknown {what}")),
-        _ => Err(format!("ambiguous {what}")),
-    }
-}
-
 pub(crate) fn resolve_exports(
     apps: &[App],
     allowlist: &AppAllowlist,
@@ -48,43 +37,39 @@ pub(crate) fn resolve_exports(
 ) -> Result<AppExports, String> {
     let mut exports = BTreeMap::new();
     let mut paths = BTreeMap::new();
-    for (app_name, tools) in allowlist {
-        let app = sole(
-            apps.iter().filter(|app| app.name == *app_name),
-            format_args!("app {app_name}"),
-        )?;
+    let selected = allowlist
+        .iter()
+        .flat_map(|(app, tools)| tools.iter().map(move |tool| (app, tool)));
+    for (app, tool) in selected {
+        let owners: Vec<_> = apps.iter().filter(|a| a.name == *app).collect();
+        let [owner] = owners[..] else {
+            return Err(format!("{} apps are named {app}", owners.len()));
+        };
+        let tools = owner.tools.iter().filter(|t| t.tool.name == *tool).count();
+        let path = owner.uri.path();
         // Shared resource reads identify the app by its URI path alone.
-        if let Some(other) = paths.insert(app.uri.path(), app_name) {
-            return Err(format!(
-                "{other} and {app_name} share resource path {}",
-                app.uri.path()
-            ));
-        }
-        for tool in tools {
-            sole(
-                app.tools.iter().filter(|t| t.tool.name == *tool),
-                format_args!("tool {app_name}/{tool}"),
-            )?;
-            if is_builtin(tool) {
-                return Err(format!(
-                    "{app_name}/{tool} conflicts with an enabled built-in tool"
-                ));
-            }
-            if let Some(other) = exports.insert(tool.clone(), app_name.clone()) {
-                return Err(format!("{tool} claimed by {other} and {app_name}"));
-            }
-        }
+        let shares_path = paths.insert(path, app).filter(|other| *other != app);
+        let problem = [
+            (tools != 1).then(|| format!("{app} has {tools} tools named {tool}")),
+            shares_path.map(|other| format!("{other} and {app} share resource path {path}")),
+            is_builtin(tool)
+                .then(|| format!("{app}/{tool} conflicts with an enabled built-in tool")),
+            exports
+                .insert(tool.clone(), app.clone())
+                .map(|other| format!("{tool} claimed by {other} and {app}")),
+        ];
+        problem.into_iter().flatten().next().map_or(Ok(()), Err)?;
     }
     Ok(Arc::new(exports))
 }
 
 pub(crate) fn warn_shadowed(exports: &AppExports, operations: &[crate::operations::Operation]) {
-    for operation in operations {
-        let name: &str = &operation.as_ref().name;
-        if let Some(app) = exports.get(name) {
-            tracing::warn!(%name, %app, "Exposed app tool shadows an operation of the same name");
-        }
-    }
+    operations
+        .iter()
+        .filter_map(|operation| exports.get_key_value(&*operation.as_ref().name))
+        .for_each(|(name, app)| {
+            tracing::warn!(%name, %app, "Exposed app tool shadows an operation of the same name")
+        });
 }
 
 /// An exposed app tool never inherits the tokenless exception of an operation it shadows.

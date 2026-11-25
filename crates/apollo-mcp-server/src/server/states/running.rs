@@ -3671,9 +3671,9 @@ mod tests {
         }
 
         #[rstest::rstest]
-        #[case::unknown_app(&[("missing", "GetId")], "unknown app missing")]
-        #[case::unknown_tool(&[("MyApp", "missing")], "unknown tool MyApp/missing")]
-        #[case::ambiguous_app(&[("twin", "GetRecord")], "ambiguous app twin")]
+        #[case::unknown_app(&[("missing", "GetId")], "0 apps are named missing")]
+        #[case::unknown_tool(&[("MyApp", "missing")], "MyApp has 0 tools named missing")]
+        #[case::ambiguous_app(&[("twin", "GetRecord")], "2 apps are named twin")]
         #[case::duplicate_tool(
             &[("forgotten", "GetRecord"), ("records", "GetRecord")],
             "GetRecord claimed by forgotten and records"
