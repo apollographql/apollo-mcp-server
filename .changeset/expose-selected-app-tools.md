@@ -13,4 +13,4 @@ apps:
     records: [lookup]
 ```
 
-Startup fails if two selected apps list the same tool name.
+Startup fails if two selected apps list the same tool name. If a listed tool and an operation have the same name, clients see and call the app tool, not the operation.
