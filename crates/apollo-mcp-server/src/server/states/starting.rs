@@ -38,7 +38,9 @@ pub(super) struct Starting {
 }
 
 impl Starting {
-    pub(super) async fn start(mut self) -> Result<Running, ServerError> {
+    /// Runs every startup step short of serving. Nothing here needs the listen address, so
+    /// a changed configuration can be checked while the running server still holds it.
+    pub(super) async fn prepare(mut self) -> Result<Ready, ServerError> {
         let operations: Vec<_> = self
             .operations
             .into_iter()
@@ -220,7 +222,7 @@ impl Starting {
         .map_err(|err| ServerError::Apps(format!("apps.expose_without_app_param: {err}")))?;
         crate::apps::warn_shadowed(&running.exports, &running.operations.read().await);
 
-        match self.config.transport {
+        let transport = match self.config.transport {
             Transport::StreamableHttp {
                 mut auth,
                 address,
@@ -230,34 +232,75 @@ impl Starting {
                 host_validation,
                 trusted_proxies,
             } => {
-                info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
                 if let Some(auth) = &mut auth {
                     crate::apps::drop_exported_skips(
                         &mut auth.skip_token_validation.tools,
                         &running.exports,
                     );
                 }
-                let running = running.clone();
                 let per_client_rate_limit = auth
                     .as_ref()
                     .is_some_and(|auth| auth.rate_limit.limits_per_client());
                 trusted_proxies
                     .warn_if_misconfigured(self.config.client_address || per_client_rate_limit);
                 let listen_address = SocketAddr::new(address, port);
-                let service = build_http_service(running, stateful_mode, &host_validation);
+                let service = build_http_service(running.clone(), stateful_mode, &host_validation);
                 let health_check = health_check.filter(|h| h.config().enabled);
 
-                let listeners =
-                    ListenerBuilder::new(listen_address, path, service, self.config.cors.clone())
-                        .with_auth(
-                            auth,
-                            self.config.required_scopes.clone(),
-                            stateful_mode,
-                            &trusted_proxies,
-                        )?
-                        .with_cors()?
-                        .with_telemetry(self.config.client_address, trusted_proxies)
-                        .with_health(health_check.as_ref())?;
+                let listeners = ListenerBuilder::new(
+                    listen_address,
+                    path.clone(),
+                    service,
+                    self.config.cors.clone(),
+                )
+                .with_auth(
+                    auth,
+                    self.config.required_scopes.clone(),
+                    stateful_mode,
+                    &trusted_proxies,
+                )?
+                .with_cors()?
+                .with_telemetry(self.config.client_address, trusted_proxies)
+                .with_health(health_check.as_ref())?;
+
+                ReadyTransport::StreamableHttp {
+                    listen_address,
+                    path,
+                    listeners,
+                }
+            }
+            Transport::Stdio {} => ReadyTransport::Stdio,
+        };
+
+        Ok(Ready { running, transport })
+    }
+}
+
+/// A server that passed every startup step and only has to start serving.
+pub(super) struct Ready {
+    running: Running,
+    transport: ReadyTransport,
+}
+
+enum ReadyTransport {
+    StreamableHttp {
+        listen_address: SocketAddr,
+        path: EndpointPath,
+        listeners: Vec<UnboundListener>,
+    },
+    Stdio,
+}
+
+impl Ready {
+    pub(super) async fn serve(self) -> Result<Running, ServerError> {
+        let Self { running, transport } = self;
+        match transport {
+            ReadyTransport::StreamableHttp {
+                listen_address,
+                path,
+                listeners,
+            } => {
+                info!(port = ?listen_address.port(), address = ?listen_address.ip(), path = %path, "Starting MCP server in Streamable HTTP mode");
 
                 // Bind every listener before spawning any serving task, so a later bind
                 // failure can't leave an earlier listener running unsupervised.
@@ -270,7 +313,7 @@ impl Starting {
                     label,
                 } in listeners
                 {
-                    let cancellation_token = cancellation_token.clone();
+                    let cancellation_token = running.cancellation_token.clone();
                     tokio::spawn(async move {
                         if let Err(e) =
                             serve_http(socket, router, cancellation_token, shutdown_signal()).await
@@ -280,7 +323,7 @@ impl Starting {
                     });
                 }
             }
-            Transport::Stdio {} => {
+            ReadyTransport::Stdio => {
                 info!("Starting MCP server in stdio mode");
                 let service = running
                     .for_service()
@@ -603,8 +646,27 @@ mod tests {
                 ..Default::default()
             },
         ));
-        let running = starting.start();
-        assert!(running.await.is_ok());
+        let Ok(ready) = starting.prepare().await else {
+            panic!("server should pass startup");
+        };
+
+        assert!(ready.serve().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn prepare_succeeds_while_the_listen_address_is_taken() {
+        let taken = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = taken.local_addr().unwrap().port();
+
+        let ready = starting(config(port, HealthCheckConfig::default()))
+            .prepare()
+            .await;
+
+        assert!(
+            ready.is_ok(),
+            "startup checks should not need the listen address: {:?}",
+            ready.err()
+        );
     }
 
     /// A config whose apps directory holds one app per `(app, tool)` pair in `apps`, and
@@ -646,11 +708,11 @@ mod tests {
             &[("records", "Lookup")],
         );
 
-        let Ok(running) = starting(config).start().await else {
-            panic!("server should start");
+        let Ok(ready) = starting(config).prepare().await else {
+            panic!("server should pass startup");
         };
 
-        let exports: Vec<_> = running.exports.iter().collect();
+        let exports: Vec<_> = ready.running.exports.iter().collect();
         assert_eq!(exports, [(&"Lookup".to_owned(), &"records".to_owned())]);
     }
 
@@ -659,7 +721,7 @@ mod tests {
         let (config, _apps_dir) =
             config_with_apps(&[("records", "Lookup")], &[("records", "Lokup")]);
 
-        let Err(ServerError::Apps(reason)) = starting(config).start().await else {
+        let Err(ServerError::Apps(reason)) = starting(config).prepare().await else {
             panic!("server should reject the listed tool");
         };
 
@@ -674,11 +736,11 @@ mod tests {
         let (config, _apps_dir) =
             config_with_apps(&[("analytics", "Lookup"), ("records", "Lookup")], &[]);
 
-        let Ok(running) = starting(config).start().await else {
-            panic!("server should start");
+        let Ok(ready) = starting(config).prepare().await else {
+            panic!("server should pass startup");
         };
 
-        assert!(running.exports.is_empty());
+        assert!(ready.running.exports.is_empty());
     }
 
     #[tokio::test]
@@ -695,7 +757,11 @@ mod tests {
             },
         ));
 
-        let err = starting.start().await.err().unwrap();
+        let Ok(ready) = starting.prepare().await else {
+            panic!("server should pass startup");
+        };
+
+        let err = ready.serve().await.err().unwrap();
         assert!(matches!(err, ServerError::Bind(bound_addr, _) if bound_addr == addr));
 
         // If the main listener had been left running (the bug this guards against), binding a

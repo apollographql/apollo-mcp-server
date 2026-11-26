@@ -27,9 +27,6 @@ pub enum Event {
     /// Rhai scripts in the configured Rhai directory have changed
     RhaiScriptsChanged,
 
-    /// The configuration file has changed, server should restart
-    ConfigChanged,
-
     /// The server should gracefully shut down
     Shutdown,
 }
@@ -54,9 +51,6 @@ impl Debug for Event {
             }
             Event::RhaiScriptsChanged => {
                 write!(f, "RhaiScriptsChanged")
-            }
-            Event::ConfigChanged => {
-                write!(f, "ConfigChanged")
             }
             Event::Shutdown => {
                 write!(f, "Shutdown")
@@ -112,13 +106,6 @@ mod tests {
         let event = Event::RhaiScriptsChanged;
         let output = format!("{:?}", event);
         assert_eq!(output, "RhaiScriptsChanged");
-    }
-
-    #[test]
-    fn debug_event_config_changed() {
-        let event = Event::ConfigChanged;
-        let output = format!("{:?}", event);
-        assert_eq!(output, "ConfigChanged");
     }
 
     #[test]
