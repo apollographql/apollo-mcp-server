@@ -4,6 +4,61 @@ All notable changes to this project will be documented in this file.
 
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2.3.0 (2026-11-26)
+
+### Features
+
+#### Serve Streamable HTTP at the exact `transport.path` only - @DaleSeo #945
+
+The server now serves MCP only at the exact `transport.path`, as it already did for the root path `/`. Before, a path such as `/mcp` also served MCP at every subpath such as `/mcp/anything`. Those requests now return HTTP 404.
+
+Trailing slashes are ignored, as in Apollo Router. A request to `/mcp/` still reaches `/mcp`, and `transport.path` now accepts a trailing slash, so `/mcp/` configures the same endpoint as `/mcp`. A trailing slash in `health_check.path` is ignored the same way.
+
+#### Serve Streamable HTTP at the root path - @DaleSeo #943
+
+`transport.path` now accepts `/`. The server then serves MCP at `/` only, so requests to other paths never reach MCP, and the health check and OAuth protected resource metadata stay at their own paths. A deployment whose public URL is the root, or whose proxy strips a prefix such as `/mcp`, no longer needs to rewrite every request onto a subpath.
+
+```yaml
+transport:
+  type: streamable_http
+  path: /
+```
+
+#### Expose selected app tools without the `app` parameter - @inanna-apollo #948
+
+A client that connects without the `app` parameter sees only server-wide operation tools, so using several apps took one connection per app. List app tools under `apps.expose_without_app_param` to add them to that connection. Each tool keeps its manifest name and opens its own app's UI.
+
+```yaml
+apps:
+  expose_without_app_param:
+    analytics: [usage_chart]
+    records: [lookup]
+```
+
+Startup fails if two selected apps list the same tool name. If a listed tool and an operation have the same name, clients see and call the app tool, not the operation.
+
+### Fixes
+
+#### Hide server-wide operation tools from app tool lists - @DaleSeo #946
+
+When a client connects to `/mcp?app=<name>`, `tools/list` now returns only the selected app's tools and, if enabled, the app-private `execute` tool. Previously, it also listed server-wide operation tools that the client could not call in app mode. Connect to `/mcp` without `?app=` to use those tools.
+
+#### Parse stringified JSON for list and input object arguments - @alexhof-shyftplan #940
+
+Some MCP clients send a list or input object argument as a JSON string
+instead of structured JSON, and the GraphQL server rejects the request. The
+server now parses such a string when the variable has a list or input object
+type and the string holds a JSON object or array. Strings for other variable
+types, invalid JSON, and JSON scalars are forwarded unchanged.
+
+#### Remove the startup warning about `transport.auth.resource` and `transport.path` - @DaleSeo #944
+
+The server no longer warns at startup when `transport.auth.resource` doesn't seem to match `transport.path`. It can't see its public URL, so the warning fired on correct setups behind a proxy. Instead, it logs the configured resource at startup, and the auth docs explain how to match it to the URL clients use.
+
+#### Serve a single-target app's resource when the URL has no `appTarget` - @DaleSeo #947
+
+Reading the resource of an app built for only one target failed with `Invalid apps target: no resource found for openai` (or `mcp`) unless the URL named that target. When the URL has no `appTarget`, the server now serves the one resource the app has. A target named in the URL must still match.
+
 ## 2.2.1 (2026-11-18)
 
 ### Fixes
