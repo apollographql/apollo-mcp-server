@@ -670,12 +670,14 @@ impl Config {
         // Auth first, then the rate limiter layered outside it.
         // Axum runs the outermost (last-added) layer first, so limited
         // requests are rejected before any token validation work.
-        let protected = router.layer(axum::middleware::from_fn_with_state(
+        // `route_layer` leaves the fallback alone, so a path that matches no
+        // route gets a 404 instead of a 401.
+        let protected = router.route_layer(axum::middleware::from_fn_with_state(
             auth_state,
             oauth_validate,
         ));
         let protected = match rate_limit_state {
-            Some(state) => protected.layer(axum::middleware::from_fn_with_state(
+            Some(state) => protected.route_layer(axum::middleware::from_fn_with_state(
                 state,
                 rate_limit::rate_limit,
             )),
@@ -1106,6 +1108,12 @@ mod tests {
     use http::header::{AUTHORIZATION, WWW_AUTHENTICATE};
     use tower::ServiceExt; // for .oneshot()
     use url::Url;
+
+    /// A router with the MCP route on it. `enable_middleware` protects routes that are
+    /// already registered, so it needs at least one.
+    fn mcp_router() -> Router {
+        Router::new().route("/mcp", get(|| async { "ok" }))
+    }
 
     #[allow(deprecated)]
     fn test_config() -> Config {
@@ -1740,7 +1748,7 @@ mod tests {
             // file:// URLs have no host
             config.servers = vec!["file:///some/path".to_string()];
 
-            let router = Router::new();
+            let router = mcp_router();
             let err = config
                 .enable_middleware(router, HashMap::new(), true, &Default::default())
                 .unwrap_err();
@@ -2142,7 +2150,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("file:///some/path").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
+                .enable_middleware(mcp_router(), HashMap::new(), true, &Default::default())
                 .unwrap_err();
 
             assert!(matches!(
@@ -2157,7 +2165,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("ftp://example.com/mcp").unwrap();
 
             let err = config
-                .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
+                .enable_middleware(mcp_router(), HashMap::new(), true, &Default::default())
                 .unwrap_err();
 
             assert!(matches!(
@@ -2172,7 +2180,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("http://localhost:4000/mcp").unwrap();
 
             let result =
-                config.enable_middleware(Router::new(), HashMap::new(), true, &Default::default());
+                config.enable_middleware(mcp_router(), HashMap::new(), true, &Default::default());
 
             assert!(result.is_ok());
         }
@@ -2183,7 +2191,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
             config.resource = Url::parse("https://mcp.example.com/mcp").unwrap();
 
             let result =
-                config.enable_middleware(Router::new(), HashMap::new(), true, &Default::default());
+                config.enable_middleware(mcp_router(), HashMap::new(), true, &Default::default());
 
             assert!(result.is_ok());
         }
@@ -3144,7 +3152,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&["server/discover"], &[], &[]);
 
                 let result = config.enable_middleware(
-                    Router::new(),
+                    mcp_router(),
                     HashMap::new(),
                     true,
                     &Default::default(),
@@ -3203,7 +3211,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
                 let _app = config
                     .enable_middleware(
-                        Router::new(),
+                        mcp_router(),
                         required_read_scope(),
                         true,
                         &Default::default(),
@@ -3222,7 +3230,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
                 let _app = config
                     .enable_middleware(
-                        Router::new(),
+                        mcp_router(),
                         required_read_scope(),
                         true,
                         &Default::default(),
@@ -3240,7 +3248,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 
                 let _app = config
                     .enable_middleware(
-                        Router::new(),
+                        mcp_router(),
                         required_read_scope(),
                         true,
                         &Default::default(),
@@ -3260,7 +3268,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.skip_token_validation = skip(&[], &[], &["x-api-key"]);
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
+                    .enable_middleware(mcp_router(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(logs_contain("skips token validation for every tool"));
@@ -3277,7 +3285,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scope_mode = ScopeMode::Disabled;
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
+                    .enable_middleware(mcp_router(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));
@@ -3291,7 +3299,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
                 config.scopes = vec![];
 
                 let _app = config
-                    .enable_middleware(Router::new(), HashMap::new(), true, &Default::default())
+                    .enable_middleware(mcp_router(), HashMap::new(), true, &Default::default())
                     .unwrap();
 
                 assert!(!logs_contain("skips token validation for every tool"));

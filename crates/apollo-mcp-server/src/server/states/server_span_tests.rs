@@ -20,13 +20,10 @@ use tracing_subscriber::registry;
 
 use super::running::Running;
 use super::running::test_support::{create_test_running, create_test_running_with_operation};
-use super::starting::{
-    build_http_service, mount_endpoint, with_client_address, with_telemetry_layers,
-};
+use super::starting::{build_http_service, with_client_address, with_telemetry_layers};
 use super::telemetry::w3c_text_map_propagator;
 use crate::generated::telemetry::TelemetryAttribute;
 use crate::health::{HealthCheck, HealthCheckConfig};
-use crate::server::EndpointPath;
 
 #[path = "mcp_trace_context_tests.rs"]
 mod mcp_trace_context;
@@ -78,7 +75,7 @@ impl ExportedSpans {
 /// layers, with the health check registered after them.
 fn production_router(running: Running) -> Router {
     let service = build_http_service(running, true, &Default::default());
-    let router = with_telemetry_layers(Router::new().nest_service("/mcp", service));
+    let router = with_telemetry_layers(Router::new().route_service("/mcp", service));
     HealthCheck::new(HealthCheckConfig::default()).enable_router(router)
 }
 
@@ -203,8 +200,7 @@ mod server_span {
     async fn records_the_root_route() {
         let spans = ExportedSpans::capture();
         let service = build_http_service(create_test_running(), true, &Default::default());
-        let root = EndpointPath::try_from("/".to_owned()).expect("valid path");
-        with_telemetry_layers(mount_endpoint(&root, service))
+        with_telemetry_layers(Router::new().route_service("/", service))
             .oneshot(mcp_request("/"))
             .await
             .expect("router responds");
@@ -750,19 +746,18 @@ mod inbound_trace_context {
 mod sub_paths {
     use super::*;
 
-    // axum reports no `MatchedPath` for a nested catch-all match, so subpaths
-    // of the MCP endpoint are traced without a route. Only the exact endpoint
-    // path gets a route-qualified span name.
+    // A subpath of the MCP endpoint matches no route, but the telemetry layers
+    // still see it on its way to the 404 fallback.
 
     #[tokio::test]
-    async fn are_named_after_the_method_alone() {
+    async fn name_the_span_after_the_method_alone() {
         let span = server_span_for(mcp_request("/mcp/anything")).await;
 
         assert_eq!(span.name, "POST");
     }
 
     #[tokio::test]
-    async fn record_no_route() {
+    async fn leave_http_route_off_the_span() {
         let span = server_span_for(mcp_request("/mcp/anything")).await;
 
         assert_eq!(attribute(&span, "http.route"), None);
@@ -825,7 +820,7 @@ mod span_tree {
             graphql.url().parse().expect("mock server URL is a URL"),
         );
         let service = build_http_service(running, false, &Default::default());
-        let response = with_telemetry_layers(Router::new().nest_service("/mcp", service))
+        let response = with_telemetry_layers(Router::new().route_service("/mcp", service))
             .oneshot(request)
             .await
             .expect("router responds");

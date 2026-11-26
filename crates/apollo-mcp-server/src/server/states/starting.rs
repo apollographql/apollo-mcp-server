@@ -9,6 +9,7 @@ use rmcp::transport::{StreamableHttpServerConfig, StreamableHttpService};
 use rmcp::{ServiceExt as _, transport::stdio};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
+use tower_http::normalize_path::NormalizePath;
 use tracing::{debug, error, info};
 
 use crate::server::states::telemetry::{expose_client_address, otel_context_middleware};
@@ -331,15 +332,23 @@ pub(super) fn build_http_service(
 }
 
 /// Both shutdown sources cancel transport streams before Axum drains connections.
+///
+/// Trailing slashes are trimmed before routing, so `/mcp/` reaches the `/mcp` route. The
+/// trim has to wrap the router, since a layer added inside it runs after routing.
 pub(super) async fn serve_http(
     listener: tokio::net::TcpListener,
     router: axum::Router,
     shutdown: CancellationToken,
     signal: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
+    // `with_state` turns every handler into a route once, as `Router`'s own
+    // `into_make_service_with_connect_info` does, instead of on each request.
+    let service = NormalizePath::trim_trailing_slash(router.with_state(()));
     axum::serve(
         listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+            SocketAddr,
+        >(service),
     )
     .with_graceful_shutdown(async move {
         tokio::select! {
@@ -359,21 +368,6 @@ fn with_cors(router: axum::Router, config: &CorsConfig) -> Result<axum::Router, 
         Ok(router.layer(cors_layer))
     } else {
         Ok(router)
-    }
-}
-
-/// Mounts the MCP service at `path`. Only the root is an exact match; any other path also
-/// routes its subpaths to the service.
-pub(super) fn mount_endpoint(
-    path: &EndpointPath,
-    service: StreamableHttpService<super::running::McpService, LocalSessionManager>,
-) -> axum::Router {
-    if path.is_root() {
-        // axum panics when nesting at the root. Streamable HTTP serves one URL, so an
-        // exact route loses nothing.
-        axum::Router::new().route_service("/", service)
-    } else {
-        axum::Router::new().nest_service(path.as_str(), service)
     }
 }
 
@@ -421,7 +415,7 @@ impl ListenerBuilder {
         cors: CorsConfig,
     ) -> Self {
         Self {
-            router: mount_endpoint(&path, service),
+            router: axum::Router::new().route_service(path.as_str(), service),
             listen_address,
             path,
             cors,
@@ -474,10 +468,10 @@ impl ListenerBuilder {
         };
         let listeners = match health_check.config().listen {
             None => {
-                let health_path = &health_check.config().path;
+                let health_path = health_check.config().route_path();
                 if self.path.as_str() == health_path {
                     return Err(ServerError::HealthPathConflict {
-                        health_path: health_path.clone(),
+                        health_path: health_path.to_owned(),
                         endpoint_path: self.path,
                     });
                 }
@@ -648,6 +642,7 @@ mod tests {
     #[rstest::rstest]
     #[case::nested_default_path("/v1/agents", "/mcp")]
     #[case::nested_parent("/v1/agents", "/v1")]
+    #[case::nested_subpath("/v1/agents", "/v1/agents/extra")]
     #[case::root_default_path("/", "/mcp")]
     #[case::root_scanner_probe("/", "/scanner-probe")]
     #[case::root_subpath("/", "/mcp/extra")]
@@ -661,13 +656,14 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case::default_path("/mcp")]
-    #[case::root("/")]
+    #[case::default_path("/mcp", "/mcp")]
+    #[case::root("/", "/")]
+    #[case::trailing_slash("/mcp/", "/mcp")]
     #[tokio::test]
-    async fn with_health_rejects_endpoint_path(#[case] path: &str) {
+    async fn with_health_rejects_endpoint_path(#[case] health_path: &str, #[case] path: &str) {
         let health_check = HealthCheck::new(HealthCheckConfig {
             enabled: true,
-            path: path.to_owned(),
+            path: health_path.to_owned(),
             ..Default::default()
         });
         let result = ListenerBuilder {
@@ -728,6 +724,34 @@ mod tests {
 
         let res = router.oneshot(get("/")).await.unwrap();
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[rstest::rstest]
+    #[case::without_health_check(false)]
+    #[case::with_health_check(true)]
+    #[tokio::test]
+    async fn with_auth_returns_not_found_outside_configured_path(#[case] health: bool) {
+        let auth: auth::Config = serde_json::from_value(serde_json::json!({
+            "servers": ["https://auth.example.com"],
+            "resource": "https://mcp.example.com/mcp",
+        }))
+        .unwrap();
+        let health_check = health.then(|| HealthCheck::new(HealthCheckConfig::default()));
+        let listeners = listener_builder("/mcp")
+            .with_auth(
+                Some(Box::new(auth)),
+                HashMap::new(),
+                true,
+                &TrustedProxies::default(),
+            )
+            .unwrap()
+            .with_health(health_check.as_ref())
+            .unwrap();
+        let router = listeners.into_iter().next().unwrap().router;
+
+        let res = router.oneshot(get("/mcp/anything")).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
@@ -884,6 +908,34 @@ mod tests {
             ),
             TrustedProxies::default(),
         );
+        let (_, body) = get_through_serve_http(router, "/").await;
+
+        assert_eq!(body, "true");
+    }
+
+    #[rstest::rstest]
+    #[case::exact("/v1/agents")]
+    #[case::trailing_slash("/v1/agents/")]
+    #[case::trailing_slashes("/v1/agents//")]
+    #[tokio::test]
+    async fn serve_http_ignores_trailing_slashes(#[case] uri: &str) {
+        let (status, _) = get_through_serve_http(listener_builder("/v1/agents").router, uri).await;
+
+        assert_ne!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn serve_http_returns_not_found_for_subpath_with_trailing_slash() {
+        let router = listener_builder("/v1/agents").router;
+
+        let (status, _) = get_through_serve_http(router, "/v1/agents/extra/").await;
+
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// Serves `router` on a local port through `serve_http`, sends one GET to `uri`, and
+    /// shuts the server down.
+    async fn get_through_serve_http(router: axum::Router, uri: &str) -> (StatusCode, String) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let shutdown = CancellationToken::new();
@@ -894,15 +946,14 @@ mod tests {
             std::future::pending(),
         ));
 
-        let body = reqwest::get(format!("http://{address}/"))
-            .await
-            .unwrap()
-            .text()
+        let response = reqwest::get(format!("http://{address}{uri}"))
             .await
             .unwrap();
+        let status = response.status();
+        let body = response.text().await.unwrap();
         shutdown.cancel();
         server.await.unwrap().unwrap();
 
-        assert_eq!(body, "true");
+        (status, body)
     }
 }

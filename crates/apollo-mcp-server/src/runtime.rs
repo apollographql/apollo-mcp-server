@@ -82,10 +82,10 @@ fn validate(config: Config) -> Result<Config, figment::Error> {
     if let Transport::StreamableHttp { path, .. } = &config.transport
         && health_check.enabled
         && health_check.listen.is_none()
-        && health_check.path == path.as_str()
+        && health_check.route_path() == path.as_str()
     {
         let conflict = ServerError::HealthPathConflict {
-            health_path: health_check.path.clone(),
+            health_path: health_check.route_path().to_owned(),
             endpoint_path: path.clone(),
         };
         return Err(figment::Error::from(conflict.to_string()));
@@ -306,6 +306,9 @@ mod test {
             assert_eq!(transport_path(read_config(path)?), "/");
 
             jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "/agents/");
+            assert_eq!(transport_path(read_config(path)?), "/agents");
+
+            jail.set_env("APOLLO_MCP_TRANSPORT__PATH", "agents");
             assert!(read_config(path).is_err());
             Ok(())
         });
@@ -313,6 +316,7 @@ mod test {
 
     #[rstest::rstest]
     #[case::same_path("/mcp", None, false)]
+    #[case::trailing_slash("/mcp/", None, false)]
     #[case::below_endpoint("/mcp/health", None, true)]
     #[case::separate_listener("/mcp", Some("127.0.0.1:9000"), true)]
     fn it_validates_health_path_against_transport_path(

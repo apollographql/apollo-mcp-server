@@ -650,7 +650,7 @@ async fn task_methods_keep_endpoint_authentication(#[case] method: &str) {
         crate::server::states::starting::build_http_service(running, false, &Default::default());
     let router = config
         .enable_middleware(
-            Router::new().nest_service("/mcp", service),
+            Router::new().route_service("/mcp", service),
             HashMap::new(),
             false,
             &Default::default(),

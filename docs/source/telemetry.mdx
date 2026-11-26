@@ -299,7 +299,7 @@ As a result, Datadog trace metrics such as `trace.http.server.request.hits` can 
 
 ### Span Attributes
 
-The inbound request span is named `{method} {route}`, for example `POST /mcp`. A request to a subpath of the MCP endpoint, such as `/mcp/anything`, matches no route, so the server names that span after its method alone. The span follows the OpenTelemetry [semantic conventions for HTTP server spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span):
+The inbound request span is named `{method} {route}`, for example `POST /mcp`. The span follows the OpenTelemetry [semantic conventions for HTTP server spans](https://opentelemetry.io/docs/specs/semconv/http/http-spans/#http-server-span):
 
 | Attribute                   | Description                                                                             |
 | --------------------------- | --------------------------------------------------------------------------------------- |

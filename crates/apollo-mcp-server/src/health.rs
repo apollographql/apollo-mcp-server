@@ -111,6 +111,17 @@ pub struct HealthCheckConfig {
     pub readiness: ReadinessConfig,
 }
 
+impl HealthCheckConfig {
+    /// The path the health check is routed at. Trailing slashes are trimmed, as they are
+    /// from requests, so `/health/` is the same as `/health`.
+    pub fn route_path(&self) -> &str {
+        match self.path.trim_end_matches('/') {
+            "" => "/",
+            path => path,
+        }
+    }
+}
+
 impl Default for HealthCheckConfig {
     fn default() -> Self {
         Self {
@@ -223,9 +234,17 @@ impl HealthCheck {
     /// Build a router containing just the health check endpoint.
     ///
     /// Used on its own when `HealthCheckConfig::listen` is set, so the health check is served
-    /// on its own socket instead of being merged into the main router. See [`Self::enable_router`]
-    /// for the merged case.
+    /// on its own socket instead of on the main router. See [`Self::enable_router`] for the
+    /// shared case.
     pub fn router(&self) -> Router {
+        self.enable_router(Router::new())
+    }
+
+    /// Add the health check endpoint to the provided router.
+    ///
+    /// The route is added directly, not merged in from a second router: a merge swaps the
+    /// router's fallback for the other router's, dropping any layers already applied to it.
+    pub fn enable_router(&self, router: Router) -> Router {
         /// Health check endpoint handler
         async fn health_endpoint(
             State(health_check): State<HealthCheck>,
@@ -239,16 +258,10 @@ impl HealthCheck {
             Ok((status_code, Json(json!(health))))
         }
 
-        Router::new()
-            .route(&self.config.path, get(health_endpoint))
-            .with_state(self.clone())
-    }
-
-    /// Enable health check router.
-    ///
-    /// Creates a router with the health check endpoint and merges it with the provided router.
-    pub fn enable_router(&self, router: Router) -> Router {
-        router.merge(self.router())
+        router.route(
+            self.config.route_path(),
+            get(health_endpoint).with_state(self.clone()),
+        )
     }
 }
 
@@ -399,6 +412,19 @@ mod tests {
             let res = app.oneshot(req).await.unwrap();
 
             assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        #[rstest::rstest]
+        #[case::trailing_slash("/custom-health/", "/custom-health")]
+        #[case::root("/", "/")]
+        #[case::well_known("/.well-known/health", "/.well-known/health")]
+        fn route_path_trims_trailing_slashes(#[case] path: &str, #[case] expected: &str) {
+            let config = HealthCheckConfig {
+                path: path.to_string(),
+                ..Default::default()
+            };
+
+            assert_eq!(config.route_path(), expected);
         }
 
         #[tokio::test]

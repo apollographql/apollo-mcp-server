@@ -164,7 +164,7 @@ These fields are under the top-level `health_check` key. Learn more about [healt
 | Option                        | Type             | Default     | Description                                                                        |
 |:------------------------------|:-----------------|:------------|:-----------------------------------------------------------------------------------|
 | `enabled`                     | `bool`           | `false`     | Enable health check endpoints                                                      |
-| `path`                        | `string`         | `"/health"` | Custom health check endpoint path                                                  |
+| `path`                        | `string`         | `"/health"` | Custom health check endpoint path. A trailing `/` is ignored.                       |
 | `listen`                      | `socket address` |             | Serve health checks on a separate address/port instead of the main listener        |
 | `readiness`                   | `object`         |             | Readiness check configuration                                                      |
 | `readiness.allowed`           | `number`         | `100`       | Maximum number of rejections allowed in a sampling interval before marking unready |
@@ -445,7 +445,7 @@ Some transport types support further configuration. For `streamable_http`, you c
 | :---------------- | :--------------- | :---------- | :------------------------------------------------------------- |
 | `address`         | `IpAddr`         | `127.0.0.1` | The IP address to bind to                                      |
 | `port`            | `u16`            | `8000`      | The port to bind to                                            |
-| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on. Must start with `/` and contain only letters, digits, `-`, `_`, `.`, `~`, and `/` separators. Set it to `/` to serve MCP at the root; the server then serves MCP at `/` only, and requests to other paths never reach MCP. A trailing `/` and paths under `/.well-known` aren't allowed. When the health check shares the main listener, its `path` can't be the same as this path. |
+| `path`            | `String`         | `/mcp`      | The URL path to serve MCP requests on, such as `/mcp`, or `/` for the root. The server serves MCP at this exact path only, not its subpaths. A trailing `/` is ignored in this value and in requests, so `/mcp/` matches `/mcp`. Must start with `/`, contain only letters, digits, `-`, `_`, `.`, `~`, and `/`, and not be under `/.well-known`. When the health check shares the main listener, its `path` must differ. |
 | `stateful_mode`   | `bool`           | `true`      | Enable legacy HTTP sessions for clients on protocol versions before `2026-07-28`. When disabled, those clients are sessionless and unsolicited tool-change notifications are unavailable. Clients on `2026-07-28` or later are always sessionless, regardless of this setting. |
 | `host_validation` | `HostValidation` |             | Host header validation configuration                           |
 | `trusted_proxies` | `List<string>`   | `[]`        | Reverse proxies and load balancers in front of the server, as CIDR ranges or single IP addresses. Spans and the per-client rate limit use the client a trusted proxy names in `X-Forwarded-For` as the client address. See [Client addresses](/apollo-mcp-server/telemetry#client-addresses). |
