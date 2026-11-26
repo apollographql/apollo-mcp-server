@@ -221,6 +221,8 @@ apps:
 
 Clients that connect to `/mcp` then see `usage_chart` and `lookup` next to the server-wide tools. Each tool keeps its manifest name and opens its own app's UI. A connection with `?app=analytics` still loads the whole analytics app.
 
+The list selects which tools a client can see and call. It doesn't limit what a call returns: calling an exposed tool runs every [`@prefetch`](#prefetch-directive) operation in its app, including ones whose tools aren't listed, as on a `?app=` connection.
+
 Tool names must be unique on the connection:
 
 - Startup fails if two selected apps list the same tool name, if a selected tool has the name of an enabled built-in tool, or if two selected apps have the same resource path.
