@@ -210,11 +210,11 @@ Use the `app` query parameter to specify which app to load: `https://your-server
 
 ## Expose app tools without the app parameter
 
-A client that connects without the `app` parameter sees only server-wide operation tools, so each app needs its own `?app=` connection. To use tools from several apps on one connection, list them by app name under `apps.expose_on_connect` in the server configuration:
+A client that connects without the `app` parameter sees only server-wide operation tools, so each app needs its own `?app=` connection. To use tools from several apps on one connection, list them by app name under `apps.expose_without_app_param` in the server configuration:
 
 ```yaml
 apps:
-  expose_on_connect:
+  expose_without_app_param:
     analytics: [usage_chart]
     records: [lookup]
 ```
@@ -228,7 +228,7 @@ Tool names must be unique on the connection:
 
 Startup also fails if a listed app or tool doesn't exist. The server restarts when its configuration file changes, so a mistake in a reloaded configuration stops the server.
 
-`expose_on_connect` doesn't replace an operation source. The server still needs operations or an enabled introspection tool to start.
+`expose_without_app_param` doesn't replace an operation source. The server still needs operations or an enabled introspection tool to start.
 
 ## App target
 
