@@ -228,7 +228,7 @@ Tool names must be unique on the connection:
 - Startup fails if two selected apps list the same tool name, if a selected tool has the name of an enabled built-in tool, or if two selected apps have the same resource path.
 - A selected tool that shares a name with a server-wide operation replaces that operation, and the server logs a warning. An entry for that name in `transport.auth.skip_token_validation.tools` is ignored, so the app tool always requires a token.
 
-Startup also fails if a listed app or tool doesn't exist. The server restarts when its configuration file changes, so a mistake in a reloaded configuration stops the server.
+Startup also fails if a listed app or tool doesn't exist. If you make one of these mistakes in the configuration file while a `streamable_http` server is running, the server logs the error and [keeps its current configuration](/apollo-mcp-server/config-file).
 
 `expose_without_app_param` doesn't replace an operation source. The server still needs operations or an enabled introspection tool to start.
 

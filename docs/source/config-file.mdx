@@ -9,6 +9,8 @@ You can configure Apollo MCP Server using a configuration file. You can also [ov
 
 The server watches the configuration file for changes. When the file is modified, the server automatically restarts with the updated configuration. For `streamable_http` transport, the restart happens in-place. For `stdio` transport, the process exits with code 75 so the parent process can restart it.
 
+For `streamable_http` transport, the server runs its startup checks on the updated configuration before it restarts. If the configuration fails a check, the server logs the error and keeps running with its current configuration. For example, this happens when the file doesn't parse, or when [`apps.expose_without_app_param`](/apollo-mcp-server/mcp-apps-reference#expose-app-tools-without-the-app-parameter) lists a tool that doesn't exist. The server can't check the listen address until it restarts, so it still stops if it can't bind the updated `address` or `port`.
+
 <Note>
 
 Changes to `logging` and `telemetry` configuration are not applied during in-process hot-reload (`streamable_http` transport). These settings are initialized once at startup and require a full process restart to take effect.

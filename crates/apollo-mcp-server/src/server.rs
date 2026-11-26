@@ -3,6 +3,8 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use futures::{StreamExt as _, stream};
+
 use apollo_mcp_registry::uplink::schema::SchemaSource;
 use bon::bon;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
@@ -34,19 +36,10 @@ pub use states::{MCP_SERVER_OPERATION_DURATION, MCP_SERVER_OPERATION_DURATION_KE
 
 use states::StateMachine;
 
-/// The reason the server shut down, used to decide whether to restart.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShutdownReason {
-    /// Normal shutdown (SIGTERM, CTRL+C)
-    Shutdown,
-    /// Config changed, server should restart with new config
-    Restart,
-}
-
-/// A callback that validates the current config file before restarting the server.
-/// Returns `Ok(())` if the config is valid, or an error describing why it is not.
-pub type ConfigValidator =
-    Arc<dyn Fn() -> Result<(), Box<dyn std::error::Error + Send + Sync>> + Send + Sync>;
+/// A callback that builds a server from the current configuration. See
+/// [`Server::start_reloading`].
+pub type ConfigReloader =
+    Arc<dyn Fn() -> Result<Server, Box<dyn std::error::Error + Send + Sync>> + Send + Sync>;
 
 /// An Apollo MCP Server
 pub struct Server {
@@ -89,7 +82,6 @@ pub struct Server {
     health_check: HealthCheckConfig,
     cors: CorsConfig,
     server_info: ServerInfoConfig,
-    config_validator: Option<ConfigValidator>,
     instructions: Option<String>,
     caching: Caching,
     tasks: crate::tasks::TasksConfig,
@@ -205,7 +197,6 @@ impl Server {
         health_check: HealthCheckConfig,
         cors: CorsConfig,
         server_info: ServerInfoConfig,
-        config_validator: Option<ConfigValidator>,
         instructions: Option<String>,
         #[builder(default)] caching: Caching,
         #[builder(default)] tasks: crate::tasks::TasksConfig,
@@ -255,35 +246,32 @@ impl Server {
             health_check,
             cors,
             server_info,
-            config_validator,
             instructions,
             caching,
             tasks,
         }
     }
 
-    pub async fn start(self) -> Result<ShutdownReason, ServerError> {
-        StateMachine {}.start(self).await
+    /// Runs the server until it shuts down.
+    pub async fn start(self) -> Result<(), ServerError> {
+        StateMachine::new(self)
+            .await
+            .run(stream::empty().boxed())
+            .await
+    }
+
+    /// Runs the server until it shuts down, restarting it in place when the configuration
+    /// file changes or the process receives `SIGHUP`. The server calls `reloader` on each
+    /// change, and is replaced only if the server it returns passes startup.
+    pub async fn start_reloading(self, reloader: ConfigReloader) -> Result<(), ServerError> {
+        let reloads = StateMachine::reloads(self.config_path.as_deref(), reloader);
+        StateMachine::new(self).await.run(reloads).await
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ShutdownReason, Transport};
-
-    #[test]
-    fn shutdown_reason_is_copy() {
-        let reason = ShutdownReason::Restart;
-        let copy = reason;
-        assert_eq!(reason, copy);
-    }
-
-    #[test]
-    fn shutdown_reason_equality() {
-        assert_eq!(ShutdownReason::Shutdown, ShutdownReason::Shutdown);
-        assert_eq!(ShutdownReason::Restart, ShutdownReason::Restart);
-        assert_ne!(ShutdownReason::Shutdown, ShutdownReason::Restart);
-    }
+    use super::Transport;
 
     #[test]
     fn sse_transport_is_rejected_at_parse_time() {

@@ -7,7 +7,7 @@ use apollo_mcp_registry::uplink::schema::SchemaSource;
 use apollo_mcp_server::custom_scalar_map::CustomScalarMap;
 use apollo_mcp_server::errors::ServerError;
 use apollo_mcp_server::operations::OperationSource;
-use apollo_mcp_server::server::{ConfigValidator, Server, ShutdownReason, Transport};
+use apollo_mcp_server::server::{ConfigReloader, Server, Transport};
 use clap::Parser;
 use clap::builder::Styles;
 use clap::builder::styling::{AnsiColor, Effects};
@@ -48,32 +48,22 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    // For stdio transport, spawn a background config watcher that exits the process
-    // when the config file changes, since the stdio event loop blocks and never
-    // polls the config watch stream in the state machine.
+    let server = build_server(config_path.as_deref())?;
+
+    // The stdio event loop blocks, so the server can't restart in place. Background tasks
+    // exit the process when the configuration changes instead.
     if matches!(config.transport, Transport::Stdio {}) {
         if let Some(ref path) = config_path {
             spawn_stdio_config_watcher(path.clone());
         }
-        spawn_stdio_sighup_handler(config_path.clone());
+        spawn_stdio_sighup_handler(config_path);
+        server.start().await?;
+    } else {
+        let reloader: ConfigReloader =
+            Arc::new(move || build_server(config_path.as_deref()).map_err(Into::into));
+        server.start_reloading(reloader).await?;
     }
-
-    loop {
-        let server = build_server(config_path.as_deref())?;
-        match server.start().await {
-            Ok(ShutdownReason::Shutdown) => break Ok(()),
-            Ok(ShutdownReason::Restart) => {
-                info!("Config changed, restarting server...");
-                warn!(
-                    "Logging and telemetry configuration changes require a full process restart to take effect"
-                );
-                // Brief delay to let the port be released
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                continue;
-            }
-            Err(e) => break Err(e.into()),
-        }
-    }
+    Ok(())
 }
 
 /// Load and parse configuration from file or environment.
@@ -90,12 +80,6 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
     if config.tasks.enabled {
         runtime::telemetry::suppress_rmcp_debug();
     }
-
-    let config_validator: Option<ConfigValidator> = config_path.map(|p| {
-        let path = p.to_path_buf();
-        Arc::new(move || load_config(Some(&path)).map(|_| ()).map_err(|e| e.into()))
-            as ConfigValidator
-    });
 
     // `Config` redacts secret-wrapped fields in `Debug`, but ordinary header values, including
     // expanded environment values, remain visible.
@@ -209,7 +193,6 @@ fn build_server(config_path: Option<&std::path::Path>) -> anyhow::Result<Server>
         .health_check(config.health_check)
         .cors(config.cors)
         .server_info(config.server_info)
-        .maybe_config_validator(config_validator)
         .maybe_instructions(config.instructions)
         .caching(config.caching)
         .tasks(config.tasks)

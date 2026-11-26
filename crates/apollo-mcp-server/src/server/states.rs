@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use apollo_compiler::{Schema, validation::Valid};
 use apollo_federation::{ApiSchemaOptions, Supergraph};
 use apollo_mcp_registry::files;
 use apollo_mcp_registry::uplink::schema::{SchemaState, event::Event as SchemaEvent};
+use futures::stream::{BoxStream, SelectAll};
 use futures::{FutureExt as _, Stream, StreamExt as _, stream};
 use reqwest::header::HeaderMap;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use url::Url;
 
 use crate::{
@@ -22,7 +24,7 @@ use crate::{
     server_info::ServerInfoConfig,
 };
 
-use super::{ConfigValidator, Server, ServerEvent, ShutdownReason, Transport};
+use super::{ConfigReloader, Server, ServerEvent, Transport};
 
 mod configuring;
 mod operations_configured;
@@ -41,9 +43,15 @@ use configuring::Configuring;
 use operations_configured::OperationsConfigured;
 use running::Running;
 use schema_configured::SchemaConfigured;
-use starting::Starting;
+use starting::{Ready, Starting};
 
-pub(super) struct StateMachine {}
+pub(super) struct StateMachine {
+    events: SelectAll<BoxStream<'static, ServerEvent>>,
+    state: State,
+}
+
+/// Servers built from each configuration change, ready to replace the running one.
+pub(super) type Reloads = BoxStream<'static, StateMachine>;
 
 /// Common configuration options for the states
 struct Config {
@@ -89,8 +97,7 @@ struct Config {
 }
 
 impl StateMachine {
-    pub(crate) async fn start(self, server: Server) -> Result<ShutdownReason, ServerError> {
-        let config_validator = server.config_validator;
+    pub(super) async fn new(server: Server) -> Self {
         let schema_stream = server
             .schema_source
             .into_stream()
@@ -99,18 +106,14 @@ impl StateMachine {
         let operation_stream = server.operation_source.into_stream().await.boxed();
         let ctrl_c_stream = Self::ctrl_c_stream().boxed();
         let rhai_stream = Self::rhai_watch_stream(&server.rhai_dir).boxed();
-        let config_stream = Self::config_watch_stream(server.config_path.as_deref()).boxed();
-        let sighup_stream = Self::sighup_stream().boxed();
-        let mut stream = stream::select_all(vec![
+        let events = stream::select_all(vec![
             schema_stream,
             operation_stream,
             ctrl_c_stream,
             rhai_stream,
-            config_stream,
-            sighup_stream,
         ]);
 
-        let mut state = State::Configuring(Configuring {
+        let state = State::Configuring(Configuring {
             config: Config {
                 rhai_dir: server.rhai_dir,
                 apps_dir: server.apps_dir,
@@ -154,43 +157,134 @@ impl StateMachine {
             },
         });
 
-        while let Some(event) = stream.next().await {
-            let tasks = match &state {
-                State::Running(running) => running.tasks.clone(),
-                _ => None,
-            };
-            let next = Self::process_event(state, event, &config_validator).await;
-            // Every exit from Running, including errors, ends its tasks.
-            if !matches!(&next, Ok(State::Running(_)))
-                && let Some(tasks) = tasks
-            {
-                tasks.shutdown().await;
+        Self { events, state }
+    }
+
+    /// Builds a server from each configuration change and runs its startup. A change that
+    /// fails is logged and skipped, so the running server keeps its configuration.
+    pub(super) fn reloads(config_path: Option<&Path>, reloader: ConfigReloader) -> Reloads {
+        let changes = stream::select(
+            Self::config_watch_stream(config_path),
+            Self::sighup_stream(),
+        );
+        Self::reloads_on(changes.boxed(), reloader)
+    }
+
+    fn reloads_on(changes: BoxStream<'static, ()>, reloader: ConfigReloader) -> Reloads {
+        stream::unfold(changes, move |mut changes| {
+            let reloader = reloader.clone();
+            async move {
+                loop {
+                    changes.next().await?;
+                    // The newest change wins, so a startup that never finishes can't hold
+                    // back a corrected configuration.
+                    loop {
+                        tokio::select! {
+                            biased;
+                            Some(()) = changes.next() => {}
+                            next = Self::reload(&reloader) => match next {
+                                Some(next) => return Some((next, changes)),
+                                None => break,
+                            },
+                        }
+                    }
+                }
             }
-            state = next?;
-            if let State::Starting(starting) = state {
-                state = starting.start().await.into();
+        })
+        // `run` polls this again after it ends, which `unfold` alone doesn't allow.
+        .fuse()
+        .boxed()
+    }
+
+    async fn reload(reloader: &ConfigReloader) -> Option<Self> {
+        let server = reloader()
+            .inspect_err(|e| {
+                error!("Config changed but contains errors, keeping current configuration: {e}")
+            })
+            .ok()?;
+        let next = Self::new(server).await.prepare().await;
+        match &next.state {
+            State::Ready(_) => Some(next),
+            State::Error(e) => {
+                error!(
+                    "Config changed but the server can't start with it, keeping current configuration: {e}"
+                );
+                None
             }
-            if matches!(
-                &state,
-                State::Error(_) | State::Stopping | State::Restarting
-            ) {
+            // Startup was interrupted, for example by a shutdown signal.
+            _ => None,
+        }
+    }
+
+    /// Runs startup until the server is ready to serve, or startup ends another way.
+    async fn prepare(mut self) -> Self {
+        while matches!(
+            self.state,
+            State::Configuring(_) | State::SchemaConfigured(_) | State::OperationsConfigured(_)
+        ) {
+            let Some(event) = self.events.next().await else {
                 break;
+            };
+            self = self.advance(event).await;
+        }
+        self
+    }
+
+    pub(super) async fn run(mut self, mut reloads: Reloads) -> Result<(), ServerError> {
+        loop {
+            if let State::Ready(ready) = self.state {
+                self.state = ready.serve().await.into();
+            }
+            match self.state {
+                State::Error(e) => return Err(e),
+                State::Stopping => return Ok(()),
+                _ => {}
+            }
+            tokio::select! {
+                event = self.events.next() => {
+                    let Some(event) = event else {
+                        return Ok(());
+                    };
+                    self = self.advance(event).await;
+                }
+                Some(next) = reloads.next() => {
+                    info!("Config changed, restarting server...");
+                    warn!(
+                        "Logging and telemetry configuration changes require a full process restart to take effect"
+                    );
+                    self.advance(ServerEvent::Shutdown).await;
+                    // Brief delay to let the port be released
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    self = next;
+                }
             }
         }
-        match state {
-            State::Error(e) => Err(e),
-            State::Restarting => Ok(ShutdownReason::Restart),
-            _ => Ok(ShutdownReason::Shutdown),
+    }
+
+    async fn advance(mut self, event: ServerEvent) -> Self {
+        let tasks = match &self.state {
+            State::Running(running) => running.tasks.clone(),
+            _ => None,
+        };
+        let mut next = Self::process_event(self.state, event)
+            .await
+            .unwrap_or_else(State::Error);
+        // Every exit from Running, including errors, ends its tasks.
+        if !matches!(&next, State::Running(_))
+            && let Some(tasks) = tasks
+        {
+            tasks.shutdown().await;
         }
+        if let State::Starting(starting) = next {
+            next = starting.prepare().await.into();
+        }
+        self.state = next;
+        self
     }
 
     /// Process a single event against the current state, returning the new state.
     #[allow(clippy::result_large_err)]
-    async fn process_event(
-        state: State,
-        event: ServerEvent,
-        config_validator: &Option<ConfigValidator>,
-    ) -> Result<State, ServerError> {
+    async fn process_event(state: State, event: ServerEvent) -> Result<State, ServerError> {
         Ok(match event {
             ServerEvent::SchemaUpdated(registry_event) => match registry_event {
                 SchemaEvent::UpdateSchema(schema_state) => {
@@ -264,21 +358,6 @@ impl StateMachine {
                 }
                 other => other,
             },
-            ServerEvent::ConfigChanged => {
-                if let Some(validate) = config_validator
-                    && let Err(e) = validate()
-                {
-                    tracing::error!(
-                        "Config file changed but contains errors, keeping current configuration: {e}"
-                    );
-                    return Ok(state);
-                }
-                info!("Config file changed, triggering server restart");
-                if let State::Running(ref running) = state {
-                    running.cancellation_token.cancel();
-                }
-                State::Restarting
-            }
             ServerEvent::Shutdown => match state {
                 State::Running(running) => {
                     running.cancellation_token.cancel();
@@ -324,33 +403,29 @@ impl StateMachine {
 
     /// Watch the config file for changes, mirroring the Rhai watch stream pattern.
     /// Skips the initial event that files::watch always emits on startup.
-    fn config_watch_stream(config_path: Option<&Path>) -> impl Stream<Item = ServerEvent> {
+    fn config_watch_stream(config_path: Option<&Path>) -> impl Stream<Item = ()> + use<> {
         match config_path {
-            Some(path) if path.exists() => files::watch(path)
-                .skip(1)
-                .map(|_| ServerEvent::ConfigChanged)
-                .boxed(),
+            Some(path) if path.exists() => files::watch(path).skip(1).boxed(),
             _ => stream::empty().boxed(),
         }
     }
 
     /// Listen for SIGHUP to trigger a config reload (Unix only).
-    fn sighup_stream() -> impl Stream<Item = ServerEvent> {
+    fn sighup_stream() -> impl Stream<Item = ()> {
         #[cfg(unix)]
         {
-            use tokio::signal::unix::SignalKind;
+            use tokio::signal::unix::{SignalKind, signal};
 
-            async fn wait_for_sighup() -> Option<ServerEvent> {
-                let mut signal = tokio::signal::unix::signal(SignalKind::hangup()).ok()?;
-                signal.recv().await?;
-                Some(ServerEvent::ConfigChanged)
+            match signal(SignalKind::hangup()) {
+                Ok(hangup) => stream::unfold(hangup, |mut hangup| async move {
+                    hangup.recv().await.map(|()| ((), hangup))
+                })
+                .boxed(),
+                Err(e) => {
+                    error!("Failed to install SIGHUP handler: {e}");
+                    stream::empty().boxed()
+                }
             }
-
-            wait_for_sighup()
-                .map(stream::iter)
-                .into_stream()
-                .flatten()
-                .boxed()
         }
 
         #[cfg(not(unix))]
@@ -403,10 +478,10 @@ enum State {
     SchemaConfigured(SchemaConfigured),
     OperationsConfigured(OperationsConfigured),
     Starting(Starting),
+    Ready(Ready),
     Running(Running),
     Error(ServerError),
     Stopping,
-    Restarting,
 }
 
 impl From<Configuring> for State {
@@ -460,6 +535,15 @@ impl From<Result<Starting, ServerError>> for State {
     }
 }
 
+impl From<Result<Ready, ServerError>> for State {
+    fn from(result: Result<Ready, ServerError>) -> Self {
+        match result {
+            Ok(ready) => State::Ready(ready),
+            Err(error) => State::Error(error),
+        }
+    }
+}
+
 impl From<Running> for State {
     fn from(running: Running) -> Self {
         State::Running(running)
@@ -483,14 +567,17 @@ impl From<ServerError> for State {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
     use std::path::PathBuf;
     use std::str::FromStr;
     use std::sync::Arc;
+    use std::time::Duration;
 
     use apollo_compiler::Schema;
     use apollo_mcp_registry::platform_api::operation_collections::error::CollectionError;
-    use apollo_mcp_registry::uplink::schema::SchemaState;
+    use apollo_mcp_registry::uplink::schema::{SchemaSource, SchemaState};
+    use assert_fs::{TempDir, prelude::*};
+    use futures::{StreamExt as _, stream};
     use reqwest::header::HeaderMap;
     use tokio::sync::RwLock;
 
@@ -503,12 +590,12 @@ mod tests {
     use crate::event::Event as ServerEvent;
     use crate::health::HealthCheckConfig;
     use crate::host_validation::HostValidationConfig;
-    use crate::operations::{MutationMode, RawOperation};
-    use crate::server::Transport;
+    use crate::operations::{MutationMode, OperationSource, RawOperation};
+    use crate::server::{ConfigReloader, Server, Transport};
     use crate::server_info::ServerInfoConfig;
     use apollo_mcp_rhai::SharedRhaiEngine;
 
-    use super::{Config, Configuring, Running, State, StateMachine};
+    use super::{Config, Configuring, Reloads, Running, State, StateMachine};
 
     fn create_running_server() -> Running {
         let schema = Schema::parse("type Query { id: String }", "schema.graphql")
@@ -604,17 +691,7 @@ mod tests {
     }
 
     async fn process_event(state: State, event: ServerEvent) -> State {
-        StateMachine::process_event(state, event, &None)
-            .await
-            .unwrap_or_else(State::Error)
-    }
-
-    async fn process_event_with_validator(
-        state: State,
-        event: ServerEvent,
-        validator: &Option<super::ConfigValidator>,
-    ) -> State {
-        StateMachine::process_event(state, event, validator)
+        StateMachine::process_event(state, event)
             .await
             .unwrap_or_else(State::Error)
     }
@@ -788,96 +865,229 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn config_changed_transitions_running_to_restarting() {
-        let running = create_running_server();
-        let state = State::Running(running);
-
-        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
-
-        assert!(
-            matches!(new_state, State::Restarting),
-            "expected server to transition to Restarting after ConfigChanged"
-        );
-    }
-
-    #[tokio::test]
-    async fn config_changed_cancels_token_when_running() {
-        let running = create_running_server();
-        let token = running.cancellation_token.clone();
-        let state = State::Running(running);
-
-        assert!(!token.is_cancelled(), "token should not be cancelled yet");
-
-        let _new_state = process_event(state, ServerEvent::ConfigChanged).await;
-
-        assert!(
-            token.is_cancelled(),
-            "cancellation token should be cancelled after ConfigChanged"
-        );
-    }
-
-    #[tokio::test]
-    async fn config_changed_transitions_configuring_to_restarting() {
-        let state = State::Configuring(Configuring {
-            config: test_config(),
+    /// A server with one app, `records`, whose only tool is `Lookup`, and which exposes
+    /// `exposed_tool` of that app without the app parameter.
+    fn server_exposing(exposed_tool: &str) -> (Server, TempDir) {
+        let apps_dir = TempDir::new().unwrap();
+        let manifest = serde_json::json!({
+            "format": "apollo-ai-app-manifest",
+            "version": "1",
+            "hash": "abcdef",
+            "resource": "https://example.com/widget/index.html",
+            "operations": [{
+                "body": "query Hello { hello }",
+                "tools": [{ "name": "Lookup", "description": "Says hello" }],
+            }],
         });
+        apps_dir
+            .child("records")
+            .child(".application-manifest.json")
+            .write_str(&manifest.to_string())
+            .unwrap();
+        let server = Server::builder()
+            .rhai_dir(PathBuf::from("rhai"))
+            .apps_dir(apps_dir.path().into())
+            .expose_without_app_param(
+                [("records".to_owned(), vec![exposed_tool.to_owned()])].into(),
+            )
+            .transport(Transport::StreamableHttp {
+                auth: None,
+                address: "127.0.0.1".parse().unwrap(),
+                port: 0,
+                path: Default::default(),
+                stateful_mode: false,
+                host_validation: HostValidationConfig::default(),
+                trusted_proxies: Default::default(),
+            })
+            .schema_source(SchemaSource::from("type Query { hello: String }"))
+            .operation_source(OperationSource::None)
+            .endpoint("http://localhost:4000".parse().unwrap())
+            .headers(HeaderMap::new())
+            .forward_headers(vec![])
+            .execute_introspection(false)
+            .validate_introspection(false)
+            .introspect_introspection(false)
+            .search_introspection(false)
+            .introspect_minify(false)
+            .search_minify(false)
+            .custom_scalar_map(None)
+            .mutation_mode(MutationMode::None)
+            .disable_type_description(false)
+            .disable_schema_description(false)
+            .enable_output_schema(false)
+            .disable_auth_token_passthrough(false)
+            .descriptions(HashMap::new())
+            .annotations(HashMap::new())
+            .required_scopes(HashMap::<String, Vec<String>>::new())
+            .search_leaf_depth(5)
+            .index_memory_bytes(1024 * 1024)
+            .health_check(HealthCheckConfig::default())
+            .cors(CorsConfig::default())
+            .server_info(ServerInfoConfig::default())
+            .build();
+        (server, apps_dir)
+    }
 
-        let new_state = process_event(state, ServerEvent::ConfigChanged).await;
+    /// A reloader that hands out `server` once.
+    fn reloader_for(server: Server) -> ConfigReloader {
+        reloader_for_each([server])
+    }
+
+    /// A reloader that hands out `servers` in order, one per call.
+    fn reloader_for_each(servers: impl IntoIterator<Item = Server>) -> ConfigReloader {
+        let servers = std::sync::Mutex::new(servers.into_iter().collect::<VecDeque<_>>());
+        Arc::new(move || Ok(servers.lock().unwrap().pop_front().unwrap()))
+    }
+
+    #[tokio::test]
+    async fn reload_returns_a_server_that_is_ready_to_serve() {
+        let (server, _apps_dir) = server_exposing("Lookup");
+
+        let reloaded = StateMachine::reload(&reloader_for(server)).await;
 
         assert!(
-            matches!(new_state, State::Restarting),
-            "expected Configuring to transition to Restarting after ConfigChanged"
+            matches!(
+                reloaded,
+                Some(StateMachine {
+                    state: State::Ready(_),
+                    ..
+                })
+            ),
+            "expected a server that passed startup"
         );
     }
 
     #[tokio::test]
-    async fn config_changed_with_invalid_config_keeps_running() {
-        let running = create_running_server();
-        let token = running.cancellation_token.clone();
-        let state = State::Running(running);
+    async fn reload_skips_a_configuration_that_fails_startup() {
+        let (server, _apps_dir) = server_exposing("Lokup");
 
-        let validator: super::ConfigValidator =
-            Arc::new(|| Err("invalid YAML: expected ':', got newline".into()));
-
-        let new_state =
-            process_event_with_validator(state, ServerEvent::ConfigChanged, &Some(validator)).await;
+        let reloaded = StateMachine::reload(&reloader_for(server)).await;
 
         assert!(
-            matches!(new_state, State::Running(_)),
-            "expected server to remain Running when config is invalid"
+            reloaded.is_none(),
+            "expected the misspelled tool name to fail startup"
         );
+    }
+
+    #[traced_test]
+    #[tokio::test]
+    async fn reload_logs_why_a_configuration_fails_startup() {
+        let (server, _apps_dir) = server_exposing("Lokup");
+
+        StateMachine::reload(&reloader_for(server)).await;
+
+        assert!(logs_contain(
+            "keeping current configuration: Failed to load apps: apps.expose_without_app_param: records has 0 tools named Lokup"
+        ));
+    }
+
+    #[tokio::test]
+    async fn reload_skips_a_configuration_that_fails_to_build() {
+        let reloader: ConfigReloader = Arc::new(|| Err("invalid YAML".into()));
+
+        let reloaded = StateMachine::reload(&reloader).await;
+
+        assert!(reloaded.is_none(), "expected the build error to be skipped");
+    }
+
+    #[tokio::test]
+    async fn reloads_drops_a_startup_that_never_finishes_when_the_configuration_changes_again() {
+        let (mut stuck, _stuck_apps_dir) = server_exposing("Lookup");
+        stuck.schema_source = SchemaSource::Stream(stream::pending().boxed());
+        let (fixed, _fixed_apps_dir) = server_exposing("Lookup");
+        let (changed, changes) = futures::channel::mpsc::unbounded();
+        let mut reloads =
+            StateMachine::reloads_on(changes.boxed(), reloader_for_each([stuck, fixed]));
+        changed.unbounded_send(()).unwrap();
+        assert!(futures::poll!(reloads.next()).is_pending());
+
+        changed.unbounded_send(()).unwrap();
+        let reloaded = tokio::time::timeout(Duration::from_secs(5), reloads.next()).await;
+
         assert!(
-            !token.is_cancelled(),
-            "cancellation token should NOT be cancelled when config is invalid"
+            matches!(
+                reloaded,
+                Ok(Some(StateMachine {
+                    state: State::Ready(_),
+                    ..
+                }))
+            ),
+            "expected the second change to replace the stuck startup"
         );
     }
 
     #[tokio::test]
-    async fn config_changed_with_valid_config_transitions_to_restarting() {
+    async fn reloads_can_be_polled_again_after_the_changes_end() {
+        let reloader: ConfigReloader = Arc::new(|| Err("unused".into()));
+        let mut reloads = StateMachine::reloads_on(stream::empty().boxed(), reloader);
+        reloads.next().await;
+
+        assert!(reloads.next().await.is_none());
+    }
+
+    /// A server that is running and receives no events.
+    fn idle_running_machine() -> (StateMachine, CancellationToken) {
         let running = create_running_server();
         let token = running.cancellation_token.clone();
-        let state = State::Running(running);
+        let machine = StateMachine {
+            events: stream::select_all(vec![stream::pending().boxed()]),
+            state: State::Running(running),
+        };
+        (machine, token)
+    }
 
-        let validator: super::ConfigValidator = Arc::new(|| Ok(()));
+    /// A reloaded server that stops as soon as it takes over, so `run` returns.
+    fn reloaded_machine_that_stops() -> Reloads {
+        stream::iter([StateMachine {
+            events: stream::select_all(vec![]),
+            state: State::Stopping,
+        }])
+        .boxed()
+    }
 
-        let new_state =
-            process_event_with_validator(state, ServerEvent::ConfigChanged, &Some(validator)).await;
+    #[tokio::test(start_paused = true)]
+    async fn run_hands_over_to_a_reloaded_server() {
+        let (machine, _token) = idle_running_machine();
+
+        let result = machine.run(reloaded_machine_that_stops()).await;
 
         assert!(
-            matches!(new_state, State::Restarting),
-            "expected server to transition to Restarting when config is valid"
+            result.is_ok(),
+            "expected the reloaded server to take over and stop: {:?}",
+            result.err()
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_stops_the_running_server_when_a_reloaded_one_takes_over() {
+        let (machine, token) = idle_running_machine();
+
+        let _ = machine.run(reloaded_machine_that_stops()).await;
+
         assert!(
             token.is_cancelled(),
-            "cancellation token should be cancelled when config is valid"
+            "expected the replaced server's connections to be cancelled"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_keeps_the_running_server_without_a_reload() {
+        let (machine, token) = idle_running_machine();
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(50),
+            machine.run(stream::empty().boxed()),
+        )
+        .await;
+
+        assert!(
+            result.is_err() && !token.is_cancelled(),
+            "expected the server to keep running"
         );
     }
 
     #[tokio::test]
     async fn config_watch_stream_returns_empty_when_no_path() {
-        use futures::StreamExt as _;
-
         let mut stream = StateMachine::config_watch_stream(None).boxed();
 
         assert!(
@@ -888,8 +1098,6 @@ mod tests {
 
     #[tokio::test]
     async fn config_watch_stream_returns_empty_for_nonexistent_path() {
-        use futures::StreamExt as _;
-
         let path = std::path::Path::new("/tmp/nonexistent-config-file-12345.yaml");
         let mut stream = StateMachine::config_watch_stream(Some(path)).boxed();
 
