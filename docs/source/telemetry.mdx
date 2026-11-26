@@ -305,7 +305,7 @@ The inbound request span is named `{method} {route}`, for example `POST /mcp`. T
 | --------------------------- | --------------------------------------------------------------------------------------- |
 | `http.request.method`       | The HTTP method, for example `POST`. A method outside the conventions' set is `_OTHER`.  |
 | `http.request.method_original` | The method as sent, for a method reported as `_OTHER`.                                |
-| `http.route`                | The matched route, for example `/mcp`.                                                  |
+| `http.route`                | The matched route, for example `/mcp`. Omitted when the request matches no route.        |
 | `http.response.status_code` | The HTTP status code, as an integer.                                                     |
 | `url.path`                  | The request path.                                                                        |
 | `url.scheme`                | Always `http`: the server serves plaintext and doesn't infer a scheme from proxy headers. |

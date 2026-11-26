@@ -726,6 +726,34 @@ mod tests {
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 
+    #[rstest::rstest]
+    #[case::without_health_check(false)]
+    #[case::with_health_check(true)]
+    #[tokio::test]
+    async fn with_auth_returns_not_found_outside_configured_path(#[case] health: bool) {
+        let auth: auth::Config = serde_json::from_value(serde_json::json!({
+            "servers": ["https://auth.example.com"],
+            "resource": "https://mcp.example.com/mcp",
+        }))
+        .unwrap();
+        let health_check = health.then(|| HealthCheck::new(HealthCheckConfig::default()));
+        let listeners = listener_builder("/mcp")
+            .with_auth(
+                Some(Box::new(auth)),
+                HashMap::new(),
+                true,
+                &TrustedProxies::default(),
+            )
+            .unwrap()
+            .with_health(health_check.as_ref())
+            .unwrap();
+        let router = listeners.into_iter().next().unwrap().router;
+
+        let res = router.oneshot(get("/mcp/anything")).await.unwrap();
+
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+    }
+
     #[tokio::test]
     async fn with_health_serves_path_below_endpoint() {
         let running = super::super::running::test_support::create_test_running();

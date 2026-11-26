@@ -234,9 +234,17 @@ impl HealthCheck {
     /// Build a router containing just the health check endpoint.
     ///
     /// Used on its own when `HealthCheckConfig::listen` is set, so the health check is served
-    /// on its own socket instead of being merged into the main router. See [`Self::enable_router`]
-    /// for the merged case.
+    /// on its own socket instead of on the main router. See [`Self::enable_router`] for the
+    /// shared case.
     pub fn router(&self) -> Router {
+        self.enable_router(Router::new())
+    }
+
+    /// Add the health check endpoint to the provided router.
+    ///
+    /// The route is added directly, not merged in from a second router: a merge swaps the
+    /// router's fallback for the other router's, dropping any layers already applied to it.
+    pub fn enable_router(&self, router: Router) -> Router {
         /// Health check endpoint handler
         async fn health_endpoint(
             State(health_check): State<HealthCheck>,
@@ -250,16 +258,10 @@ impl HealthCheck {
             Ok((status_code, Json(json!(health))))
         }
 
-        Router::new()
-            .route(self.config.route_path(), get(health_endpoint))
-            .with_state(self.clone())
-    }
-
-    /// Enable health check router.
-    ///
-    /// Creates a router with the health check endpoint and merges it with the provided router.
-    pub fn enable_router(&self, router: Router) -> Router {
-        router.merge(self.router())
+        router.route(
+            self.config.route_path(),
+            get(health_endpoint).with_state(self.clone()),
+        )
     }
 }
 

@@ -746,13 +746,21 @@ mod inbound_trace_context {
 mod sub_paths {
     use super::*;
 
-    #[tokio::test]
-    async fn are_not_traced() {
-        // The telemetry layers wrap only registered routes, and a subpath of the
-        // MCP endpoint falls through to axum's default 404.
-        let spans = spans_for(mcp_request("/mcp/anything")).await;
+    // A subpath of the MCP endpoint matches no route, but the telemetry layers
+    // still see it on its way to the 404 fallback.
 
-        assert!(spans.is_empty(), "subpath request was traced: {spans:#?}");
+    #[tokio::test]
+    async fn name_the_span_after_the_method_alone() {
+        let span = server_span_for(mcp_request("/mcp/anything")).await;
+
+        assert_eq!(span.name, "POST");
+    }
+
+    #[tokio::test]
+    async fn leave_http_route_off_the_span() {
+        let span = server_span_for(mcp_request("/mcp/anything")).await;
+
+        assert_eq!(attribute(&span, "http.route"), None);
     }
 }
 
