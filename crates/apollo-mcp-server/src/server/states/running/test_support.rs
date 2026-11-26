@@ -65,6 +65,7 @@ pub(in crate::server::states) fn create_test_running() -> Running {
     Running {
         schema: Arc::new(RwLock::new(schema)),
         operations: Arc::new(RwLock::new(vec![])),
+        exports: Default::default(),
         apps: vec![],
         prompts: vec![],
         headers: http::HeaderMap::new(),

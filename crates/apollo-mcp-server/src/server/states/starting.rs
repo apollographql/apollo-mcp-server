@@ -167,10 +167,11 @@ impl Starting {
         // Move into `Running` so we do not clone the full string (`config.instructions` is not read afterward).
         let instructions = std::mem::take(&mut self.config.instructions);
 
-        let running = Running {
+        let mut running = Running {
             schema,
             operations: Arc::new(RwLock::new(operations)),
             apps,
+            exports: Default::default(),
             prompts,
             headers: self.config.headers,
             forward_headers: self.config.forward_headers.clone(),
@@ -211,9 +212,17 @@ impl Starting {
             }),
         };
 
+        running.exports = crate::apps::resolve_exports(
+            &running.apps,
+            &self.config.expose_without_app_param,
+            |name| running.is_builtin_tool(name),
+        )
+        .map_err(|err| ServerError::Apps(format!("apps.expose_without_app_param: {err}")))?;
+        crate::apps::warn_shadowed(&running.exports, &running.operations.read().await);
+
         match self.config.transport {
             Transport::StreamableHttp {
-                auth,
+                mut auth,
                 address,
                 port,
                 path,
@@ -222,6 +231,12 @@ impl Starting {
                 trusted_proxies,
             } => {
                 info!(port = ?port, address = ?address, path = %path, "Starting MCP server in Streamable HTTP mode");
+                if let Some(auth) = &mut auth {
+                    crate::apps::drop_exported_skips(
+                        &mut auth.skip_token_validation.tools,
+                        &running.exports,
+                    );
+                }
                 let running = running.clone();
                 let per_client_rate_limit = auth
                     .as_ref()
@@ -504,6 +519,7 @@ impl ListenerBuilder {
 
 #[cfg(test)]
 mod tests {
+    use assert_fs::{TempDir, prelude::*};
     use axum::{
         body::Body,
         http::{Request, StatusCode},
@@ -520,6 +536,7 @@ mod tests {
     fn config(port: u16, health_check: HealthCheckConfig) -> Config {
         Config {
             rhai_dir: std::path::PathBuf::from("rhai"),
+            expose_without_app_param: Default::default(),
             apps_dir: std::path::PathBuf::from("apps"),
             prompts_dir: std::path::PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {
@@ -588,6 +605,80 @@ mod tests {
         ));
         let running = starting.start();
         assert!(running.await.is_ok());
+    }
+
+    /// A config whose apps directory holds one app per `(app, tool)` pair in `apps`, and
+    /// which exposes the `(app, tool)` pairs in `exposed` without the app parameter.
+    fn config_with_apps(apps: &[(&str, &str)], exposed: &[(&str, &str)]) -> (Config, TempDir) {
+        let apps_dir = TempDir::new().unwrap();
+        for (app, tool) in apps {
+            let manifest = serde_json::json!({
+                "format": "apollo-ai-app-manifest",
+                "version": "1",
+                "hash": "abcdef",
+                "resource": "https://example.com/widget/index.html",
+                "operations": [{
+                    "body": "query Hello { hello }",
+                    "tools": [{ "name": tool, "description": "Says hello" }],
+                }],
+            });
+            apps_dir
+                .child(app)
+                .child(".application-manifest.json")
+                .write_str(&manifest.to_string())
+                .unwrap();
+        }
+        let config = Config {
+            apps_dir: apps_dir.path().into(),
+            expose_without_app_param: exposed
+                .iter()
+                .map(|(app, tool)| (app.to_string(), vec![tool.to_string()]))
+                .collect(),
+            ..config(0, HealthCheckConfig::default())
+        };
+        (config, apps_dir)
+    }
+
+    #[tokio::test]
+    async fn start_exports_only_the_listed_app_tools() {
+        let (config, _apps_dir) = config_with_apps(
+            &[("analytics", "UsageChart"), ("records", "Lookup")],
+            &[("records", "Lookup")],
+        );
+
+        let Ok(running) = starting(config).start().await else {
+            panic!("server should start");
+        };
+
+        let exports: Vec<_> = running.exports.iter().collect();
+        assert_eq!(exports, [(&"Lookup".to_owned(), &"records".to_owned())]);
+    }
+
+    #[tokio::test]
+    async fn start_rejects_a_listed_tool_that_no_app_has() {
+        let (config, _apps_dir) =
+            config_with_apps(&[("records", "Lookup")], &[("records", "Lokup")]);
+
+        let Err(ServerError::Apps(reason)) = starting(config).start().await else {
+            panic!("server should reject the listed tool");
+        };
+
+        assert_eq!(
+            reason,
+            "apps.expose_without_app_param: records has 0 tools named Lokup"
+        );
+    }
+
+    #[tokio::test]
+    async fn apps_that_share_a_tool_name_start_when_neither_is_listed() {
+        let (config, _apps_dir) =
+            config_with_apps(&[("analytics", "Lookup"), ("records", "Lookup")], &[]);
+
+        let Ok(running) = starting(config).start().await else {
+            panic!("server should start");
+        };
+
+        assert!(running.exports.is_empty());
     }
 
     #[tokio::test]

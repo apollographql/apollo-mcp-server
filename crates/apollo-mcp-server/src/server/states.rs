@@ -49,6 +49,7 @@ pub(super) struct StateMachine {}
 struct Config {
     rhai_dir: PathBuf,
     apps_dir: PathBuf,
+    expose_without_app_param: crate::apps::AppAllowlist,
     prompts_dir: PathBuf,
     transport: Transport,
     endpoint: Url,
@@ -113,6 +114,7 @@ impl StateMachine {
             config: Config {
                 rhai_dir: server.rhai_dir,
                 apps_dir: server.apps_dir,
+                expose_without_app_param: server.expose_without_app_param,
                 prompts_dir: server.prompts_dir,
                 transport: server.transport,
                 endpoint: server.endpoint,
@@ -517,6 +519,7 @@ mod tests {
         Running {
             schema: Arc::new(RwLock::new(schema)),
             operations: Arc::new(RwLock::new(vec![])),
+            exports: Default::default(),
             apps: vec![],
             prompts: vec![],
             headers: HeaderMap::new(),
@@ -551,6 +554,7 @@ mod tests {
     fn test_config() -> Config {
         Config {
             rhai_dir: PathBuf::from("rhai"),
+            expose_without_app_param: Default::default(),
             apps_dir: PathBuf::from("apps"),
             prompts_dir: PathBuf::from("prompts"),
             transport: Transport::StreamableHttp {

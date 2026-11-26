@@ -392,6 +392,7 @@ mod test {
             Config {
                 apps: AppsConfig {
                     path: "apps",
+                    expose_without_app_param: {},
                 },
                 caching: Caching {
                     ttl_ms: 300000,
